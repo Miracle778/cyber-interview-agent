@@ -1,3 +1,18 @@
+# Python
+backend/.venv/
+backend/__pycache__/
+*.pyc
+backend/.ruff_cache/
+backend/.pytest_cache/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# 本地数据与密钥（绝不入库）
+backend/config.local.toml
+data/
+
+# OS
 .DS_Store
 .superpowers/
-/docs/
