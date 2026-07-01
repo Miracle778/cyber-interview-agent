@@ -4,6 +4,7 @@ backend/__pycache__/
 *.pyc
 backend/.ruff_cache/
 backend/.pytest_cache/
+backend/dist/
 
 # Node
 frontend/node_modules/
@@ -12,6 +13,7 @@ frontend/dist/
 # 本地数据与密钥（绝不入库）
 backend/config.local.toml
 data/
+backend/data/
 
 # OS
 .DS_Store
