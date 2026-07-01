@@ -9,6 +9,9 @@ backend/dist/
 # Node
 frontend/node_modules/
 frontend/dist/
+frontend/*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
 
 # 本地数据与密钥（绝不入库）
 backend/config.local.toml
