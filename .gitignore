@@ -22,3 +22,6 @@ backend/data/
 .DS_Store
 .superpowers/
 .worktrees/
+
+# 变更说明文档（仅本地阅读，不入库）
+docs/changes/
