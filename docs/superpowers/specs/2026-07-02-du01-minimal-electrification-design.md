@@ -20,13 +20,15 @@ DU01 是一条**垂直切片（tracer bullet）**：用最薄的真实业务切�
 React Profile 页（粘贴文本）
   → POST /api/profile/runs {text}
   → ProfileService 定位/创建唯一 Profile Artifact（见 §7.4）
-    → 创建 AgentRun(queued) + 首个 RunAttempt(running)
-  → Run Gate：校验输入非空、artifact kind=profile、锁定最小 manifest
-  → AgentRunService 经 TaskRegistry 调度 asyncio.create_task 启动 AgentRuntime（loop 实现）
-      → ModelGateway.stream(provider, model, messages)
-      → RuntimeEventMapper：provider chunk → 稳定 RunEvent{delta}（逐条落库+通知 SSE）
-      → 流结束：FinalOutputParser 累积 delta 文本 → 解析为 FinalOutputResult
-      → AgentRuntime 返回 FinalOutputResult（非 RunEvent）给 AgentRunService
+    → 创建 AgentRun(queued) + 首个 RunAttempt(queued)（短事务提交，返回 run_id）
+  → Run Gate（调度前执行）：校验输入非空、artifact kind=profile、锁定最小 manifest
+    → Gate 失败：queued → failed 短事务（见 §7.3），返回 run_id，前端经 SSE 收 failed
+  → AgentRunService 经 TaskRegistry 调度 asyncio.create_task
+    → TaskRegistry 接管后、模型调用前，短事务：AgentRun queued→running + RunAttempt queued→running(写 started_at)
+    → 启动 AgentRuntime（loop 实现）
+      → ModelGateway.stream → RuntimeEventMapper → 产出 RuntimeOutput 流
+      → DeltaOutput：逐条落库为 RunEvent{delta} + 通知 SSE
+      → 末尾 FinalOutputResult：交给 AgentRunService
   → AgentRunService 执行 Output Gate + 终态事务（terminal event 唯一持久化，见 §7.2/§7.3）
   → 成功路径原子事务：ArtifactVersion(draft→pending_approval) + RunAttempt(completed) + AgentRun(completed) + completed RunEvent → 提交 → 通知 SSE
   → 前端 SSE 收到 completed → 拉 pending_approval 草稿展示
@@ -55,9 +57,9 @@ DU01 建表遵循「用到时才建」（replan §4）。6 张表。`workspace_i
 
 | 表 | 关键字段 | 说明 |
 |---|---|---|
-| `artifact` | id, workspace_id(可空), kind('profile'), created_at | 制品身份 |
+| `artifact` | id, workspace_id(可空,DU01写固定非空常量), kind('profile'), created_at | 制品身份 |
 | `artifact_version` | id, artifact_id, version_no, schema_name, schema_version, content_json, status, created_at, published_at | 不可变版本；status ∈ {draft, pending_approval, published} |
-| `agent_run` | id, artifact_id, workspace_id(可空), thread_id(可空), status, command_id(可空), input_text, created_at, completed_at | status ∈ {queued, running, completed, failed} |
+| `agent_run` | id, artifact_id, workspace_id(可空,DU01写固定非空常量), thread_id(可空), status, command_id(可空), input_text, created_at, completed_at | status ∈ {queued, running, completed, failed} |
 | `run_attempt` | id, run_id, attempt_no, status, started_at, ended_at | DU01 一个 run 一个 attempt；status 同 agent_run |
 | `run_event` | id, run_id, sequence, event_type, payload_json, created_at | SSE 回放源；sequence 单调递增 |
 | `model_call` | id, attempt_id, provider, model, request_id, tokens_in, tokens_out, latency_ms, cost_usd_micros | AuditTrace/Trace 最小 |
@@ -69,9 +71,10 @@ DU01 建表遵循「用到时才建」（replan §4）。6 张表。`workspace_i
 - `(run_id, sequence)` UNIQUE（run_event）——保证 SSE 回放无歧义。
 - `(artifact_id, version_no)` UNIQUE（artifact_version）——版本号在制品内唯一。
 - `(run_id, attempt_no)` UNIQUE（run_attempt）——attempt 号在 run 内唯一。
-- `(workspace_id, kind)` UNIQUE（artifact）——单 workspace 下每种 kind 唯一（见 §7.4）。
+- `(workspace_id, kind)` UNIQUE（artifact）——单 workspace 下每种 kind 唯一（见 §7.4）。**依赖 workspace_id 非空**，DU01 写固定常量 UUID。
 - `status` 字段 CHECK 约束枚举值（artifact_version / agent_run / run_attempt 各自的合法集合）。
 - `run_event.event_type` CHECK 枚举（DU01：`delta`/`partial`/`completed`/`failed`）。
+- **部分唯一索引**（artifact_version）：`CREATE UNIQUE INDEX uq_artifact_one_published ON artifact_version(artifact_id) WHERE status = 'published';`——数据库级保证每个 artifact 最多一个 published 版本，作为 §7.5 Application 检查的最终防线。DU02 引入 superseded 后该索引仍适用（superseded 是独立状态，published 仍唯一），无需移除。
 - 外键 + 删除策略：`ON DELETE RESTRICT`（artifact_version→artifact、agent_run→artifact、run_attempt→agent_run、run_event→agent_run、model_call→run_attempt）。DU01 不级联删除，避免孤儿事件/版本。
 - 时间字段统一 UTC，存储 ISO-8601 字符串或 epoch 整数（迁移内统一一种，推荐 epoch ms）。
 - `model_call.cost_usd_micros` 用**整数百万分之一美元**（micro-USD），不用浮点也不用美分——小模型调用常 <1 美分，美分会大量记为 0；micros 足够精度。`provider`/`model` 记录实际调用模型。
@@ -114,12 +117,21 @@ class ModelGateway(Protocol):
 
 ```python
 class AgentRuntime(Protocol):
-    async def run(self, ctx: RunContext) -> AsyncIterator[RunEvent]: ...
+    def run(self, ctx: RunContext) -> AsyncIterator[RuntimeOutput]: ...
 ```
 
-DU01 loop 实现：调 `ModelGateway.stream` → `RuntimeEventMapper` 映射 → yield `RunEvent{delta}`（逐条由 Application 层落库）；流结束后由 `FinalOutputParser` 解析，**返回 `FinalOutputResult` 给 `AgentRunService`**（不是 RunEvent）。
+`RuntimeOutput` 是 harness 层内部联合类型（非 RunEvent）：
 
-**terminal event 所有权：** AgentRuntime **不产生** completed/failed RunEvent。它只产 delta 事件 + 一个 FinalOutputResult 返回值。completed/failed RunEvent 由 `AgentRunService` 在终态事务（§7.2/§7.3）中唯一持久化——保证 terminal event 与 ArtifactVersion/状态更新原子提交，且只落库一次。
+- `DeltaOutput(text: str)` —— 流式文本片段。
+- `FinalOutputResult(profile: ProfileVersion | None, error: OutputError | None)` —— 流结束的终态产物。
+
+DU01 loop 实现：调 `ModelGateway.stream` → 每个 chunk 映射为 `DeltaOutput` yield；流结束后由 `FinalOutputParser` 解析，yield 一个 `FinalOutputResult` 后关闭迭代器。
+
+Application 层（`AgentRunService`）消费该流时分流：`DeltaOutput` → 落库为 `RunEvent{delta}` + 通知 SSE；`FinalOutputResult` → 进入终态事务（§7.2/§7.3）。
+
+**terminal event 所有权：** AgentRuntime **不产生** completed/failed RunEvent，只产 `DeltaOutput` 和一个 `FinalOutputResult`。completed/failed RunEvent 由 `AgentRunService` 在终态事务中唯一持久化——保证 terminal event 与 ArtifactVersion/状态更新原子提交，且只落库一次。
+
+> 选 `AsyncIterator[RuntimeOutput]` 而非「yield + return」：Python async generator 不允许 `return <value>`（SyntaxError），调用方也无法从 `async for` 取返回值；统一为单一输出流是最简可实现契约。
 
 **Port 签名预留 `checkpoint_ref` 字段（DU01 不用）**，DU03 替换为 LangGraph adapter 不破上层。`RunContext` 含 run_id、attempt_id、agent_definition、locked manifest、model 配置。
 
@@ -144,7 +156,7 @@ DU01 loop 实现：调 `ModelGateway.stream` → `RuntimeEventMapper` 映射 →
 - **累积**：loop 把所有 `delta.text` 拼接为 `full_text`，流结束（`ModelChunk(type=done)`）后解析。
 - **提取**：`FinalOutputParser` 容错处理常见杂质——剥离 markdown 围栏（```json ... ```）、定位首个 `{` 到末个 `}` 的子串。提取失败视为解析失败。
 - **解析**：`ProfileVersion.model_validate_json(extracted)`，pydantic 校验 schema（facts 1–3、claim 非空、evidence_ref 可空）。
-- **返回值**：`FinalOutputResult` 是 dataclass，含 `profile: ProfileVersion | None` 和 `error: OutputError | None`（二选一）。成功时 profile 非空，失败时 error 携带 category/safe_message/finish_reason。`AgentRuntime.run` 把它作为返回值交给 `AgentRunService`，**不包装成 RunEvent**。
+- **产出**：`FinalOutputParser` 的结果是 `FinalOutputResult`（dataclass），含 `profile: ProfileVersion | None` 和 `error: OutputError | None`（二选一）。成功时 profile 非空，失败时 error 携带 category/safe_message/finish_reason。它作为 `AgentRuntime.run` 流的最后一个 `RuntimeOutput` 交给 `AgentRunService`，**不包装成 RunEvent**。
 - **partial 事件**：DU01 不发 `partial`（已解析的中间 facts）；`partial` 是 RunEvent 枚举预留位，DU02 按需启用。流式期间只发 `delta`（原始文本片段）。
 
 四种结果（普通 CI 必须覆盖）：
@@ -171,10 +183,12 @@ Output Gate 接收 `FinalOutputResult`：profile 非空时 Gate 再做一次 sch
 ```text
 ArtifactVersion: draft → pending_approval → published
 AgentRun:         queued → running → completed | failed
+                 queued → failed   (Run Gate 失败，未进入 running)
 ```
 
 - 流式完成、Output Gate 通过后，draft 自动转 pending_approval（待审批）。
 - 审批发布：pending_approval → published，单 SQLite 事务（定稿 §5.4：发布不调用模型/工具/文件写入）。
+- `queued → failed`：Run Gate 在调度前失败时直接转 failed，不经过 running（§7.3 失败事务同样适用，attempt 也置 failed）。
 - superseded/rejected（DU02）、waiting_input/interrupted/cancelled（DU03）不在 DU01。
 
 ### 7.2 成功路径事务顺序（原子）
@@ -208,21 +222,23 @@ failed 状态、RunAttempt 状态与 failed event 同事务提交，保证前端
 
 DU01 是「单隐式 workspace 下唯一 kind=profile 的 Artifact」：
 
-- `ProfileService` 创建 run 时，先按 `(workspace_id, kind='profile')` 查找现有 Artifact；不存在则创建。
-- 数据库约束 `(workspace_id, kind)` UNIQUE 保证唯一性（DU01 workspace_id 固定单值，DU03 多 workspace 后该约束自然分区）。
+- DU01 使用一个**固定非空常量 UUID** 作为隐式 workspace_id（domain 常量 `DEFAULT_WORKSPACE_ID`）。`workspace_id` 列虽标注 nullable（为 DU02/DU03 留迁移空间），但 DU01 写入时**始终用该常量非空值**，使 `(workspace_id, kind)` UNIQUE 真正生效——SQLite UNIQUE 允许多个 NULL，写 NULL 会破坏唯一性。
+- DU03 多 workspace 时，该常量成为 default workspace 的真实 id，不破坏既有数据。
+- `ProfileService` 创建 run 时，先按 `(workspace_id=DEFAULT_WORKSPACE_ID, kind='profile')` 查找现有 Artifact；不存在则创建。
 - 所有 Profile run 的 `agent_run.artifact_id` 都指向这同一个 Artifact。
-- 「当前版本」= 该 Artifact 下 status ∈ {pending_approval, published} 中 `version_no` 最大的版本（draft 不算当前；DU01 一次只允许一个非 draft 版本，见 §7.5）。
+- 「当前版本」= 该 Artifact 下 status ∈ {pending_approval, published} 中 `version_no` 最大的版本。
+- **版本数量规则**：允许多个 pending_approval 版本并存（多次 run 各产草稿）；但最多一个 published（由 §7.5 的部分唯一索引保证）。不限制 pending_approval 数量，避免误加「pending 唯一」约束。
 
 ### 7.5 多 published 防护（DU01 临时规则）
 
-DU01 不实现 superseded（DU02），为避免同一 Artifact 出现多个 published 版本破坏权威唯一性，审批发布时执行临时规则：
+DU01 不实现 superseded（DU02），为避免同一 Artifact 出现多个 published 版本破坏权威唯一性，采用**双层防护**：
 
-- `ArtifactApprovalService` 在发布事务内**检查该 Artifact 是否已存在 published 版本**。
-- 已有 published → 拒绝发布，返回 `ErrorEnvelope(category=policy, code=already_published)`，不修改任何状态。
-- 无 published → 正常 `pending_approval → published`。
-- 这条规则在 DU02 实现 supersede 后移除（改为新版本发布时旧版本自动 superseded）。
+- **Application 层（友好错误）**：`ArtifactApprovalService` 在发布事务内检查该 Artifact 是否已存在 published 版本。已有 → 拒绝，返回 `ErrorEnvelope(category=policy, code=already_published)`，不修改状态。无 → 正常 `pending_approval → published`。
+- **数据库层（最终防线）**：部分唯一索引 `uq_artifact_one_published`（§4.1）保证每个 artifact 最多一个 published，即使 Application 检查被绕过或并发漏检也无法插入第二个 published（违反约束时事务回滚）。
 
-并发审批防护：发布检查与状态更新在同一事务内，配合 SQLite 的串行写，杜绝两个并发 approve 同时把两个版本置 published。集成测试覆盖：对同一 artifact 两个 pending_approval 版本并发 approve，断言最终只有一个 published、另一个仍 pending_approval 或被拒绝。
+这条规则在 DU02 实现 supersede 后移除 Application 检查；DB 索引保留（superseded 不影响 published 唯一）。
+
+并发审批：发布检查与状态更新在同一事务，加上 DB 部分唯一索引兜底，杜绝两个并发 approve 同时把两个版本置 published。集成测试覆盖：对同一 artifact 两个 pending_approval 版本并发 approve，断言最终只有一个 published、另一个仍 pending_approval 或因约束冲突回滚。
 
 ## 8. HTTP API（4 端点）
 
@@ -283,7 +299,7 @@ data: <RunEvent JSON>
 ## 11. 测试策略
 
 - **Domain 单测**：状态机转换合法/非法、Profile schema 校验、Artifact 不可变（draft/pending_approval 内容落库后不可改）。
-- **契约测试**：ModelGateway（chunk 序列、重试、错误分类）、AgentRuntime（delta event 序列、返回 FinalOutputResult 而非 terminal event、checkpoint 参数存在）、FinalOutputParser（§6.5 四种情况）。
+- **契约测试**：ModelGateway（chunk 序列、重试、错误分类）、AgentRuntime（产出 DeltaOutput 流 + 末尾一个 FinalOutputResult、不产 terminal RunEvent、checkpoint 参数存在）、FinalOutputParser（§6.5 四种情况）。
 - **集成测试**：
   - SQLite 事务（发布原子性、draft 不可原地改、`(artifact_id,version_no)`/`(run_id,attempt_no)`/`(run_id,sequence)`/`(workspace_id,kind)` 唯一约束生效）。
   - 成功/失败路径事务顺序（§7.2/§7.3）——断言 completed+artifact_version+run_attempt 同事务、failed+run_attempt+failed_event 同事务。
