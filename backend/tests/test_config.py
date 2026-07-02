@@ -12,9 +12,7 @@ def test_missing_config_returns_empty_mapping(tmp_path: Path):
 def test_loads_provider_with_api_key_and_base_url(tmp_path: Path):
     config_path = tmp_path / "config.local.toml"
     config_path.write_text(
-        '[providers.openai]\n'
-        'api_key = "secret"\n'
-        'base_url = "https://api.openai.com/v1"\n',
+        '[providers.openai]\napi_key = "secret"\nbase_url = "https://api.openai.com/v1"\n',
         encoding="utf-8",
     )
     config_path.chmod(0o600)
