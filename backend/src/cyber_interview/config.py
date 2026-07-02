@@ -3,12 +3,29 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel
+
 
 class ConfigPermissionError(PermissionError):
     """Raised when a secret config is accessible by another user."""
 
 
-def load_provider_secrets(path: Path) -> dict[str, str]:
+class ProviderConfig(BaseModel):
+    """Configuration for a single LLM provider."""
+
+    api_key: str = ""
+    base_url: str | None = None
+
+
+def load_providers(path: Path) -> dict[str, ProviderConfig]:
+    """Load provider configurations from a TOML file.
+
+    Each provider is a subtable of ``[providers]``:
+
+        [providers.openai]
+        api_key = "..."
+        base_url = "https://api.openai.com/v1"
+    """
     if not path.exists():
         return {}
 
@@ -22,4 +39,5 @@ def load_provider_secrets(path: Path) -> dict[str, str]:
     providers = document.get("providers", {})
     if not isinstance(providers, dict):
         return {}
-    return {str(key): str(value) for key, value in providers.items()}
+
+    return {str(name): ProviderConfig.model_validate(entry) for name, entry in providers.items()}

@@ -1,4 +1,12 @@
-[providers]
-openai_api_key = ""
-anthropic_api_key = ""
+# Provider configuration. Copy to config.local.toml (chmod 600) and fill in.
+#
+# Each provider is a subtable of [providers]. `api_key` is required;
+# `base_url` is optional and overrides the provider's default endpoint.
 
+[providers.openai]
+api_key = ""
+base_url = "https://api.openai.com/v1"
+
+[providers.anthropic]
+api_key = ""
+base_url = "https://api.anthropic.com"
