@@ -1,6 +1,7 @@
 from logging.config import fileConfig
 
 from alembic import context
+from cyber_interview.infra.models import Base
 from cyber_interview.settings import get_settings
 
 config = context.config
@@ -10,7 +11,7 @@ if config.config_file_name is not None:
 database_path = get_settings().data_dir / "career.db"
 database_path.parent.mkdir(parents=True, exist_ok=True)
 config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
-target_metadata = None
+target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
