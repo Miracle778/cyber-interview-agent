@@ -1,7 +1,7 @@
 # DU01 最小通电切片 — 设计
 
 日期：2026-07-02
-状态：待用户审阅（review v2 已修订）
+状态：待用户审阅（review v4 已修订）
 适用范围：DU01 单个交付单元
 
 > 与 `docs/architecture-review/2026-07-01-week1-replan.md` §3「DU01」一致，是其在实现层的细化。与长期愿景文档冲突时，以定稿 `docs/superpowers/specs/2026-07-01-career-agent-architecture-finalization-design.md` 首月范围为准。状态名、状态机、安全不变量等一律以定稿为权威。
@@ -129,6 +129,13 @@ DU01 loop 实现：调 `ModelGateway.stream` → 每个 chunk 映射为 `DeltaOu
 
 Application 层（`AgentRunService`）消费该流时分流：`DeltaOutput` → 落库为 `RunEvent{delta}` + 通知 SSE；`FinalOutputResult` → 进入终态事务（§7.2/§7.3）。
 
+`RuntimeOutput` 流必须满足以下结束不变量：
+
+- 每次 run **恰好产出一个** `FinalOutputResult`，且它必须是流的最后一个元素。
+- 流在未产出 `FinalOutputResult` 时结束，视为 runtime/model error，由 `AgentRunService` 进入失败事务（§7.3）。
+- 产出多个 `FinalOutputResult`，或在 `FinalOutputResult` 后继续产出 `DeltaOutput`，均视为 runtime 契约违规并进入失败事务。
+- `AgentRunService` 是这些不变量的最终校验者，不能假定任意 Runtime Adapter 天然满足契约。
+
 **terminal event 所有权：** AgentRuntime **不产生** completed/failed RunEvent，只产 `DeltaOutput` 和一个 `FinalOutputResult`。completed/failed RunEvent 由 `AgentRunService` 在终态事务中唯一持久化——保证 terminal event 与 ArtifactVersion/状态更新原子提交，且只落库一次。
 
 > 选 `AsyncIterator[RuntimeOutput]` 而非「yield + return」：Python async generator 不允许 `return <value>`（SyntaxError），调用方也无法从 `async for` 取返回值；统一为单一输出流是最简可实现契约。
@@ -145,7 +152,7 @@ Application 层（`AgentRunService`）消费该流时分流：`DeltaOutput` → 
 
 - **所有权**：registry 按 run_id 持有 Task 引用，run 完成后移除。
 - **未订阅 SSE 不影响**：task 生命周期与 SSE 订阅解耦，无人订阅时仍执行到 terminal。
-- **统一异常边界**：task 体内所有未捕获异常由 registry 的包装捕获，转成 run failed + failed RunEvent（同事务，见 §7.2），绝不让 run 永久停在 running。
+- **统一异常边界**：task 体内所有未捕获异常由 registry 的包装捕获，转成 run failed + failed RunEvent（同事务，见 §7.3），绝不让 run 永久停在 running。
 - **应用关闭**：FastAPI lifespan shutdown 时 registry 取消所有活跃 task，对应 run 标记为 failed（DU01 不支持恢复，重启后由 DU03 的 interrupted 机制处理；DU01 重启后遗留 running 视为 failed，写入 failed event）。
 - **测试清理**：测试 fixture 在 teardown 调 `registry.cancel_all()`，不遗留 task 跨用例。
 
@@ -196,7 +203,7 @@ AgentRun:         queued → running → completed | failed
 `AgentRunService` 收到 `AgentRuntime.run` 返回的 `FinalOutputResult`（profile 非空）后，单 SQLite 事务，按序：
 
 1. Output Gate 校验 `FinalOutputResult.profile`（纯内存，无 DB 写）。
-2. 创建 `ArtifactVersion(status=draft, content_json=ProfileVersion JSON)`。
+2. 在同一写事务内分配 `version_no`：以 `BEGIN IMMEDIATE` 获取写锁，读取该 Artifact 的 `max(version_no) + 1`，随后创建 `ArtifactVersion(status=draft, content_json=ProfileVersion JSON)`。
 3. ArtifactVersion `draft → pending_approval`（写 status；published_at 保持 null）。
 4. `RunAttempt` status → `completed`，写 `ended_at`。
 5. `AgentRun` status → `completed`，写 `completed_at`。
@@ -204,7 +211,7 @@ AgentRun:         queued → running → completed | failed
 7. **提交事务**。
 8. 提交成功后通知 SSE 订阅者（事务外）。
 
-步骤 2–6 在同一事务，要么全成要么全失败——避免「Run 已 completed 但 ArtifactVersion/Attempt 未更新」的中间状态。terminal RunEvent 只在此处持久化一次（AgentRuntime 不产 terminal event）。SSE 通知在提交后，避免「前端收到 completed 但查不到草稿」。
+步骤 2–6 在同一事务，要么全成要么全失败——避免「Run 已 completed 但 ArtifactVersion/Attempt 未更新」的中间状态。`BEGIN IMMEDIATE` 使同一 Artifact 的并发完成按写事务串行分配 `version_no`，避免两个 Run 同时计算出相同版本号；`(artifact_id, version_no)` UNIQUE 仍作为最终防线。terminal RunEvent 只在此处持久化一次（AgentRuntime 不产 terminal event）。SSE 通知在提交后，避免「前端收到 completed 但查不到草稿」。
 
 ### 7.3 失败路径事务顺序（原子）
 
@@ -224,7 +231,7 @@ DU01 是「单隐式 workspace 下唯一 kind=profile 的 Artifact」：
 
 - DU01 使用一个**固定非空常量 UUID** 作为隐式 workspace_id（domain 常量 `DEFAULT_WORKSPACE_ID`）。`workspace_id` 列虽标注 nullable（为 DU02/DU03 留迁移空间），但 DU01 写入时**始终用该常量非空值**，使 `(workspace_id, kind)` UNIQUE 真正生效——SQLite UNIQUE 允许多个 NULL，写 NULL 会破坏唯一性。
 - DU03 多 workspace 时，该常量成为 default workspace 的真实 id，不破坏既有数据。
-- `ProfileService` 创建 run 时，先按 `(workspace_id=DEFAULT_WORKSPACE_ID, kind='profile')` 查找现有 Artifact；不存在则创建。
+- `ProfileService` 创建 run 时，先按 `(workspace_id=DEFAULT_WORKSPACE_ID, kind='profile')` 查找现有 Artifact；不存在则尝试创建。首次并发请求发生唯一约束竞争时，捕获 `(workspace_id, kind)` 冲突并重新查询已由另一事务创建的 Artifact，再继续创建各自的 Run，不把正常竞争暴露为 HTTP 500。
 - 所有 Profile run 的 `agent_run.artifact_id` 都指向这同一个 Artifact。
 - 「当前版本」= 该 Artifact 下 status ∈ {pending_approval, published} 中 `version_no` 最大的版本。
 - **版本数量规则**：允许多个 pending_approval 版本并存（多次 run 各产草稿）；但最多一个 published（由 §7.5 的部分唯一索引保证）。不限制 pending_approval 数量，避免误加「pending 唯一」约束。
@@ -276,6 +283,7 @@ data: <RunEvent JSON>
 - `Content-Type: text/event-stream`；禁用代理缓存（`Cache-Control: no-cache`、`X-Accel-Buffering: no`）。
 - `Last-Event-ID` 语义为 **exclusive**：回放 sequence > Last-Event-ID 的事件（Last-Event-ID 本身已投递，不重发）。无 Last-Event-ID 时从 sequence=1 开始。
 - terminal event（completed/failed）发送后服务端关闭连接。
+- 前端收到 terminal event 后必须立即调用 `EventSource.close()`，再更新 TanStack Query 状态；不能只依赖服务端断开，因为原生 `EventSource` 会自动重连。主动关闭后该 run 不再重连。
 - **心跳**：连接空闲时每 15s 发 `: ping\n\n`（SSE 注释行），防中间代理超时断连。
 - **不存在的 run_id**：直接返回 **HTTP 404 + `ErrorEnvelope`**（category=`input`，code=`run_not_found`）。不合成 failed event——不存在 AgentRun 时无法满足外键、无法落库 RunEvent，合成事件会违反「先落库再发送」不变量。前端 `EventSource` 收到 onerror 后，先调用 `GET /api/profile/runs/{run_id}` 区分 404（run 不存在，停止重连）与临时断线（run 存在，继续重连），避免无限重连。
 - RunEvent 必须成功落库后才能发送（定稿 §7.2）；断线不取消 run（task 与 SSE 解耦，见 §6.4）。
@@ -288,7 +296,7 @@ data: <RunEvent JSON>
 - SSE 订阅（`EventSource`），展示 streaming 三态（loading / streaming / done）。
 - 流式完成后展示 Profile 草稿（facts 列表）。
 - 「批准发布」按钮 → 调 approve → 展示 published 状态。
-- SSE 断线重连用 `Last-Event-ID`（`EventSource` 自动发送）。`onerror` 时先调 `GET /api/profile/runs/{run_id}` 区分 404（停止重连）与临时断线（继续重连）。
+- SSE 断线重连用 `Last-Event-ID`（`EventSource` 自动发送）。`onerror` 时先调 `GET /api/profile/runs/{run_id}` 区分 404（停止重连）与临时断线（继续重连）。收到 `completed`/`failed` 后前端立即主动 `close()`，避免服务端关闭连接触发 EventSource 自动重连。
 
 技术栈继承 DU00：TanStack Query 管理服务端状态，`queryKey` 以 scope 开头（DU01 `["profile", run_id, ...]`），SSE 事件按 `run_id + sequence` 去重。
 
@@ -299,19 +307,20 @@ data: <RunEvent JSON>
 ## 11. 测试策略
 
 - **Domain 单测**：状态机转换合法/非法、Profile schema 校验、Artifact 不可变（draft/pending_approval 内容落库后不可改）。
-- **契约测试**：ModelGateway（chunk 序列、重试、错误分类）、AgentRuntime（产出 DeltaOutput 流 + 末尾一个 FinalOutputResult、不产 terminal RunEvent、checkpoint 参数存在）、FinalOutputParser（§6.5 四种情况）。
+- **契约测试**：ModelGateway（chunk 序列、重试、错误分类）、AgentRuntime（产出 DeltaOutput 流 + 末尾恰好一个 FinalOutputResult、不产 terminal RunEvent、checkpoint 参数存在；覆盖零个/多个/非末尾 FinalOutputResult 的契约违规）、FinalOutputParser（§6.5 四种情况）。
 - **集成测试**：
   - SQLite 事务（发布原子性、draft 不可原地改、`(artifact_id,version_no)`/`(run_id,attempt_no)`/`(run_id,sequence)`/`(workspace_id,kind)` 唯一约束生效）。
   - 成功/失败路径事务顺序（§7.2/§7.3）——断言 completed+artifact_version+run_attempt 同事务、failed+run_attempt+failed_event 同事务。
   - terminal event 唯一持久化——AgentRuntime 不产 terminal event，断言 run 只有一个 completed 或 failed event。
+  - 并发版本分配——两个 Run 同时完成时，经 `BEGIN IMMEDIATE` 串行获得不同 `version_no`，均成功进入 pending_approval。
   - 多 published 防护（§7.5）——对同一 artifact 并发 approve 两个版本，断言最终只一个 published。
-  - Artifact 复用（§7.4）——两次 run 复用同一 artifact_id。
+  - Artifact 复用（§7.4）——两次 run 复用同一 artifact_id；两个首次请求并发创建时，唯一冲突方重新查询并继续成功创建 Run。
   - SSE replay（`Last-Event-ID` exclusive 回放、sequence 去重、terminal 后关连接、心跳）。
   - 不存在 run_id 返回 404（不合成 event）。
   - Output Gate 拦截坏 schema → run failed。
   - TaskRegistry：未订阅 SSE run 仍到 terminal、未捕获异常→failed、shutdown 取消、测试无遗留 task。
 - **Fake Model**：自动化测试用 `FakeModelGateway`（注入预定义 chunk 序列 + 模拟瞬时错误 + 模拟截断/非法 JSON），不耗真 key。
-- **前端测试**：Profile 页三态、批准发布交互、SSE 断线重连 + onerror 区分 404（mock SSE）。
+- **前端测试**：Profile 页三态、批准发布交互、SSE 断线重连 + onerror 区分 404（mock SSE）；收到 completed/failed 后断言主动调用 `EventSource.close()` 且不再重连。
 
 ## 12. 扩展点（为 DU02–DU04 留好）
 
