@@ -28,19 +28,13 @@ def _build_gateway(settings):
     if "openai" in providers and providers["openai"].api_key:
         from cyber_interview.harness.model_adapters import OpenAIAdapter
 
-        return (
-            OpenAIAdapter(config=providers["openai"], model="gpt-4o-mini"),
-            "openai",
-            "gpt-4o-mini",
-        )
+        model = providers["openai"].model or "gpt-4o-mini"
+        return OpenAIAdapter(config=providers["openai"], model=model), "openai", model
     if "anthropic" in providers and providers["anthropic"].api_key:
         from cyber_interview.harness.model_adapters import AnthropicAdapter
 
-        return (
-            AnthropicAdapter(config=providers["anthropic"], model="claude-3-5-haiku-latest"),
-            "anthropic",
-            "claude-3-5-haiku-latest",
-        )
+        model = providers["anthropic"].model or "claude-3-5-haiku-latest"
+        return AnthropicAdapter(config=providers["anthropic"], model=model), "anthropic", model
     payload = json.dumps(
         {
             "schema_name": "profile",

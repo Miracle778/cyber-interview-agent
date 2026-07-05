@@ -1,12 +1,16 @@
 # Provider configuration. Copy to config.local.toml (chmod 600) and fill in.
 #
 # Each provider is a subtable of [providers]. `api_key` is required;
-# `base_url` is optional and overrides the provider's default endpoint.
+# `base_url` is optional and overrides the provider's default endpoint;
+# `model` is the default model id for this provider (DU01 uses it for the
+# Profile extraction agent; DU03+ AgentDefinition may override per-agent).
 
 [providers.openai]
 api_key = ""
 base_url = "https://api.openai.com/v1"
+model = "gpt-4o-mini"
 
 [providers.anthropic]
 api_key = ""
 base_url = "https://api.anthropic.com"
+model = "claude-3-5-haiku-latest"

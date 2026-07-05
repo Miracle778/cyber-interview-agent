@@ -11,10 +11,16 @@ class ConfigPermissionError(PermissionError):
 
 
 class ProviderConfig(BaseModel):
-    """Configuration for a single LLM provider."""
+    """Configuration for a single LLM provider.
+
+    `model` is the provider's default model id. DU01 has no AgentDefinition yet,
+    so the default model is configured at provider level; DU03+ AgentDefinition
+    may override per-agent (定稿 §12.1).
+    """
 
     api_key: str = ""
     base_url: str | None = None
+    model: str | None = None
 
 
 def load_providers(path: Path) -> dict[str, ProviderConfig]:

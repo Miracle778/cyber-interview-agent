@@ -32,6 +32,27 @@ def test_base_url_is_optional(tmp_path: Path):
     }
 
 
+def test_model_field_is_loaded(tmp_path: Path):
+    config_path = tmp_path / "config.local.toml"
+    config_path.write_text(
+        '[providers.openai]\napi_key = "secret"\n'
+        'base_url = "https://api.openai.com/v1"\nmodel = "gpt-4o-mini"\n',
+        encoding="utf-8",
+    )
+    config_path.chmod(0o600)
+
+    providers = load_providers(config_path)
+    assert providers["openai"].model == "gpt-4o-mini"
+
+
+def test_model_defaults_to_none(tmp_path: Path):
+    config_path = tmp_path / "config.local.toml"
+    config_path.write_text('[providers.openai]\napi_key = "secret"\n', encoding="utf-8")
+    config_path.chmod(0o600)
+
+    assert load_providers(config_path)["openai"].model is None
+
+
 def test_group_readable_config_is_rejected(tmp_path: Path):
     config_path = tmp_path / "config.local.toml"
     config_path.write_text('[providers.openai]\napi_key = "secret"\n', encoding="utf-8")
