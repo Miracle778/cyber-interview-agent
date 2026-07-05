@@ -25,3 +25,4 @@ backend/data/
 
 # 变更说明文档（仅本地阅读，不入库）
 docs/changes/
+/my_record.md
