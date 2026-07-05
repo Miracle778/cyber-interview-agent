@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { approveVersion, createProfileRun, getRun } from "../lib/api";
@@ -8,6 +8,7 @@ export function Profile() {
   const [text, setText] = useState("");
   const [runId, setRunId] = useState<string | null>(null);
   const { events, terminal } = useRunEvents(runId);
+  const queryClient = useQueryClient();
 
   const createMutation = useMutation({
     mutationFn: (input: string) => createProfileRun(input),
@@ -22,6 +23,10 @@ export function Profile() {
 
   const approveMutation = useMutation({
     mutationFn: (versionId: string) => approveVersion(versionId),
+    onSuccess: () => {
+      // 批准成功后刷新 run 状态（pending_version 会变 null），并标记已发布
+      queryClient.invalidateQueries({ queryKey: ["profile", runId] });
+    },
   });
 
   const pending = runQuery.data?.pending_version;
@@ -65,6 +70,16 @@ export function Profile() {
             批准发布
           </button>
         </section>
+      ) : null}
+      {approveMutation.isSuccess ? (
+        <p className="font-semibold text-green-700" role="status">
+          已发布
+        </p>
+      ) : null}
+      {approveMutation.isError ? (
+        <p className="text-red-600" role="alert">
+          批准失败：{(approveMutation.error as Error)?.message ?? "未知错误"}
+        </p>
       ) : null}
     </div>
   );
