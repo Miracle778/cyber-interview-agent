@@ -14,9 +14,9 @@ DU00 建立前后端工程骨架与质量门禁，不实现任何业务功能。
 ## 2. 技术选型（已确认）
 
 - 仓库：Monorepo，根目录 `backend/` + `frontend/`。
-- 后端：Python 3.12，uv 管依赖与虚拟环境，Ruff 做 lint/format，pytest 测试。
+- 后端：Python 3.12，uv 管依赖与虚拟环境，Ruff 做 lint/format，pytest 测试。Build backend 用 Hatchling。
 - 后端 DB 访问：SQLAlchemy 2.0 + Alembic（DU00 只建骨架，不生成迁移）。
-- 前端：React + TypeScript + Vite，React Router，TanStack Query，shadcn/ui + Tailwind CSS。
+- 前端：React + TypeScript + Vite，React Router，TanStack Query，shadcn/ui + Tailwind CSS。`package-lock.json` 纳入版本管理，配合 `npm ci`。`concurrently` 作为 devDependency 管理前后端进程。
 - UI 测试：Vitest + Testing Library。
 - 本地启动：根目录 Makefile，`make dev` 一键拉起前后端。
 - 服务绑定：仅 `127.0.0.1`。
@@ -57,11 +57,14 @@ cyber-interview-agent/
 │           └── test_settings.py
 ├── frontend/
 │   ├── package.json
+│   ├── package-lock.json       # 纳入 git，配合 npm ci
 │   ├── tsconfig.json
 │   ├── vite.config.ts
 │   ├── tailwind.config.ts
 │   ├── components.json         # shadcn 配置
 │   ├── index.html
+│   ├── scripts/
+│   │   └── dev.mjs             # concurrently 管理前后端进程
 │   └── src/
 │       ├── main.tsx
 │       ├── App.tsx
@@ -76,7 +79,23 @@ cyber-interview-agent/
 └── docs/                       # 已有
 ```
 
-包名用 `cyber_interview`（下划线，对齐仓库名 `cyber-interview-agent`）。`pyproject.toml` 发行名 `cyber-interview-agent`，`packages = [{include = "cyber_interview", from = "src"}]`。
+包名用 `cyber_interview`（下划线，对齐仓库名 `cyber-interview-agent`）。`pyproject.toml` 发行名 `cyber-interview-agent`，build backend 为 Hatchling。`pyproject.toml` 关键配置：
+
+```toml
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cyber-interview-agent"
+version = "0.0.0"
+requires-python = ">=3.12"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cyber_interview"]
+```
+
+Hatchling 的 src-layout 通过 `packages = ["src/cyber_interview"]` 声明。确保 `uv sync`、`uv run python -c "import cyber_interview"`、`uv build` 均可正常执行。
 
 分层目录 `app/ domain/ harness/ infra/` 在 DU00 提前建好（带 docstring 的 `__init__.py`），DU00 只填 `api/health.py` + `config.py` + `settings.py` + `main.py`，DU01+ 直接往各层加文件。
 
@@ -205,7 +224,7 @@ Vitest + Testing Library：
 
 ### 5.8 前端质量门禁
 
-`npm run lint`（eslint）、`npm run typecheck`（`tsc --noEmit`）、`npm run build`、`npm run test`。
+`npm run lint`（eslint）、`npm run typecheck`（`tsc --noEmit`）、`npm run build`、`npm run test`。`typecheck` 作为独立步骤，不并入 `lint`，以便 `make check` 显式串联。
 
 ## 6. Makefile
 
@@ -215,21 +234,106 @@ Vitest + Testing Library：
 .PHONY: install dev backend frontend test test-backend test-frontend lint lint-backend lint-frontend format check build
 
 install:           # uv sync + npm ci
-dev:               # 并行起 backend (uvicorn) + frontend (vite)，trap 清理
-backend:           # 单起后端
-frontend:          # 单起前端
+dev:               # cd frontend && node scripts/dev.mjs（concurrently 起前后端）
+backend:           # 单起后端 uvicorn
+frontend:          # 单起前端 vite
 test:              # test-backend + test-frontend
 test-backend:      # uv run pytest
 test-frontend:     # npm run test
 lint:              # lint-backend + lint-frontend
 lint-backend:      # uv run ruff check
-lint-frontend:     # npm run lint && npm run typecheck
+lint-frontend:     # npm run lint
 format:            # ruff format + eslint --fix
-check:             # lint + test（CI 等价门禁，全绿才算过）
 build:             # frontend npm run build
+check:             # lint + typecheck + test + build（CI 等价门禁，全绿才算过）
 ```
 
-`dev` 目标用 `trap 'kill 0' EXIT` 同时起前后端，任一退出都清理双方，避免留僵尸进程。
+`check` 显式串联四项，与 DU00 验收口径一致：
+
+```makefile
+check: lint typecheck test build
+typecheck: lint-frontend-typecheck   # npm run typecheck
+```
+
+（`typecheck` 仅前端有；后端类型由 ruff 与 mypy 视后续需要再加，DU00 不引入。）
+
+### 6.1 `make dev` 的进程管理
+
+`dev` 同时起前后端，但**不在 Makefile 里手写信号处理**。理由：Make 默认用 `/bin/sh`，macOS 下 `/bin/sh` 不保证支持 `wait -n`；Makefile 里的 `$$` 转义和 `$(...)` 易与 Make 变量混淆；手写 trap + PID 管理在三种退出场景下很难一次写对。改用成熟进程管理工具 `concurrently`。
+
+`concurrently` 作为前端 devDependency 引入（`npm i -D concurrently`）。脚本放在
+`frontend/scripts/dev.mjs`，确保 Node 按脚本位置向上查找时能从
+`frontend/node_modules` 解析 `concurrently`。脚本通过每个命令的 `cwd` 明确工作目录：
+
+```js
+// frontend/scripts/dev.mjs
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+import concurrently from "concurrently";
+
+const frontendDir = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+);
+const repoRoot = path.resolve(frontendDir, "..");
+
+const { result } = concurrently(
+  [
+    {
+      name: "backend",
+      command:
+        "uv run uvicorn cyber_interview.main:app --host 127.0.0.1 --port 8000 --reload",
+      cwd: path.join(repoRoot, "backend"),
+      prefixColor: "cyan",
+    },
+    {
+      name: "frontend",
+      command: "npm run dev",
+      cwd: frontendDir,
+      prefixColor: "magenta",
+    },
+  ],
+  {
+    killOthersOn: ["failure", "success"],
+    restartTries: 0,
+  }
+);
+
+try {
+  await result;
+} catch {
+  process.exitCode = 1;
+}
+```
+
+要点：
+
+- `killOthersOn: ["failure", "success"]`：任一子进程退出（无论成功失败），其余自动终止。覆盖后端崩溃、前端崩溃、正常退出三种场景。
+- Ctrl+C 的 SIGINT 由 Node 转发给两个子进程，concurrently 负责回收，无僵尸进程。
+- 不动进程组，不误杀调用 Make 的 shell 或终端。
+- 脚本显式等待 `result`；任一命令失败时设置非零退出码，使 Make 和 CI 能识别失败。
+- Makefile 从 `frontend/` 启动脚本，使依赖解析与前端 lockfile 保持一致。
+
+Makefile 对应：
+
+```makefile
+dev:
+	cd frontend && node scripts/dev.mjs
+```
+
+`frontend/scripts/dev.mjs` 纳入 git。
+
+#### 验收验证
+
+实现后必须实测以下场景全部通过：
+
+- Ctrl+C：前后端均干净退出。
+- 后端异常退出（如手动 kill 后端进程）：前端自动退出。
+- 前端异常退出（如手动 kill 前端进程）：后端自动退出。
+- 任一退出后 `ps` 无残留后台进程。
+- 不误杀终端或其他同组进程。
+
+验证方法：分别 `kill -9` 后端/前端 PID，观察另一方是否随之退出且无残留。
 
 ## 7. .gitignore 修正
 
@@ -271,11 +375,13 @@ data/
 
 ## 9. DU00 验收门槛
 
-1. 全新 clone 后，按 README `make install` + `make dev` 可一次拉起前后端。
+1. 全新 clone 后，按 README `make install` + `make dev` 可一次拉起前后端。`make install` 依赖 `npm ci`，因此 `package-lock.json` 必须已提交。
 2. 浏览器访问前端首页，能读到后端 `/api/health` 的 ok 状态（真实联调通电）。
-3. `make check` 后端测试、前端测试、lint、typecheck、build 全部通过。
-4. `/docs/` 已纳入 git（修正 .gitignore），docs 随仓库走。
-5. `config.local.toml` 与 `data/` 确认被 gitignore，密钥绝无入库风险。
+3. `make check` 显式验证 lint、typecheck、test、build 四项全部通过（与本地门禁口径一致）。
+4. `uv sync`、`uv run python -c "import cyber_interview"`、`uv build` 均可正常执行（Hatchling build backend 配置正确）。
+5. `/docs/` 已纳入 git（修正 .gitignore），docs 随仓库走。
+6. `config.local.toml` 与 `data/` 确认被 gitignore，密钥绝无入库风险。
+7. `make dev` 在 Ctrl+C、后端崩溃、前端崩溃三种场景下均无后台残留进程（实测：分别 kill 前后端 PID，观察另一方随之退出且无残留）。
 
 ## 10. 为 DU01 留好的扩展点
 
