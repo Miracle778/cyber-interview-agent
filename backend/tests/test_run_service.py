@@ -115,3 +115,30 @@ async def test_failure_path_writes_failed_event_and_attempt_ended(services):
             ).scalars()
         )
         assert events[-1].event_type == "failed"
+
+
+@pytest.mark.asyncio
+async def test_execute_sends_system_prompt_to_model(services):
+    """spec §6.1: prompt 必须指示模型输出 ProfileVersion JSON。"""
+    service, engine = services
+    captured_messages: list = []
+
+    class CapturingGateway:
+        async def stream(self, provider, model, messages, *, max_tokens=None):
+            captured_messages.extend(messages)
+            yield ModelChunk(type="delta", text=json.dumps(
+                {"schema_name": "profile", "schema_version": 1,
+                 "facts": [{"claim": "x", "evidence_ref": None}]}
+            ))
+            yield ModelChunk(type="done", finish_reason="stop")
+
+    service._runtime = LoopAgentRuntime(model_gateway=CapturingGateway())
+    artifact_id = await service._ensure_artifact()
+    run_id = await service.create_run(artifact_id=artifact_id, input_text="some text")
+    await service._await_completion(run_id)
+
+    roles = [m.role for m in captured_messages]
+    assert "system" in roles, "missing system prompt"
+    assert "user" in roles
+    system_msg = next(m for m in captured_messages if m.role == "system")
+    assert "JSON" in system_msg.content, "system prompt must instruct JSON output"

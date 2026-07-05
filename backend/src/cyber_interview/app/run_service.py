@@ -23,6 +23,16 @@ from cyber_interview.infra.repositories import (
 
 SessionFactory = Callable[[], AsyncSession]
 
+# spec §6.1: prompt 明确指示模型只输出 ProfileVersion JSON，不要 markdown 围栏。
+# DU03+ 有 AgentDefinition 时，prompt 会移到 agent 定义里；DU01 硬编码这一个。
+SYSTEM_PROMPT = (
+    "你是一个 Profile 抽取助手。从用户提供的文本中抽取 1-3 条关键事实。\n"
+    "只输出符合以下 JSON schema 的 JSON，不要 markdown 围栏，不要任何解释：\n"
+    '{"schema_name": "profile", "schema_version": 1, '
+    '"facts": [{"claim": "...", "evidence_ref": null}]}\n'
+    "facts 长度 1-3，每条 claim 非空。"
+)
+
 
 class AgentRunService:
     def __init__(
@@ -86,7 +96,10 @@ class AgentRunService:
                 attempt_id=attempt_id,
                 provider=self._provider,
                 model=self._model,
-                messages=[Message(role="user", content=input_text)],
+                messages=[
+                    Message(role="system", content=SYSTEM_PROMPT),
+                    Message(role="user", content=input_text),
+                ],
             )
             final: FinalOutputResult | None = None
             seen_final = False
