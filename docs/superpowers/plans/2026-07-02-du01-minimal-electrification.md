@@ -1799,6 +1799,15 @@ from cyber_interview.infra.repositories import (
 
 SessionFactory = Callable[[], AsyncSession]
 
+# spec §6.1: prompt 必须指示模型输出 ProfileVersion JSON。DU03+ 移到 AgentDefinition。
+SYSTEM_PROMPT = (
+    "你是一个 Profile 抽取助手。从用户提供的文本中抽取 1-3 条关键事实。\n"
+    "只输出符合以下 JSON schema 的 JSON，不要 markdown 围栏，不要任何解释：\n"
+    '{"schema_name": "profile", "schema_version": 1, '
+    '"facts": [{"claim": "...", "evidence_ref": null}]}\n'
+    "facts 长度 1-3，每条 claim 非空。"
+)
+
 
 def _now() -> int:
     import time
@@ -1852,12 +1861,15 @@ class AgentRunService:
 
     async def _execute(self, run_id: str, artifact_id: str, input_text: str) -> None:
         try:
-            await self._transition_to_running(run_id)
+            attempt_id = await self._transition_to_running(run_id)
             from cyber_interview.harness.runtime import RunContext
             from cyber_interview.harness.model_gateway import Message
             ctx = RunContext(
-                run_id=run_id, attempt_id=run_id, provider="openai", model="gpt-4o-mini",
-                messages=[Message(role="user", content=input_text)],
+                run_id=run_id, attempt_id=attempt_id, provider="openai", model="gpt-4o-mini",
+                messages=[
+                    Message(role="system", content=SYSTEM_PROMPT),
+                    Message(role="user", content=input_text),
+                ],
             )
             final = None
             async with self._sf() as s:
