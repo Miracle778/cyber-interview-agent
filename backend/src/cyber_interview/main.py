@@ -24,7 +24,7 @@ def _reset_singletons():
 
 
 def _build_gateway(settings):
-    providers = load_providers(settings.data_dir / "config.local.toml")
+    providers = load_providers(settings.config_path)
     if "openai" in providers and providers["openai"].api_key:
         from cyber_interview.harness.model_adapters import OpenAIAdapter
 

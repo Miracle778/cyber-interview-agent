@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 8000
     data_dir: Path = Path("./data")
+    config_path: Path = Path("config.local.toml")
 
     model_config = SettingsConfigDict(env_prefix="CIA_", env_file=".env")
 
