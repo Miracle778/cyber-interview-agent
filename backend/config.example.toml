@@ -1,10 +1,9 @@
 # Provider configuration. Copy this file to `config.local.toml` (in backend/,
-# same directory as this file) and fill in your real keys, then `chmod 600`.
+# same directory as this file) and fill in your real keys.
 #
 # `config.local.toml` is gitignored (contains secrets). Path is configurable
 # via the CIA_CONFIG_PATH env var (defaults to `config.local.toml`, resolved
-# relative to the backend/ working directory). Permissions must be 0600 —
-# `load_providers` rejects group/other-readable configs.
+# relative to the backend/ working directory).
 #
 # Each provider is a subtable of [providers]. `api_key` is required;
 # `base_url` is optional and overrides the provider's default endpoint;

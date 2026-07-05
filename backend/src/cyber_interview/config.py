@@ -1,13 +1,8 @@
-import stat
 import tomllib
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
-
-
-class ConfigPermissionError(PermissionError):
-    """Raised when a secret config is accessible by another user."""
 
 
 class ProviderConfig(BaseModel):
@@ -34,10 +29,6 @@ def load_providers(path: Path) -> dict[str, ProviderConfig]:
     """
     if not path.exists():
         return {}
-
-    mode = stat.S_IMODE(path.stat().st_mode)
-    if mode & 0o077:
-        raise ConfigPermissionError(f"{path} must not be accessible by group or other users")
 
     with path.open("rb") as config_file:
         document: dict[str, Any] = tomllib.load(config_file)
