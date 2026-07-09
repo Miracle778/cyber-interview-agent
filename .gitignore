@@ -10,3 +10,6 @@ __pycache__/
 *.py[cod]
 
 .DS_Store
+
+# 本地变更记录，不入库
+docs/changes/
