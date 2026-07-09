@@ -1002,12 +1002,12 @@ def test_search_documents(tmp_path):
     upsert_document(conn, IndexedDocument(
         id="q1",
         path="10_question_bank/q1.md",
-        title="SQL 注入",
+        title="缓存穿透",
         type="question",
         status="ingested",
-        body="SQL 注入 参数化查询",
+        body="缓存穿透 布隆过滤器",
     ))
-    assert search_documents(conn, "SQL") == ["q1"]
+    assert search_documents(conn, "缓存") == ["q1"]
 ```
 
 - [ ] **Step 4：验证和提交**
@@ -1236,8 +1236,8 @@ def create_question_draft(text: str) -> ReviewQuestion:
 from app.services.document_ingestion import create_question_draft
 
 def test_create_question_draft_from_text() -> None:
-    draft = create_question_draft("SQL 注入是什么？\n参考答案")
-    assert draft.title == "SQL 注入是什么？"
+    draft = create_question_draft("缓存穿透是什么？\n参考答案")
+    assert draft.title == "缓存穿透是什么？"
     assert draft.topics == ["uncategorized"]
 ```
 
@@ -1490,17 +1490,17 @@ def test_review_graph_generates_report() -> None:
     graph = build_review_graph()
     question = ReviewQuestion(
         id="q1",
-        title="SQL 注入",
-        questionText="SQL 注入是什么？",
-        referenceAnswer="使用参数化查询防止拼接 SQL。",
-        topics=["web_security"],
+        title="缓存穿透",
+        questionText="缓存穿透是什么？",
+        referenceAnswer="缓存空值或布隆过滤器可以减少不存在数据请求打到数据库。",
+        topics=["backend"],
         difficulty="medium",
-        keyPoints=["参数化查询", "拼接 SQL"],
+        keyPoints=["缓存空值", "布隆过滤器"],
         followUps=[],
         mastery="weak",
     )
     settings = ReviewRoundSettings(selectedTopics=[], questionCount=1, mode="weak-point")
-    result = graph.invoke({"questions": [question], "settings": settings, "user_answer": "使用参数化查询"})
+    result = graph.invoke({"questions": [question], "settings": settings, "user_answer": "缓存空值"})
     assert result["evaluation"]["score"] == "partial"
     assert "status: review_pending" in result["report_markdown"]
 ```

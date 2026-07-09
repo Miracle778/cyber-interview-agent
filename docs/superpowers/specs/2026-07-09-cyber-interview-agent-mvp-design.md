@@ -12,7 +12,7 @@ Cyber Interview Agent 是一个面试准备工作台。MVP 第一版聚焦一个
 
 ## 2. 目标用户与核心场景
 
-目标用户是正在准备网络安全、后端、基础设施、研发等技术面试的人。用户手里的资料通常不是完整课程，而是比较随意的内容：
+目标用户是正在准备后端、前端、基础设施、AI 应用、研发工程等技术面试的人。用户手里的资料通常不是完整课程，而是比较随意的内容：
 
 - 自己收集的面试题。
 - 零散笔记。
@@ -302,14 +302,14 @@ status: reviewed
 source_ids:
   - src_20260709_001
 topics:
-  - web_security
-  - sql_injection
+  - backend
+  - cache
 difficulty: medium
 mastery: weak
 last_reviewed_at: 2026-07-09
 review_count: 2
 related_concepts:
-  - concept_sql_injection
+  - concept_cache_penetration
 related_questions:
   - q_20260709_002
 ingestion:

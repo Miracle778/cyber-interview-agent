@@ -213,14 +213,14 @@ curl -s -X POST http://127.0.0.1:8000/api/settings/providers/test \
 ### 3. 上传资料并生成题库草稿
 
 ```bash
-cat > /tmp/sql_question.txt <<'EOF'
-SQL 注入是什么？
-攻击者通过拼接恶意 SQL 改变查询语义。防护重点是参数化查询。
+cat > /tmp/cache_question.txt <<'EOF'
+缓存穿透是什么？
+用户请求不存在的数据时，缓存无法命中，请求会持续打到数据库。常见防护是缓存空值或使用布隆过滤器。
 EOF
 
 curl -s -X POST http://127.0.0.1:8000/api/knowledge/sources \
   -F "workspacePath=$CIA_WORKSPACE" \
-  -F "file=@/tmp/sql_question.txt" | python -m json.tool
+  -F "file=@/tmp/cache_question.txt" | python -m json.tool
 ```
 
 预期返回一个 `ReviewQuestion` 草稿，类似：
@@ -228,12 +228,12 @@ curl -s -X POST http://127.0.0.1:8000/api/knowledge/sources \
 ```json
 {
   "id": "q_xxx",
-  "title": "SQL 注入是什么？",
-  "questionText": "SQL 注入是什么？",
-  "referenceAnswer": "SQL 注入是什么？\n攻击者...",
+  "title": "缓存穿透是什么？",
+  "questionText": "缓存穿透是什么？",
+  "referenceAnswer": "缓存穿透是什么？\n用户请求...",
   "topics": ["uncategorized"],
   "difficulty": "medium",
-  "keyPoints": ["SQL 注入是什么？"],
+  "keyPoints": ["缓存穿透是什么？"],
   "followUps": [],
   "mastery": "unknown"
 }
@@ -245,7 +245,7 @@ curl -s -X POST http://127.0.0.1:8000/api/knowledge/sources \
 ls "$CIA_WORKSPACE/knowledge-vault/00_inbox"
 ```
 
-应该看到 `sql_question.txt`。
+应该看到 `cache_question.txt`。
 
 ### 4. 扫描 Vault 并建立 SQLite FTS 索引
 
@@ -253,15 +253,15 @@ ls "$CIA_WORKSPACE/knowledge-vault/00_inbox"
 
 ```bash
 mkdir -p "$CIA_WORKSPACE/knowledge-vault/10_question_bank"
-cat > "$CIA_WORKSPACE/knowledge-vault/10_question_bank/sql_injection.md" <<'EOF'
+cat > "$CIA_WORKSPACE/knowledge-vault/10_question_bank/cache_penetration.md" <<'EOF'
 ---
 type: question
 status: reviewed
 ---
 
-# SQL 注入
+# 缓存穿透
 
-参数化查询、防止拼接 SQL。
+缓存空值、布隆过滤器、请求限流。
 EOF
 ```
 
@@ -299,12 +299,12 @@ curl -s -X POST http://127.0.0.1:8000/api/review/run \
     "questions": [
       {
         "id": "q1",
-        "title": "SQL 注入",
-        "questionText": "SQL 注入是什么？",
-        "referenceAnswer": "使用参数化查询防止拼接 SQL。",
-        "topics": ["web_security"],
+        "title": "缓存穿透",
+        "questionText": "缓存穿透是什么？",
+        "referenceAnswer": "缓存空值或布隆过滤器可以减少不存在数据请求打到数据库。",
+        "topics": ["backend"],
         "difficulty": "medium",
-        "keyPoints": ["参数化查询", "拼接 SQL"],
+        "keyPoints": ["缓存空值", "布隆过滤器"],
         "followUps": [],
         "mastery": "weak"
       }
@@ -314,7 +314,7 @@ curl -s -X POST http://127.0.0.1:8000/api/review/run \
       "questionCount": 1,
       "mode": "weak-point"
     },
-    "userAnswer": "使用参数化查询"
+    "userAnswer": "可以缓存空值"
   }' | python -m json.tool
 ```
 
@@ -322,7 +322,7 @@ curl -s -X POST http://127.0.0.1:8000/api/review/run \
 
 - `current_question.id` 是 `q1`。
 - `evaluation.score` 是 `partial`。
-- `evaluation.missing_key_points` 包含 `拼接 SQL`。
+- `evaluation.missing_key_points` 包含 `布隆过滤器`。
 - `report_markdown` 包含 `status: review_pending`。
 
 注意：这还不是 LLM 评估，只是简单关键词规则。
