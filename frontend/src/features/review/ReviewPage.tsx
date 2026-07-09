@@ -1,4 +1,8 @@
 import { useState } from "react";
+import { AlertCircle, ClipboardCheck, FileCheck, Inbox, MessageSquareText } from "lucide-react";
+import { Badge } from "../../shared/ui/Badge";
+import { Button } from "../../shared/ui/Button";
+import { Card } from "../../shared/ui/Card";
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import { confirmReport, runReview, type ConfirmReportResponse, type ReviewRunResponse } from "./reviewApi";
 import type { ReviewQuestion } from "./reviewTypes";
@@ -78,61 +82,95 @@ export function ReviewPage({
   }
 
   return (
-    <section aria-labelledby="review-title">
-      <h2 id="review-title">复习</h2>
-      <section aria-label="复习会话">
-        <h3>会话</h3>
-        <p>{reviewResult ? "本轮复习" : "暂无会话"}</p>
-      </section>
-      <section aria-label="复习对话">
-        <h3>复习对话</h3>
-        {!draftQuestion ? <p>请先上传资料生成题库草稿</p> : null}
+    <section className="page-section" aria-labelledby="review-title">
+      <div className="page-section__header">
+        <span className="page-section__icon" aria-hidden="true">
+          <MessageSquareText size={18} />
+        </span>
+        <h2 id="review-title" className="page-section__title">
+          复习
+        </h2>
+        {draftQuestion ? <Badge tone="primary">weak-point · 1 题</Badge> : null}
+      </div>
+
+      <Card title="复习对话" icon={<MessageSquareText size={18} />}>
+        {!draftQuestion ? (
+          <div className="empty-state">
+            <span className="empty-state__icon" aria-hidden="true">
+              <Inbox size={20} />
+            </span>
+            <p className="empty-state__text">请先上传资料生成题库草稿</p>
+          </div>
+        ) : null}
+
         {draftQuestion ? (
           <article aria-label="当前题目">
-            <h4>{draftQuestion.title}</h4>
-            <p>{draftQuestion.questionText}</p>
+            <h3 className="question-card__title">{draftQuestion.title}</h3>
+            <p className="question-card__text">{draftQuestion.questionText}</p>
           </article>
         ) : null}
-        <label htmlFor="reviewAnswer">
-          <span>你的回答</span>
+
+        <div className="field">
+          <label className="field__label" htmlFor="reviewAnswer">
+            你的回答
+          </label>
           <textarea
             id="reviewAnswer"
             name="reviewAnswer"
+            className="field__input field__input--area"
             value={answer}
             disabled={!draftQuestion || isSending}
             onChange={(event) => setAnswer(event.target.value)}
           />
-        </label>
-        <button type="button" onClick={handleRunReview} disabled={!draftQuestion || isSending}>
-          发送回答
-        </button>
-      </section>
-      <section aria-label="复习设置">
-        <h3>复习设置</h3>
-        <p>模式：weak-point</p>
-        <p>题目数：1</p>
-      </section>
+        </div>
+
+        <div className="btn-row">
+          <Button onClick={handleRunReview} disabled={!draftQuestion || isSending} loading={isSending}>
+            发送回答
+          </Button>
+        </div>
+      </Card>
+
       {reviewResult ? (
-        <section aria-label="复习评估">
-          <h3>复习评估</h3>
-          <p>评分：{reviewResult.evaluation.score}</p>
-          <p>缺失点：{reviewResult.evaluation.missing_key_points.join("、") || "无"}</p>
-          <p>证据：{reviewResult.evaluation.evidence || "无"}</p>
-          <pre>{reviewResult.report_markdown}</pre>
-        </section>
+        <Card title="复习评估" icon={<ClipboardCheck size={18} />} ariaLabel="复习评估">
+          <p className="eval-score" data-score={reviewResult.evaluation.score}>
+            评分：{reviewResult.evaluation.score}
+          </p>
+          <p className="eval-line">缺失点：{reviewResult.evaluation.missing_key_points.join("、") || "无"}</p>
+          <p className="eval-line">证据：{reviewResult.evaluation.evidence || "无"}</p>
+
+          <div>
+            <p className="muted-text" style={{ marginBottom: "var(--space-2)" }}>
+              报告预览
+            </p>
+            <pre className="report-preview">{reviewResult.report_markdown}</pre>
+          </div>
+        </Card>
       ) : null}
+
       {workspace && activeReportMarkdown ? (
-        <button type="button" onClick={handleConfirmReport} disabled={isConfirming}>
-          确认报告
-        </button>
+        <Card title="确认报告" icon={<FileCheck size={18} />}>
+          <p className="muted-text">将本轮报告与掌握度写入 Vault。</p>
+          <div className="btn-row">
+            <Button onClick={handleConfirmReport} disabled={isConfirming} loading={isConfirming}>
+              确认报告
+            </Button>
+          </div>
+          {confirmedReport ? (
+            <div>
+              <p className="result-line">报告：{confirmedReport.reportPath}</p>
+              <p className="result-line">掌握度：{confirmedReport.masteryPath}</p>
+            </div>
+          ) : null}
+        </Card>
       ) : null}
-      {confirmedReport ? (
-        <section aria-label="报告写入结果">
-          <p>报告：{confirmedReport.reportPath}</p>
-          <p>掌握度：{confirmedReport.masteryPath}</p>
-        </section>
+
+      {error ? (
+        <div className="error-banner" role="alert" aria-live="polite">
+          <AlertCircle size={16} aria-hidden="true" />
+          <span>{error}</span>
+        </div>
       ) : null}
-      {error ? <p>错误：{error}</p> : null}
     </section>
   );
 }
