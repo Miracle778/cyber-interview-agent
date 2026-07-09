@@ -24,3 +24,7 @@ export function getWorkspace(): Promise<WorkspaceConfig | null> {
 export function initializeWorkspace(workspacePath: string): Promise<WorkspaceConfig> {
   return apiPost<{ workspacePath: string }, WorkspaceConfig>("/api/settings/workspace", { workspacePath });
 }
+
+export function testProviderConnection(provider: ProviderConfig): Promise<ProviderConfig> {
+  return apiPost<ProviderConfig, ProviderConfig>("/api/settings/providers/test", provider);
+}
