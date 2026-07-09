@@ -1,7 +1,8 @@
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from app.schemas.settings import WorkspaceConfig
+from app.schemas.settings import ProviderConfig, WorkspaceConfig
+from app.services.provider_registry import test_provider_connection
 from app.services.vault import initialize_vault
 from app.services.workspace import resolve_workspace
 
@@ -24,3 +25,8 @@ def set_workspace(request: WorkspaceRequest) -> WorkspaceConfig:
     vault = initialize_vault(workspace)
     _workspace = WorkspaceConfig(workspacePath=str(workspace), vaultPath=str(vault))
     return _workspace
+
+
+@router.post("/providers/test")
+def test_provider(provider: ProviderConfig) -> ProviderConfig:
+    return test_provider_connection(provider)
