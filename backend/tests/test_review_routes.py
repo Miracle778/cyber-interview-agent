@@ -36,3 +36,25 @@ def test_run_review_returns_evaluation_and_report() -> None:
     assert body["evaluation"]["score"] == "partial"
     assert body["evaluation"]["missing_key_points"] == ["拼接 SQL"]
     assert "status: review_pending" in body["report_markdown"]
+
+
+def test_confirm_report_writes_session_and_mastery_files(tmp_path) -> None:
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/review/reports/confirm",
+        json={
+            "workspacePath": str(tmp_path),
+            "reportMarkdown": "# 单轮复习报告\n\n- score: partial",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    report_path = tmp_path / "knowledge-vault" / "20_review_sessions"
+    mastery_path = tmp_path / "knowledge-vault" / "30_mastery" / "global_mastery_review_pending.md"
+
+    assert str(report_path) in body["reportPath"]
+    assert body["masteryPath"] == str(mastery_path)
+    assert mastery_path.exists()
+    assert "type: mastery_report" in mastery_path.read_text(encoding="utf-8")
