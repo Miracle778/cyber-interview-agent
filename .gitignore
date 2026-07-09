@@ -10,6 +10,9 @@ __pycache__/
 *.py[cod]
 
 .DS_Store
+.idea/
 
 # 本地变更记录，不入库
 docs/changes/
+docs/my_idea.md
+docs/mvp_verification_guide.md
