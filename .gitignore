@@ -12,6 +12,10 @@ __pycache__/
 .DS_Store
 .idea/
 
+# docs 下只入库 superpowers/，其余均为本地文档
+docs/*
+!docs/superpowers/
+
 # 本地变更记录，不入库
 docs/changes/
 docs/my_idea.md
