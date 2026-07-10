@@ -224,6 +224,27 @@ class ProviderRepository:
         ).fetchone()
         return row is not None
 
+    def list_model_bindings(
+        self, model_id: str
+    ) -> tuple[tuple[str, str], ...]:
+        rows = self._connection.execute(
+            "SELECT workspace_id, role FROM workspace_model_bindings "
+            "WHERE provider_model_id = ? ORDER BY workspace_id, role",
+            (model_id,),
+        ).fetchall()
+        return tuple((row["workspace_id"], row["role"]) for row in rows)
+
+    def list_provider_bindings(
+        self, provider_id: str
+    ) -> tuple[tuple[str, str], ...]:
+        rows = self._connection.execute(
+            "SELECT b.workspace_id, b.role FROM workspace_model_bindings b "
+            "JOIN provider_models m ON m.id = b.provider_model_id "
+            "WHERE m.provider_id = ? ORDER BY b.workspace_id, b.role",
+            (provider_id,),
+        ).fetchall()
+        return tuple((row["workspace_id"], row["role"]) for row in rows)
+
     def _require_provider(self, provider_id: str) -> ProviderRecord:
         record = self.get_provider(provider_id)
         if record is None:

@@ -160,8 +160,9 @@ class ProviderService:
         if current is None:
             raise ProviderNotFoundError(provider_id)
         # Check in-use first so a bound provider never loses its secret.
-        if self.providers.provider_has_bound_models(provider_id):
-            raise ProviderModelInUseError(provider_id)
+        bindings = self.providers.list_provider_bindings(provider_id)
+        if bindings:
+            raise ProviderModelInUseError(provider_id, bindings)
 
         old_secret: str | None = None
         had_secret = False
@@ -183,7 +184,8 @@ class ProviderService:
                 self.providers.delete_provider(provider_id)
         except sqlite3.IntegrityError as exc:
             self._restore_secret(current.secret_source, current.secret_ref, had_secret, old_secret)
-            raise ProviderModelInUseError(provider_id) from exc
+            bindings = self.providers.list_provider_bindings(provider_id)
+            raise ProviderModelInUseError(provider_id, bindings) from exc
         except Exception:
             self._restore_secret(current.secret_source, current.secret_ref, had_secret, old_secret)
             raise
@@ -232,11 +234,15 @@ class ProviderService:
     def delete_provider_model(self, model_id: str) -> None:
         if self.providers.get_model(model_id) is None:
             raise ProviderModelNotFoundError(model_id)
+        bindings = self.providers.list_model_bindings(model_id)
+        if bindings:
+            raise ProviderModelInUseError(model_id, bindings)
         try:
             with self._transaction():
                 self.providers.delete_model(model_id)
         except sqlite3.IntegrityError as exc:
-            raise ProviderModelInUseError(model_id) from exc
+            bindings = self.providers.list_model_bindings(model_id)
+            raise ProviderModelInUseError(model_id, bindings) from exc
 
     async def test_model(self, model_id: str) -> ProviderModelResource:
         model = self.providers.get_model(model_id)

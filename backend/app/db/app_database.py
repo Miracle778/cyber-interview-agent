@@ -52,7 +52,10 @@ def connect_app_database(data_dir: Path | None = None) -> sqlite3.Connection:
     database_dir = Path(data_dir) if data_dir is not None else resolve_app_data_dir()
     database_dir.mkdir(parents=True, exist_ok=True)
 
-    connection = sqlite3.connect(database_dir / "app.sqlite")
+    connection = sqlite3.connect(
+        database_dir / "app.sqlite",
+        check_same_thread=False,
+    )
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     _apply_migrations(connection)

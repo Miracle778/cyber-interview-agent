@@ -1,10 +1,20 @@
 from typing import Literal
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ProviderFormat = Literal["openai-compatible", "anthropic-compatible"]
 ConnectivityStatus = Literal["unknown", "ok", "failed"]
+
+
+def _to_camel(value: str) -> str:
+    head, *tail = value.split("_")
+    return head + "".join(part.capitalize() for part in tail)
+
+
+class CamelModel(BaseModel):
+    model_config = ConfigDict(alias_generator=_to_camel, populate_by_name=True)
+
 
 class ProviderConfig(BaseModel):
     id: str
@@ -57,7 +67,7 @@ def _validate_base_url(value: str | None) -> str | None:
     return value
 
 
-class CreateProviderCommand(BaseModel):
+class CreateProviderCommand(CamelModel):
     name: str
     api_format: ProviderFormat
     base_url: str
@@ -70,8 +80,21 @@ class CreateProviderCommand(BaseModel):
     def _validate_base_url(cls, value: str) -> str:
         return _validate_base_url(value)  # type: ignore[return-value]
 
+    @field_validator("api_key", "secret_ref", mode="before")
+    @classmethod
+    def _empty_secret_value_is_missing(cls, value):
+        return None if isinstance(value, str) and not value.strip() else value
 
-class UpdateProviderCommand(BaseModel):
+    @model_validator(mode="after")
+    def _require_secret_configuration(self):
+        if self.secret_source == "keyring" and self.api_key is None:
+            raise ValueError("api_key is required for keyring secrets")
+        if self.secret_source == "environment" and self.secret_ref is None:
+            raise ValueError("secret_ref is required for environment secrets")
+        return self
+
+
+class UpdateProviderCommand(CamelModel):
     name: str | None = None
     api_format: ProviderFormat | None = None
     base_url: str | None = None
@@ -82,20 +105,25 @@ class UpdateProviderCommand(BaseModel):
     def _validate_base_url(cls, value: str | None) -> str | None:
         return _validate_base_url(value)
 
+    @field_validator("api_key", mode="before")
+    @classmethod
+    def _blank_api_key_preserves_existing(cls, value):
+        return None if isinstance(value, str) and not value.strip() else value
 
-class CreateProviderModelCommand(BaseModel):
+
+class CreateProviderModelCommand(CamelModel):
     model_id: str
     display_name: str
     enabled: bool = True
 
 
-class UpdateProviderModelCommand(BaseModel):
+class UpdateProviderModelCommand(CamelModel):
     model_id: str | None = None
     display_name: str | None = None
     enabled: bool | None = None
 
 
-class ProviderModelResource(BaseModel):
+class ProviderModelResource(CamelModel):
     id: str
     provider_id: str
     model_id: str
@@ -107,7 +135,7 @@ class ProviderModelResource(BaseModel):
     last_latency_ms: int | None
 
 
-class ProviderResource(BaseModel):
+class ProviderResource(CamelModel):
     id: str
     name: str
     api_format: ProviderFormat
@@ -118,3 +146,53 @@ class ProviderResource(BaseModel):
     created_at: str
     updated_at: str
     models: list[ProviderModelResource] = Field(default_factory=list)
+
+
+ModelRole = Literal[
+    "question_generation",
+    "answer_evaluation",
+    "report_summarization",
+    "agent_chat",
+]
+MODEL_ROLES = {
+    "question_generation",
+    "answer_evaluation",
+    "report_summarization",
+    "agent_chat",
+}
+
+
+class RegisterWorkspaceCommand(CamelModel):
+    root_path: str
+
+
+class RelinkWorkspaceCommand(CamelModel):
+    root_path: str
+
+
+class UpdateWorkspaceCommand(CamelModel):
+    available: bool
+
+
+class WorkspaceResource(CamelModel):
+    id: str
+    root_path: str
+    vault_path: str
+    available: bool
+    created_at: str
+    updated_at: str
+
+
+class UpdateWorkspaceModelBindingsCommand(CamelModel):
+    bindings: dict[ModelRole, str]
+
+    @model_validator(mode="after")
+    def _require_all_roles(self):
+        if set(self.bindings) != MODEL_ROLES:
+            raise ValueError("bindings must contain all four model roles")
+        return self
+
+
+class WorkspaceModelBindingsResource(CamelModel):
+    workspace_id: str
+    bindings: dict[ModelRole, str]

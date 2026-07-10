@@ -54,11 +54,42 @@ class WorkspaceRepository:
             return None
         return self._workspace_from_row(row)
 
+    def get_by_root_path(self, root_path: str) -> WorkspaceRecord | None:
+        row = self._connection.execute(
+            f"SELECT {_WORKSPACE_COLUMNS} FROM workspaces WHERE root_path = ?",
+            (root_path,),
+        ).fetchone()
+        return None if row is None else self._workspace_from_row(row)
+
+    def get_current(self) -> WorkspaceRecord | None:
+        row = self._connection.execute(
+            f"SELECT {_WORKSPACE_COLUMNS} FROM workspaces "
+            "ORDER BY updated_at DESC, rowid DESC LIMIT 1"
+        ).fetchone()
+        return None if row is None else self._workspace_from_row(row)
+
+    def list_workspaces(self) -> tuple[WorkspaceRecord, ...]:
+        rows = self._connection.execute(
+            f"SELECT {_WORKSPACE_COLUMNS} FROM workspaces ORDER BY rowid"
+        ).fetchall()
+        return tuple(self._workspace_from_row(row) for row in rows)
+
     def relink(self, workspace_id: str, root_path: str) -> WorkspaceRecord:
         self._connection.execute(
-            "UPDATE workspaces SET root_path = ?, updated_at = CURRENT_TIMESTAMP "
+            "UPDATE workspaces SET root_path = ?, available = 1, "
+            "updated_at = CURRENT_TIMESTAMP "
             "WHERE id = ?",
             (root_path, workspace_id),
+        )
+        return self._require_workspace(workspace_id)
+
+    def update_available(
+        self, workspace_id: str, available: bool
+    ) -> WorkspaceRecord:
+        self._connection.execute(
+            "UPDATE workspaces SET available = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ?",
+            (1 if available else 0, workspace_id),
         )
         return self._require_workspace(workspace_id)
 
@@ -70,7 +101,10 @@ class WorkspaceRepository:
     ) -> WorkspaceModelBindingRecord:
         self._connection.execute(
             "INSERT INTO workspace_model_bindings "
-            "(workspace_id, role, provider_model_id) VALUES (?, ?, ?)",
+            "(workspace_id, role, provider_model_id) VALUES (?, ?, ?) "
+            "ON CONFLICT(workspace_id, role) DO UPDATE SET "
+            "provider_model_id = excluded.provider_model_id, "
+            "updated_at = CURRENT_TIMESTAMP",
             (workspace_id, role, provider_model_id),
         )
         return self._require_binding(workspace_id, role)
