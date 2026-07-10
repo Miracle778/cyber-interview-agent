@@ -61,8 +61,9 @@ class ProviderRepository:
         secret_source: str,
         secret_ref: str,
         enabled: bool = True,
+        provider_id: str | None = None,
     ) -> ProviderRecord:
-        provider_id = str(uuid.uuid4())
+        provider_id = provider_id or str(uuid.uuid4())
         self._connection.execute(
             "INSERT INTO providers (id, name, api_format, base_url, "
             "secret_source, secret_ref, enabled) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -111,6 +112,117 @@ class ProviderRepository:
         self._connection.execute(
             "DELETE FROM provider_models WHERE id = ?", (model_id,)
         )
+
+    def get_model(self, model_id: str) -> ProviderModelRecord | None:
+        row = self._connection.execute(
+            f"SELECT {_MODEL_COLUMNS} FROM provider_models WHERE id = ?",
+            (model_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._model_from_row(row)
+
+    def update_model_status(
+        self,
+        model_id: str,
+        *,
+        connectivity_status: str,
+        latency_ms: int | None,
+        error_code: str | None,
+    ) -> ProviderModelRecord:
+        self._connection.execute(
+            "UPDATE provider_models SET connectivity_status = ?, "
+            "last_latency_ms = ?, last_error_code = ?, "
+            "last_tested_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ?",
+            (connectivity_status, latency_ms, error_code, model_id),
+        )
+        return self._require_model(model_id)
+
+    def record_test_run(
+        self,
+        model_id: str,
+        *,
+        status: str,
+        latency_ms: int | None,
+        error_code: str | None,
+        message: str,
+    ) -> None:
+        run_id = str(uuid.uuid4())
+        self._connection.execute(
+            "INSERT INTO provider_test_runs "
+            "(id, provider_model_id, status, latency_ms, error_code, message) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (run_id, model_id, status, latency_ms, error_code, message),
+        )
+
+    def update_provider(
+        self,
+        provider_id: str,
+        *,
+        name: str,
+        api_format: str,
+        base_url: str,
+    ) -> ProviderRecord:
+        self._connection.execute(
+            "UPDATE providers SET name = ?, api_format = ?, base_url = ?, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (name, api_format, base_url, provider_id),
+        )
+        return self._require_provider(provider_id)
+
+    def delete_provider(self, provider_id: str) -> None:
+        """Delete a provider. Raises sqlite3.IntegrityError when a bound model
+        exists (ON DELETE RESTRICT via workspace_model_bindings)."""
+        self._connection.execute(
+            "DELETE FROM providers WHERE id = ?", (provider_id,)
+        )
+
+    def reset_model_statuses(self, provider_id: str) -> None:
+        self._connection.execute(
+            "UPDATE provider_models SET connectivity_status = 'unknown', "
+            "last_tested_at = NULL, last_error_code = NULL, last_latency_ms = NULL, "
+            "updated_at = CURRENT_TIMESTAMP WHERE provider_id = ?",
+            (provider_id,),
+        )
+
+    def reset_model_status(self, model_id: str) -> None:
+        self._connection.execute(
+            "UPDATE provider_models SET connectivity_status = 'unknown', "
+            "last_tested_at = NULL, last_error_code = NULL, last_latency_ms = NULL, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (model_id,),
+        )
+
+    def list_providers(self) -> list[ProviderRecord]:
+        rows = self._connection.execute(
+            f"SELECT {_PROVIDER_COLUMNS} FROM providers ORDER BY rowid"
+        ).fetchall()
+        return [self._provider_from_row(row) for row in rows]
+
+    def update_model(
+        self,
+        model_id: str,
+        *,
+        real_model_id: str,
+        display_name: str,
+        enabled: bool,
+    ) -> ProviderModelRecord:
+        self._connection.execute(
+            "UPDATE provider_models SET model_id = ?, display_name = ?, "
+            "enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (real_model_id, display_name, 1 if enabled else 0, model_id),
+        )
+        return self._require_model(model_id)
+
+    def provider_has_bound_models(self, provider_id: str) -> bool:
+        row = self._connection.execute(
+            "SELECT 1 FROM workspace_model_bindings b "
+            "JOIN provider_models m ON m.id = b.provider_model_id "
+            "WHERE m.provider_id = ? LIMIT 1",
+            (provider_id,),
+        ).fetchone()
+        return row is not None
 
     def _require_provider(self, provider_id: str) -> ProviderRecord:
         record = self.get_provider(provider_id)
