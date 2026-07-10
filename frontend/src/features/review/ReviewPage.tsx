@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { AlertCircle, ClipboardCheck, FileCheck, Inbox, MessageSquareText } from "lucide-react";
+import { toActionableError, type ActionableError } from "../../shared/api/errorAdvice";
 import { Badge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
@@ -12,6 +13,7 @@ interface ReviewPageProps {
   draftQuestion: ReviewQuestion | null;
   latestReportMarkdown: string;
   onReportMarkdownChange: (markdown: string) => void;
+  onReportConfirmed: () => void;
 }
 
 export function ReviewPage({
@@ -19,25 +21,26 @@ export function ReviewPage({
   draftQuestion,
   latestReportMarkdown,
   onReportMarkdownChange,
+  onReportConfirmed,
 }: ReviewPageProps) {
   const [answer, setAnswer] = useState("");
   const [reviewResult, setReviewResult] = useState<ReviewRunResponse | null>(null);
   const [confirmedReport, setConfirmedReport] = useState<ConfirmReportResponse | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<ActionableError | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
 
   const activeReportMarkdown = reviewResult?.report_markdown ?? latestReportMarkdown;
 
   async function handleRunReview() {
-    setError("");
+    setError(null);
     if (!draftQuestion) {
-      setError("请先上传资料生成题库草稿");
+      setError(toActionableError(new Error("请先上传资料生成题库草稿"), "复习评估失败"));
       return;
     }
     const trimmedAnswer = answer.trim();
     if (!trimmedAnswer) {
-      setError("请输入你的回答");
+      setError(toActionableError(new Error("请输入你的回答"), "复习评估失败"));
       return;
     }
     setIsSending(true);
@@ -55,16 +58,16 @@ export function ReviewPage({
       setConfirmedReport(null);
       onReportMarkdownChange(result.report_markdown);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "复习评估失败");
+      setError(toActionableError(caught, "复习评估失败"));
     } finally {
       setIsSending(false);
     }
   }
 
   async function handleConfirmReport() {
-    setError("");
+    setError(null);
     if (!workspace || !activeReportMarkdown) {
-      setError("请先生成报告");
+      setError(toActionableError(new Error("请先生成报告"), "确认报告失败"));
       return;
     }
     setIsConfirming(true);
@@ -74,8 +77,9 @@ export function ReviewPage({
         reportMarkdown: activeReportMarkdown,
       });
       setConfirmedReport(result);
+      onReportConfirmed();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "确认报告失败");
+      setError(toActionableError(caught, "确认报告失败"));
     } finally {
       setIsConfirming(false);
     }
@@ -168,7 +172,8 @@ export function ReviewPage({
       {error ? (
         <div className="error-banner" role="alert" aria-live="polite">
           <AlertCircle size={16} aria-hidden="true" />
-          <span>{error}</span>
+          <span>错误：{error.message}</span>
+          <span>{error.advice}</span>
         </div>
       ) : null}
     </section>

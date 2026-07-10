@@ -57,4 +57,13 @@ describe("SettingsPage", () => {
     await waitFor(() => expect(onWorkspaceReady).toHaveBeenCalledWith(workspace));
     expect(await screen.findByText("Vault：/tmp/cyber-demo/knowledge-vault")).toBeInTheDocument();
   });
+
+  it("shows actionable advice when workspace path is empty", () => {
+    render(<SettingsPage workspace={null} onWorkspaceReady={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "初始化工作区" }));
+
+    expect(screen.getByText("错误：请输入 Workspace Path")).toBeInTheDocument();
+    expect(screen.getByText("下一步：填写本地 workspace 路径")).toBeInTheDocument();
+  });
 });

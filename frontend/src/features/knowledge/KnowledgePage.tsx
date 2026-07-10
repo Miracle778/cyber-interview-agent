@@ -3,6 +3,7 @@ import { AlertCircle, BookOpen, FileText, FolderLock, RefreshCw, Upload } from "
 import { Badge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
+import { toActionableError, type ActionableError } from "../../shared/api/errorAdvice";
 import type { ReviewQuestion, MasteryState } from "../review/reviewTypes";
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import { rescanVault, uploadSource } from "./knowledgeApi";
@@ -11,6 +12,7 @@ interface KnowledgePageProps {
   workspace: WorkspaceConfig | null;
   draftQuestion: ReviewQuestion | null;
   onDraftQuestionReady: (question: ReviewQuestion) => void;
+  onVaultRescanned: (indexedCount: number) => void;
 }
 
 const MASTERY_TONE: Record<MasteryState, "neutral" | "danger" | "warning" | "primary" | "success"> = {
@@ -21,24 +23,24 @@ const MASTERY_TONE: Record<MasteryState, "neutral" | "danger" | "warning" | "pri
   strong: "success",
 };
 
-export function KnowledgePage({ workspace, draftQuestion, onDraftQuestionReady }: KnowledgePageProps) {
+export function KnowledgePage({ workspace, draftQuestion, onDraftQuestionReady, onVaultRescanned }: KnowledgePageProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [visibleDraftQuestion, setVisibleDraftQuestion] = useState<ReviewQuestion | null>(draftQuestion);
   const [indexedCount, setIndexedCount] = useState<number | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<ActionableError | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isRescanning, setIsRescanning] = useState(false);
 
   const hasWorkspace = workspace !== null;
 
   async function handleUpload() {
-    setError("");
+    setError(null);
     if (!workspace) {
-      setError("请先初始化工作区");
+      setError(toActionableError(new Error("请先初始化工作区"), "上传失败"));
       return;
     }
     if (!selectedFile) {
-      setError("请选择资料文件");
+      setError(toActionableError(new Error("请选择资料文件"), "上传失败"));
       return;
     }
     setIsUploading(true);
@@ -47,24 +49,25 @@ export function KnowledgePage({ workspace, draftQuestion, onDraftQuestionReady }
       setVisibleDraftQuestion(question);
       onDraftQuestionReady(question);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "上传失败");
+      setError(toActionableError(caught, "上传失败"));
     } finally {
       setIsUploading(false);
     }
   }
 
   async function handleRescan() {
-    setError("");
+    setError(null);
     if (!workspace) {
-      setError("请先初始化工作区");
+      setError(toActionableError(new Error("请先初始化工作区"), "重新扫描失败"));
       return;
     }
     setIsRescanning(true);
     try {
       const result = await rescanVault(workspace.workspacePath);
       setIndexedCount(result.indexed);
+      onVaultRescanned(result.indexed);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "重新扫描失败");
+      setError(toActionableError(caught, "重新扫描失败"));
     } finally {
       setIsRescanning(false);
     }
@@ -178,7 +181,8 @@ export function KnowledgePage({ workspace, draftQuestion, onDraftQuestionReady }
       {error ? (
         <div className="error-banner" role="alert" aria-live="polite">
           <AlertCircle size={16} aria-hidden="true" />
-          <span>{error}</span>
+          <span>错误：{error.message}</span>
+          <span>{error.advice}</span>
         </div>
       ) : null}
     </section>

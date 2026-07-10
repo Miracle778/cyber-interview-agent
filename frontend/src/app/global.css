@@ -283,6 +283,152 @@ button {
   gap: var(--space-6);
 }
 
+/* ============================================================
+   Status strip (backend health + workspace) & flow status panel
+   ============================================================ */
+.status-strip {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.app-health {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 9px 14px;
+  font-size: 0.88rem;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--fg);
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease),
+    color var(--dur) var(--ease);
+}
+
+.app-health__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.app-health[data-state="connected"] {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: #065f46;
+}
+
+.app-health[data-state="checking"] {
+  color: var(--fg-muted);
+}
+
+.app-health[data-state="checking"] .app-health__icon {
+  color: var(--warning);
+}
+
+.app-health[data-state="disconnected"] {
+  background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+  color: #991b1b;
+}
+
+.app-health[data-state="workspace"] {
+  background: var(--bg-elevated);
+  color: var(--fg);
+}
+
+.app-health[data-state="workspace"] .app-health__icon {
+  color: var(--primary);
+}
+
+.app-health__spin {
+  animation: btn-spin 0.9s linear infinite;
+}
+
+.flow-status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.flow-status__label {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.flow-status__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2) var(--space-6);
+}
+
+.flow-status__grid > p {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--fg);
+}
+
+.flow-status__grid > p::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border-strong);
+  transition: background var(--dur) var(--ease);
+}
+
+.flow-status__grid > p[data-state="pending"] {
+  color: var(--fg-muted);
+}
+
+.flow-status__grid > p[data-state="active"]::before {
+  background: var(--primary);
+}
+
+.flow-status__grid > p[data-state="done"]::before {
+  background: var(--accent);
+}
+
+.flow-status__grid > p[data-state="error"] {
+  color: var(--danger);
+}
+
+.flow-status__grid > p[data-state="error"]::before {
+  background: var(--danger);
+}
+
+.flow-status__next {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 10px 14px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--primary) 24%, transparent);
+  border-left-width: 3px;
+  border-radius: var(--radius-md);
+}
+
 /* page section */
 .page-section {
   display: flex;
@@ -885,6 +1031,14 @@ button {
 
   .btn--md {
     flex: 1 1 auto;
+  }
+
+  .flow-status {
+    padding: var(--space-4);
+  }
+
+  .flow-status__grid {
+    grid-template-columns: 1fr;
   }
 }
 

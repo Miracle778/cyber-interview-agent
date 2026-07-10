@@ -34,6 +34,7 @@ describe("ReviewPage", () => {
         draftQuestion={null}
         latestReportMarkdown=""
         onReportMarkdownChange={vi.fn()}
+        onReportConfirmed={vi.fn()}
       />,
     );
 
@@ -64,6 +65,7 @@ describe("ReviewPage", () => {
         draftQuestion={question}
         latestReportMarkdown=""
         onReportMarkdownChange={onReportMarkdownChange}
+        onReportConfirmed={vi.fn()}
       />,
     );
 
@@ -77,6 +79,7 @@ describe("ReviewPage", () => {
   });
 
   it("confirms report and displays written paths", async () => {
+    const onReportConfirmed = vi.fn();
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       new Response(
         JSON.stringify({
@@ -93,6 +96,7 @@ describe("ReviewPage", () => {
         draftQuestion={question}
         latestReportMarkdown="# 单轮复习报告"
         onReportMarkdownChange={vi.fn()}
+        onReportConfirmed={onReportConfirmed}
       />,
     );
 
@@ -100,5 +104,23 @@ describe("ReviewPage", () => {
 
     expect(await screen.findByText("报告：/tmp/cyber-demo/knowledge-vault/20_review_sessions/session.md")).toBeInTheDocument();
     expect(screen.getByText("掌握度：/tmp/cyber-demo/knowledge-vault/30_mastery/global_mastery_review_pending.md")).toBeInTheDocument();
+    await waitFor(() => expect(onReportConfirmed).toHaveBeenCalled());
+  });
+
+  it("shows actionable advice when answer is empty", () => {
+    render(
+      <ReviewPage
+        workspace={workspace}
+        draftQuestion={question}
+        latestReportMarkdown=""
+        onReportMarkdownChange={vi.fn()}
+        onReportConfirmed={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "发送回答" }));
+
+    expect(screen.getByText("错误：请输入你的回答")).toBeInTheDocument();
+    expect(screen.getByText("下一步：根据当前题目输入一段回答")).toBeInTheDocument();
   });
 });

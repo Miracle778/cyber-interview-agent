@@ -4,6 +4,7 @@ import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
 import { Badge } from "../../shared/ui/Badge";
 import { Field } from "../../shared/ui/Field";
+import { toActionableError, type ActionableError } from "../../shared/api/errorAdvice";
 import { initializeWorkspace, testProviderConnection, type ProviderConfig, type WorkspaceConfig } from "./settingsApi";
 
 interface SettingsPageProps {
@@ -18,12 +19,12 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
   const [workspacePath, setWorkspacePath] = useState("");
   const [providerStatus, setProviderStatus] = useState<ProviderConfig["connectivityStatus"] | null>(null);
   const [workspaceMessage, setWorkspaceMessage] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState<ActionableError | null>(null);
   const [isTestingProvider, setIsTestingProvider] = useState(false);
   const [isInitializingWorkspace, setIsInitializingWorkspace] = useState(false);
 
   async function handleProviderTest() {
-    setError("");
+    setError(null);
     setProviderStatus(null);
     setIsTestingProvider(true);
     try {
@@ -38,18 +39,18 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
       });
       setProviderStatus(provider.connectivityStatus);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Provider 测试失败");
+      setError(toActionableError(caught, "Provider 测试失败"));
     } finally {
       setIsTestingProvider(false);
     }
   }
 
   async function handleWorkspaceInit() {
-    setError("");
+    setError(null);
     setWorkspaceMessage("");
     const trimmedPath = workspacePath.trim();
     if (!trimmedPath) {
-      setError("请输入 Workspace Path");
+      setError(toActionableError(new Error("请输入 Workspace Path"), "初始化工作区失败"));
       return;
     }
     setIsInitializingWorkspace(true);
@@ -58,7 +59,7 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
       onWorkspaceReady(initializedWorkspace);
       setWorkspaceMessage(`Vault：${initializedWorkspace.vaultPath}`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "初始化工作区失败");
+      setError(toActionableError(caught, "初始化工作区失败"));
     } finally {
       setIsInitializingWorkspace(false);
     }
@@ -121,7 +122,8 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
       {error ? (
         <div className="error-banner" role="alert" aria-live="polite">
           <AlertCircle size={16} aria-hidden="true" />
-          <span>{error}</span>
+          <span>错误：{error.message}</span>
+          <span>{error.advice}</span>
         </div>
       ) : null}
     </section>
