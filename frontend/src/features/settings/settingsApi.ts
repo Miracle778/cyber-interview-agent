@@ -1,26 +1,19 @@
-import { apiDelete, apiGet, apiPatch, apiPost } from "../../shared/api/client";
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "../../shared/api/client";
 import type {
   CreateProviderCommand,
   CreateProviderModelCommand,
   ProviderFormat,
   ProviderModelResource,
   ProviderResource,
+  ModelRole,
   UpdateProviderCommand,
   UpdateProviderModelCommand,
+  WorkspaceModelBindingsResource,
+  WorkspaceResource,
 } from "./providerTypes";
 
 // Legacy (pre-R1) types still used by the current SettingsPage; removed in task 7.
 export type { ProviderFormat } from "./providerTypes";
-
-export interface ProviderConfig {
-  id: string;
-  name: string;
-  apiFormat: ProviderFormat;
-  baseUrl: string;
-  modelIds: string[];
-  activeModelId: string;
-  connectivityStatus: "unknown" | "ok" | "failed";
-}
 
 export interface WorkspaceConfig {
   workspacePath: string;
@@ -29,14 +22,6 @@ export interface WorkspaceConfig {
 
 export function getWorkspace(): Promise<WorkspaceConfig | null> {
   return apiGet<WorkspaceConfig | null>("/api/settings/workspace");
-}
-
-export function initializeWorkspace(workspacePath: string): Promise<WorkspaceConfig> {
-  return apiPost<{ workspacePath: string }, WorkspaceConfig>("/api/settings/workspace", { workspacePath });
-}
-
-export function testProviderConnection(provider: ProviderConfig): Promise<ProviderConfig> {
-  return apiPost<ProviderConfig, ProviderConfig>("/api/settings/providers/test", provider);
 }
 
 // --- R1 provider/model API ---
@@ -80,4 +65,26 @@ export function deleteProviderModel(modelId: string): Promise<void> {
 
 export function testProviderModel(modelId: string): Promise<ProviderModelResource> {
   return apiPost<undefined, ProviderModelResource>(`/api/settings/provider-models/${modelId}/test`, undefined);
+}
+
+export function listWorkspaces(): Promise<WorkspaceResource[]> {
+  return apiGet<WorkspaceResource[]>("/api/settings/workspaces");
+}
+
+export function registerWorkspace(rootPath: string): Promise<WorkspaceResource> {
+  return apiPost<{ rootPath: string }, WorkspaceResource>("/api/settings/workspaces", { rootPath });
+}
+
+export function getWorkspaceModelBindings(workspaceId: string): Promise<WorkspaceModelBindingsResource> {
+  return apiGet<WorkspaceModelBindingsResource>(`/api/settings/workspaces/${workspaceId}/model-bindings`);
+}
+
+export function replaceWorkspaceModelBindings(
+  workspaceId: string,
+  bindings: Record<ModelRole, string>,
+): Promise<WorkspaceModelBindingsResource> {
+  return apiPut<{ bindings: Record<ModelRole, string> }, WorkspaceModelBindingsResource>(
+    `/api/settings/workspaces/${workspaceId}/model-bindings`,
+    { bindings },
+  );
 }

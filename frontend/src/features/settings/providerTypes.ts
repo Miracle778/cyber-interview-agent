@@ -64,3 +64,23 @@ export interface UpdateProviderModelCommand {
   displayName?: string;
   enabled?: boolean;
 }
+
+export type ModelRole =
+  | "question_generation"
+  | "answer_evaluation"
+  | "report_summarization"
+  | "agent_chat";
+
+export interface WorkspaceResource {
+  id: string;
+  rootPath: string;
+  vaultPath: string;
+  available: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkspaceModelBindingsResource {
+  workspaceId: string;
+  bindings: Partial<Record<ModelRole, string>>;
+}

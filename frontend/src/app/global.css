@@ -936,6 +936,96 @@ button {
 }
 
 /* ============================================================
+   Settings: providers and model bindings
+   ============================================================ */
+.settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.provider-form-grid {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.8fr) minmax(150px, 0.8fr) minmax(220px, 1.4fr) minmax(180px, 1fr);
+  align-items: start;
+}
+
+.provider-card {
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border);
+}
+
+.provider-card__header,
+.model-row__main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.provider-card__title {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.provider-card__name {
+  font-size: 0.95rem;
+}
+
+.provider-card__title .muted-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.provider-card__edit,
+.provider-card__models {
+  margin-top: var(--space-4);
+}
+
+.model-row {
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--border);
+}
+
+.model-row__main {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(120px, 1fr) auto minmax(220px, auto);
+}
+
+.model-row__id {
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+
+.model-row__add {
+  margin-top: var(--space-3);
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(160px, 1fr) auto;
+  align-items: end;
+}
+
+.binding-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.status-note--warning {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.status-note--inline {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ============================================================
    Empty / error / status banners
    ============================================================ */
 .empty-state {
@@ -1031,6 +1121,27 @@ button {
 
   .btn--md {
     flex: 1 1 auto;
+  }
+
+  .provider-form-grid,
+  .model-row__add,
+  .binding-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .provider-card__header,
+  .model-row__main {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .model-row__main {
+    display: flex;
+  }
+
+  .provider-card__header > .btn-row,
+  .model-row__main > .btn-row {
+    width: 100%;
   }
 
   .flow-status {

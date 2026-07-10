@@ -63,7 +63,11 @@ function isResourceInUse(caught: unknown): caught is ApiError {
   return caught instanceof ApiError && caught.code === "resource_in_use";
 }
 
-export function ProviderManager() {
+interface ProviderManagerProps {
+  onProvidersChanged?: () => void;
+}
+
+export function ProviderManager({ onProvidersChanged }: ProviderManagerProps = {}) {
   const [providers, setProviders] = useState<ProviderResource[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ActionableError | null>(null);
@@ -106,6 +110,7 @@ export function ProviderManager() {
       };
       const created = await createProvider(command);
       setProviders((prev) => [...prev, created]);
+      onProvidersChanged?.();
       // API key lives only in short-lived state; clear immediately on success.
       setName("");
       setBaseUrl("");
@@ -119,15 +124,17 @@ export function ProviderManager() {
 
   function replaceProvider(updated: ProviderResource) {
     setProviders((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+    onProvidersChanged?.();
   }
 
   function removeProvider(providerId: string) {
     setProviders((prev) => prev.filter((p) => p.id !== providerId));
+    onProvidersChanged?.();
   }
 
   return (
     <Card title="Provider 管理" icon={<Server size={18} aria-hidden="true" />}>
-      <div className="field-group">
+      <div className="field-group provider-form-grid">
         <Field label="Provider 名称" name="new-provider-name" value={name} onChange={(e) => setName(e.target.value)} />
         <div className="field">
           <label className="field__label" htmlFor="new-provider-format">

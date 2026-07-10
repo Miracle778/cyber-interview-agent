@@ -1,11 +1,17 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertCircle, FolderCog, Server } from "lucide-react";
+import { toActionableError, type ActionableError } from "../../shared/api/errorAdvice";
+import { Badge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
-import { Badge } from "../../shared/ui/Badge";
 import { Field } from "../../shared/ui/Field";
-import { toActionableError, type ActionableError } from "../../shared/api/errorAdvice";
-import { initializeWorkspace, testProviderConnection, type ProviderConfig, type WorkspaceConfig } from "./settingsApi";
+import { ModelBindings } from "./ModelBindings";
+import { ProviderManager } from "./ProviderManager";
+import {
+  listWorkspaces,
+  registerWorkspace,
+  type WorkspaceConfig,
+} from "./settingsApi";
 
 interface SettingsPageProps {
   workspace: WorkspaceConfig | null;
@@ -13,37 +19,42 @@ interface SettingsPageProps {
 }
 
 export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps) {
-  const [providerName, setProviderName] = useState("OpenAI Compatible");
-  const [baseUrl, setBaseUrl] = useState("https://api.example.com/v1");
-  const [modelId, setModelId] = useState("model-a");
-  const [workspacePath, setWorkspacePath] = useState("");
-  const [providerStatus, setProviderStatus] = useState<ProviderConfig["connectivityStatus"] | null>(null);
+  const [workspacePath, setWorkspacePath] = useState(workspace?.workspacePath ?? "");
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [workspaceMessage, setWorkspaceMessage] = useState("");
   const [error, setError] = useState<ActionableError | null>(null);
-  const [isTestingProvider, setIsTestingProvider] = useState(false);
   const [isInitializingWorkspace, setIsInitializingWorkspace] = useState(false);
+  const [providerRevision, setProviderRevision] = useState(0);
 
-  async function handleProviderTest() {
-    setError(null);
-    setProviderStatus(null);
-    setIsTestingProvider(true);
-    try {
-      const provider = await testProviderConnection({
-        id: "local-provider",
-        name: providerName,
-        apiFormat: "openai-compatible",
-        baseUrl,
-        modelIds: [modelId],
-        activeModelId: modelId,
-        connectivityStatus: "unknown",
-      });
-      setProviderStatus(provider.connectivityStatus);
-    } catch (caught) {
-      setError(toActionableError(caught, "Provider 测试失败"));
-    } finally {
-      setIsTestingProvider(false);
+  useEffect(() => {
+    if (!workspace) {
+      setWorkspaceId(null);
+      return;
     }
-  }
+    let cancelled = false;
+    setWorkspacePath(workspace.workspacePath);
+    void listWorkspaces()
+      .then((workspaces) => {
+        if (cancelled) return;
+        const registered = workspaces.find(
+          (candidate) => candidate.rootPath === workspace.workspacePath,
+        );
+        if (registered) {
+          setWorkspaceId(registered.id);
+          setError(null);
+        } else {
+          return registerWorkspace(workspace.workspacePath).then((created) => {
+            if (!cancelled) setWorkspaceId(created.id);
+          });
+        }
+      })
+      .catch((caught) => {
+        if (!cancelled) setError(toActionableError(caught, "恢复工作区失败"));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspace]);
 
   async function handleWorkspaceInit() {
     setError(null);
@@ -55,17 +66,20 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
     }
     setIsInitializingWorkspace(true);
     try {
-      const initializedWorkspace = await initializeWorkspace(trimmedPath);
-      onWorkspaceReady(initializedWorkspace);
-      setWorkspaceMessage(`Vault：${initializedWorkspace.vaultPath}`);
+      const registered = await registerWorkspace(trimmedPath);
+      const ready = {
+        workspacePath: registered.rootPath,
+        vaultPath: registered.vaultPath,
+      };
+      setWorkspaceId(registered.id);
+      onWorkspaceReady(ready);
+      setWorkspaceMessage(`Vault：${registered.vaultPath}`);
     } catch (caught) {
       setError(toActionableError(caught, "初始化工作区失败"));
     } finally {
       setIsInitializingWorkspace(false);
     }
   }
-
-  const statusTone = providerStatus === "ok" ? "success" : providerStatus ? "danger" : "neutral";
 
   return (
     <section className="page-section" aria-labelledby="settings-title">
@@ -79,29 +93,6 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
         {workspace ? <span className="page-section__hint">配置 Provider 与工作区</span> : null}
       </div>
 
-      <Card title="Provider 配置" icon={<Server size={18} />}>
-        <div className="field-group">
-          <Field label="Provider 名称" name="providerName" value={providerName} onChange={(event) => setProviderName(event.target.value)} />
-          <Field label="Base URL" name="baseUrl" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} />
-          <Field label="Model ID" name="modelId" value={modelId} onChange={(event) => setModelId(event.target.value)} />
-        </div>
-        <div className="btn-row">
-          <Button onClick={handleProviderTest} loading={isTestingProvider}>
-            测试连接
-          </Button>
-          {providerStatus ? (
-            <Badge tone={statusTone} dot>
-              {providerStatus === "ok" ? "已连接" : "连接异常"}
-            </Badge>
-          ) : null}
-        </div>
-        {providerStatus ? (
-          <p className="status-note" data-status={providerStatus}>
-            Provider 连接状态：{providerStatus}
-          </p>
-        ) : null}
-      </Card>
-
       <Card title="工作区" icon={<FolderCog size={18} />}>
         <Field
           label="Workspace Path"
@@ -114,10 +105,25 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
           <Button onClick={handleWorkspaceInit} loading={isInitializingWorkspace}>
             初始化工作区
           </Button>
-          {workspace ? <Badge tone="success" dot>{workspace.workspacePath}</Badge> : null}
+          {workspace ? (
+            <Badge tone="success" dot>
+              {workspace.workspacePath}
+            </Badge>
+          ) : null}
         </div>
         {workspaceMessage ? <p className="status-note">{workspaceMessage}</p> : null}
       </Card>
+
+      {workspaceId ? (
+        <div className="settings-stack">
+          <ProviderManager
+            onProvidersChanged={() => setProviderRevision((revision) => revision + 1)}
+          />
+          <ModelBindings workspaceId={workspaceId} refreshKey={providerRevision} />
+        </div>
+      ) : workspace ? (
+        <p className="status-note">正在恢复 Workspace 配置…</p>
+      ) : null}
 
       {error ? (
         <div className="error-banner" role="alert" aria-live="polite">
