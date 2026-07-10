@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, apiGet } from "./client";
+import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiPut } from "./client";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -14,5 +14,66 @@ describe("apiGet", () => {
   it("throws ApiError for failed responses", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ code: "bad", message: "坏请求" }), { status: 400 })));
     await expect(apiGet("/api/fail")).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe("apiPost", () => {
+  it("posts json and returns the response", async () => {
+    const fetchMock = vi.fn(async (_input: unknown, init?: RequestInit) =>
+      new Response(JSON.stringify({ id: "1" }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(apiPost<{ x: number }, { id: string }>("/api/x", { x: 1 })).resolves.toEqual({ id: "1" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/x", expect.objectContaining({ method: "POST" }));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/x",
+      expect.objectContaining({ body: JSON.stringify({ x: 1 }) }),
+    );
+  });
+});
+
+describe("apiPatch", () => {
+  it("sends a PATCH with json body and returns the parsed response", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: "p1", name: "Patched" })));
+    vi.stubGlobal("fetch", fetchMock);
+    await apiPatch<{ name: string }, { id: string }>("/api/settings/providers/p1", { name: "Patched" });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/settings/providers/p1",
+      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ name: "Patched" }) }),
+    );
+  });
+
+  it("converts error responses to ApiError with code", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ code: "resource_in_use", message: "仍被绑定" }), { status: 409 })));
+    await expect(apiPatch("/api/x", { a: 1 })).rejects.toMatchObject({ code: "resource_in_use", message: "仍被绑定" });
+  });
+});
+
+describe("apiPut", () => {
+  it("sends a PUT with json body and returns the parsed response", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true })));
+    vi.stubGlobal("fetch", fetchMock);
+    await apiPut<{ a: number }, { ok: boolean }>("/api/x", { a: 1 });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/x",
+      expect.objectContaining({ method: "PUT", body: JSON.stringify({ a: 1 }) }),
+    );
+  });
+});
+
+describe("apiDelete", () => {
+  it("resolves with void on 204 No Content without parsing a body", async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(apiDelete("/api/settings/providers/p1")).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/settings/providers/p1",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
+  it("converts 409 conflict to ApiError with code", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ code: "resource_in_use", message: "占用" }), { status: 409 })));
+    await expect(apiDelete("/api/x")).rejects.toBeInstanceOf(ApiError);
   });
 });
