@@ -365,7 +365,7 @@ Session 状态：
 
 ### 7.3 Run
 
-每次用户输入或恢复动作创建 run。一个 session 同时只允许一个 active run。
+每次新的用户输入创建 run。interrupt、HITL 或服务重启后的恢复沿用原 `run_id`，增加 resume attempt 计数并记录恢复事件。一个 session 同时只允许一个 active run。
 
 Run 状态：
 
