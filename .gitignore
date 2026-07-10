@@ -16,3 +16,9 @@ __pycache__/
 docs/changes/
 docs/my_idea.md
 docs/mvp_verification_guide.md
+docs/verification/
+
+# 本地规划工作文件（planning-with-files），不入库
+findings.md
+progress.md
+task_plan.md
