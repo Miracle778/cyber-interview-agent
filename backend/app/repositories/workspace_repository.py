@@ -1,0 +1,124 @@
+import sqlite3
+import uuid
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class WorkspaceRecord:
+    id: str
+    root_path: str
+    available: bool
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class WorkspaceModelBindingRecord:
+    workspace_id: str
+    role: str
+    provider_model_id: str
+    created_at: str
+    updated_at: str
+
+
+_WORKSPACE_COLUMNS = "id, root_path, available, created_at, updated_at"
+_BINDING_COLUMNS = (
+    "workspace_id, role, provider_model_id, created_at, updated_at"
+)
+
+
+class WorkspaceRepository:
+    """Persists workspace registry entries and model-role bindings.
+
+    Executes parameterized SQL only; never commits (the service owns the
+    transaction boundary) and never reads the SecretStore.
+    """
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+
+    def register(self, *, root_path: str, available: bool = True) -> WorkspaceRecord:
+        workspace_id = str(uuid.uuid4())
+        self._connection.execute(
+            "INSERT INTO workspaces (id, root_path, available) VALUES (?, ?, ?)",
+            (workspace_id, root_path, 1 if available else 0),
+        )
+        return self._require_workspace(workspace_id)
+
+    def get(self, workspace_id: str) -> WorkspaceRecord | None:
+        row = self._connection.execute(
+            f"SELECT {_WORKSPACE_COLUMNS} FROM workspaces WHERE id = ?",
+            (workspace_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._workspace_from_row(row)
+
+    def relink(self, workspace_id: str, root_path: str) -> WorkspaceRecord:
+        self._connection.execute(
+            "UPDATE workspaces SET root_path = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ?",
+            (root_path, workspace_id),
+        )
+        return self._require_workspace(workspace_id)
+
+    def set_model_binding(
+        self,
+        workspace_id: str,
+        role: str,
+        provider_model_id: str,
+    ) -> WorkspaceModelBindingRecord:
+        self._connection.execute(
+            "INSERT INTO workspace_model_bindings "
+            "(workspace_id, role, provider_model_id) VALUES (?, ?, ?)",
+            (workspace_id, role, provider_model_id),
+        )
+        return self._require_binding(workspace_id, role)
+
+    def get_model_bindings(
+        self, workspace_id: str
+    ) -> tuple[WorkspaceModelBindingRecord, ...]:
+        rows = self._connection.execute(
+            f"SELECT {_BINDING_COLUMNS} FROM workspace_model_bindings "
+            "WHERE workspace_id = ? ORDER BY rowid",
+            (workspace_id,),
+        ).fetchall()
+        return tuple(self._binding_from_row(row) for row in rows)
+
+    def _require_workspace(self, workspace_id: str) -> WorkspaceRecord:
+        record = self.get(workspace_id)
+        if record is None:
+            raise LookupError(f"workspace {workspace_id!r} not found")
+        return record
+
+    def _require_binding(
+        self, workspace_id: str, role: str
+    ) -> WorkspaceModelBindingRecord:
+        row = self._connection.execute(
+            f"SELECT {_BINDING_COLUMNS} FROM workspace_model_bindings "
+            "WHERE workspace_id = ? AND role = ?",
+            (workspace_id, role),
+        ).fetchone()
+        if row is None:
+            raise LookupError(
+                f"binding for workspace {workspace_id!r} role {role!r} not found"
+            )
+        return self._binding_from_row(row)
+
+    def _workspace_from_row(self, row: sqlite3.Row) -> WorkspaceRecord:
+        return WorkspaceRecord(
+            id=row["id"],
+            root_path=row["root_path"],
+            available=bool(row["available"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def _binding_from_row(self, row: sqlite3.Row) -> WorkspaceModelBindingRecord:
+        return WorkspaceModelBindingRecord(
+            workspace_id=row["workspace_id"],
+            role=row["role"],
+            provider_model_id=row["provider_model_id"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
