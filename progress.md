@@ -495,3 +495,11 @@
 - ActionCenter 现在按新 run ID 等待对应 action，请求内容变化会生成新幂等 key；Repository 对同 key 的不同决定返回 typed conflict，reconciliation 对终态 run 直接收口 receipt 而不重放副作用。
 - 最终自动验证：后端 193 passed；前端 47 passed；TypeScript 与 production build 通过，保留 1 个既有 Starlette deprecation warning。
 - verification 与 R1.4 learning 七件套通过文档质量门禁；用户按既定决定延后统一学习，练习不阻塞产品开发。
+
+### R1.4 合并收尾
+
+- `codex/r1-4-persistent-hitl` 已 fast-forward 合并到本地 `main`，产品完成提交为 `05efeb2`。
+- 合并后重新验证：后端 193 passed，前端 47 passed，TypeScript 检查与 production build 通过；保留 1 个既有 Starlette deprecation warning。
+- 本地 `docs/verification/r1_4_persistent_hitl.md` 和 `docs/learning/r1-4-hitl/` 七件套已显式同步到主仓库并逐文件比对一致，阶段文档门禁通过。
+- 产品成熟度为“可人工验证”；用户尚未完成 R1.4 学习和练习，作为非阻塞理解债务保留。
+- 下一产品任务：用户人工验证 R1.4 后，开始 R1.5 知识发布与审核流设计复核。

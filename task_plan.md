@@ -37,7 +37,7 @@
 | R1.1 | 可人工验证 | 尚未验收 | Provider adapter、模型绑定与 secret 边界 | Provider 请求链路追踪 | 解释一次模型测试请求 |
 | R1.2 | 可人工验证 | 尚未验收 | Runtime 分层、RunManager、恢复语义与 SSE 重放（掌握包已生成） | 增加一个 Runtime 查询能力 | 增加 Run 详情查询接口 |
 | R1.3 | 可人工验证 | 尚未验收 | Workspace scope、默认拒绝工具权限、路径与软链接安全、脱敏审计（掌握包已生成） | 解释 Runtime 如何绑定工具上下文 | 实现或审阅一个路径校验用例 |
-| R1.4 | 开发中 | 尚未验收 | pending action、interrupt/resume、幂等决定与恢复投递 | 待阶段完成后统一学习 | 待阶段完成后生成，当前不阻塞开发 |
+| R1.4 | 可人工验证，已合入 main | 尚未验收 | pending action、interrupt/resume、幂等决定与重启恢复（掌握包已生成） | 追踪一次批准决定从 API 到原 run 恢复 | 解释 resolution receipt 如何跨重启避免重复恢复 |
 
 状态定义：
 
@@ -284,9 +284,9 @@
 
 ## 下一步
 
-R1.4 进入人工验证，验证通过后开始 R1.5“知识发布与审核流”的设计复核：
+R1.4 已合入 `main`，当前等待用户人工验证；验证通过后开始 R1.5“知识发布与审核流”的设计复核：
 
 1. 按 `docs/verification/r1_4_persistent_hitl.md` 验证 pending action、编辑批准、拒绝和后端重启恢复。
-2. 验证通过后合并 `codex/r1-4-persistent-hitl`，再复核 R1.5 与 R1 总规格、R1.4 HITL 接口的边界。
+2. 验证通过后复核 R1.5 与 R1 总规格、R1.4 HITL 接口的边界。
 3. R1.5 聚焦知识草稿、审核、发布和 active scope，不提前混入 R1.6 真实复习业务迁移。
 4. 继续按 Task 增量更新 verification；阶段结束时生成 ownership 七件套并运行文档门禁。
