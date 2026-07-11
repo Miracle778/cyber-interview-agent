@@ -503,3 +503,11 @@
 - 本地 `docs/verification/r1_4_persistent_hitl.md` 和 `docs/learning/r1-4-hitl/` 七件套已显式同步到主仓库并逐文件比对一致，阶段文档门禁通过。
 - 产品成熟度为“可人工验证”；用户尚未完成 R1.4 学习和练习，作为非阻塞理解债务保留。
 - 下一产品任务：用户人工验证 R1.4 后，开始 R1.5 知识发布与审核流设计复核。
+
+### R1.5 知识草稿与发布启动
+
+- 用户确认开始 R1.5，并选择推荐范围：同步把上传资料从 Vault 迁移到 `artifacts/review/sources/`，生成持久化草稿后再经 HITL 发布。
+- 用户要求简化流程；创建普通分支 `codex/r1-5-knowledge-publication`，不使用产品 worktree、不委派外部 Agent，由 Codex 直接设计、实现和验收。
+- 只读审计发现旧计划需适配 R1.4：publish request 必须通过真实 `knowledge.publish` Graph 创建 action，不能创建没有可恢复 run 的悬空 action。
+- 新增设计复核 `docs/superpowers/specs/2026-07-12-r1-5-knowledge-publication-design-review.md`，明确上传迁移、草稿模型、publication journal、active scope、冲突保护、前端闭环和七任务拆分。
+- 当前状态：设计已口头确认，等待用户快速复核书面 spec；之后立即修订实施计划并开始 TDD。

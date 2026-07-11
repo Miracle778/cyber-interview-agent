@@ -423,3 +423,12 @@
 - ActionCenter 启动诊断后不能以“Workspace 中出现任意 pending action”为成功条件；真实多 action 场景必须用 `runId` 关联刚创建的 run。
 - resolution 幂等不仅要比较 key，还要比较版本、终态、decision 和 reason；同 key 不同语义必须返回冲突，不能静默复用旧结果。
 - reconciliation 需要先识别 completed/cancelled run；其未投递 receipt 应直接标记收口，不能再次执行未来可能带副作用的 handler 或重复发布 resolved 事件。
+
+## 2026-07-12：R1.5 知识发布设计复核发现
+
+- 旧上传接口把原文件直接写入 `knowledge-vault/00_inbox`，与已批准的 sources/drafts/Vault 三层模型冲突；R1.5 必须同步迁移上传链路，而不是只增加发布服务。
+- 知识接口仍接受任意 `workspacePath`，但 R1.1 已建立稳定 Workspace Registry；R1.5 应改用 `workspaceId`，由后端解析 root。
+- 旧计划让 API 直接创建 `knowledge.publish` action，但 R1.4 action 绑定真实 session/run/checkpoint。采用确定性发布 Graph 才能复用 waiting、重启恢复、取消和 resume 语义。
+- 当前 rescan 把所有 Markdown 当作 reviewed source 写入 FTS，未解析 frontmatter，也未限制 active scope；R1.5 必须只索引 `ingested + confirmed_by_user` 文档。
+- 当前 manifest/FTS 是派生索引，publication journal 才是发布恢复的产品状态；Markdown 写入成功后不能因索引失败回滚或删除。
+- 用户要求简化开发流程：本阶段使用普通分支，由 Codex 直接实现，不创建 worktree、不委派；测试、审阅和文档门禁仍保留。

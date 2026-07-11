@@ -19,7 +19,7 @@
 | 阶段 | 名称 | 状态 | 成熟度说明 |
 |---|---|---|---|
 | R0 | 技术切片与质量基线 | 可人工验证 | 已能跑通单题单轮浏览器链路，不代表完整复习 Agent |
-| R1 | 共享 Agent 与知识库底座 | R1.1、R1.2、R1.3、R1.4 可人工验证 | Provider、Runtime、持久化会话、SSE、Workspace 路径策略、受限工具、脱敏审计和持久化 HITL 已落地 |
+| R1 | 共享 Agent 与知识库底座 | R1.1-R1.4 可人工验证；R1.5 设计复核 | Provider、Runtime、工具安全和持久化 HITL 已落地；正在接入知识草稿与发布协议 |
 | R2 | 完整复习 Agent | 待开始 | 多题轮次、模式、追问、派生、单轮与全局掌握度 |
 | R3 | 个人信息 Agent | 待开始 | 简历、个人画像、资料对话、审核推送 |
 | R4 | 岗位与 JD 追踪 | 待开始 | 岗位索引、匹配度、竞争力、差距和准备聚合 |
@@ -38,6 +38,7 @@
 | R1.2 | 可人工验证 | 尚未验收 | Runtime 分层、RunManager、恢复语义与 SSE 重放（掌握包已生成） | 增加一个 Runtime 查询能力 | 增加 Run 详情查询接口 |
 | R1.3 | 可人工验证 | 尚未验收 | Workspace scope、默认拒绝工具权限、路径与软链接安全、脱敏审计（掌握包已生成） | 解释 Runtime 如何绑定工具上下文 | 实现或审阅一个路径校验用例 |
 | R1.4 | 可人工验证，已合入 main | 尚未验收 | pending action、interrupt/resume、幂等决定与重启恢复（掌握包已生成） | 追踪一次批准决定从 API 到原 run 恢复 | 解释 resolution receipt 如何跨重启避免重复恢复 |
+| R1.5 | 设计复核 | 尚未验收 | 草稿分层、发布 journal、active scope 与 Obsidian 冲突保护 | 待实现后生成 | 待实现后生成，不阻塞产品开发 |
 
 状态定义：
 
@@ -284,9 +285,9 @@
 
 ## 下一步
 
-R1.4 已合入 `main`，当前等待用户人工验证；验证通过后开始 R1.5“知识发布与审核流”的设计复核：
+R1.5“知识发布与审核流”已完成设计复核，当前等待书面 spec 快速确认：
 
-1. 按 `docs/verification/r1_4_persistent_hitl.md` 验证 pending action、编辑批准、拒绝和后端重启恢复。
-2. 验证通过后复核 R1.5 与 R1 总规格、R1.4 HITL 接口的边界。
-3. R1.5 聚焦知识草稿、审核、发布和 active scope，不提前混入 R1.6 真实复习业务迁移。
-4. 继续按 Task 增量更新 verification；阶段结束时生成 ownership 七件套并运行文档门禁。
+1. 确认 `docs/superpowers/specs/2026-07-12-r1-5-knowledge-publication-design-review.md`。
+2. 将旧 R1.5 计划修订为七任务，补上上传链路迁移与真实 `knowledge.publish` Graph。
+3. 在普通 `codex/r1-5-knowledge-publication` 分支直接按 TDD 实现，不创建 worktree、不委派。
+4. R1.5 不提前混入 R1.6 真实模型与复习 Graph，也不实现 R7 高级 Obsidian 冲突合并。
