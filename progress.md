@@ -379,3 +379,6 @@
 - 复杂度结论：R1.2 状态、事务、异步和前端 SSE 高耦合，本切片全部由 Codex 实现。
 - 设计复核文档：`docs/superpowers/specs/2026-07-11-r1-2-agent-runtime-sse-design-review.md`。
 - Task 1 首次 GREEN 失败：Runtime migration 在索引中引用 SQLite 隐式 `rowid`，报 `no such column: rowid`；改为显式 `(session_id, created_at, id)` 后重试。
+- Task 5 依赖核对：主仓库虚拟环境缺少 `aiosqlite`/`langgraph-checkpoint-sqlite`，按计划更新依赖声明并在 worktree 创建隔离环境。
+- R1.2 Task 5 完成：新增 SQLite LangGraph checkpointer 和 RunManager，覆盖正常执行、单会话并发保护、幂等取消、启动恢复和同 run 续跑。
+- Task 5 验证：RunManager 5 passed；Runtime 累计 24 passed；`git diff --check` 通过。
