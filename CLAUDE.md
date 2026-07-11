@@ -11,4 +11,4 @@ Before doing any project work, read and follow:
 5. `progress.md`
 6. The current stage spec and implementation plan
 
-`AGENTS.md` is the concise cross-agent rule entry. The design spec is the single detailed source of truth. Do not let user learning exercises block product development. Work only from the minimal repository context required for the assigned task, and leave review and final acceptance to Codex.
+`AGENTS.md` is the concise cross-agent rule entry. The design spec is the single detailed source of truth. Do not let user learning exercises block product development. Concurrent learning uses one active learning worktree, and each learning branch starts from its own stage completion baseline rather than another learning branch. Work only from the minimal repository context required for the assigned task, and leave review and final acceptance to Codex.

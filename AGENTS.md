@@ -17,6 +17,7 @@ Repository files and executable state are authoritative. Do not reconstruct proj
 
 - Keep product delivery and user ownership as separate tracks.
 - User learning exercises never block implementation, commits, merges, or the next product stage.
+- When product development and learning run concurrently, keep only one active learning worktree; create each learning branch from its own stage completion baseline, never from another learning branch.
 - Record unfinished learning as understanding debt.
 - Generate or update the local `docs/learning/<stage>/` ownership pack after each major stage.
 - Batch product and architecture questions when possible and provide recommended defaults.
