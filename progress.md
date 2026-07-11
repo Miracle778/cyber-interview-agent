@@ -483,3 +483,15 @@
 - session detail 读取当前 pending action 摘要；原同步接口改为 async 并保持既有路由兼容。
 - 版本过期和不同 key 二次决定分别返回 `action_version_conflict`、`action_already_resolved`；非法编辑返回 `invalid_action_payload`。
 - HITL 与既有 Agent 路由联合验证 11 passed；后端完整回归 189 passed，保留 1 个既有 Starlette deprecation warning。
+
+### R1.4 Task 5：ActionCenter 与浏览器闭环
+
+- 新增 typed HITL API、ActionCenter、设置页入口和响应式样式；可恢复 pending action、编辑批准、拒绝并运行真实 `test.approval` Graph。
+- 前端 TDD 覆盖恢复、编辑 payload、请求期间按钮锁定、拒绝原因和启动真实诊断，共 45 passed；TypeScript 与 production build 通过。
+- 浏览器验证完成：初始化独立 Workspace，创建 action，刷新恢复，编辑批准，第二次运行后拒绝；后端进程重启后 pending action 仍存在并可继续解决。
+- 响应式检查覆盖 1440x1000 与 375x812，无横向溢出；移动端 ActionCenter 宽 343px，决定按钮宽 309px，控制台无 warning/error。
+- 最终自审新增伪造 interrupt action ID 回归；RunManager 改为只接受本次 Runtime requester 返回的 action ID，专项 5 passed。
+- 独立复核发现自检可能选中旧 action、resolution key 未绑定决定内容、终态 run 可能重放 handler；三项均先用失败测试复现后修正。
+- ActionCenter 现在按新 run ID 等待对应 action，请求内容变化会生成新幂等 key；Repository 对同 key 的不同决定返回 typed conflict，reconciliation 对终态 run 直接收口 receipt 而不重放副作用。
+- 最终自动验证：后端 193 passed；前端 47 passed；TypeScript 与 production build 通过，保留 1 个既有 Starlette deprecation warning。
+- verification 与 R1.4 learning 七件套通过文档质量门禁；用户按既定决定延后统一学习，练习不阻塞产品开发。

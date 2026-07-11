@@ -19,7 +19,7 @@
 | 阶段 | 名称 | 状态 | 成熟度说明 |
 |---|---|---|---|
 | R0 | 技术切片与质量基线 | 可人工验证 | 已能跑通单题单轮浏览器链路，不代表完整复习 Agent |
-| R1 | 共享 Agent 与知识库底座 | R1.1、R1.2、R1.3 可人工验证；R1.4 开发中 | Provider、Runtime、持久化会话、SSE、Workspace 路径策略、受限工具和脱敏审计已落地；正在实现持久化 HITL |
+| R1 | 共享 Agent 与知识库底座 | R1.1、R1.2、R1.3、R1.4 可人工验证 | Provider、Runtime、持久化会话、SSE、Workspace 路径策略、受限工具、脱敏审计和持久化 HITL 已落地 |
 | R2 | 完整复习 Agent | 待开始 | 多题轮次、模式、追问、派生、单轮与全局掌握度 |
 | R3 | 个人信息 Agent | 待开始 | 简历、个人画像、资料对话、审核推送 |
 | R4 | 岗位与 JD 追踪 | 待开始 | 岗位索引、匹配度、竞争力、差距和准备聚合 |
@@ -284,10 +284,9 @@
 
 ## 下一步
 
-开始 R1.4“持久化 HITL”的设计复核与实施：
+R1.4 进入人工验证，验证通过后开始 R1.5“知识发布与审核流”的设计复核：
 
-1. 复核 `docs/superpowers/plans/2026-07-10-r1-4-persistent-hitl.md` 与 R1 总规格及 R1.3 已落地 Tool Registry 的接口。
-2. 建立 pending action、interrupt/resume、批准/拒绝/编辑和重启恢复闭环。
-3. 继续按 Task 增量更新 verification；阶段结束时按正式模板整理用户指南、生成 ownership 七件套，并运行 `scripts/check_stage_docs.py`。
-4. R1.3 的非阻塞所有权练习不阻塞 R1.4 产品开发。
-5. 不提前混入 R1.5 知识发布或 R1.6 真实复习业务迁移。
+1. 按 `docs/verification/r1_4_persistent_hitl.md` 验证 pending action、编辑批准、拒绝和后端重启恢复。
+2. 验证通过后合并 `codex/r1-4-persistent-hitl`，再复核 R1.5 与 R1 总规格、R1.4 HITL 接口的边界。
+3. R1.5 聚焦知识草稿、审核、发布和 active scope，不提前混入 R1.6 真实复习业务迁移。
+4. 继续按 Task 增量更新 verification；阶段结束时生成 ownership 七件套并运行文档门禁。

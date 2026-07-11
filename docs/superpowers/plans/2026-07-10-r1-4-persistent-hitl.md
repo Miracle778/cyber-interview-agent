@@ -259,17 +259,17 @@ git commit -m "feat(hitl): expose persistent action decisions"
 - ActionCenter 接受 Workspace ID 和可选 session ID 过滤。
 - 设置页必须能启动一次真实 `test.approval` run，不能只展示静态 action 列表。
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 Create `ActionCenter.test.tsx` covering list, preview, edited approval, reject reason, stale version 409, duplicate resolve result, and restoration after rerender. Assert buttons disable during a resolution request.
 
-- [ ] **步骤 2：运行测试确认失败**
+- [x] **步骤 2：运行测试确认失败**
 
 运行：`pnpm --dir frontend test -- ActionCenter.test.tsx`
 
 预期：失败，因为 HITL 前端文件尚不存在。
 
-- [ ] **步骤 3：实现最小功能**
+- [x] **步骤 3：实现最小功能**
 
 使用精确 status union 和请求类型：
 
@@ -286,7 +286,7 @@ export interface ResolveActionRequest {
 
 优先渲染结构化预览；只有 action schema 标记字段可编辑时才显示编辑控件。每次按钮动作只生成一次幂等键，重试时不能重新生成。把 ActionCenter 接入设置页，提供“运行确认测试”入口并支持刷新恢复 pending action。
 
-- [ ] **步骤 4：验证完整切片并提交**
+- [x] **步骤 4：验证完整切片并提交**
 
 运行：
 
@@ -304,7 +304,7 @@ git add frontend/src/features/agent/hitlTypes.ts frontend/src/features/agent/hit
 git commit -m "feat(hitl): review and resolve pending actions"
 ```
 
-- [ ] **步骤 5：整理阶段文档并运行质量门禁**
+- [x] **步骤 5：整理阶段文档并运行质量门禁**
 
 按照正式模板把增量 verification 整理为最终用户验证指南，并生成 `docs/learning/r1-4-hitl/` 七件套。对照 R1.3 同类型文档检查内容深度，然后运行：
 

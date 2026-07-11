@@ -109,6 +109,7 @@ class HitlService:
         return resolved
 
     async def reconcile(self) -> tuple[str, ...]:
+        await self._repository.settle_terminal_run_resolutions()
         delivered: list[str] = []
         for receipt in await self._repository.list_recoverable_resolutions():
             action = await self._repository.get(receipt.action_id)

@@ -1,9 +1,12 @@
 from pathlib import Path
 
 import pytest
+from langgraph.graph import END, START, StateGraph
+from langgraph.types import interrupt
 
 from app.hitl.models import ResolveActionCommand
 from app.runtime.default_graphs import create_default_graph_registry
+from app.runtime.graph_registry import GraphDefinition, GraphRegistry
 from app.runtime.service import AgentRuntime
 
 
@@ -135,3 +138,47 @@ async def test_startup_reconciles_resolution_left_delivering(
     assert stored_receipt.delivery_status == "delivered"
     assert stored_receipt.delivery_attempts == 2
     await restarted.close()
+
+
+@pytest.mark.asyncio
+async def test_interrupt_rejects_action_id_not_created_by_runtime(
+    tmp_path: Path,
+) -> None:
+    registry = GraphRegistry()
+
+    def factory(context):
+        graph = StateGraph(dict)
+        graph.add_node("invalid", lambda _state: interrupt({"actionId": "fake"}))
+        graph.add_edge(START, "invalid")
+        graph.add_edge("invalid", END)
+        return graph.compile(checkpointer=context.checkpointer)
+
+    registry.register(
+        GraphDefinition(
+            graph_id="test.invalid-approval",
+            graph_version=1,
+            factory=factory,
+            required_model_roles=frozenset(),
+            allowed_tools=frozenset(),
+            allowed_scopes=frozenset(),
+        )
+    )
+    runtime = AgentRuntime(
+        graph_registry=registry,
+        workspace_resolver=lambda _workspace_id: tmp_path,
+        model_binding_resolver=lambda _workspace_id: {},
+        workspace_ids=lambda: ("w1",),
+    )
+    session = await runtime.create_session(
+        workspace_id="w1",
+        graph_id="test.invalid-approval",
+        graph_version=1,
+        title="Invalid",
+    )
+
+    run = await runtime.start_run(session.id, input={})
+    failed = await runtime._context("w1").manager.wait(run.id)
+
+    assert failed.status == "failed"
+    assert await runtime.list_actions("w1", status="pending") == ()
+    await runtime.close()

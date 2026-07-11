@@ -6,6 +6,7 @@ from app.db.runtime_database import connect_runtime_database
 from app.hitl.models import CreatePendingAction
 from app.hitl.repository import (
     ActionAlreadyResolvedError,
+    ActionIdempotencyConflictError,
     ActionVersionConflictError,
     PendingActionRepository,
 )
@@ -139,6 +140,40 @@ async def test_duplicate_resolution_returns_original_receipt(tmp_path: Path) -> 
     assert resolved.status == "edited_and_approved"
     assert resolved.version == 2
     assert resolved.payload["summary"] == "edited"
+    connection.close()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_resolution_key_rejects_changed_request(tmp_path: Path) -> None:
+    connection = _database(tmp_path)
+    repository = PendingActionRepository(tmp_path)
+    action = await repository.create(_request())
+    await repository.resolve(
+        action.id,
+        expected_version=action.version,
+        status="approved",
+        resolution_key="resolve-1",
+        decision={"decision": "approved"},
+    )
+
+    with pytest.raises(ActionIdempotencyConflictError):
+        await repository.resolve(
+            action.id,
+            expected_version=action.version,
+            status="rejected",
+            resolution_key="resolve-1",
+            decision={"decision": "rejected", "reason": "changed"},
+            reason="changed",
+        )
+
+    with pytest.raises(ActionIdempotencyConflictError):
+        await repository.resolve(
+            action.id,
+            expected_version=action.version + 1,
+            status="approved",
+            resolution_key="resolve-1",
+            decision={"decision": "approved"},
+        )
     connection.close()
 
 

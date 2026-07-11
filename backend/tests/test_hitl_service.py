@@ -287,3 +287,31 @@ async def test_concurrent_duplicate_resolution_claims_delivery_once(
     assert handler.receipts == [receipt.id]
     assert [item[2] for item in events.items] == ["hitl.resolved"]
     connection.close()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_settles_terminal_run_without_replaying_side_effects(
+    tmp_path: Path,
+) -> None:
+    connection = _database(tmp_path)
+    service, repository, handler, events, resume = _service(tmp_path)
+    action = await repository.create(_request())
+    receipt = await repository.resolve(
+        action.id,
+        expected_version=action.version,
+        status="approved",
+        resolution_key="approve-1",
+        decision={"decision": "approved"},
+    )
+    runtime = RuntimeRepository(connection)
+    runtime.transition_run("r1", expected="running", target="completed")
+
+    await service.reconcile()
+
+    stored = (await repository.list_resolutions(action.id))[0]
+    assert stored.id == receipt.id
+    assert stored.delivery_status == "delivered"
+    assert handler.receipts == []
+    assert events.items == []
+    assert resume.calls == []
+    connection.close()

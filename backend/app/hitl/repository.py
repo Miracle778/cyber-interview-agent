@@ -136,6 +136,15 @@ class PendingActionRepository:
                     connection, action_id, resolution_key
                 )
                 if existing is not None:
+                    action = await self._require_action(connection, action_id)
+                    self._ensure_same_resolution_request(
+                        existing,
+                        action=action,
+                        expected_version=expected_version,
+                        status=status,
+                        decision=decision,
+                        reason=reason,
+                    )
                     await connection.commit()
                     return existing
 
@@ -273,6 +282,21 @@ class PendingActionRepository:
             )
             rows = await cursor.fetchall()
         return tuple(self._receipt_from_row(row) for row in rows)
+
+    async def settle_terminal_run_resolutions(self) -> int:
+        async with self._connection() as connection:
+            cursor = await connection.execute(
+                "UPDATE pending_action_resolutions AS resolution "
+                "SET delivery_status = 'delivered', delivery_error_code = NULL, "
+                "delivered_at = COALESCE(delivered_at, CURRENT_TIMESTAMP) "
+                "WHERE resolution.delivery_status != 'delivered' AND EXISTS ("
+                "SELECT 1 FROM pending_actions action "
+                "JOIN agent_runs run ON run.id = action.run_id "
+                "WHERE action.id = resolution.action_id "
+                "AND run.status IN ('completed', 'cancelled'))"
+            )
+            await connection.commit()
+            return cursor.rowcount
 
     async def prepare_delivery_retry(
         self, receipt_id: str
@@ -421,6 +445,26 @@ class PendingActionRepository:
         if identity != requested_identity or content_changed:
             raise ActionIdempotencyConflictError(
                 "action idempotency key was reused with different content"
+            )
+
+    @staticmethod
+    def _ensure_same_resolution_request(
+        existing: ResolutionReceipt,
+        *,
+        action: PendingActionRecord,
+        expected_version: int,
+        status: ResolvedActionStatus,
+        decision: dict[str, Any],
+        reason: str | None,
+    ) -> None:
+        if (
+            existing.status != status
+            or existing.decision != decision
+            or existing.reason != reason
+            or action.version != expected_version + 1
+        ):
+            raise ActionIdempotencyConflictError(
+                "resolution idempotency key was reused with different content"
             )
 
     @staticmethod

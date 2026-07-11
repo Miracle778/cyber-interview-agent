@@ -152,3 +152,32 @@ def test_version_and_second_decision_return_typed_conflicts(hitl_client) -> None
     assert approved.status_code == 200
     assert conflicting.status_code == 409
     assert conflicting.json()["code"] == "action_already_resolved"
+
+
+def test_reused_resolution_key_with_changed_content_is_typed_conflict(
+    hitl_client,
+) -> None:
+    client, _runtime = hitl_client
+    _session, _run, action = _create_pending(client)
+    endpoint = f"/api/agent/actions/{action['id']}/approve"
+
+    first = client.post(
+        endpoint,
+        json={
+            "version": action["version"],
+            "idempotencyKey": "approve-1",
+            "editedPayload": {"summary": "first"},
+        },
+    )
+    changed = client.post(
+        endpoint,
+        json={
+            "version": action["version"],
+            "idempotencyKey": "approve-1",
+            "editedPayload": {"summary": "second"},
+        },
+    )
+
+    assert first.status_code == 200
+    assert changed.status_code == 409
+    assert changed.json()["code"] == "action_idempotency_conflict"

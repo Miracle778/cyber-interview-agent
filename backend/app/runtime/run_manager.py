@@ -245,6 +245,7 @@ class RunManager:
                     audit_repository=self._audit_repository,
                     event_stream=self._event_stream,
                 )
+                requested_action_ids: set[str] = set()
 
                 async def request_action(
                     *,
@@ -254,7 +255,7 @@ class RunManager:
                     editable_fields: tuple[str, ...],
                     idempotency_key: str,
                 ) -> PendingActionRecord:
-                    return await self._request_action(
+                    action = await self._request_action(
                         CreatePendingAction(
                             workspace_id=session.workspace_id,
                             session_id=session.id,
@@ -266,6 +267,8 @@ class RunManager:
                             idempotency_key=f"{run.id}:{idempotency_key}",
                         )
                     )
+                    requested_action_ids.add(action.id)
+                    return action
 
                 async with self._checkpointer.open() as checkpointer:
                     graph = definition.factory(
@@ -290,6 +293,10 @@ class RunManager:
                     )
                     if not isinstance(action_id, str):
                         raise RuntimeError("HITL interrupt is missing actionId")
+                    if action_id not in requested_action_ids:
+                        raise RuntimeError(
+                            "HITL interrupt action was not created by this run"
+                        )
                     waiting = self._repository.transition_run(
                         run.id,
                         expected="running",

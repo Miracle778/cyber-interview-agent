@@ -23,6 +23,7 @@ from app.runtime.graph_registry import GraphVersionNotFoundError
 from app.hitl.handlers import ActionPayloadValidationError, UnknownActionTypeError
 from app.hitl.repository import (
     ActionAlreadyResolvedError,
+    ActionIdempotencyConflictError,
     ActionVersionConflictError,
     PendingActionNotFoundError,
 )
@@ -160,6 +161,13 @@ async def action_already_resolved(
     _request: Request, _error_value: ActionAlreadyResolvedError
 ) -> JSONResponse:
     return _error(409, "action_already_resolved", "待确认动作已经处理")
+
+
+@app.exception_handler(ActionIdempotencyConflictError)
+async def action_idempotency_conflict(
+    _request: Request, _error_value: ActionIdempotencyConflictError
+) -> JSONResponse:
+    return _error(409, "action_idempotency_conflict", "本次确认内容与重复请求不一致")
 
 
 @app.exception_handler(ActionPayloadValidationError)

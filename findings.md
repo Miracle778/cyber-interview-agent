@@ -411,3 +411,15 @@
 - Graph 不能从 state 接收 workspace/session/run 身份；这些字段由 Runtime 闭包绑定，只向 `GraphBuildContext` 注入窄化 `request_action` 接口。
 - resolution receipt 需要持久化 delivery 状态并在启动时 reconciliation，覆盖“action 已解决但恢复命令尚未投递”的崩溃窗口。
 - 旧计划只有 ActionCenter 列表，没有创建真实 action 的浏览器入口；R1.4 增加 `test.approval` 确定性 Graph，并接入设置页完成暂停、刷新、重启和恢复闭环。
+
+## 2026-07-12：R1.4 实施与验收发现
+
+- LangGraph 节点在 resume 时会重放到 `interrupt()` 之前；action 创建必须幂等，并允许终态 action 用不可变身份重放，不能拿已编辑 payload 与原始 payload 比较。
+- resolution 相同 key 的并发请求不能靠 asyncio lock；SQLite delivery claim 才能保证跨请求执行者只有一个。
+- receipt 标记 delivered 后进程仍可能在 Graph 真正推进前退出；启动 reconciliation 需要同时检查未 delivered receipt 和“run 已 interrupted”的 delivered receipt。
+- Runtime 必须验证 interrupt action ID 来自本次执行通过绑定 requester 创建的集合，不能只检查字符串格式，否则错误 Graph 会制造没有真实 action 的 waiting run。
+- ActionCenter 只读取 preview 和 editable fields；内部 payload、创建幂等 key、checkpoint 和异常详情不进入 API 或前端。
+- 工作区 pnpm 会尝试重装链接依赖；隔离验证使用主仓库既有 Vitest、TypeScript 和 Vite 二进制，未下载或修改依赖。
+- ActionCenter 启动诊断后不能以“Workspace 中出现任意 pending action”为成功条件；真实多 action 场景必须用 `runId` 关联刚创建的 run。
+- resolution 幂等不仅要比较 key，还要比较版本、终态、decision 和 reason；同 key 不同语义必须返回冲突，不能静默复用旧结果。
+- reconciliation 需要先识别 completed/cancelled run；其未投递 receipt 应直接标记收口，不能再次执行未来可能带副作用的 handler 或重复发布 resolved 事件。

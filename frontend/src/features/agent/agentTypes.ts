@@ -42,7 +42,13 @@ export interface AgentMessage {
 export interface AgentSessionDetail extends AgentSession {
   messages: AgentMessage[];
   latestRun: AgentRun | null;
-  pendingAction: null;
+  pendingAction: {
+    id: string;
+    actionType: string;
+    preview: Record<string, unknown>;
+    status: string;
+    version: number;
+  } | null;
 }
 
 interface EventEnvelope<TType extends string, TPayload> {
@@ -68,5 +74,7 @@ export type AgentEvent =
   | EventEnvelope<"message.delta", { text: string }>
   | EventEnvelope<"message.completed", { messageId: string; content: string }>
   | EventEnvelope<"tool.started" | "tool.completed" | "tool.failed", ToolEventPayload>
+  | EventEnvelope<"hitl.required", { actionId: string }>
+  | EventEnvelope<"hitl.resolved", { actionId: string; status: string; version: number }>
   | EventEnvelope<"run.failed", { code: string; message: string }>
   | EventEnvelope<string, Record<string, unknown>>;
