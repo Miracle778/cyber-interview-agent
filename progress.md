@@ -384,3 +384,5 @@
 - Task 5 验证：RunManager 5 passed；Runtime 累计 24 passed；`git diff --check` 通过。
 - R1.2 Task 6 完成：AgentRuntime 按 Workspace 隔离并缓存运行上下文，新增 session/run REST、可重放 SSE、结构化 404/409，以及应用启动恢复和关闭清理。
 - Task 6 验证：Agent 路由 3 passed；后端完整回归 105 passed，保留 1 个既有 Starlette deprecation warning。
+- R1.2 Task 7 完成：新增 typed Agent session/run client、SSE 事件联合类型和显式游标重连 Hook；支持命名 SSE 事件、event ID 去重和 run.failed 保留历史。
+- Task 7 验证：Agent 前端 3 passed；TypeScript `--noEmit` 通过。worktree 使用主仓库既有 `node_modules` 临时软链接，不修改依赖声明。

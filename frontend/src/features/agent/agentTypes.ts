@@ -1,0 +1,61 @@
+export type AgentRunStatus =
+  | "queued"
+  | "running"
+  | "waiting_for_approval"
+  | "interrupted"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface AgentSession {
+  id: string;
+  workspaceId: string;
+  graphId: string;
+  graphVersion: number;
+  title: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  lastRunId: string | null;
+}
+
+export interface AgentRun {
+  id: string;
+  sessionId: string;
+  status: AgentRunStatus;
+  resumeCount: number;
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+export interface AgentMessage {
+  id: string;
+  runId: string | null;
+  role: "user" | "assistant" | "system" | "tool";
+  content: string;
+  createdAt: string;
+}
+
+export interface AgentSessionDetail extends AgentSession {
+  messages: AgentMessage[];
+  latestRun: AgentRun | null;
+  pendingAction: null;
+}
+
+interface EventEnvelope<TType extends string, TPayload> {
+  id: number;
+  type: TType;
+  sessionId: string;
+  runId: string | null;
+  timestamp: string;
+  payload: TPayload;
+}
+
+export type AgentEvent =
+  | EventEnvelope<"message.delta", { text: string }>
+  | EventEnvelope<"message.completed", { messageId: string; content: string }>
+  | EventEnvelope<"run.failed", { code: string; message: string }>
+  | EventEnvelope<string, Record<string, unknown>>;
