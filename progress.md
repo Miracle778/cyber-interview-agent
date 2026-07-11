@@ -514,3 +514,12 @@
 - 用户已通过书面 spec。旧六任务计划重写为七任务，增加 Workspace artifacts 安全初始化、上传链路迁移、真实发布 Graph 和同页 ActionCenter。
 - 已创建本地增量 verification：`docs/verification/r1_5_knowledge_publication.md`，按 ignore 规则不提交。
 - 当前状态：实施计划就绪，下一步直接执行 Task 1 RED。
+
+### R1.5 Task 1：Migration 与 KnowledgeDraftService
+
+- RED 因 `app.knowledge` 和 004 migration 不存在而在测试收集阶段失败，符合预期。
+- 新增完整 `knowledge_drafts` 与 `publication_runs` schema；004 migration 后续任务不再回改。
+- 新增安全 artifacts layout，创建 `artifacts/review/sources` 与 `drafts`，遇到软链接或非目录立即拒绝。
+- `KnowledgeDraftService` 使用独立 aiosqlite 事务、同目录临时文件、fsync/replace、version 和 content hash 管理草稿。
+- 首次 GREEN 暴露异步连接 helper 不是 context manager，改为 `asynccontextmanager` 后专项 13 passed。
+- 后端完整回归 199 passed，保留 1 个既有 Starlette deprecation warning；下一步 Task 2 迁移上传链路与 Workspace ID。

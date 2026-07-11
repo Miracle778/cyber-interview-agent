@@ -432,3 +432,5 @@
 - 当前 rescan 把所有 Markdown 当作 reviewed source 写入 FTS，未解析 frontmatter，也未限制 active scope；R1.5 必须只索引 `ingested + confirmed_by_user` 文档。
 - 当前 manifest/FTS 是派生索引，publication journal 才是发布恢复的产品状态；Markdown 写入成功后不能因索引失败回滚或删除。
 - 用户要求简化开发流程：本阶段使用普通分支，由 Codex 直接实现，不创建 worktree、不委派；测试、审阅和文档门禁仍保留。
+- 草稿 metadata 与 Markdown 分属 SQLite 和文件系统，无法获得单一 ACID 事务；实现通过 `BEGIN IMMEDIATE`、写前后 hash 校验、同目录原子替换和创建失败清理缩小不一致窗口，后续 publication journal 负责更关键的发布恢复。
+- WorkspacePathPolicy 要求 scope 根目录已经存在；R1.5 增加受限 artifacts layout helper，逐级创建目录并拒绝任何已存在软链接或非目录节点，不能用普通递归 mkdir 绕过 R1.3 边界。

@@ -65,6 +65,7 @@
 - `backend/tests/test_knowledge_routes.py`
 - `backend/tests/test_runtime_database.py`
 - `backend/tests/test_tool_audit.py`
+- `backend/tests/test_hitl_repository.py`
 - `frontend/src/features/agent/ActionCenter.tsx`
 - `frontend/src/features/agent/ActionCenter.test.tsx`
 - `frontend/src/features/knowledge/KnowledgePage.tsx`
@@ -77,7 +78,7 @@
 
 **产出：** 完整 publication schema；异步 `create/get/list/update`；draft 正文只写 `artifacts/<domain>/drafts/`。
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 在 `backend/tests/test_knowledge_drafts.py` 覆盖：
 
@@ -103,7 +104,7 @@ async def test_update_rejects_stale_version(service, draft):
 
 更新 runtime migration 测试，断言版本为 `[1, 2, 3, 4]`，且 `knowledge_drafts`、`publication_runs` 和必要唯一索引存在。
 
-- [ ] **步骤 2：运行 RED**
+- [x] **步骤 2：运行 RED**
 
 ```bash
 cd backend
@@ -112,16 +113,16 @@ cd backend
 
 预期：因 migration 和 `app.knowledge.drafts` 不存在失败。
 
-- [ ] **步骤 3：实现最小功能**
+- [x] **步骤 3：实现最小功能**
 
 `004_publication.sql` 一次定义 draft 与 publication run 全部字段。`initialize_knowledge_artifacts` 逐级创建 artifacts/domain/sources/drafts，并拒绝任一已存在软链接或非目录。`KnowledgeDraftService` 使用独立 aiosqlite 事务保存 metadata，使用 `WorkspacePathPolicy` 和同目录临时文件保存 UTF-8 正文。更新在第二次 hash 检查后 `os.replace`，成功后 version `+1`。
 
-- [ ] **步骤 4：验证并提交**
+- [x] **步骤 4：验证并提交**
 
 ```bash
 cd backend
 .venv/bin/pytest tests/test_knowledge_drafts.py tests/test_runtime_database.py tests/test_tool_audit.py -v
-git add backend/app/db/migrations/runtime/004_publication.sql backend/app/knowledge/workspace_layout.py backend/app/knowledge/drafts.py backend/tests/test_knowledge_drafts.py backend/tests/test_runtime_database.py backend/tests/test_tool_audit.py
+git add backend/app/db/migrations/runtime/004_publication.sql backend/app/knowledge/workspace_layout.py backend/app/knowledge/drafts.py backend/tests/test_knowledge_drafts.py backend/tests/test_runtime_database.py backend/tests/test_tool_audit.py backend/tests/test_hitl_repository.py
 git commit -m "feat(knowledge): persist drafts outside vault"
 ```
 

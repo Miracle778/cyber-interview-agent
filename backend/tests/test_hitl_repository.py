@@ -60,7 +60,7 @@ def test_runtime_migration_creates_hitl_tables(tmp_path: Path) -> None:
     ).fetchall()
 
     assert {"pending_actions", "pending_action_resolutions"} <= tables
-    assert [row[0] for row in versions] == [1, 2, 3]
+    assert [row[0] for row in versions] == [1, 2, 3, 4]
     connection.close()
 
 
