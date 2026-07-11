@@ -137,6 +137,16 @@ docs/verification/<stage>.md
 - 生成的本地文件、数据库或目录；
 - 当前产品成熟度，以及明确属于后续阶段的边界。
 
+阶段结束时必须将增量证据整理为最终用户验证指南，固定使用 `docs/superpowers/templates/stage-verification-template.md` 的五个二级章节：
+
+1. 这次实现了什么；
+2. 代码地图；
+3. 自动验证；
+4. 人工验证；
+5. 当前边界。
+
+`progress.md` 是 Task 状态、测试数字、失败尝试和提交记录的开发流水账。最终 verification 不能以 `Task 进度` 或纯 Task 列表为主体，必须让用户能够从零启动、理解和验收完整切片。
+
 Verification 文档必须以最终代码和最新验证输出为准。过期测试数字、已失效路径、旧 UI 文案和不再成立的验证步骤必须在交付前修正。
 
 `docs/verification/` 始终由 Git 忽略，不得暂存或提交。产品分支或 worktree 合并后，负责产品交付的 Codex 会话必须：
@@ -165,6 +175,30 @@ docs/learning/<stage>/
 该目录默认由 `.gitignore` 忽略，只在用户本地保留。正式架构决定仍写入 `docs/superpowers/`。
 
 掌握包必须基于最终代码和真实开发记录，不使用与实现不符的通用教程填充。
+
+七件套的必需章节、内容职责和非阻塞练习规则由 `docs/superpowers/templates/stage-learning-pack-template.md` 定义。单个 `README.md` 不能代替七件套；`failure-journal.md` 只记录真实发生的故障，不能为了填充结构虚构问题。
+
+### 8.1 阶段文档质量门禁
+
+阶段关闭前必须运行：
+
+```bash
+python3 scripts/check_stage_docs.py \
+  --verification docs/verification/<stage>.md \
+  --learning docs/learning/<stage>/
+```
+
+脚本负责确认 verification 的最终结构、可执行命令和人工步骤，以及 learning 七件套的文件、专属章节和明显占位符。门禁失败时不能将阶段标记为“可人工验证”或“交付完成”。
+
+脚本通过后，负责交付的 Codex 还必须人工确认：
+
+- 对照上一阶段同类型文档，结构和内容深度没有明显退化；
+- 代码地图、测试数字和操作步骤来自最终代码与最新输出；
+- failure journal 只写真实故障；
+- learning 足以支持 Explain、Trace、Review、Debug 或实现练习；
+- 产品成熟度与用户掌握度仍分开陈述。
+
+机器门禁负责“不能缺”，人工门禁负责“不能空”。门禁结果必须写入 `progress.md` 和最终交付汇报。用户是否完成 learning 练习不属于门禁条件。
 
 ## 9. 用户所有权练习
 

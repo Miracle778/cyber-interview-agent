@@ -188,15 +188,15 @@ git commit -m "feat(docs): validate stage documentation packs"
 - 详细规则只在双轨工作流维护。
 - AGENTS/CLAUDE 提供相同命令入口和不可绕过的阶段关闭条件。
 
-- [ ] **步骤 1：编写 verification 模板**
+- [x] **步骤 1：编写 verification 模板**
 
 模板固定五个二级章节，并在“人工验证”中提供启动、准备数据、主流程、重复/刷新、持久化检查的编号结构。模板明确：开发中 Task 证据先写入 progress 或临时段，阶段结束必须整理，不能原样交付 Task 日志。
 
-- [ ] **步骤 2：编写 learning 模板**
+- [x] **步骤 2：编写 learning 模板**
 
 在一份正式模板中列出七个目标文件、每份必需章节、必须回答的问题和禁止使用的通用填充内容。明确 failure journal 只记录真实故障，exercises 必须有非阻塞降级形式。
 
-- [ ] **步骤 3：更新权威工作流和 Agent 入口**
+- [x] **步骤 3：更新权威工作流和 Agent 入口**
 
 双轨工作流补充“机器门禁负责不能缺，人工门禁负责不能空”。AGENTS 和 CLAUDE 加入：
 
@@ -208,7 +208,7 @@ python3 scripts/check_stage_docs.py \
 
 阶段关闭前必须对照上一阶段同类型文档，并在最终汇报记录门禁结果。
 
-- [ ] **步骤 4：验证规则一致性并提交**
+- [x] **步骤 4：验证规则一致性并提交**
 
 ```bash
 rg -n "check_stage_docs|最终用户验证指南|七件套" AGENTS.md CLAUDE.md docs/superpowers/specs/2026-07-11-dual-track-development-workflow-design.md docs/superpowers/templates

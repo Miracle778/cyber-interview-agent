@@ -27,6 +27,7 @@ Repository files and executable state are authoritative. Do not reconstruct proj
 - Never modify or commit `docs/my_idea.md`.
 - Only commit formal documents under `docs/superpowers/`; keep `docs/learning/` and `docs/verification/` local and sync them explicitly after branch merges.
 - Maintain one incremental `docs/verification/<stage>.md` per product slice. Update it after every task, refresh final evidence before completion, and verify it is explicitly synchronized into the main repository after merges; delivery is not closed until this check passes.
+- Before closing a stage, reshape verification as the final user guide, generate the seven-file learning pack from the formal templates, compare both with the previous stage, and run `python3 scripts/check_stage_docs.py --verification docs/verification/<stage>.md --learning docs/learning/<stage>/`. A failed gate blocks the “ready for manual verification” status; unfinished user exercises do not.
 
 ## Completion Reporting
 
