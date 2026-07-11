@@ -85,6 +85,14 @@ class RuntimeRepository:
     def get_session(self, session_id: str) -> SessionRecord:
         return self._require_session(session_id)
 
+    def list_sessions(self, workspace_id: str) -> tuple[SessionRecord, ...]:
+        rows = self._connection.execute(
+            "SELECT * FROM agent_sessions WHERE workspace_id = ? "
+            "ORDER BY updated_at DESC, id",
+            (workspace_id,),
+        ).fetchall()
+        return tuple(self._session_from_row(row) for row in rows)
+
     def create_run(
         self,
         session_id: str,
@@ -126,6 +134,14 @@ class RuntimeRepository:
 
     def get_run(self, run_id: str) -> RunRecord:
         return self._require_run(run_id)
+
+    def latest_run(self, session_id: str) -> RunRecord | None:
+        row = self._connection.execute(
+            "SELECT * FROM agent_runs WHERE session_id = ? "
+            "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        return None if row is None else self._run_from_row(row)
 
     def transition_run(
         self,

@@ -1,0 +1,195 @@
+import sqlite3
+from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from app.db.runtime_database import connect_runtime_database
+from app.runtime.checkpoints import RuntimeCheckpointer
+from app.runtime.event_stream import EventStream, encode_sse_event
+from app.runtime.graph_registry import GraphRegistry
+from app.runtime.models import RunRecord, SessionRecord
+from app.runtime.repository import RuntimeRecordNotFoundError, RuntimeRepository
+from app.runtime.run_manager import RunManager
+
+
+@dataclass(slots=True)
+class _WorkspaceRuntime:
+    connection: sqlite3.Connection
+    repository: RuntimeRepository
+    event_stream: EventStream
+    manager: RunManager
+
+
+class AgentRuntime:
+    def __init__(
+        self,
+        *,
+        graph_registry: GraphRegistry,
+        workspace_resolver: Callable[[str], Path],
+        model_binding_resolver: Callable[[str], dict[str, str]],
+        workspace_ids: Callable[[], tuple[str, ...]],
+    ) -> None:
+        self._graph_registry = graph_registry
+        self._workspace_resolver = workspace_resolver
+        self._model_binding_resolver = model_binding_resolver
+        self._workspace_ids = workspace_ids
+        self._workspaces: dict[str, _WorkspaceRuntime] = {}
+
+    async def create_session(
+        self,
+        *,
+        workspace_id: str,
+        graph_id: str,
+        graph_version: int,
+        title: str,
+    ) -> SessionRecord:
+        self._graph_registry.get(graph_id, graph_version)
+        context = self._context(workspace_id)
+        session = context.repository.create_session(
+            workspace_id=workspace_id,
+            graph_id=graph_id,
+            graph_version=graph_version,
+            title=title,
+        )
+        await context.event_stream.publish(
+            session.id, None, "session.created", {"title": title}
+        )
+        return session
+
+    def list_sessions(self, workspace_id: str) -> tuple[SessionRecord, ...]:
+        return self._context(workspace_id).repository.list_sessions(workspace_id)
+
+    def session_detail(self, session_id: str) -> dict[str, Any]:
+        context, session = self._locate_session(session_id)
+        return {
+            **self._session_resource(session),
+            "messages": [
+                {
+                    "id": item.id,
+                    "runId": item.run_id,
+                    "role": item.role,
+                    "content": item.content,
+                    "createdAt": item.created_at,
+                }
+                for item in context.repository.list_messages(session.id)
+            ],
+            "latestRun": self._run_resource(
+                context.repository.latest_run(session.id)
+            ),
+            "pendingAction": None,
+        }
+
+    async def start_run(
+        self, session_id: str, *, input: dict[str, Any]
+    ) -> RunRecord:
+        context, session = self._locate_session(session_id)
+        bindings = self._model_binding_resolver(session.workspace_id)
+        return await context.manager.start(
+            session.id, input=input, model_bindings=bindings
+        )
+
+    async def resume_run(self, run_id: str) -> RunRecord:
+        context = self._locate_run(run_id)
+        return await context.manager.resume(run_id)
+
+    async def cancel_run(self, run_id: str) -> RunRecord:
+        context = self._locate_run(run_id)
+        return await context.manager.cancel(run_id)
+
+    async def events(
+        self, session_id: str, *, after_id: int | None
+    ) -> AsyncIterator[str]:
+        context, _session = self._locate_session(session_id)
+        async for event in context.event_stream.subscribe(
+            session_id, after_id=after_id
+        ):
+            yield encode_sse_event(event)
+
+    async def recover_interrupted_runs(self) -> tuple[str, ...]:
+        recovered: list[str] = []
+        for workspace_id in self._workspace_ids():
+            recovered.extend(
+                await self._context(workspace_id).manager.recover_interrupted_runs()
+            )
+        return tuple(recovered)
+
+    async def close(self) -> None:
+        for context in self._workspaces.values():
+            await context.manager.shutdown()
+            context.connection.close()
+        self._workspaces.clear()
+
+    def _context(self, workspace_id: str) -> _WorkspaceRuntime:
+        context = self._workspaces.get(workspace_id)
+        if context is not None:
+            return context
+        root = self._workspace_resolver(workspace_id)
+        root.mkdir(parents=True, exist_ok=True)
+        connection = connect_runtime_database(root)
+        repository = RuntimeRepository(connection)
+        event_stream = EventStream(repository)
+        context = _WorkspaceRuntime(
+            connection=connection,
+            repository=repository,
+            event_stream=event_stream,
+            manager=RunManager(
+                repository=repository,
+                event_stream=event_stream,
+                graph_registry=self._graph_registry,
+                checkpointer=RuntimeCheckpointer(root),
+            ),
+        )
+        self._workspaces[workspace_id] = context
+        return context
+
+    def _locate_session(
+        self, session_id: str
+    ) -> tuple[_WorkspaceRuntime, SessionRecord]:
+        for workspace_id in self._workspace_ids():
+            context = self._context(workspace_id)
+            try:
+                return context, context.repository.get_session(session_id)
+            except RuntimeRecordNotFoundError:
+                continue
+        raise RuntimeRecordNotFoundError(f"session {session_id!r} not found")
+
+    def _locate_run(self, run_id: str) -> _WorkspaceRuntime:
+        for workspace_id in self._workspace_ids():
+            context = self._context(workspace_id)
+            try:
+                context.repository.get_run(run_id)
+                return context
+            except RuntimeRecordNotFoundError:
+                continue
+        raise RuntimeRecordNotFoundError(f"run {run_id!r} not found")
+
+    @staticmethod
+    def _session_resource(session: SessionRecord) -> dict[str, Any]:
+        return {
+            "id": session.id,
+            "workspaceId": session.workspace_id,
+            "graphId": session.graph_id,
+            "graphVersion": session.graph_version,
+            "title": session.title,
+            "status": session.status,
+            "createdAt": session.created_at,
+            "updatedAt": session.updated_at,
+            "lastRunId": session.last_run_id,
+        }
+
+    @staticmethod
+    def _run_resource(run: RunRecord | None) -> dict[str, Any] | None:
+        if run is None:
+            return None
+        return {
+            "id": run.id,
+            "sessionId": run.session_id,
+            "status": run.status,
+            "resumeCount": run.resume_count,
+            "errorCode": run.error_code,
+            "errorMessage": run.error_message,
+            "createdAt": run.created_at,
+            "startedAt": run.started_at,
+            "finishedAt": run.finished_at,
+        }

@@ -382,3 +382,5 @@
 - Task 5 依赖核对：主仓库虚拟环境缺少 `aiosqlite`/`langgraph-checkpoint-sqlite`，按计划更新依赖声明并在 worktree 创建隔离环境。
 - R1.2 Task 5 完成：新增 SQLite LangGraph checkpointer 和 RunManager，覆盖正常执行、单会话并发保护、幂等取消、启动恢复和同 run 续跑。
 - Task 5 验证：RunManager 5 passed；Runtime 累计 24 passed；`git diff --check` 通过。
+- R1.2 Task 6 完成：AgentRuntime 按 Workspace 隔离并缓存运行上下文，新增 session/run REST、可重放 SSE、结构化 404/409，以及应用启动恢复和关闭清理。
+- Task 6 验证：Agent 路由 3 passed；后端完整回归 105 passed，保留 1 个既有 Starlette deprecation warning。
