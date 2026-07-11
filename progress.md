@@ -337,3 +337,33 @@
 2. R1.2 只做 Runtime/session/run/event/checkpoint/SSE，不提前做 HITL、知识发布或完整复习业务迁移。
 3. 稍复杂的跨层任务由 Codex 实现；普通任务可委派 Claude Opus，Codex 审阅和验收。
 4. 每个任务结束都要补自动测试、必要的人工验证说明和本地 progress 记录。
+
+### 产品布局重构
+
+- 用户确认在 R1.2 前重构产品信息架构与应用骨架，并要求本次设计和开发全部由 Codex 完成。
+- 按要求在当前仓库创建普通分支 `codex/product-layout-redesign`，没有创建 worktree。
+- 设计规格提交：`4a884ea docs: design product application layout`。
+- 实施计划提交：`176bc2e docs: plan product layout redesign`。
+- 产品骨架实现提交：`c7cee95 feat(ui): add routed responsive product shell`。
+- 无障碍与 E2E 收尾提交：`1df1f4f test(ui): harden navigation accessibility and smoke coverage`。
+
+已实现：
+
+1. `/review`、`/knowledge`、`/settings` 独立路由，根路径和未知路径重定向到复习。
+2. 桌面分组侧栏、移动顶部栏和模态抽屉，共享单一导航定义。
+3. 页面级标题、描述、后端状态和 Workspace 状态。
+4. 复习主工作区与流程摘要双列布局；流程状态不再占据所有页面。
+5. 复习和知识库空状态提供跨页恢复动作。
+6. 中性、内容优先的设计 token 和响应式组件样式。
+7. Escape、遮罩关闭、焦点返回、滚动锁定、当前导航和“跳到主内容”等无障碍行为。
+
+验证结果：
+
+- 前端 Vitest：35 passed。
+- 前端 production build：passed。
+- Playwright 路由 smoke：1 passed。
+- 后端 pytest：78 passed，1 个既有 Starlette deprecation warning。
+- 浏览器 QA：1440x1000、1024x768、768x1024、375x812，无水平溢出、控件越界或控制台错误。
+- 本地人工验证指南：`docs/verification/2026-07-11-product-layout-redesign.md`。
+
+当前下一步保持不变：用户复核并合并布局分支后，执行 R1.2 Agent Runtime 与 SSE。
