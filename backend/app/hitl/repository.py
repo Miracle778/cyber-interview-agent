@@ -178,14 +178,31 @@ class PendingActionRepository:
                 raise
 
     async def mark_delivering(self, receipt_id: str) -> ResolutionReceipt:
-        return await self._update_delivery(
-            receipt_id,
-            "UPDATE pending_action_resolutions "
-            "SET delivery_status = 'delivering', "
-            "delivery_attempts = delivery_attempts + 1, "
-            "delivery_error_code = NULL "
-            "WHERE id = ? AND delivery_status != 'delivered'",
-        )
+        claimed = await self.claim_delivery(receipt_id)
+        if claimed is None:
+            raise PendingActionError("resolution delivery is already in progress")
+        return claimed
+
+    async def claim_delivery(
+        self, receipt_id: str
+    ) -> ResolutionReceipt | None:
+        async with self._connection() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = await connection.execute(
+                    "UPDATE pending_action_resolutions "
+                    "SET delivery_status = 'delivering', "
+                    "delivery_attempts = delivery_attempts + 1, "
+                    "delivery_error_code = NULL "
+                    "WHERE id = ? AND delivery_status IN ('pending', 'failed')",
+                    (receipt_id,),
+                )
+                receipt = await self._require_receipt(connection, receipt_id)
+                await connection.commit()
+                return receipt if cursor.rowcount == 1 else None
+            except Exception:
+                await connection.rollback()
+                raise
 
     async def mark_delivered(self, receipt_id: str) -> ResolutionReceipt:
         return await self._update_delivery(
@@ -213,6 +230,18 @@ class PendingActionRepository:
             cursor = await connection.execute(
                 "SELECT * FROM pending_action_resolutions "
                 "WHERE delivery_status != 'delivered' ORDER BY created_at, id"
+            )
+            rows = await cursor.fetchall()
+        return tuple(self._receipt_from_row(row) for row in rows)
+
+    async def list_resolutions(
+        self, action_id: str
+    ) -> tuple[ResolutionReceipt, ...]:
+        async with self._connection() as connection:
+            cursor = await connection.execute(
+                "SELECT * FROM pending_action_resolutions "
+                "WHERE action_id = ? ORDER BY created_at, id",
+                (action_id,),
             )
             rows = await cursor.fetchall()
         return tuple(self._receipt_from_row(row) for row in rows)

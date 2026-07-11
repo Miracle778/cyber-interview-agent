@@ -458,3 +458,11 @@
 - `PendingActionRepository` 使用独立 aiosqlite 连接和 `BEGIN IMMEDIATE`，避免 Graph/checkpointer 同库写阻塞 event loop。
 - action 创建幂等、version 冲突、相同决定重放、不同决定冲突、delivery 生命周期和 run 取消联动均有回归测试。
 - RED 因 `app.hitl` 不存在失败；GREEN 针对性验证 10 passed，后端完整回归 175 passed，保留 1 个既有 Starlette deprecation warning。
+
+### R1.4 Task 2：Handler 与 HitlService
+
+- ActionHandlerRegistry 默认拒绝未知类型；DefaultActionHandler 只合并 action 声明的 editable fields。
+- HitlService 在 action 原子解决后，用同一 receipt ID 执行 handler、发布 `hitl.resolved` 并调用 Runtime 恢复回调；失败只记录 `hitl_resume_failed`。
+- 相同幂等键且已 delivered 时直接返回原结果；失败 receipt 可重试并复用原 decision。
+- 新增并发 RED 证明两个相同请求会重复恢复；改为数据库 delivery claim 后，只有一个请求进入回调。
+- Repository/Service 联合验证 14 passed；后端完整回归 181 passed，保留 1 个既有 Starlette deprecation warning。

@@ -114,7 +114,7 @@ git commit -m "feat(hitl): persist approval actions"
 - 产出 `HitlService.create_action/approve/reject`.
 - Handler 在 Repository 状态转换后接收 resolved action，且必须幂等。
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 创建 `backend/tests/test_hitl_service.py`：
 
@@ -134,13 +134,13 @@ async def test_reject_resumes_with_reason(service, runtime, request):
     runtime.resume_run.assert_awaited_once_with(action.run_id, {"actionId": action.id, "decision": "rejected", "reason": "不发布"})
 ```
 
-- [ ] **步骤 2：运行测试确认失败**
+- [x] **步骤 2：运行测试确认失败**
 
 运行：`cd backend && UV_CACHE_DIR=.uv-cache/backend uv run pytest tests/test_hitl_service.py -v`
 
 预期：失败，因为 service/handler Registry 尚不存在。
 
-- [ ] **步骤 3：实现最小功能**
+- [x] **步骤 3：实现最小功能**
 
 使用以下命令模型：
 
@@ -164,7 +164,7 @@ class ResolveActionCommand(BaseModel):
 
 每个 Workspace Runtime 创建自己的 Repository 与 Service，Action API 通过 `AgentRuntime` 定位，不创建悬空的应用级全局 service。action 创建先持久化；`RunManager` 是 `hitl.required` 的唯一发布者，识别 interrupt 并进入 waiting 后才发送事件。终态转换后发送 `hitl.resolved`，resolution receipt 提交后才能恢复 run。相同幂等键在“已提交但尚未成功启动恢复”的情况下必须安全重试恢复；启动时 reconciliation 处理未 delivered receipt。
 
-- [ ] **步骤 4：运行测试确认通过并提交**
+- [x] **步骤 4：运行测试确认通过并提交**
 
 运行：`cd backend && UV_CACHE_DIR=.uv-cache/backend uv run pytest tests/test_hitl_service.py -v`
 

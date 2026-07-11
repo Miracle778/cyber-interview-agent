@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal, TypeAlias
 
+from pydantic import BaseModel, ConfigDict, Field
+
 
 PendingActionStatus: TypeAlias = Literal[
     "pending",
@@ -74,3 +76,12 @@ class ResolutionReceipt:
     delivery_error_code: str | None
     created_at: str
     delivered_at: str | None
+
+
+class ResolveActionCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=1)
+    edited_payload: dict[str, Any] | None = None
+    reason: str | None = None
