@@ -1,7 +1,16 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { WorkspaceConfig } from "./settingsApi";
 import { SettingsPage } from "./SettingsPage";
+
+function renderSettings(workspace: WorkspaceConfig | null, onWorkspaceReady = vi.fn()) {
+  return render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <SettingsPage workspace={workspace} onWorkspaceReady={onWorkspaceReady} />
+    </QueryClientProvider>,
+  );
+}
 
 const workspaceResource = {
   id: "w1",
@@ -28,6 +37,9 @@ function installSettingsFetch() {
     if (url.endsWith("/model-bindings")) {
       return Response.json({ workspaceId: "w1", bindings: {} });
     }
+    if (url === "/api/agent/sessions?workspaceId=w1") {
+      return Response.json([]);
+    }
     return Response.json({ code: "unexpected", message: url }, { status: 500 });
   });
 }
@@ -45,10 +57,11 @@ describe("SettingsPage", () => {
       vaultPath: workspaceResource.vaultPath,
     };
 
-    render(<SettingsPage workspace={workspace} onWorkspaceReady={vi.fn()} />);
+    renderSettings(workspace);
 
     expect(await screen.findByText("Provider 管理")).toBeInTheDocument();
     expect(screen.getByText("模型用途绑定")).toBeInTheDocument();
+    expect(screen.getByText("Agent Runtime")).toBeInTheDocument();
     expect(screen.getByText(workspace.workspacePath)).toBeInTheDocument();
   });
 
@@ -56,7 +69,7 @@ describe("SettingsPage", () => {
     installSettingsFetch();
     const onWorkspaceReady = vi.fn();
 
-    render(<SettingsPage workspace={null} onWorkspaceReady={onWorkspaceReady} />);
+    renderSettings(null, onWorkspaceReady);
 
     fireEvent.change(screen.getByLabelText("Workspace Path"), {
       target: { value: workspaceResource.rootPath },
@@ -71,14 +84,16 @@ describe("SettingsPage", () => {
     );
     expect(await screen.findByText(`Vault：${workspaceResource.vaultPath}`)).toBeInTheDocument();
     expect(screen.getByText("Provider 管理")).toBeInTheDocument();
+    expect(screen.getByText("Agent Runtime")).toBeInTheDocument();
   });
 
   it("shows actionable advice when workspace path is empty", () => {
-    render(<SettingsPage workspace={null} onWorkspaceReady={vi.fn()} />);
+    renderSettings(null);
 
     fireEvent.click(screen.getByRole("button", { name: "初始化工作区" }));
 
     expect(screen.getByText("错误：请输入 Workspace Path")).toBeInTheDocument();
     expect(screen.getByText("下一步：填写本地 workspace 路径")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "运行自检" })).not.toBeInTheDocument();
   });
 });

@@ -19,7 +19,7 @@
 | 阶段 | 名称 | 状态 | 成熟度说明 |
 |---|---|---|---|
 | R0 | 技术切片与质量基线 | 可人工验证 | 已能跑通单题单轮浏览器链路，不代表完整复习 Agent |
-| R1 | 共享 Agent 与知识库底座 | R1.1 与产品布局可人工验证，R1.2 设计复核完成待实现 | 真实 Provider 和可扩展前端骨架已落地；正在接 LangGraph Runtime、会话和 SSE |
+| R1 | 共享 Agent 与知识库底座 | R1.1、R1.2 与产品布局可人工验证 | Provider、LangGraph Runtime、持久化会话和 SSE 已落地；下一步是 R1.3 Workspace 工具安全 |
 | R2 | 完整复习 Agent | 待开始 | 多题轮次、模式、追问、派生、单轮与全局掌握度 |
 | R3 | 个人信息 Agent | 待开始 | 简历、个人画像、资料对话、审核推送 |
 | R4 | 岗位与 JD 追踪 | 待开始 | 岗位索引、匹配度、竞争力、差距和准备聚合 |
@@ -91,7 +91,7 @@
 
 #### B. LangGraph Runtime
 
-- 状态：R1.2 设计复核完成，进入实现。
+- 状态：R1.2 已实现并完成自动与浏览器验收，成熟度为“可人工验证”。
 - 定义共享 graph invocation 接口和每类 Agent 独立 state schema。
 - 使用 checkpoint 保存并恢复会话状态。
 - 会话创建、列表、标题、恢复和归档。
@@ -266,9 +266,9 @@
 
 ## 下一步
 
-从 R1.2“Agent Runtime 与 SSE”开始执行实施计划：
+从 R1.3“Workspace 工具安全”开始编写和执行实施计划：
 
-1. 先阅读 `docs/superpowers/plans/2026-07-10-r1-2-agent-runtime-sse.md`，按任务拆执行。
-2. R1.2 重点是 session/run/event/checkpoint、SSE 断线续传、Graph version 和运行状态恢复。
+1. 先复核 `docs/superpowers/plans/2026-07-10-r1-3-workspace-tool-security.md` 与 R1 总规格是否一致。
+2. R1.3 重点是 Execution Context、Tool Registry、相对路径校验、软链接越界防护和审计记录。
 3. 复杂或跨层任务由 Codex 直接实现；普通任务可委派给 Claude Opus，Codex 负责审阅、测试和验收。
-4. R1.2 完成后再进入 R1.3 Workspace 工具安全；不要提前混入 HITL、知识发布或复习业务迁移。
+4. 不提前混入 R1.4 HITL、R1.5 知识发布或 R1.6 复习业务迁移。

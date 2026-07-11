@@ -7,6 +7,7 @@ import { Card } from "../../shared/ui/Card";
 import { Field } from "../../shared/ui/Field";
 import { ModelBindings } from "./ModelBindings";
 import { ProviderManager } from "./ProviderManager";
+import { RuntimeDiagnostics } from "./RuntimeDiagnostics";
 import {
   listWorkspaces,
   registerWorkspace,
@@ -120,6 +121,7 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
             onProvidersChanged={() => setProviderRevision((revision) => revision + 1)}
           />
           <ModelBindings workspaceId={workspaceId} refreshKey={providerRevision} />
+          <RuntimeDiagnostics workspaceId={workspaceId} />
         </div>
       ) : workspace ? (
         <p className="status-note">正在恢复 Workspace 配置…</p>

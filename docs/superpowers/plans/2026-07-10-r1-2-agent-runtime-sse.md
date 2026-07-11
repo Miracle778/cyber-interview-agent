@@ -1,6 +1,6 @@
 # R1.2 Agent Runtime 与 SSE 实施计划
 
-> **面向执行 Agent：** 必须使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans，按任务逐项执行本计划。步骤使用复选框（`- [ ]`）跟踪。
+> **面向执行 Agent：** 必须使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans，按任务逐项执行本计划。步骤使用复选框（`- [x]`）跟踪。
 
 **目标：** 持久化 Agent session、run、message、checkpoint 和可重放事件，通过 REST 暴露异步命令，通过 SSE 暴露运行进度。
 
@@ -66,7 +66,7 @@
 - 产出 `connect_runtime_database(workspace_root: Path) -> sqlite3.Connection`.
 - 产出 `SessionRecord`, `RunRecord`, `MessageRecord`, and `EventRecord`.
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 创建 `backend/tests/test_runtime_database.py`：
 
@@ -87,19 +87,19 @@ def test_runtime_schema_contains_product_tables(tmp_path):
     assert {"agent_sessions", "agent_messages", "agent_runs", "agent_events"} <= tables
 ```
 
-- [ ] **步骤 2：运行测试确认失败**
+- [x] **步骤 2：运行测试确认失败**
 
 运行：`cd backend && UV_CACHE_DIR=.uv-cache/backend uv run pytest tests/test_runtime_database.py -v`
 
 预期：失败，因为模块尚不存在。
 
-- [ ] **步骤 3：实现最小功能**
+- [x] **步骤 3：实现最小功能**
 
 Schema 必须强制 session/run 外键、每个 session 唯一事件序列和状态 CHECK 约束。Run 表包含 `resume_count` 和 `last_resumed_at`；恢复动作沿用原 run ID。`connect_runtime_database` 创建 `.cyber-interview-agent`，启用外键、WAL 和 busy timeout，再按顺序应用 Runtime 迁移。
 
 严格使用 spec 中的状态。Session 状态不包含 `failed`；某次 run 失败后 session 回到 active。
 
-- [ ] **步骤 4：运行测试确认通过并提交**
+- [x] **步骤 4：运行测试确认通过并提交**
 
 运行：`cd backend && UV_CACHE_DIR=.uv-cache/backend uv run pytest tests/test_runtime_database.py -v`
 
@@ -114,7 +114,7 @@ git commit -m "feat(runtime): add workspace runtime database"
 - 产出 `GraphDefinition` and `GraphRegistry.register/get`.
 - definition 包含 `graph_id`、`graph_version`、factory、模型用途、工具和 scope。
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 创建 `backend/tests/test_graph_registry.py`：
 
@@ -133,17 +133,17 @@ def test_registry_does_not_fall_forward_to_new_version():
         registry.get("test.echo", 1)
 ```
 
-- [ ] **步骤 2：运行测试确认失败**
+- [x] **步骤 2：运行测试确认失败**
 
 运行：`cd backend && UV_CACHE_DIR=.uv-cache/backend uv run pytest tests/test_graph_registry.py -v`
 
 预期：失败，因为 GraphRegistry 尚不存在。
 
-- [ ] **步骤 3：实现最小功能**
+- [x] **步骤 3：实现最小功能**
 
 使用以 `(graph_id, graph_version)` 为 key 的字典。重复注册抛出 `DuplicateGraphDefinitionError`。Factory 接收 checkpointer 并返回已编译 Graph；Registry 不访问 Workspace 或 Provider service。
 
-- [ ] **步骤 4：运行测试确认通过并提交**
+- [x] **步骤 4：运行测试确认通过并提交**
 
 运行：`cd backend && UV_CACHE_DIR=.uv-cache/backend uv run pytest tests/test_graph_registry.py -v`
 
@@ -158,7 +158,7 @@ git commit -m "feat(runtime): register versioned agent graphs"
 - 产出 CRUD/state-transition methods used by AgentRuntime.
 - Repository methods use explicit expected states for transitions.
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 创建 `backend/tests/test_runtime_repository.py`，测试：
 
@@ -172,17 +172,17 @@ assert repository.get_session(session.id).status == "active"
 
 同时断言同一 session 的第二个 queued/running run 抛出 `SessionBusyError`，消息保持顺序，event ID 单调递增。
 
-- [ ] **步骤 2：运行测试确认失败**
+- [x] **步骤 2：运行测试确认失败**
 
 运行：`cd backend && UV_CACHE_DIR=.uv-cache/backend uv run pytest tests/test_runtime_repository.py -v`
 
 预期：失败，因为 RuntimeRepository 尚不存在。
 
-- [ ] **步骤 3：实现最小功能**
+- [x] **步骤 3：实现最小功能**
 
 Use `BEGIN IMMEDIATE` for run creation/transition. Store model binding snapshots as canonical JSON. Reject stale transitions with `InvalidRunTransitionError`; never overwrite a state without an expected source status.
 
-- [ ] **步骤 4：运行测试确认通过并提交**
+- [x] **步骤 4：运行测试确认通过并提交**
 
 运行：`cd backend && UV_CACHE_DIR=.uv-cache/backend uv run pytest tests/test_runtime_repository.py -v`
 
@@ -197,7 +197,7 @@ git commit -m "feat(runtime): persist sessions runs and events"
 - 产出 `EventStream.publish(session_id, run_id, type, payload)` and `subscribe(session_id, after_id)`.
 - Event payloads pass through a type registry and secret scrubber.
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 创建 `backend/tests/test_event_stream.py`：
 
@@ -221,13 +221,13 @@ async def test_subscribe_replays_after_event_id(runtime_repository):
     assert received.id == second.id
 ```
 
-- [ ] **步骤 2：运行测试确认失败**
+- [x] **步骤 2：运行测试确认失败**
 
 运行：`cd backend && UV_CACHE_DIR=.uv-cache/backend uv run pytest tests/test_event_stream.py -v`
 
 预期：失败，因为 EventStream 尚不存在。
 
-- [ ] **步骤 3：实现最小功能**
+- [x] **步骤 3：实现最小功能**
 
 先持久化并提交事件，再通知内存 subscriber。订阅时先重放数据库事件，再流式发送新事件。SSE 编码如下：
 
@@ -240,7 +240,7 @@ data: <camelCase JSON envelope>
 
 持久化前递归移除 key 为 `api_key`、`apiKey`、`authorization`、`secret`、`access_token`、`accessToken`、`refresh_token`、`refreshToken` 的字段。保留 `tokenUsage`、`inputTokens`、`outputTokens` 等非 secret 指标。
 
-- [ ] **步骤 4：运行测试确认通过并提交**
+- [x] **步骤 4：运行测试确认通过并提交**
 
 运行：`cd backend && UV_CACHE_DIR=.uv-cache/backend uv run pytest tests/test_event_stream.py -v`
 
@@ -255,23 +255,23 @@ git commit -m "feat(runtime): persist and replay agent events"
 - 产出 `RuntimeCheckpointer.open(workspace_root)`.
 - 产出 `RunManager.start`, `resume`, `cancel`, and `recover_interrupted_runs`.
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 创建 `backend/tests/test_run_manager.py`：一个确定性 StateGraph 写入消息，另一个 Graph 通过注入测试节点暂停。验证完成 run 持久化 checkpoint，重启恢复把 running 标记为 interrupted，waiting-for-approval 保持不变，恢复使用 config `{"configurable": {"thread_id": session_id}}`，并沿用原 run ID。
 
-- [ ] **步骤 2：运行测试确认失败**
+- [x] **步骤 2：运行测试确认失败**
 
 运行：`cd backend && UV_CACHE_DIR=.uv-cache/backend uv run pytest tests/test_run_manager.py -v`
 
 预期：失败，因为 checkpointer 和 RunManager 尚不存在。
 
-- [ ] **步骤 3：实现最小功能**
+- [x] **步骤 3：实现最小功能**
 
 先在 `backend/pyproject.toml` 添加 `aiosqlite` 和 `langgraph-checkpoint-sqlite`。用 `RuntimeCheckpointer` 封装 `AsyncSqliteSaver`，配置 WAL 并使用 Workspace Runtime 数据库路径。RunManager 为每个 session 持有 `asyncio.Lock`，并按 run 维护进程内 task map。它发送 start/completion/failure/interrupted 事件，并把最终 Agent 消息与 checkpoint 分开保存。
 
 进程启动时调用 `recover_interrupted_runs()`，只把 `running` 转换为 `interrupted`，不能自动恢复外部模型调用。
 
-- [ ] **步骤 4：运行测试确认通过并提交**
+- [x] **步骤 4：运行测试确认通过并提交**
 
 运行：`cd backend && UV_CACHE_DIR=.uv-cache/backend uv lock && UV_CACHE_DIR=.uv-cache/backend uv run pytest tests/test_run_manager.py -v`
 
@@ -286,7 +286,7 @@ git commit -m "feat(runtime): checkpoint and recover agent runs"
 - 产出 API resources from the R1 spec.
 - Start/resume endpoints return `202` with a Run resource.
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 创建 `backend/tests/test_agent_routes.py` 并覆盖 `get_agent_runtime`。断言 session 创建/列表/详情、启动返回 202、并发 run 返回 `409 session_busy`、取消幂等，以及 SSE 遵循 `Last-Event-ID`。
 
@@ -300,19 +300,19 @@ run = client.post(f"/api/agent/sessions/{session_id}/runs", json={"input": {"tex
 assert run.status_code == 202
 ```
 
-- [ ] **步骤 2：运行测试确认失败**
+- [x] **步骤 2：运行测试确认失败**
 
 运行：`cd backend && UV_CACHE_DIR=.uv-cache/backend uv run pytest tests/test_agent_routes.py -v`
 
 预期：失败，因为 schema/route 尚不存在。
 
-- [ ] **步骤 3：实现最小功能**
+- [x] **步骤 3：实现最小功能**
 
 AgentRuntime 通过 WorkspaceService 解析 Workspace，打开 Runtime Repository，校验精确 Graph 版本，保存模型绑定快照，再委派 RunManager。Session detail 返回消息、最近 run 和 pending action 摘要，但不返回 checkpoint blob。
 
 在 `main.py` 注册 `routes_agent` 和启动恢复逻辑。
 
-- [ ] **步骤 4：运行测试确认通过并提交**
+- [x] **步骤 4：运行测试确认通过并提交**
 
 运行：`cd backend && UV_CACHE_DIR=.uv-cache/backend uv run pytest tests/test_agent_routes.py tests/test_run_manager.py -v`
 
@@ -327,17 +327,17 @@ git commit -m "feat(runtime): expose persistent agent sessions and SSE"
 - 产出 typed session/run methods and `useAgentEvents(sessionId)`.
 - 不迁移复习业务 Graph；为设置页 Runtime 自检提供 typed client。
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 Create API tests for create/list/detail/start/resume/cancel. Create hook tests with a fake EventSource asserting reconnect uses the last event ID through the URL `?after=<id>`, duplicate event IDs are ignored, and `run.failed` updates connection state without losing prior messages.
 
-- [ ] **步骤 2：运行测试确认失败**
+- [x] **步骤 2：运行测试确认失败**
 
 运行：`pnpm --dir frontend test -- agentApi.test.ts useAgentEvents.test.tsx`
 
 预期：失败，因为 Agent 前端模块尚不存在。
 
-- [ ] **步骤 3：实现最小功能**
+- [x] **步骤 3：实现最小功能**
 
 使用可辨识联合类型：
 
@@ -351,7 +351,7 @@ export type AgentEvent =
 
 The hook owns connection/reconnect state only; final product messages come from session detail after reconnect.
 
-- [ ] **步骤 4：验证完整切片并提交**
+- [x] **步骤 4：验证完整切片并提交**
 
 运行：
 
@@ -376,25 +376,25 @@ git commit -m "feat(runtime): add browser agent session client"
 - 使用固定 `test.echo` version 1 创建/恢复“Agent Runtime 自检”session。
 - 展示最近 run、SSE 连接状态和经过整理的事件时间线。
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 创建 `RuntimeDiagnostics.test.tsx`，覆盖：首次加载恢复最近自检 session；没有 session 时显示可运行状态；点击“运行自检”后创建 session、启动 run；收到 `run.started`、`message.completed`、`run.completed` 后更新状态；`run.failed` 显示恢复建议；重复事件不重复渲染。
 
 更新 `SettingsPage.test.tsx`，断言 Workspace 注册恢复后组合 RuntimeDiagnostics；无 Workspace 时不渲染自检按钮。
 
-- [ ] **步骤 2：运行测试确认失败**
+- [x] **步骤 2：运行测试确认失败**
 
 运行：`pnpm --dir frontend test -- RuntimeDiagnostics.test.tsx SettingsPage.test.tsx`
 
 预期：失败，因为 RuntimeDiagnostics 尚不存在。
 
-- [ ] **步骤 3：实现最小功能**
+- [x] **步骤 3：实现最小功能**
 
 RuntimeDiagnostics 使用 React Query 加载 `listAgentSessions(workspaceId)` 和 session detail。运行自检时复用最近的 `test.echo` session，否则创建新 session，再用固定非敏感输入启动 run。`useAgentEvents` 只提供连接和增量事件；run 终态后重新获取 session detail。
 
 面板只显示产品状态和整理后的事件，不展示 checkpoint、原始 payload 或开发调试 JSON。使用 `aria-live="polite"` 告知连接和 run 变化；375px 下事件项和操作按钮换行。
 
-- [ ] **步骤 4：验证前端和浏览器闭环并提交**
+- [x] **步骤 4：验证前端和浏览器闭环并提交**
 
 运行：
 

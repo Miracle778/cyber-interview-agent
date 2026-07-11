@@ -386,3 +386,10 @@
 - Task 6 验证：Agent 路由 3 passed；后端完整回归 105 passed，保留 1 个既有 Starlette deprecation warning。
 - R1.2 Task 7 完成：新增 typed Agent session/run client、SSE 事件联合类型和显式游标重连 Hook；支持命名 SSE 事件、event ID 去重和 run.failed 保留历史。
 - Task 7 验证：Agent 前端 3 passed；TypeScript `--noEmit` 通过。worktree 使用主仓库既有 `node_modules` 临时软链接，不修改依赖声明。
+- R1.2 Task 8 完成：设置页新增 Runtime 自检，复用最近 `test.echo` session，展示 run/SSE 状态和去重后的产品事件时间线，终态后重新读取 session detail。
+- Task 8 浏览器验收发现并修正终态事件后按钮仍禁用的问题，新增完成后按钮可再次运行的回归断言。
+- Task 8 收尾自审修正历史终态覆盖新 run 的问题，状态派生限定为 latest run，并验证第二次启动后按钮重新锁定。
+- R1.2 最终自动验证：后端 105 passed；前端 40 passed；TypeScript 检查与 production build 通过。
+- R1.2 浏览器验证：真实自检完成；重启刷新恢复 session 和事件；1440x1000、1024x768、768x1024、375x812 均无横向溢出；控制台无 warning/error。
+- 本地人工验证指南：`docs/verification/r1_2_agent_runtime_sse.md`（按 ignore 规则不提交）。
+- 当前成熟度：R1.2“可人工验证”；下一步进入 R1.3 Workspace 工具安全，不提前实现 HITL、知识发布或复习业务迁移。

@@ -361,3 +361,15 @@
 - 不采用提前迁移复习页；完整复习 Graph 仍在 R1.6，避免绕过工具安全、HITL 和知识发布协议。
 - Repository、EventStream、RunManager 和 REST/SSE 共享状态契约且复杂度高；本切片全部由 Codex 实现，不委派 Claude。
 - worktree 复用主仓库依赖时，`pnpm` 会尝试重装链接的 `node_modules` 并访问 registry；基线和后续验证应直接调用主仓库已安装的 Vitest/tsc/Vite 二进制，或在获批网络下独立安装。
+
+## 2026-07-11：R1.2 实施与验收发现
+
+- Workspace Runtime 数据与 app config 数据必须分库：Provider/Workspace registry 留在应用级 `app.sqlite`，Agent session/checkpoint/event 跟随 Workspace 存在 `runtime.sqlite`。
+- SQLite 不能在显式索引中引用隐式 `rowid`；事件和消息排序使用显式时间与 ID，产品消息仍按插入顺序读取。
+- 单 Session 并发保护必须落在数据库唯一约束上，进程内 lock 只负责执行串行化，不能作为状态真相源。
+- LangGraph checkpoint 不能替代产品消息和 run 状态；前端刷新从 session detail 恢复最终状态，SSE 只负责增量事件和断线补发。
+- SSE 使用命名事件时，浏览器不能只监听 `onmessage`；前端必须对已注册事件类型使用 `addEventListener`。
+- 自动重连显式携带最后 event ID，重复 ID 在 Hook 内去重；`run.failed` 不清空先前消息和时间线。
+- 浏览器验收发现 optimistic `running` 会在终态事件后继续禁用按钮；终态事件必须优先于旧的本地 run 快照。
+- SSE 重放包含同一 session 的历史 run；运行状态只能使用 latest run 对应的事件派生，否则旧终态会错误覆盖新 run 的 queued/running 状态。
+- 设置页确定性自检证明了 session、run、checkpoint、SSE 和刷新恢复的真实闭环，同时保持 R1.6 复习业务迁移边界。
