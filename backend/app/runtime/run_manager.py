@@ -3,6 +3,7 @@ from typing import Any
 
 from app.runtime.checkpoints import RuntimeCheckpointer
 from app.runtime.event_stream import EventStream
+from app.runtime.graph_build_context import GraphBuildContext, unavailable_tool_invoker
 from app.runtime.graph_registry import GraphRegistry
 from app.runtime.models import RunRecord
 from app.runtime.repository import InvalidRunTransitionError, RuntimeRepository
@@ -154,7 +155,12 @@ class RunManager:
                     session.graph_id, session.graph_version
                 )
                 async with self._checkpointer.open() as checkpointer:
-                    graph = definition.factory(checkpointer)
+                    graph = definition.factory(
+                        GraphBuildContext(
+                            checkpointer=checkpointer,
+                            invoke_tool=unavailable_tool_invoker,
+                        )
+                    )
                     result = await graph.ainvoke(
                         graph_input,
                         {"configurable": {"thread_id": run.session_id}},

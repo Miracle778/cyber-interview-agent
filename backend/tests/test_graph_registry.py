@@ -6,13 +6,18 @@ from app.runtime.graph_registry import (
     GraphRegistry,
     GraphVersionNotFoundError,
 )
+from app.runtime.graph_build_context import GraphBuildContext
+
+
+async def invoke_tool(_name: str, _raw_input: dict[str, object]) -> dict[str, object]:
+    raise AssertionError("tool invocation is not expected")
 
 
 def definition(version: int) -> GraphDefinition:
     return GraphDefinition(
         graph_id="test.echo",
         graph_version=version,
-        factory=lambda checkpointer: ("compiled", checkpointer),
+        factory=lambda context: ("compiled", context.checkpointer),
         required_model_roles=frozenset(),
         allowed_tools=frozenset(),
         allowed_scopes=frozenset(),
@@ -26,7 +31,10 @@ def test_registry_resolves_exact_graph_version():
     registry.register(registered)
 
     assert registry.get("test.echo", 1) is registered
-    assert registry.get("test.echo", 1).factory("checkpoint") == (
+    build_context = GraphBuildContext(
+        checkpointer="checkpoint", invoke_tool=invoke_tool
+    )
+    assert registry.get("test.echo", 1).factory(build_context) == (
         "compiled",
         "checkpoint",
     )

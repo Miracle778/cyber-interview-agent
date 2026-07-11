@@ -18,14 +18,14 @@ class EchoState(TypedDict, total=False):
 
 
 def echo_definition() -> GraphDefinition:
-    def factory(checkpointer):
+    def factory(context):
         graph = StateGraph(EchoState)
         graph.add_node(
             "echo", lambda state: {"response": f"Echo: {state['text']}"}
         )
         graph.add_edge(START, "echo")
         graph.add_edge("echo", END)
-        return graph.compile(checkpointer=checkpointer)
+        return graph.compile(checkpointer=context.checkpointer)
 
     return GraphDefinition(
         graph_id="test.echo",
@@ -98,7 +98,7 @@ async def test_start_rejects_second_active_run(tmp_path):
     registry = GraphRegistry()
     gate = asyncio.Event()
 
-    def factory(checkpointer):
+    def factory(context):
         async def wait_node(state):
             await gate.wait()
             return {"response": "done"}
@@ -107,7 +107,7 @@ async def test_start_rejects_second_active_run(tmp_path):
         graph.add_node("wait", wait_node)
         graph.add_edge(START, "wait")
         graph.add_edge("wait", END)
-        return graph.compile(checkpointer=checkpointer)
+        return graph.compile(checkpointer=context.checkpointer)
 
     registry.register(
         GraphDefinition(
@@ -207,7 +207,7 @@ async def test_failure_exposes_safe_message_without_exception_details(tmp_path):
     repository = RuntimeRepository(connection)
     registry = GraphRegistry()
 
-    def factory(checkpointer):
+    def factory(context):
         def fail(_state):
             raise RuntimeError("authorization=Bearer sk-secret")
 
@@ -215,7 +215,7 @@ async def test_failure_exposes_safe_message_without_exception_details(tmp_path):
         graph.add_node("fail", fail)
         graph.add_edge(START, "fail")
         graph.add_edge("fail", END)
-        return graph.compile(checkpointer=checkpointer)
+        return graph.compile(checkpointer=context.checkpointer)
 
     registry.register(
         GraphDefinition(
@@ -254,7 +254,7 @@ async def test_shutdown_interrupts_active_run_instead_of_cancelling(tmp_path):
     registry = GraphRegistry()
     gate = asyncio.Event()
 
-    def factory(checkpointer):
+    def factory(context):
         async def wait_node(_state):
             await gate.wait()
             return {"response": "done"}
@@ -263,7 +263,7 @@ async def test_shutdown_interrupts_active_run_instead_of_cancelling(tmp_path):
         graph.add_node("wait", wait_node)
         graph.add_edge(START, "wait")
         graph.add_edge("wait", END)
-        return graph.compile(checkpointer=checkpointer)
+        return graph.compile(checkpointer=context.checkpointer)
 
     registry.register(
         GraphDefinition(

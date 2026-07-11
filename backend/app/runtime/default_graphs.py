@@ -2,6 +2,7 @@ from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from app.runtime.graph_build_context import GraphBuildContext
 from app.runtime.graph_registry import GraphDefinition, GraphRegistry
 
 
@@ -11,14 +12,14 @@ class _EchoState(TypedDict, total=False):
 
 
 def create_default_graph_registry() -> GraphRegistry:
-    def echo_factory(checkpointer):
+    def echo_factory(context: GraphBuildContext):
         graph = StateGraph(_EchoState)
         graph.add_node(
             "echo", lambda state: {"response": f"Echo: {state['text']}"}
         )
         graph.add_edge(START, "echo")
         graph.add_edge("echo", END)
-        return graph.compile(checkpointer=checkpointer)
+        return graph.compile(checkpointer=context.checkpointer)
 
     registry = GraphRegistry()
     registry.register(

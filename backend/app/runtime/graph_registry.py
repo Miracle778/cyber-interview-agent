@@ -2,6 +2,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from app.runtime.graph_build_context import GraphBuildContext
+
 
 class GraphRegistryError(RuntimeError):
     pass
@@ -19,7 +21,7 @@ class GraphVersionNotFoundError(GraphRegistryError):
 class GraphDefinition:
     graph_id: str
     graph_version: int
-    factory: Callable[[Any], Any]
+    factory: Callable[[GraphBuildContext], Any]
     required_model_roles: frozenset[str]
     allowed_tools: frozenset[str]
     allowed_scopes: frozenset[str]

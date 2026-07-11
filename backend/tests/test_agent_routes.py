@@ -20,7 +20,7 @@ class EchoState(TypedDict, total=False):
 
 
 def echo_registry(*, gate: asyncio.Event | None = None) -> GraphRegistry:
-    def factory(checkpointer):
+    def factory(context):
         async def echo(state):
             if gate is not None:
                 await gate.wait()
@@ -30,7 +30,7 @@ def echo_registry(*, gate: asyncio.Event | None = None) -> GraphRegistry:
         graph.add_node("echo", echo)
         graph.add_edge(START, "echo")
         graph.add_edge("echo", END)
-        return graph.compile(checkpointer=checkpointer)
+        return graph.compile(checkpointer=context.checkpointer)
 
     registry = GraphRegistry()
     registry.register(
