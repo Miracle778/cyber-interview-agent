@@ -236,11 +236,11 @@ git commit -m "docs: require stage documentation quality gate"
 - R1.4 最终 Task 在产品测试与浏览器验收后运行文档门禁。
 - 门禁通过不代表用户已完成 learning 练习。
 
-- [ ] **步骤 1：更新 R1.4 最终关闭步骤**
+- [x] **步骤 1：更新 R1.4 最终关闭步骤**
 
 在 Task 5 增加：使用正式模板整理 verification、生成七件套、对照 R1.3 文档、运行检查器、记录结果。门禁失败时不能将 R1.4 标为“可人工验证”。
 
-- [ ] **步骤 2：运行真实 R1.3 门禁**
+- [x] **步骤 2：运行真实 R1.3 门禁**
 
 ```bash
 python3 scripts/check_stage_docs.py \
@@ -250,11 +250,11 @@ python3 scripts/check_stage_docs.py \
 
 预期：通过并报告 7 个 learning 文件。
 
-- [ ] **步骤 3：更新项目记录**
+- [x] **步骤 3：更新项目记录**
 
 记录本次根因：存在性检查不能替代文档类型和结构检查；后续阶段以模板、脚本和人工对照三重门禁关闭。保持 R1.4 为下一产品任务。
 
-- [ ] **步骤 4：最终验证并提交**
+- [x] **步骤 4：最终验证并提交**
 
 ```bash
 python3 scripts/test_check_stage_docs.py

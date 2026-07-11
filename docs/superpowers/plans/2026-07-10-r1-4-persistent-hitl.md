@@ -297,4 +297,16 @@ git add frontend/src/features/agent/hitlTypes.ts frontend/src/features/agent/hit
 git commit -m "feat(hitl): review and resolve pending actions"
 ```
 
+- [ ] **步骤 5：整理阶段文档并运行质量门禁**
+
+按照正式模板把增量 verification 整理为最终用户验证指南，并生成 `docs/learning/r1-4-hitl/` 七件套。对照 R1.3 同类型文档检查内容深度，然后运行：
+
+```bash
+python3 scripts/check_stage_docs.py \
+  --verification docs/verification/r1_4_persistent_hitl.md \
+  --learning docs/learning/r1-4-hitl/
+```
+
+将门禁结果写入 `progress.md` 和最终交付汇报。门禁失败时不得把 R1.4 标记为“可人工验证”；用户尚未完成 learning 练习不阻塞阶段关闭或后续产品开发。
+
 R1.4 验收：Graph 停在一个持久化 action；重启后仍存在；支持编辑后批准或拒绝；只恢复一次；重复或浏览器并发决定不会执行两次。

@@ -287,6 +287,6 @@
 
 1. 复核 `docs/superpowers/plans/2026-07-10-r1-4-persistent-hitl.md` 与 R1 总规格及 R1.3 已落地 Tool Registry 的接口。
 2. 建立 pending action、interrupt/resume、批准/拒绝/编辑和重启恢复闭环。
-3. 继续按 Task 增量更新 verification，并在阶段结束生成 ownership 掌握包。
+3. 继续按 Task 增量更新 verification；阶段结束时按正式模板整理用户指南、生成 ownership 七件套，并运行 `scripts/check_stage_docs.py`。
 4. R1.3 的非阻塞所有权练习不阻塞 R1.4 产品开发。
 5. 不提前混入 R1.5 知识发布或 R1.6 真实复习业务迁移。

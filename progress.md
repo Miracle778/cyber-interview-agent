@@ -434,3 +434,12 @@
 - 本地 verification：`docs/verification/r1_3_workspace_tool_security.md`。
 - 本地 ownership 掌握包：`docs/learning/r1-3-tool-security/`。
 - 当前成熟度：R1.3“可人工验证”；下一产品任务为 R1.4 持久化 HITL。
+
+### 阶段文档质量门禁
+
+- 复盘 R1.3 文档退化根因：既有规则约束了路径和更新时机，但没有区分开发流水账与最终用户指南，也没有检查 learning 七件套结构。
+- 新增正式设计与实施计划、verification 模板、learning 七件套模板，以及标准库只读检查器 `scripts/check_stage_docs.py`。
+- 检查器回归覆盖完整文档、缺 verification 章节、Task 流水账、缺 learning 文件、README-only 和占位符，共 6 个测试。
+- 真实运行 R1.3 文档门禁通过：`r1_3_workspace_tool_security.md` 与 `r1-3-tool-security/` 七份文件均合格。
+- `AGENTS.md`、`CLAUDE.md` 和双轨工作流已统一阶段关闭规则；R1.4 最终任务已接入同一门禁。
+- 产品下一任务保持 R1.4 持久化 HITL；本次只加固协作与文档质量机制，不改变产品成熟度。
