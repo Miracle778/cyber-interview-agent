@@ -436,3 +436,5 @@
 - WorkspacePathPolicy 要求 scope 根目录已经存在；R1.5 增加受限 artifacts layout helper，逐级创建目录并拒绝任何已存在软链接或非目录节点，不能用普通递归 mkdir 绕过 R1.3 边界。
 - 上传响应暂时同时返回持久化 draft 和 legacy `ReviewQuestion`：知识发布只依赖 draft，而当前单题复习页继续消费 question；该兼容桥将在 R1.6 Runtime 迁移时移除。
 - Multipart 客户端可能在应用收到请求前规范化 Windows 路径形文件名；路由覆盖 POSIX/nested 输入，底层 source service 单测直接覆盖 Windows 路径，避免把框架预处理误认为策略验证。
+- canonical frontmatter 由严格 Pydantic model 生成，不接受任意 metadata 合并；这比渲染后再递归删除 secret 更容易证明禁止字段不会进入 Vault。
+- 通用 atomic writer 只负责单文件 compare-and-swap；Workspace scope 与父目录链安全仍由 PublicationService 在调用前通过 R1.3 PathPolicy 保证，两个边界不能互相替代。

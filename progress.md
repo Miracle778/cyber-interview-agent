@@ -533,3 +533,12 @@
 - 为保持 R1.6 前现有单题入口可用，上传响应同时返回持久化 draft 和过渡 `ReviewQuestion`；发布链路只使用 draft。
 - 完整验证：后端 204 passed；前端 47 passed；TypeScript 与 production build 通过，保留 1 个既有 Starlette warning。
 - 下一步 Task 3：Document Registry、严格 frontmatter 与通用原子 writer。
+
+### R1.5 Task 3：Document Registry、Frontmatter 与原子 Writer
+
+- RED 因 document registry 和 atomic writer 模块不存在而在测试收集阶段失败。
+- 五种 R1 document type 映射到现有 Vault canonical 目录，目标路径固定为 `<directory>/<document-id>.md`。
+- PublishedDocument/Provenance 使用 `extra=forbid`，frontmatter 固定 ingested、confirmed、来源关系和可追溯 provenance。
+- atomic writer 覆盖新建、expected hash 覆盖、外部冲突、replace 失败清理和 symlink target 拒绝。
+- 专项 17 passed；后端完整回归 220 passed，保留 1 个既有 Starlette warning。
+- 下一步 Task 4：publication journal、Service 与 active index/rescan。

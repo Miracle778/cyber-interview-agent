@@ -1,6 +1,14 @@
 import frontmatter
 
+from app.knowledge.frontmatter import PublishedDocument, render_published_document
 from app.schemas.review import ReviewQuestion
+
+
+__all__ = [
+    "PublishedDocument",
+    "render_published_document",
+    "render_question_markdown",
+]
 
 def render_question_markdown(question: ReviewQuestion, status: str = "review_pending") -> str:
     post = frontmatter.Post(

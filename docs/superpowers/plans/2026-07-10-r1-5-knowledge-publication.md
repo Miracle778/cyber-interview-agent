@@ -177,7 +177,7 @@ git commit -m "refactor(knowledge): keep uploads outside vault"
 
 **产出：** 五种 canonical directory、严格 frontmatter、确定性路径和外部修改保护。
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 `backend/tests/test_frontmatter.py`：
 
@@ -197,18 +197,18 @@ def test_forbidden_metadata_is_rejected(key, document):
 
 `backend/tests/test_atomic_writer.py` 覆盖 fsync、replace、expected hash 冲突、临时文件清理和文件内容保持。
 
-- [ ] **步骤 2：运行 RED**
+- [x] **步骤 2：运行 RED**
 
 ```bash
 cd backend
 .venv/bin/pytest tests/test_frontmatter.py tests/test_atomic_writer.py -v
 ```
 
-- [ ] **步骤 3：实现最小功能**
+- [x] **步骤 3：实现最小功能**
 
 Registry 映射 `source/question/session_report/mastery_report/concept` 到现有 Vault 目录。Pydantic frontmatter models `extra="forbid"`。`atomic_write_text` 在同目录创建 temp、flush/fsync、重验 existing hash 后 replace，并在 finally 清理 temp。
 
-- [ ] **步骤 4：验证并提交**
+- [x] **步骤 4：验证并提交**
 
 ```bash
 cd backend
