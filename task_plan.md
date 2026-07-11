@@ -35,7 +35,7 @@
 | 阶段 | 产品状态 | 已掌握 | 待掌握 | 待实践 | 非阻塞练习 |
 |---|---|---|---|---|---|
 | R1.1 | 可人工验证 | 尚未验收 | Provider adapter、模型绑定与 secret 边界 | Provider 请求链路追踪 | 解释一次模型测试请求 |
-| R1.2 | 可人工验证 | 尚未验收 | Runtime 分层、RunManager、恢复语义与 SSE 重放 | 增加一个 Runtime 查询能力 | 增加 Run 详情查询接口 |
+| R1.2 | 可人工验证 | 尚未验收 | Runtime 分层、RunManager、恢复语义与 SSE 重放（掌握包已生成） | 增加一个 Runtime 查询能力 | 增加 Run 详情查询接口 |
 | R1.3 | 待开始 | - | Workspace scope、路径与软链接安全 | SafePathResolver | 实现或审阅一个路径校验用例 |
 
 状态定义：

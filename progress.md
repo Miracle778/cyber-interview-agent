@@ -404,3 +404,5 @@
 - 用户所有权练习为非阻塞任务，未完成项进入理解债务。
 - Codex 与 Claude 使用仓库级入口恢复同一规则。
 - 本地掌握包写入 `docs/learning/<stage>/`，正式规格继续写入 `docs/superpowers/`。
+- 已生成本地 R1.2 Runtime 掌握包：`docs/learning/r1-2-runtime/`。
+- R1.2 非阻塞练习：增加 Run 详情查询接口；未完成不阻塞 R1.3。

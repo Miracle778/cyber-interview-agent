@@ -1,6 +1,6 @@
 # 双轨开发与项目所有权工作流实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 建立 Codex、Claude、新会话和上下文压缩后都能恢复的双轨规则，并生成首份 R1.2 掌握包。
 
@@ -29,13 +29,13 @@
 - Consumes: `docs/superpowers/specs/2026-07-11-dual-track-development-workflow-design.md`
 - Produces: Codex 与 Claude Code 的强制会话恢复入口。
 
-- [ ] **Step 1: 验证入口当前不存在**
+- [x] **Step 1: 验证入口当前不存在**
 
 Run: `test ! -e AGENTS.md && test ! -e CLAUDE.md`
 
 Expected: exit 0。
 
-- [ ] **Step 2: 创建 `AGENTS.md`**
+- [x] **Step 2: 创建 `AGENTS.md`**
 
 写入以下完整规则：
 
@@ -69,7 +69,7 @@ Repository files and executable state are authoritative; do not rely on chat mem
 Report product status, maturity boundary, ownership status, next product task, and the non-blocking user exercise separately.
 ```
 
-- [ ] **Step 3: 创建 `CLAUDE.md`**
+- [x] **Step 3: 创建 `CLAUDE.md`**
 
 写入以下完整规则：
 
@@ -81,7 +81,7 @@ Before project work, read `AGENTS.md`, `docs/superpowers/specs/2026-07-11-dual-t
 `AGENTS.md` is the concise cross-agent entry. The workflow design spec is the detailed source of truth. Do not let user learning exercises block product development. Use only the minimal repository context required by the assigned task. Codex owns review and final acceptance.
 ```
 
-- [ ] **Step 4: 验证入口**
+- [x] **Step 4: 验证入口**
 
 Run:
 
@@ -96,7 +96,7 @@ git diff --check
 
 Expected: 两个入口存在，均包含双轨与非阻塞规则，diff 检查通过。
 
-- [ ] **Step 5: 提交入口**
+- [x] **Step 5: 提交入口**
 
 ```bash
 git add AGENTS.md CLAUDE.md
@@ -114,7 +114,7 @@ git commit -m "docs: add cross-agent project instructions"
 - Consumes: Task 1 的入口。
 - Produces: 可跨会话读取的掌握状态和本地学习目录规则。
 
-- [ ] **Step 1: 验证状态区不存在**
+- [x] **Step 1: 验证状态区不存在**
 
 Run:
 
@@ -125,7 +125,7 @@ Run:
 
 Expected: exit 0。
 
-- [ ] **Step 2: 显式忽略 `docs/learning/`**
+- [x] **Step 2: 显式忽略 `docs/learning/`**
 
 在 `.gitignore` 本地文档规则加入：
 
@@ -133,7 +133,7 @@ Expected: exit 0。
 docs/learning/
 ```
 
-- [ ] **Step 3: 增加掌握状态表**
+- [x] **Step 3: 增加掌握状态表**
 
 在 `task_plan.md` 当前状态后增加：
 
@@ -153,7 +153,7 @@ docs/learning/
 - 待实践：需要通过修改、调试或审阅证明。
 ```
 
-- [ ] **Step 4: 更新 `progress.md`**
+- [x] **Step 4: 更新 `progress.md`**
 
 追加：
 
@@ -166,7 +166,7 @@ docs/learning/
 - 本地掌握包写入 `docs/learning/<stage>/`，正式规格继续写入 `docs/superpowers/`。
 ```
 
-- [ ] **Step 5: 验证 ignore 与状态**
+- [x] **Step 5: 验证 ignore 与状态**
 
 Run:
 
@@ -181,7 +181,7 @@ git diff --check
 
 Expected: probe 被忽略，状态区可检索，diff 检查通过。
 
-- [ ] **Step 6: 提交状态规则**
+- [x] **Step 6: 提交状态规则**
 
 ```bash
 git add .gitignore task_plan.md progress.md
@@ -204,13 +204,13 @@ git commit -m "docs: track product ownership debt"
 - Consumes: R1.2 最终代码、设计、计划、验证指南和审阅记录。
 - Produces: 第一份可延后学习的 Agent Harness 掌握包。
 
-- [ ] **Step 1: 验证目录不存在**
+- [x] **Step 1: 验证目录不存在**
 
 Run: `test ! -d docs/learning/r1-2-runtime`
 
 Expected: exit 0。
 
-- [ ] **Step 2: 生成七份真实材料**
+- [x] **Step 2: 生成七份真实材料**
 
 使用以下固定结构：
 
@@ -258,7 +258,7 @@ presentation-script.md
 
 每份材料引用当前真实代码路径，不得声称 R1.3-R1.6 已完成。
 
-- [ ] **Step 3: 验证完整性与 ignore**
+- [x] **Step 3: 验证完整性与 ignore**
 
 Run:
 
@@ -272,7 +272,7 @@ git diff --check
 
 Expected: 七份材料存在、边界明确、文件被 Git 忽略。
 
-- [ ] **Step 4: 更新并提交索引状态**
+- [x] **Step 4: 更新并提交索引状态**
 
 在 `progress.md` 记录掌握包路径和非阻塞练习，然后提交：
 
