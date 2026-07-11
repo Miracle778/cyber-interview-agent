@@ -385,3 +385,14 @@
 - 工具审计和 SSE 事件只保存逻辑 scope、相对资源、状态、耗时、byte count 和 hash；正文、secret、请求头、绝对路径和异常堆栈不得进入持久化或前端。
 - R1.3 采用七任务纵向计划；设置页复用现有 session/run/SSE 协议运行确定性安全 Graph，不增加第二套诊断 API。
 - 本地 `docs/verification/r1_3_workspace_tool_security.md` 已建立骨架，后续必须在每个 Task 后增量更新，而不是阶段结束时一次性补写。
+
+## 2026-07-11：R1.3 实施与验收发现
+
+- `WorkspacePathPolicy` 必须先做词法校验，再逐组件 `lstat`，最后验证真实路径包含关系；只用 `resolve()` 无法表达“路径链中出现软链接就拒绝”的产品规则。
+- Graph factory 迁移为 `GraphBuildContext` 后，所有测试 Graph 也必须同步契约；完整回归曾发现一个局部 Echo factory 仍把上下文误当 checkpointer。
+- 草稿覆盖使用 SHA-256 乐观并发：首次写入不要求 hash，已有文件缺少或不匹配 `expected_sha256` 都拒绝，临时文件与目标同目录并通过 `os.replace` 原子替换。
+- LangGraph checkpoint 与产品数据共用 `runtime.sqlite` 时，节点内同步 SQLite 写会阻塞 event loop，使 checkpoint 无法提交并在 busy timeout 后报 `database is locked`。工具审计和生产 EventStream 必须使用独立异步连接等待同库写锁。
+- 只验证第一次诊断运行不足以覆盖 checkpoint 并发；浏览器重复运行发现第二个 run 的 `tool.started` 写入自锁，新增“同 session 连续两次”后端回归后修复。
+- 诊断 Graph 允许 `read_active_knowledge` 工具但不授予 `knowledge.active` scope，真实证明 scope 拒绝发生在文件 handler 前，而不是用未注册工具代替。
+- 知识上传不再把 `../evil.txt` 静默改名后接受，而是返回 `workspace_path_denied`；合法中文文件名继续支持。
+- 设置页只显示整理后的检查名、稳定错误码和相对资源，不展示原始工具 payload；当前 run ID 过滤避免历史终态和事件污染重复运行。

@@ -19,7 +19,7 @@
 | 阶段 | 名称 | 状态 | 成熟度说明 |
 |---|---|---|---|
 | R0 | 技术切片与质量基线 | 可人工验证 | 已能跑通单题单轮浏览器链路，不代表完整复习 Agent |
-| R1 | 共享 Agent 与知识库底座 | R1.1、R1.2 与产品布局可人工验证；R1.3 实施中 | Provider、LangGraph Runtime、持久化会话和 SSE 已落地；R1.3 工具安全设计已批准，实施计划已就绪 |
+| R1 | 共享 Agent 与知识库底座 | R1.1、R1.2、R1.3 与产品布局可人工验证 | Provider、Runtime、持久化会话、SSE、Workspace 路径策略、受限工具和脱敏审计已落地；下一步是 R1.4 持久化 HITL |
 | R2 | 完整复习 Agent | 待开始 | 多题轮次、模式、追问、派生、单轮与全局掌握度 |
 | R3 | 个人信息 Agent | 待开始 | 简历、个人画像、资料对话、审核推送 |
 | R4 | 岗位与 JD 追踪 | 待开始 | 岗位索引、匹配度、竞争力、差距和准备聚合 |
@@ -36,7 +36,7 @@
 |---|---|---|---|---|---|
 | R1.1 | 可人工验证 | 尚未验收 | Provider adapter、模型绑定与 secret 边界 | Provider 请求链路追踪 | 解释一次模型测试请求 |
 | R1.2 | 可人工验证 | 尚未验收 | Runtime 分层、RunManager、恢复语义与 SSE 重放（掌握包已生成） | 增加一个 Runtime 查询能力 | 增加 Run 详情查询接口 |
-| R1.3 | 实施中 | - | Workspace scope、默认拒绝工具权限、路径与软链接安全、脱敏审计 | WorkspacePathPolicy 与 BoundToolInvoker | 实现或审阅一个路径校验用例 |
+| R1.3 | 可人工验证 | 尚未验收 | Workspace scope、默认拒绝工具权限、路径与软链接安全、脱敏审计（掌握包已生成） | 解释 Runtime 如何绑定工具上下文 | 实现或审阅一个路径校验用例 |
 
 状态定义：
 
@@ -283,10 +283,10 @@
 
 ## 下一步
 
-执行 R1.3“Workspace 工具安全”的七任务实施计划：
+开始 R1.4“持久化 HITL”的设计复核与实施：
 
-1. Task 1-6 依次完成 WorkspacePathPolicy、Tool Registry、文件工具、审计与 Runtime 集成、旧文件边界迁移和确定性安全诊断 Graph。
-2. Task 7 完成设置页安全自检、浏览器验收、verification 和 ownership 掌握包。
-3. 每个 Task 先写失败测试，再实现、验证、更新本地 verification 并提交。
-4. 复杂或跨层任务由 Codex 直接实现；边界清晰的普通前端任务可委派 Claude Opus，Codex 负责审阅、测试和验收。
-5. 不提前混入 R1.4 HITL、R1.5 知识发布或 R1.6 复习业务迁移。
+1. 复核 `docs/superpowers/plans/2026-07-10-r1-4-persistent-hitl.md` 与 R1 总规格及 R1.3 已落地 Tool Registry 的接口。
+2. 建立 pending action、interrupt/resume、批准/拒绝/编辑和重启恢复闭环。
+3. 继续按 Task 增量更新 verification，并在阶段结束生成 ownership 掌握包。
+4. R1.3 的非阻塞所有权练习不阻塞 R1.4 产品开发。
+5. 不提前混入 R1.5 知识发布或 R1.6 真实复习业务迁移。

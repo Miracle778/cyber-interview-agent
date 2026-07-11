@@ -1,8 +1,12 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
+import aiosqlite
+
+from app.db.runtime_database import runtime_database_path
 from app.runtime.models import EventRecord
 from app.runtime.repository import RuntimeRepository
 
@@ -77,10 +81,19 @@ def encode_sse_event(event: EventRecord) -> str:
 
 class EventStream:
     def __init__(
-        self, repository: RuntimeRepository, *, keepalive_seconds: float = 15.0
+        self,
+        repository: RuntimeRepository,
+        *,
+        keepalive_seconds: float = 15.0,
+        workspace_root: Path | None = None,
     ) -> None:
         self._repository = repository
         self._keepalive_seconds = keepalive_seconds
+        self._database_path = (
+            runtime_database_path(workspace_root)
+            if workspace_root is not None
+            else None
+        )
         self._conditions: dict[str, asyncio.Condition] = {}
 
     def _condition(self, session_id: str) -> asyncio.Condition:
@@ -102,13 +115,63 @@ class EventStream:
         if not isinstance(payload, dict):
             raise EventValidationError("event payload must be an object")
 
-        event = self._repository.append_event(
-            session_id, run_id, event_type, _scrub(payload)
+        safe_payload = _scrub(payload)
+        event = (
+            await self._append_event_async(
+                session_id, run_id, event_type, safe_payload
+            )
+            if self._database_path is not None
+            else self._repository.append_event(
+                session_id, run_id, event_type, safe_payload
+            )
         )
         condition = self._condition(session_id)
         async with condition:
             condition.notify_all()
         return event
+
+    async def _append_event_async(
+        self,
+        session_id: str,
+        run_id: str | None,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> EventRecord:
+        async with aiosqlite.connect(self._database_path) as connection:
+            connection.row_factory = aiosqlite.Row
+            await connection.execute("PRAGMA foreign_keys = ON")
+            await connection.execute("PRAGMA busy_timeout = 5000")
+            cursor = await connection.execute(
+                "INSERT INTO agent_events "
+                "(session_id, run_id, type, payload_json) VALUES (?, ?, ?, ?)",
+                (
+                    session_id,
+                    run_id,
+                    event_type,
+                    json.dumps(
+                        payload,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                ),
+            )
+            event_id = cursor.lastrowid
+            await connection.commit()
+            row_cursor = await connection.execute(
+                "SELECT created_at FROM agent_events WHERE id = ?", (event_id,)
+            )
+            row = await row_cursor.fetchone()
+        if event_id is None or row is None:
+            raise RuntimeError("Persisted event could not be loaded")
+        return EventRecord(
+            id=event_id,
+            session_id=session_id,
+            run_id=run_id,
+            type=event_type,
+            payload=payload,
+            created_at=row["created_at"],
+        )
 
     async def subscribe(
         self, session_id: str, *, after_id: int | None

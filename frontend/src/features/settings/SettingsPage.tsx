@@ -8,6 +8,7 @@ import { Field } from "../../shared/ui/Field";
 import { ModelBindings } from "./ModelBindings";
 import { ProviderManager } from "./ProviderManager";
 import { RuntimeDiagnostics } from "./RuntimeDiagnostics";
+import { SecurityDiagnostics } from "./SecurityDiagnostics";
 import {
   listWorkspaces,
   registerWorkspace,
@@ -122,6 +123,7 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
           />
           <ModelBindings workspaceId={workspaceId} refreshKey={providerRevision} />
           <RuntimeDiagnostics workspaceId={workspaceId} />
+          <SecurityDiagnostics workspaceId={workspaceId} />
         </div>
       ) : workspace ? (
         <p className="status-note">正在恢复 Workspace 配置…</p>

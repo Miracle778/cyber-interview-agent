@@ -148,7 +148,7 @@ class AgentRuntime:
         )
         connection = connect_runtime_database(root)
         repository = RuntimeRepository(connection)
-        event_stream = EventStream(repository)
+        event_stream = EventStream(repository, workspace_root=root)
         context = _WorkspaceRuntime(
             connection=connection,
             repository=repository,

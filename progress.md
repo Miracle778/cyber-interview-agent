@@ -417,3 +417,20 @@
 - 计划通过 `git diff --check`、占位符扫描、接口一致性和规格覆盖检查。
 - 已创建本地增量验证骨架：`docs/verification/r1_3_workspace_tool_security.md`，按仓库规则忽略且不得提交。
 - 当前状态：R1.3 设计已批准、实施计划就绪，下一步按 TDD 执行 Task 1。
+
+### R1.3 Workspace 工具安全实施
+
+- Task 1：WorkspacePathPolicy，提交 `92b71c8`。
+- Task 2：ToolExecutionContext、默认拒绝 Registry 与 GraphBuildContext，提交 `6432ff8`。
+- Task 3：受限读取、草稿写入与诊断文件工具，提交 `82f1f18`。
+- Task 4：工具审计、BoundToolInvoker 与 Runtime 安全注入，提交 `5c82c86`。
+- Task 5：知识上传/rescan 旧文件边界迁移，提交 `403cb6f`。
+- Task 6：确定性 `test.tool-security` Graph，提交 `df85203`。
+- Task 7：设置页工具安全自检、重复运行修复和阶段验收，待本次收尾提交。
+- 浏览器首次重复运行发现 checkpoint 与同步 EventStream 写入发生 SQLite 自锁；新增后端回归并将生产 EventStream 改为异步连接后，同 session 连续两次运行和刷新恢复均通过。
+- 最终自动验证：后端 167 passed；前端 42 passed；TypeScript 与 production build 通过。
+- 浏览器验证：真实安全自检连续两次通过，刷新恢复 4 项检查与 4 条当前 run 工具事件；1440x1000、1024x768、768x1024、375x812 无横向溢出，控制台无 warning/error。
+- 独立审阅 Agent 因额度上限退出，未返回审阅结论；Codex 完成本地安全、SQLite 并发、SSE 恢复和前端当前 run 隔离复核，未发现未解决 Critical/Important，外部独立复核作为流程欠项保留。
+- 本地 verification：`docs/verification/r1_3_workspace_tool_security.md`。
+- 本地 ownership 掌握包：`docs/learning/r1-3-tool-security/`。
+- 当前成熟度：R1.3“可人工验证”；下一产品任务为 R1.4 持久化 HITL。

@@ -54,8 +54,19 @@ interface EventEnvelope<TType extends string, TPayload> {
   payload: TPayload;
 }
 
+export interface ToolEventPayload {
+  toolName?: string;
+  resourceScope?: string;
+  resourcePath?: string;
+  resourceSha256?: string;
+  byteCount?: number;
+  latencyMs?: number;
+  code?: string;
+}
+
 export type AgentEvent =
   | EventEnvelope<"message.delta", { text: string }>
   | EventEnvelope<"message.completed", { messageId: string; content: string }>
+  | EventEnvelope<"tool.started" | "tool.completed" | "tool.failed", ToolEventPayload>
   | EventEnvelope<"run.failed", { code: string; message: string }>
   | EventEnvelope<string, Record<string, unknown>>;

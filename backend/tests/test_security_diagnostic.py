@@ -65,3 +65,31 @@ def test_security_graph_has_only_diagnostic_permissions() -> None:
         {"diagnostic_read", "read_active_knowledge"}
     )
     assert definition.allowed_scopes == frozenset({"diagnostics.security"})
+
+
+@pytest.mark.asyncio
+async def test_security_diagnostic_can_run_twice_in_the_same_session(
+    tmp_path: Path,
+) -> None:
+    runtime = AgentRuntime(
+        graph_registry=create_default_graph_registry(),
+        workspace_resolver=lambda _workspace_id: tmp_path,
+        model_binding_resolver=lambda _workspace_id: {},
+        workspace_ids=lambda: ("w1",),
+    )
+    session = await runtime.create_session(
+        workspace_id="w1",
+        graph_id="test.tool-security",
+        graph_version=1,
+        title="工具安全自检",
+    )
+
+    first = await runtime.start_run(session.id, input={})
+    first_completed = await runtime._context("w1").manager.wait(first.id)
+    second = await runtime.start_run(session.id, input={})
+    second_completed = await runtime._context("w1").manager.wait(second.id)
+
+    assert first_completed.status == "completed"
+    assert second_completed.status == "completed"
+    assert len(await ToolAuditRepository(tmp_path).list_for_run(second.id)) == 4
+    await runtime.close()

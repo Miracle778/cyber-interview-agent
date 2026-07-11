@@ -62,6 +62,7 @@ describe("SettingsPage", () => {
     expect(await screen.findByText("Provider 管理")).toBeInTheDocument();
     expect(screen.getByText("模型用途绑定")).toBeInTheDocument();
     expect(screen.getByText("Agent Runtime")).toBeInTheDocument();
+    expect(screen.getByText("工具安全")).toBeInTheDocument();
     expect(screen.getByText(workspace.workspacePath)).toBeInTheDocument();
   });
 
@@ -85,6 +86,7 @@ describe("SettingsPage", () => {
     expect(await screen.findByText(`Vault：${workspaceResource.vaultPath}`)).toBeInTheDocument();
     expect(screen.getByText("Provider 管理")).toBeInTheDocument();
     expect(screen.getByText("Agent Runtime")).toBeInTheDocument();
+    expect(screen.getByText("工具安全")).toBeInTheDocument();
   });
 
   it("shows actionable advice when workspace path is empty", () => {
