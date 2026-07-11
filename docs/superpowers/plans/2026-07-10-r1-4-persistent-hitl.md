@@ -64,7 +64,7 @@
 - 使用 action `version` 和确定性创建 `idempotency_key`。
 - resolution receipt 保存 `delivery_status`、attempt count 和可重试 decision payload。
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 创建 `backend/tests/test_hitl_repository.py`：
 
@@ -88,17 +88,17 @@ async def test_duplicate_resolution_returns_receipt(repository, action_request):
     assert second == first
 ```
 
-- [ ] **步骤 2：运行测试确认失败**
+- [x] **步骤 2：运行测试确认失败**
 
 运行：`cd backend && UV_CACHE_DIR=.uv-cache/backend uv run pytest tests/test_hitl_repository.py -v`
 
 预期：失败，因为 HITL 模块和迁移尚不存在。
 
-- [ ] **步骤 3：实现最小功能**
+- [x] **步骤 3：实现最小功能**
 
 迁移创建 `pending_actions` 和 `pending_action_resolutions`。强制唯一创建幂等键、唯一 `(action_id, resolution_key)`、session/run 外键和不可变终态。receipt 保存 decision JSON、delivery status/attempt/delivered time/稳定错误码。payload/preview/editable fields 保存为标准 JSON，对外暴露不可变 record。更新 migration 版本回归。Repository 不复用 Runtime 同步 connection。
 
-- [ ] **步骤 4：运行测试确认通过并提交**
+- [x] **步骤 4：运行测试确认通过并提交**
 
 运行：`cd backend && UV_CACHE_DIR=.uv-cache/backend uv run pytest tests/test_hitl_repository.py -v`
 

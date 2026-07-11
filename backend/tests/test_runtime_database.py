@@ -39,7 +39,7 @@ def test_runtime_migration_is_idempotent_and_creates_product_tables(tmp_path):
     } <= tables
     assert connection.execute(
         "SELECT COUNT(*) FROM runtime_schema_migrations"
-    ).fetchone()[0] == 2
+    ).fetchone()[0] == 3
 
 
 def test_runtime_database_rejects_invalid_session_status(tmp_path):

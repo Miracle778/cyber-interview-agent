@@ -451,3 +451,10 @@
 - 独立只读审阅发现旧计划与 R1.3 后 Runtime 存在 async SQLite、Graph 注入、interrupt 返回、resume 签名、Workspace service 生命周期和恢复投递窗口等偏差。
 - 新增 R1.4 设计复核并修订实施计划；产品决策不变，补充异步 Repository、delivery reconciliation、`test.approval` Graph 和设置页真实 ActionCenter 闭环。
 - 用户选择在基础设施层完成后统一学习；R1.4 掌握包仍会沉淀，但当前不安排练习、不阻塞产品开发。
+
+### R1.4 Task 1：HITL 持久化
+
+- 新增 003 runtime migration，保存 pending action、resolution receipt 和恢复投递状态。
+- `PendingActionRepository` 使用独立 aiosqlite 连接和 `BEGIN IMMEDIATE`，避免 Graph/checkpointer 同库写阻塞 event loop。
+- action 创建幂等、version 冲突、相同决定重放、不同决定冲突、delivery 生命周期和 run 取消联动均有回归测试。
+- RED 因 `app.hitl` 不存在失败；GREEN 针对性验证 10 passed，后端完整回归 175 passed，保留 1 个既有 Starlette deprecation warning。
