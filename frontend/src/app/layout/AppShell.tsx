@@ -68,6 +68,9 @@ export function AppShell() {
 
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#main-content">
+        跳到主内容
+      </a>
       <aside className="desktop-sidebar">
         <div className="desktop-sidebar__brand">
           <span className="desktop-sidebar__mark" aria-hidden="true">
@@ -85,7 +88,7 @@ export function AppShell() {
         </div>
       </aside>
       <MobileNavigation />
-      <main className="app-main">
+      <main id="main-content" className="app-main" tabIndex={-1}>
         <div className="app-container">
           <Routes>
             <Route path="/" element={<Navigate to="/review" replace />} />

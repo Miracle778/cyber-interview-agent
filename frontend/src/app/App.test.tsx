@@ -48,6 +48,7 @@ describe("App", () => {
     expect(screen.getByRole("link", { name: "复习" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "设置" })).toBeInTheDocument();
     expect(screen.queryByText("模拟面试")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "跳到主内容" })).toHaveAttribute("href", "#main-content");
   });
 
   it("closes the mobile navigation with Escape and restores focus", async () => {

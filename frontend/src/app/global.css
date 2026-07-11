@@ -129,6 +129,26 @@ pre {
   min-height: 100dvh;
 }
 
+.skip-link {
+  position: fixed;
+  top: var(--space-3);
+  left: var(--space-3);
+  z-index: calc(var(--z-drawer) + 1);
+  padding: var(--space-2) var(--space-3);
+  color: #ffffff;
+  font-size: 0.86rem;
+  font-weight: 650;
+  text-decoration: none;
+  background: var(--text);
+  border-radius: var(--radius-md);
+  transform: translateY(calc(-100% - var(--space-4)));
+  transition: transform var(--duration-fast) var(--ease);
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
 .desktop-sidebar {
   display: none;
 }
