@@ -285,9 +285,9 @@
 
 ## 下一步
 
-R1.5“知识发布与审核流”设计已通过，七任务实施计划已修订：
+R1.5“知识发布与审核流”Task 1-5 已通过自动验证：
 
-1. 执行 Task 1：完整 migration、Workspace artifacts layout 与 KnowledgeDraftService。
-2. 每个 Task 按 RED/GREEN、专项回归、审阅、提交和 verification 增量更新推进。
-3. 在普通 `codex/r1-5-knowledge-publication` 分支直接实现，不创建 worktree、不委派。
+1. 下一步执行 Task 6：Draft REST API、发布请求 API 与 typed errors。
+2. 随后执行 Task 7：知识页草稿浏览、编辑、发布审批闭环和最终文档门禁。
+3. 继续在普通 `codex/r1-5-knowledge-publication` 分支直接实现，不创建 worktree、不委派。
 4. R1.5 不提前混入 R1.6 真实模型与复习 Graph，也不实现 R7 高级 Obsidian 冲突合并。

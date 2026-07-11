@@ -440,3 +440,7 @@
 - 通用 atomic writer 只负责单文件 compare-and-swap；Workspace scope 与父目录链安全仍由 PublicationService 在调用前通过 R1.3 PathPolicy 保证，两个边界不能互相替代。
 - `resolved_at` 是 action 重试间稳定的发布时间来源；若每次 delivery 都取当前时间，重渲染 hash 会变化并把自己的已写文件误判成外部冲突。
 - rescan 负责从 Vault 重建 active 派生索引，PublicationService 只在确认文件 hash 仍等于 journal result hash 后把 `index_stale` 收口，避免把被外部修改的文件误标为已恢复。
+- publish request 必须先创建真实 session/run，再由 Graph interrupt 产生 action；这样发布审批天然继承 R1.4 的 waiting、resume、取消和启动 reconciliation 语义。
+- edited approval 的 action payload 保留请求时 draft version/hash，但 title/markdown 已是审核后的值。Handler 需要先用旧版本做一次乐观更新，再把新 version/hash 仅用于本次 publication delivery，不能篡改 action 的审计事实。
+- delivery 可能在草稿已升级、Vault 尚未写入时失败；重试必须识别“当前草稿恰好是期望版本 + 1 且内容等于审核编辑”的状态并复用，不能再次升级版本。
+- 同一 draft version/hash 的重复发布请求应复用 waiting run，而不是制造多个 pending action；草稿内容变化后才允许产生新的发布 run。

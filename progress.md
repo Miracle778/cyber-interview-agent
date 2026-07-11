@@ -551,3 +551,14 @@
 - 文件写入后立即标记 draft published；索引失败保留 Markdown 并进入 index_stale。
 - rescan 只索引 confirmed ingested 文档，跳过 draft 和非法 frontmatter，并在 hash 一致时修复 stale journal。
 - 后端完整回归 225 passed，保留 1 个既有 Starlette warning；下一步 Task 5 接入真实 publish Graph 与 HITL handler。
+
+### R1.5 Task 5：knowledge.publish Graph 与 HITL Handler
+
+- RED：3 个发布 Graph 测试均因 `AgentRuntime.request_draft_publication` 不存在而失败，确认尚未接线。
+- 新增 `knowledge.publish` Graph v1，通过真实 run 创建 `knowledge.publish` action 并使用 LangGraph interrupt 等待审批。
+- Workspace Runtime 注入 KnowledgeDraftService、PublicationService 与专用 handler；批准写 Vault，拒绝无副作用，编辑批准先生成精确的新草稿版本。
+- 同 draft version/hash 重复请求复用 waiting run，避免重复 pending action。
+- 模拟 handler delivery 失败并重启：reconciliation 完成发布，编辑草稿保持 version 2，证明重试不重复升级。
+- 发布生命周期输出 `publication.started/completed/index_stale` 事件，payload 仅含 action、draft、相对 target 和状态。
+- 专项 Runtime/HITL 回归 17 passed；后端完整回归 230 passed，保留 1 个既有 Starlette warning。
+- 下一步 Task 6：Draft REST API、发布请求 API 与 typed errors。

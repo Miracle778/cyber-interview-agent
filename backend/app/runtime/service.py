@@ -13,6 +13,13 @@ from app.hitl.models import (
 )
 from app.hitl.repository import PendingActionNotFoundError, PendingActionRepository
 from app.hitl.service import HitlService
+from app.knowledge.drafts import (
+    DraftNotFoundError,
+    KnowledgeDraftRecord,
+    KnowledgeDraftService,
+)
+from app.knowledge.publication import PublicationService
+from app.knowledge.publication_handler import KnowledgePublishActionHandler
 from app.runtime.checkpoints import RuntimeCheckpointer
 from app.runtime.event_stream import EventStream, encode_sse_event
 from app.runtime.graph_registry import GraphRegistry, GraphVersionNotFoundError
@@ -33,6 +40,8 @@ class _WorkspaceRuntime:
     manager: RunManager
     hitl_repository: PendingActionRepository
     hitl_service: HitlService
+    draft_service: KnowledgeDraftService
+    publication_service: PublicationService
 
 
 class AgentRuntime:
@@ -137,6 +146,41 @@ class AgentRuntime:
         context = self._locate_run(run_id)
         return await context.manager.cancel(run_id)
 
+    async def wait_run(self, run_id: str) -> RunRecord:
+        return await self._locate_run(run_id).manager.wait(run_id)
+
+    async def request_draft_publication(self, draft_id: str) -> RunRecord:
+        context, draft = await self._locate_draft(draft_id)
+        for action in await context.hitl_repository.list_pending(
+            draft.workspace_id
+        ):
+            if (
+                action.action_type == "knowledge.publish"
+                and action.payload.get("draftId") == draft.id
+                and action.payload.get("draftVersion") == draft.version
+                and action.payload.get("contentHash") == draft.content_hash
+            ):
+                run = context.repository.get_run(action.run_id)
+                if run.status == "waiting_for_approval":
+                    return run
+        session = await self.create_session(
+            workspace_id=draft.workspace_id,
+            graph_id="knowledge.publish",
+            graph_version=1,
+            title=f"知识发布：{draft.title}",
+        )
+        return await context.manager.start(
+            session.id,
+            input={
+                "draftId": draft.id,
+                "draftVersion": draft.version,
+                "contentHash": draft.content_hash,
+                "title": draft.title,
+                "markdown": draft.markdown,
+            },
+            model_bindings=self._model_binding_resolver(draft.workspace_id),
+        )
+
     async def list_actions(
         self,
         workspace_id: str,
@@ -202,7 +246,17 @@ class AgentRuntime:
         repository = RuntimeRepository(connection)
         event_stream = EventStream(repository, workspace_root=root)
         hitl_repository = PendingActionRepository(root)
-        handlers = create_default_action_handler_registry()
+        draft_service = KnowledgeDraftService(root, workspace_id=workspace_id)
+        publication_service = PublicationService(
+            root, workspace_id=workspace_id
+        )
+        handlers = create_default_action_handler_registry(
+            knowledge_publish_handler=KnowledgePublishActionHandler(
+                drafts=draft_service,
+                publications=publication_service,
+                event_stream=event_stream,
+            )
+        )
         service_holder: dict[str, HitlService] = {}
 
         async def request_action(
@@ -234,6 +288,8 @@ class AgentRuntime:
             manager=manager,
             hitl_repository=hitl_repository,
             hitl_service=hitl_service,
+            draft_service=draft_service,
+            publication_service=publication_service,
         )
         service_holder["service"] = hitl_service
         self._workspaces[workspace_id] = context
@@ -259,6 +315,17 @@ class AgentRuntime:
             except RuntimeRecordNotFoundError:
                 continue
         raise RuntimeRecordNotFoundError(f"run {run_id!r} not found")
+
+    async def _locate_draft(
+        self, draft_id: str
+    ) -> tuple[_WorkspaceRuntime, KnowledgeDraftRecord]:
+        for workspace_id in self._workspace_ids():
+            context = self._context(workspace_id)
+            try:
+                return context, await context.draft_service.get(draft_id)
+            except DraftNotFoundError:
+                continue
+        raise DraftNotFoundError(f"draft {draft_id!r} not found")
 
     async def _locate_action(
         self, action_id: str

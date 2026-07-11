@@ -260,7 +260,7 @@ git commit -m "feat(knowledge): publish drafts with recoverable index"
 
 **产出：** publish request 通过真实 run 创建 action；批准执行 publication；拒绝不写 Vault；重启可恢复。
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 `backend/tests/test_knowledge_publication_graph.py` 覆盖：
 
@@ -279,18 +279,18 @@ assert list(vault.rglob("*.md"))
 
 另测拒绝、编辑批准、相同 draft version 重复请求、handler delivery 失败后重启恢复。
 
-- [ ] **步骤 2：运行 RED**
+- [x] **步骤 2：运行 RED**
 
 ```bash
 cd backend
 .venv/bin/pytest tests/test_knowledge_publication_graph.py -v
 ```
 
-- [ ] **步骤 3：实现最小功能**
+- [x] **步骤 3：实现最小功能**
 
 注册 `knowledge.publish` Graph version 1。Graph input 为 draft id/version/hash，创建 action 后 interrupt。Workspace Runtime 创建 Draft/Publication services，并把 `KnowledgePublishActionHandler` 注册到 R1.4 Registry。handler 对 rejected no-op；批准时保存允许的 title/markdown 编辑，再发布精确版本。`AgentRuntime.request_draft_publication` 复用同 draft version 的 waiting run。
 
-- [ ] **步骤 4：验证并提交**
+- [x] **步骤 4：验证并提交**
 
 ```bash
 cd backend
