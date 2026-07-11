@@ -93,6 +93,20 @@ class RuntimeRepository:
         ).fetchall()
         return tuple(self._session_from_row(row) for row in rows)
 
+    def set_session_status(
+        self, session_id: str, status: SessionStatus
+    ) -> SessionRecord:
+        def update() -> SessionRecord:
+            self._require_session(session_id)
+            self._connection.execute(
+                "UPDATE agent_sessions SET status = ?, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (status, session_id),
+            )
+            return self._require_session(session_id)
+
+        return self._transaction(update)
+
     def create_run(
         self,
         session_id: str,
@@ -100,7 +114,10 @@ class RuntimeRepository:
         input: dict[str, Any],
         model_bindings: dict[str, str],
         run_id: str | None = None,
+        initial_status: RunStatus = "queued",
     ) -> RunRecord:
+        if initial_status not in {"queued", "running"}:
+            raise ValueError("initial run status must be queued or running")
         record_id = run_id or str(uuid4())
 
         def insert() -> RunRecord:
@@ -108,13 +125,16 @@ class RuntimeRepository:
             try:
                 self._connection.execute(
                     "INSERT INTO agent_runs "
-                    "(id, session_id, input_json, model_bindings_json) "
-                    "VALUES (?, ?, ?, ?)",
+                    "(id, session_id, input_json, model_bindings_json, "
+                    "status, started_at) VALUES (?, ?, ?, ?, ?, "
+                    "CASE WHEN ? = 'running' THEN CURRENT_TIMESTAMP END)",
                     (
                         record_id,
                         session_id,
                         _canonical_json(input),
                         _canonical_json(model_bindings),
+                        initial_status,
+                        initial_status,
                     ),
                 )
             except sqlite3.IntegrityError as error:
@@ -188,7 +208,16 @@ class RuntimeRepository:
 
         return self._transaction(transition)
 
-    def resume_run(self, run_id: str, *, expected: RunStatus) -> RunRecord:
+    def resume_run(
+        self,
+        run_id: str,
+        *,
+        expected: RunStatus,
+        target: RunStatus = "queued",
+    ) -> RunRecord:
+        if target not in {"queued", "running"}:
+            raise ValueError("resume target must be queued or running")
+
         def resume() -> RunRecord:
             current = self._require_run(run_id)
             if current.status != expected:
@@ -196,12 +225,12 @@ class RuntimeRepository:
                     f"run {run_id!r} expected {expected!r}, got {current.status!r}"
                 )
             self._connection.execute(
-                "UPDATE agent_runs SET status = 'queued', "
+                "UPDATE agent_runs SET status = ?, "
                 "resume_count = resume_count + 1, "
                 "last_resumed_at = CURRENT_TIMESTAMP, error_code = NULL, "
                 "error_message = NULL, finished_at = NULL "
                 "WHERE id = ? AND status = ?",
-                (run_id, expected),
+                (target, run_id, expected),
             )
             self._connection.execute(
                 "UPDATE agent_sessions SET status = 'active', "

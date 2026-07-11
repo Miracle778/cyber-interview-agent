@@ -7,10 +7,11 @@ from typing import Any
 from app.db.runtime_database import connect_runtime_database
 from app.runtime.checkpoints import RuntimeCheckpointer
 from app.runtime.event_stream import EventStream, encode_sse_event
-from app.runtime.graph_registry import GraphRegistry
+from app.runtime.graph_registry import GraphRegistry, GraphVersionNotFoundError
 from app.runtime.models import RunRecord, SessionRecord
 from app.runtime.repository import RuntimeRecordNotFoundError, RuntimeRepository
 from app.runtime.run_manager import RunManager
+from app.services.workspace import WorkspaceError
 
 
 @dataclass(slots=True)
@@ -80,10 +81,20 @@ class AgentRuntime:
             "pendingAction": None,
         }
 
+    def ensure_session(self, session_id: str) -> None:
+        self._locate_session(session_id)
+
     async def start_run(
         self, session_id: str, *, input: dict[str, Any]
     ) -> RunRecord:
         context, session = self._locate_session(session_id)
+        try:
+            self._graph_registry.get(session.graph_id, session.graph_version)
+        except GraphVersionNotFoundError:
+            context.repository.set_session_status(
+                session.id, "migration_required"
+            )
+            raise
         bindings = self._model_binding_resolver(session.workspace_id)
         return await context.manager.start(
             session.id, input=input, model_bindings=bindings
@@ -104,7 +115,7 @@ class AgentRuntime:
         async for event in context.event_stream.subscribe(
             session_id, after_id=after_id
         ):
-            yield encode_sse_event(event)
+            yield ": keepalive\n\n" if event is None else encode_sse_event(event)
 
     async def recover_interrupted_runs(self) -> tuple[str, ...]:
         recovered: list[str] = []
@@ -125,7 +136,8 @@ class AgentRuntime:
         if context is not None:
             return context
         root = self._workspace_resolver(workspace_id)
-        root.mkdir(parents=True, exist_ok=True)
+        if not root.is_dir():
+            raise WorkspaceError("Workspace 路径不可用，请重新关联")
         connection = connect_runtime_database(root)
         repository = RuntimeRepository(connection)
         event_stream = EventStream(repository)

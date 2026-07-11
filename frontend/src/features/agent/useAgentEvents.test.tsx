@@ -59,14 +59,23 @@ describe("useAgentEvents", () => {
         payload: { messageId: "m1", content: "hello" },
       });
       first.onerror?.(new Event("error"));
+      first.onerror?.(new Event("error"));
     });
 
     expect(result.current.events).toHaveLength(1);
     expect(result.current.status).toBe("reconnecting");
     act(() => vi.advanceTimersByTime(10));
+    expect(FakeEventSource.instances).toHaveLength(2);
     expect(FakeEventSource.instances[1].url).toBe(
       "/api/agent/sessions/s1/events?after=4",
     );
+    const second = FakeEventSource.instances[1];
+    act(() => {
+      first.onerror?.(new Event("error"));
+      vi.advanceTimersByTime(10);
+    });
+    expect(FakeEventSource.instances).toHaveLength(2);
+    expect(second.close).not.toHaveBeenCalled();
   });
 
   it("keeps prior events when a run fails", () => {

@@ -112,7 +112,7 @@ class EventStream:
 
     async def subscribe(
         self, session_id: str, *, after_id: int | None
-    ) -> AsyncIterator[EventRecord]:
+    ) -> AsyncIterator[EventRecord | None]:
         cursor = after_id or 0
         condition = self._condition(session_id)
         while True:
@@ -126,9 +126,12 @@ class EventStream:
             async with condition:
                 if self._repository.list_events(session_id, after_id=cursor):
                     continue
+                timed_out = False
                 try:
                     await asyncio.wait_for(
                         condition.wait(), timeout=self._keepalive_seconds
                     )
                 except TimeoutError:
-                    continue
+                    timed_out = True
+            if timed_out:
+                yield None

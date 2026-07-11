@@ -23,6 +23,7 @@ class RunManager:
         self._checkpointer = checkpointer
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._session_locks: dict[str, asyncio.Lock] = {}
+        self._is_shutting_down = False
 
     async def start(
         self,
@@ -34,14 +35,24 @@ class RunManager:
         session = self._repository.get_session(session_id)
         self._graph_registry.get(session.graph_id, session.graph_version)
         run = self._repository.create_run(
-            session_id, input=input, model_bindings=model_bindings
+            session_id,
+            input=input,
+            model_bindings=model_bindings,
+            initial_status="running",
         )
-        text = input.get("text")
-        if isinstance(text, str) and text.strip():
-            self._repository.append_message(
-                session_id, run_id=run.id, role="user", content=text
+        try:
+            text = input.get("text")
+            if isinstance(text, str) and text.strip():
+                self._repository.append_message(
+                    session_id, run_id=run.id, role="user", content=text
+                )
+            await self._event_stream.publish(
+                run.session_id, run.id, "run.started", {}
             )
-        self._spawn(run.id, graph_input=input)
+            self._spawn(run.id, graph_input=input)
+        except BaseException:
+            self._interrupt_unspawned(run.id)
+            raise
         return run
 
     async def wait(self, run_id: str) -> RunRecord:
@@ -86,13 +97,33 @@ class RunManager:
         return run_ids
 
     async def resume(self, run_id: str) -> RunRecord:
-        run = self._repository.resume_run(run_id, expected="interrupted")
-        self._spawn(run.id, graph_input=None)
+        interrupted = self._repository.get_run(run_id)
+        graph_input = (
+            None
+            if await self._checkpointer.has_checkpoint(interrupted.session_id)
+            else interrupted.input
+        )
+        run = self._repository.resume_run(
+            run_id, expected="interrupted", target="running"
+        )
+        try:
+            await self._event_stream.publish(
+                run.session_id, run.id, "run.started", {}
+            )
+            self._spawn(run.id, graph_input=graph_input)
+        except BaseException:
+            self._interrupt_unspawned(run.id)
+            raise
         return run
 
     async def shutdown(self) -> None:
-        for run_id in tuple(self._tasks):
-            await self.cancel(run_id)
+        self._is_shutting_down = True
+        tasks = tuple(self._tasks.values())
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        await self.recover_interrupted_runs()
 
     def _spawn(self, run_id: str, *, graph_input: dict[str, Any] | None) -> None:
         task = asyncio.create_task(self._execute(run_id, graph_input=graph_input))
@@ -104,6 +135,13 @@ class RunManager:
 
         task.add_done_callback(discard)
 
+    def _interrupt_unspawned(self, run_id: str) -> None:
+        run = self._repository.get_run(run_id)
+        if run.status == "running":
+            self._repository.transition_run(
+                run.id, expected="running", target="interrupted"
+            )
+
     async def _execute(
         self, run_id: str, *, graph_input: dict[str, Any] | None
     ) -> None:
@@ -111,12 +149,6 @@ class RunManager:
         lock = self._session_locks.setdefault(run.session_id, asyncio.Lock())
         try:
             async with lock:
-                run = self._repository.transition_run(
-                    run.id, expected="queued", target="running"
-                )
-                await self._event_stream.publish(
-                    run.session_id, run.id, "run.started", {}
-                )
                 session = self._repository.get_session(run.session_id)
                 definition = self._graph_registry.get(
                     session.graph_id, session.graph_version
@@ -149,7 +181,8 @@ class RunManager:
                     run.session_id, run.id, "run.completed", {}
                 )
         except asyncio.CancelledError:
-            await self._mark_cancelled(run_id)
+            if not self._is_shutting_down:
+                await self._mark_cancelled(run_id)
             raise
         except Exception as error:
             current = self._repository.get_run(run_id)
@@ -159,13 +192,13 @@ class RunManager:
                     expected=current.status,
                     target="failed",
                     error_code="runtime_error",
-                    error_message=str(error),
+                    error_message="Agent 运行失败",
                 )
                 await self._event_stream.publish(
                     failed.session_id,
                     failed.id,
                     "run.failed",
-                    {"code": "runtime_error", "message": str(error)},
+                    {"code": "runtime_error", "message": "Agent 运行失败"},
                 )
 
     async def _mark_cancelled(self, run_id: str) -> None:

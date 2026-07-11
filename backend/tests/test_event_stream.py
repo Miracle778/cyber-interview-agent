@@ -86,6 +86,21 @@ async def test_live_subscriber_receives_event_after_waiting(runtime_repository):
 
 
 @pytest.mark.asyncio
+async def test_idle_subscription_emits_keepalive(runtime_repository):
+    stream = EventStream(
+        runtime_repository, keepalive_seconds=0.01
+    )
+    subscription = stream.subscribe("s1", after_id=None)
+
+    assert await asyncio.wait_for(anext(subscription), timeout=1) is None
+    published = await asyncio.wait_for(
+        stream.publish("s1", "r1", "run.started", {}), timeout=1
+    )
+    assert await asyncio.wait_for(anext(subscription), timeout=1) == published
+    await subscription.aclose()
+
+
+@pytest.mark.asyncio
 async def test_unknown_event_type_is_rejected(runtime_repository):
     with pytest.raises(EventValidationError):
         await EventStream(runtime_repository).publish(

@@ -393,3 +393,7 @@
 - R1.2 浏览器验证：真实自检完成；重启刷新恢复 session 和事件；1440x1000、1024x768、768x1024、375x812 均无横向溢出；控制台无 warning/error。
 - 本地人工验证指南：`docs/verification/r1_2_agent_runtime_sse.md`（按 ignore 规则不提交）。
 - 当前成熟度：R1.2“可人工验证”；下一步进入 R1.3 Workspace 工具安全，不提前实现 HITL、知识发布或复习业务迁移。
+- R1.2 完成前独立代码审阅完成两轮；首轮 8 个 Important/1 个 Minor、复核轮 3 个衍生 Important/1 个 Minor 均已修正并增加回归测试。
+- 审阅加固覆盖：单 event-loop Runtime DB 访问、优雅停机 interrupted、无 checkpoint 输入重放、安全错误、SSE keepalive 与预检 404、Graph migration_required、Workspace 缺失保护、多 run 时间线和 EventSource 旧回调隔离。
+- 审阅修正后的真实浏览器回归再次运行同一 session：历史“运行完成”由 1 条增加为 2 条，最终按钮可用、状态为“自检完成”、控制台无 warning/error。
+- 独立审阅最终复核无 Critical/Important；补充 resume 发布失败恢复和 keepalive 背压测试后，后端总计 114 passed。

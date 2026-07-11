@@ -35,7 +35,7 @@ async def create_session(
 
 
 @router.get("/sessions", response_model=list[SessionResource])
-def list_sessions(
+async def list_sessions(
     workspace_id: Annotated[str, Query(alias="workspaceId")],
     runtime: AgentRuntime = Depends(get_agent_runtime),
 ) -> tuple[SessionRecord, ...]:
@@ -43,7 +43,7 @@ def list_sessions(
 
 
 @router.get("/sessions/{session_id}", response_model=SessionDetailResource)
-def get_session(
+async def get_session(
     session_id: str, runtime: AgentRuntime = Depends(get_agent_runtime)
 ):
     return runtime.session_detail(session_id)
@@ -81,12 +81,13 @@ async def cancel_run(
 
 
 @router.get("/sessions/{session_id}/events")
-def stream_events(
+async def stream_events(
     session_id: str,
     after: int | None = None,
     last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
     runtime: AgentRuntime = Depends(get_agent_runtime),
 ) -> StreamingResponse:
+    runtime.ensure_session(session_id)
     cursor = after
     if cursor is None and last_event_id is not None:
         try:

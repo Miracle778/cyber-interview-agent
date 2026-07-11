@@ -18,6 +18,7 @@ from app.core.errors import (
 )
 from app.db.app_database import connect_app_database
 from app.runtime.default_graphs import create_default_graph_registry
+from app.runtime.graph_registry import GraphVersionNotFoundError
 from app.runtime.repository import RuntimeRecordNotFoundError, SessionBusyError
 from app.runtime.service import AgentRuntime
 from app.services.secrets import SecretStoreUnavailableError
@@ -28,33 +29,37 @@ from app.services.workspace_service import WorkspaceService
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     connection = connect_app_database()
-    workspaces = WorkspaceService(connection)
-
-    def workspace_record(workspace_id: str):
-        record = workspaces.workspaces.get(workspace_id)
-        if record is None:
-            raise WorkspaceNotFoundError(workspace_id)
-        return record
-
-    runtime = AgentRuntime(
-        graph_registry=create_default_graph_registry(),
-        workspace_resolver=lambda workspace_id: Path(
-            workspace_record(workspace_id).root_path
-        ),
-        model_binding_resolver=lambda workspace_id: {
-            binding.role: binding.provider_model_id
-            for binding in workspaces.workspaces.get_model_bindings(workspace_id)
-        },
-        workspace_ids=lambda: tuple(
-            item.id for item in workspaces.workspaces.list_workspaces()
-        ),
-    )
-    application.state.agent_runtime = runtime
-    await runtime.recover_interrupted_runs()
+    runtime: AgentRuntime | None = None
     try:
+        workspaces = WorkspaceService(connection)
+
+        def workspace_record(workspace_id: str):
+            record = workspaces.workspaces.get(workspace_id)
+            if record is None:
+                raise WorkspaceNotFoundError(workspace_id)
+            return record
+
+        runtime = AgentRuntime(
+            graph_registry=create_default_graph_registry(),
+            workspace_resolver=lambda workspace_id: Path(
+                workspace_record(workspace_id).root_path
+            ),
+            model_binding_resolver=lambda workspace_id: {
+                binding.role: binding.provider_model_id
+                for binding in workspaces.workspaces.get_model_bindings(workspace_id)
+            },
+            workspace_ids=lambda: tuple(
+                item.id
+                for item in workspaces.workspaces.list_workspaces()
+                if item.available and Path(item.root_path).is_dir()
+            ),
+        )
+        application.state.agent_runtime = runtime
+        await runtime.recover_interrupted_runs()
         yield
     finally:
-        await runtime.close()
+        if runtime is not None:
+            await runtime.close()
         connection.close()
 
 
@@ -131,6 +136,13 @@ async def session_busy(
     _request: Request, _error_value: SessionBusyError
 ) -> JSONResponse:
     return _error(409, "session_busy", "当前 Session 已有运行中的任务")
+
+
+@app.exception_handler(GraphVersionNotFoundError)
+async def graph_migration_required(
+    _request: Request, _error_value: GraphVersionNotFoundError
+) -> JSONResponse:
+    return _error(409, "graph_migration_required", "当前 Agent 版本需要迁移")
 
 @app.get("/api/health")
 def health() -> dict[str, str]:

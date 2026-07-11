@@ -118,6 +118,7 @@ describe("RuntimeDiagnostics", () => {
       const url = String(input);
       if (url.includes("workspaceId=w1")) return Response.json([session]);
       if (url === "/api/agent/sessions/s1") return Response.json({ ...session, messages: [], latestRun: { id: "r1", sessionId: "s1", status: "failed", resumeCount: 0, errorCode: "runtime_error", errorMessage: "failed", createdAt: "now", startedAt: "now", finishedAt: "now" }, pendingAction: null });
+      if (url === "/api/agent/sessions/s1/runs") return Response.json({ id: "r2", sessionId: "s1", status: "queued", resumeCount: 0, errorCode: null, errorMessage: null, createdAt: "now", startedAt: null, finishedAt: null }, { status: 202 });
       return Response.json({}, { status: 500 });
     });
 
@@ -125,5 +126,13 @@ describe("RuntimeDiagnostics", () => {
     expect(await screen.findByText("自检失败")).toBeInTheDocument();
     expect(screen.getByText("请检查后端日志与模型配置后重试")).toBeInTheDocument();
     expect(FakeEventSource.instances[0].url).toBe("/api/agent/sessions/s1/events");
+
+    act(() => {
+      FakeEventSource.instances[0].emit({ id: 2, type: "run.failed", sessionId: "s1", runId: "r1", timestamp: "now", payload: { code: "runtime_error", message: "failed" } });
+    });
+    fireEvent.click(screen.getByRole("button", { name: "运行自检" }));
+    await waitFor(() =>
+      expect(screen.queryByText("请检查后端日志与模型配置后重试")).not.toBeInTheDocument(),
+    );
   });
 });

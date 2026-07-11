@@ -67,13 +67,21 @@ export function RuntimeDiagnostics({ workspaceId }: { workspaceId: string }) {
     enabled: sessionId !== null,
   });
   const stream = useAgentEvents(sessionId);
+  const latestRun = activeRun ?? detailQuery.data?.latestRun ?? null;
+  const currentRunEvents = useMemo(
+    () =>
+      latestRun
+        ? stream.events.filter((event) => event.runId === latestRun.id)
+        : stream.events,
+    [latestRun?.id, stream.events],
+  );
 
   useEffect(() => {
-    const hasTerminalEvent = stream.events.some((event) =>
+    const hasTerminalEvent = currentRunEvents.some((event) =>
       ["run.completed", "run.failed", "run.cancelled", "run.interrupted"].includes(event.type),
     );
     if (hasTerminalEvent) void detailQuery.refetch();
-  }, [stream.events, detailQuery.refetch]);
+  }, [currentRunEvents, detailQuery.refetch]);
 
   const runMutation = useMutation({
     mutationFn: async () => {
@@ -96,18 +104,18 @@ export function RuntimeDiagnostics({ workspaceId }: { workspaceId: string }) {
       setCommandError(error instanceof Error ? error.message : "无法启动 Runtime 自检"),
   });
 
-  const latestRun = activeRun ?? detailQuery.data?.latestRun ?? null;
-  const currentRunEvents = latestRun
-    ? stream.events.filter((event) => event.runId === latestRun.id)
-    : stream.events;
   const state = runState(latestRun, currentRunEvents);
-  const failed = state.label === "自检失败" || stream.runError !== null;
+  const failed = state.label === "自检失败";
   const hasTerminalEvent = currentRunEvents.some((event) =>
     ["run.completed", "run.failed", "run.cancelled", "run.interrupted"].includes(
       event.type,
     ),
   );
-  const visibleEvents = stream.events.filter((event) => EVENT_LABELS[event.type]);
+  const visibleEvents = stream.events.filter(
+    (event) =>
+      EVENT_LABELS[event.type] &&
+      (event.type === "session.created" || event.runId === latestRun?.id),
+  );
   const connectionLabel =
     stream.status === "connected"
       ? "SSE 已连接"

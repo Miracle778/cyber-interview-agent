@@ -78,11 +78,15 @@ export function useAgentEvents(
     const connect = () => {
       const suffix = cursorRef.current > 0 ? `?after=${cursorRef.current}` : "";
       setStatus(cursorRef.current > 0 ? "reconnecting" : "connecting");
-      source = createEventSourceRef.current(
+      const nextSource = createEventSourceRef.current(
         `/api/agent/sessions/${sessionId}/events${suffix}`,
       );
-      source.onopen = () => setStatus("connected");
+      source = nextSource;
+      nextSource.onopen = () => {
+        if (!stopped && source === nextSource) setStatus("connected");
+      };
       const receive = (message: MessageEvent<string>) => {
+        if (stopped || source !== nextSource) return;
         let event: AgentEvent;
         try {
           event = JSON.parse(message.data) as AgentEvent;
@@ -101,12 +105,15 @@ export function useAgentEvents(
           });
         }
       };
-      EVENT_TYPES.forEach((type) => source?.addEventListener(type, receive));
-      source.onerror = () => {
-        source?.close();
-        if (stopped) return;
+      EVENT_TYPES.forEach((type) => nextSource.addEventListener(type, receive));
+      nextSource.onerror = () => {
+        if (stopped || source !== nextSource || timer !== null) return;
+        nextSource.close();
         setStatus("reconnecting");
-        timer = setTimeout(connect, reconnectDelayRef.current);
+        timer = setTimeout(() => {
+          timer = null;
+          connect();
+        }, reconnectDelayRef.current);
       };
     };
 

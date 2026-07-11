@@ -373,3 +373,6 @@
 - 浏览器验收发现 optimistic `running` 会在终态事件后继续禁用按钮；终态事件必须优先于旧的本地 run 快照。
 - SSE 重放包含同一 session 的历史 run；运行状态只能使用 latest run 对应的事件派生，否则旧终态会错误覆盖新 run 的 queued/running 状态。
 - 设置页确定性自检证明了 session、run、checkpoint、SSE 和刷新恢复的真实闭环，同时保持 R1.6 复习业务迁移边界。
+- 完成前独立代码审阅发现并关闭：Runtime connection 跨线程复用、优雅停机误取消、running 写入与 task 注册失败窗口、无 checkpoint 恢复、SSE keepalive/404、Graph migration 状态、历史 run 事件污染和旧 EventSource 延迟回调。
+- Start 和 resume 在单事务内进入 running；spawn 前失败会回到 interrupted，进程退出后的 running 仍由启动恢复处理，避免 active-run 唯一约束被无执行器的 run 占用。
+- Keepalive 必须退出 subscriber condition 临界区后再 yield，否则网络背压会让 publisher 等待内存锁，即使事件已经写入数据库。

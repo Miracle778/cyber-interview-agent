@@ -182,3 +182,177 @@ async def test_resume_uses_same_run_and_checkpoint(runtime_parts):
     assert resumed.id == first.id
     assert completed.status == "completed"
     assert completed.resume_count == 1
+
+
+@pytest.mark.asyncio
+async def test_resume_without_checkpoint_replays_persisted_input(runtime_parts):
+    repository, _registry, _checkpointer, manager = runtime_parts
+    session = create_session(repository)
+    run = repository.create_run(
+        session.id, input={"text": "hello"}, model_bindings={}
+    )
+    repository.transition_run(run.id, expected="queued", target="running")
+    repository.interrupt_running_runs()
+
+    resumed = await manager.resume(run.id)
+    completed = await manager.wait(resumed.id)
+
+    assert completed.status == "completed"
+    assert repository.list_messages(session.id)[-1].content == "Echo: hello"
+
+
+@pytest.mark.asyncio
+async def test_failure_exposes_safe_message_without_exception_details(tmp_path):
+    connection = connect_runtime_database(tmp_path)
+    repository = RuntimeRepository(connection)
+    registry = GraphRegistry()
+
+    def factory(checkpointer):
+        def fail(_state):
+            raise RuntimeError("authorization=Bearer sk-secret")
+
+        graph = StateGraph(EchoState)
+        graph.add_node("fail", fail)
+        graph.add_edge(START, "fail")
+        graph.add_edge("fail", END)
+        return graph.compile(checkpointer=checkpointer)
+
+    registry.register(
+        GraphDefinition(
+            graph_id="test.echo",
+            graph_version=1,
+            factory=factory,
+            required_model_roles=frozenset(),
+            allowed_tools=frozenset(),
+            allowed_scopes=frozenset(),
+        )
+    )
+    manager = RunManager(
+        repository=repository,
+        event_stream=EventStream(repository),
+        graph_registry=registry,
+        checkpointer=RuntimeCheckpointer(tmp_path),
+    )
+    session = create_session(repository)
+
+    run = await manager.start(session.id, input={"text": "hello"}, model_bindings={})
+    failed = await manager.wait(run.id)
+
+    assert failed.status == "failed"
+    assert failed.error_message == "Agent 运行失败"
+    event = repository.list_events(session.id)[-1]
+    assert event.type == "run.failed"
+    assert event.payload == {"code": "runtime_error", "message": "Agent 运行失败"}
+    assert "sk-secret" not in str(event.payload)
+    connection.close()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_interrupts_active_run_instead_of_cancelling(tmp_path):
+    connection = connect_runtime_database(tmp_path)
+    repository = RuntimeRepository(connection)
+    registry = GraphRegistry()
+    gate = asyncio.Event()
+
+    def factory(checkpointer):
+        async def wait_node(_state):
+            await gate.wait()
+            return {"response": "done"}
+
+        graph = StateGraph(EchoState)
+        graph.add_node("wait", wait_node)
+        graph.add_edge(START, "wait")
+        graph.add_edge("wait", END)
+        return graph.compile(checkpointer=checkpointer)
+
+    registry.register(
+        GraphDefinition(
+            graph_id="test.echo",
+            graph_version=1,
+            factory=factory,
+            required_model_roles=frozenset(),
+            allowed_tools=frozenset(),
+            allowed_scopes=frozenset(),
+        )
+    )
+    manager = RunManager(
+        repository=repository,
+        event_stream=EventStream(repository),
+        graph_registry=registry,
+        checkpointer=RuntimeCheckpointer(tmp_path),
+    )
+    session = create_session(repository)
+    run = await manager.start(session.id, input={"text": "hello"}, model_bindings={})
+    for _ in range(20):
+        if repository.get_run(run.id).status == "running":
+            break
+        await asyncio.sleep(0)
+
+    await manager.shutdown()
+
+    assert repository.get_run(run.id).status == "interrupted"
+    assert repository.list_events(session.id)[-1].type == "run.interrupted"
+    connection.close()
+
+
+@pytest.mark.asyncio
+async def test_startup_failure_before_task_spawn_leaves_run_interrupted(tmp_path):
+    connection = connect_runtime_database(tmp_path)
+    repository = RuntimeRepository(connection)
+    registry = GraphRegistry()
+    registry.register(echo_definition())
+
+    class FailingEventStream(EventStream):
+        async def publish(self, *args, **kwargs):
+            raise RuntimeError("event storage unavailable")
+
+    manager = RunManager(
+        repository=repository,
+        event_stream=FailingEventStream(repository),
+        graph_registry=registry,
+        checkpointer=RuntimeCheckpointer(tmp_path),
+    )
+    session = create_session(repository)
+
+    with pytest.raises(RuntimeError, match="event storage unavailable"):
+        await manager.start(
+            session.id, input={"text": "hello"}, model_bindings={}
+        )
+
+    assert repository.latest_run(session.id).status == "interrupted"
+    connection.close()
+
+
+@pytest.mark.asyncio
+async def test_resume_publish_failure_leaves_run_interrupted(tmp_path):
+    connection = connect_runtime_database(tmp_path)
+    repository = RuntimeRepository(connection)
+    registry = GraphRegistry()
+    registry.register(echo_definition())
+
+    class FailingEventStream(EventStream):
+        async def publish(self, *args, **kwargs):
+            raise RuntimeError("event storage unavailable")
+
+    manager = RunManager(
+        repository=repository,
+        event_stream=FailingEventStream(repository),
+        graph_registry=registry,
+        checkpointer=RuntimeCheckpointer(tmp_path),
+    )
+    session = create_session(repository)
+    run = repository.create_run(
+        session.id,
+        input={"text": "hello"},
+        model_bindings={},
+        initial_status="running",
+    )
+    repository.interrupt_running_runs()
+
+    with pytest.raises(RuntimeError, match="event storage unavailable"):
+        await manager.resume(run.id)
+
+    interrupted = repository.get_run(run.id)
+    assert interrupted.status == "interrupted"
+    assert interrupted.resume_count == 1
+    connection.close()

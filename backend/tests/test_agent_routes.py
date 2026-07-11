@@ -11,6 +11,7 @@ from app.api.dependencies import get_agent_runtime
 from app.main import app
 from app.runtime.graph_registry import GraphDefinition, GraphRegistry
 from app.runtime.service import AgentRuntime
+from app.services.workspace import WorkspaceError
 
 
 class EchoState(TypedDict, total=False):
@@ -47,6 +48,7 @@ def echo_registry(*, gate: asyncio.Event | None = None) -> GraphRegistry:
 
 @pytest.fixture
 def agent_client(tmp_path: Path):
+    (tmp_path / "w1").mkdir()
     runtime = AgentRuntime(
         graph_registry=echo_registry(),
         workspace_resolver=lambda workspace_id: tmp_path / workspace_id,
@@ -105,7 +107,49 @@ def test_session_create_list_detail_and_run(agent_client):
     assert resumed.json()["resumeCount"] == 1
 
 
+def test_missing_session_event_stream_returns_404_before_streaming(agent_client):
+    client, _runtime = agent_client
+
+    response = client.get("/api/agent/sessions/missing/events")
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "runtime_record_not_found"
+
+
+def test_missing_graph_version_marks_session_for_migration(tmp_path: Path):
+    workspace = tmp_path / "w1"
+    workspace.mkdir()
+    runtime = AgentRuntime(
+        graph_registry=GraphRegistry(),
+        workspace_resolver=lambda _workspace_id: workspace,
+        model_binding_resolver=lambda _workspace_id: {},
+        workspace_ids=lambda: ("w1",),
+    )
+    session = runtime._context("w1").repository.create_session(
+        workspace_id="w1",
+        graph_id="removed.graph",
+        graph_version=1,
+        title="Old",
+    )
+    app.dependency_overrides[get_agent_runtime] = lambda: runtime
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                f"/api/agent/sessions/{session.id}/runs",
+                json={"input": {"text": "hello"}},
+            )
+            detail = client.get(f"/api/agent/sessions/{session.id}")
+
+        assert response.status_code == 409
+        assert response.json()["code"] == "graph_migration_required"
+        assert detail.json()["status"] == "migration_required"
+    finally:
+        app.dependency_overrides.clear()
+        asyncio.run(runtime.close())
+
+
 def test_concurrent_run_returns_structured_conflict(tmp_path: Path):
+    (tmp_path / "w1").mkdir()
     gate = asyncio.Event()
     runtime = AgentRuntime(
         graph_registry=echo_registry(gate=gate),
@@ -149,6 +193,9 @@ def test_sse_prefers_query_cursor_then_last_event_id():
     seen: list[int | None] = []
 
     class FakeRuntime:
+        def ensure_session(self, _session_id: str) -> None:
+            return None
+
         async def events(
             self, _session_id: str, *, after_id: int | None
         ) -> AsyncIterator[str]:
@@ -170,3 +217,24 @@ def test_sse_prefers_query_cursor_then_last_event_id():
         assert seen == [7, 6]
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_runtime_rejects_missing_workspace_instead_of_recreating_it(tmp_path):
+    missing = tmp_path / "missing"
+    runtime = AgentRuntime(
+        graph_registry=echo_registry(),
+        workspace_resolver=lambda _workspace_id: missing,
+        model_binding_resolver=lambda _workspace_id: {},
+        workspace_ids=lambda: ("w1",),
+    )
+
+    with pytest.raises(WorkspaceError):
+        await runtime.create_session(
+            workspace_id="w1",
+            graph_id="test.echo",
+            graph_version=1,
+            title="Echo",
+        )
+
+    assert not missing.exists()
