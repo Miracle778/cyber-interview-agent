@@ -562,3 +562,16 @@
 - 发布生命周期输出 `publication.started/completed/index_stale` 事件，payload 仅含 action、draft、相对 target 和状态。
 - 专项 Runtime/HITL 回归 17 passed；后端完整回归 230 passed，保留 1 个既有 Starlette warning。
 - 下一步 Task 6：Draft REST API、发布请求 API 与 typed errors。
+
+### R1.5 Task 6：Draft REST API 与 Typed Errors（Claude 接手）
+
+- 接手时 Task 6 后端已基本写好但未提交：`routes_drafts.py`、`test_draft_routes.py` 未跟踪，`main.py`、`runtime/service.py`、`schemas/drafts.py` 已改。
+- 草稿 API 落地：`GET /api/knowledge/drafts?workspaceId=`、`GET /api/knowledge/drafts/{id}`、`PATCH /api/knowledge/drafts/{id}`（只接受 `{version, title?, markdown}`）、`POST /api/knowledge/drafts/{id}/publish-request`（202 返回 session/run/status）。
+- typed errors 映射：`draft_not_found`(404)、`draft_version_changed`(409)、`draft_not_editable`(409)、`draft_content_changed`(409)、`external_document_changed`(409)；响应不暴露绝对路径或内部异常。
+- `AgentRuntime` 暴露 `list_drafts/get_draft/update_draft`；schemas 补 `UpdateKnowledgeDraftRequest`、`PublishDraftRunResource` 并对 `DraftModel` 加 `extra="forbid"`。
+- 测试可靠性修复（均为 Task 6 验证前置）：
+  - 新增 `backend/tests/conftest.py`：session 级 autouse fixture 把 `CYBER_INTERVIEW_AGENT_DATA_DIR` 指向临时目录。此前 `app.main.lifespan` 调用 `connect_app_database()` 无参，解析到用户真实 app data，每个 `TestClient(app)` fixture 都会打开真实 `app.sqlite`、为真实 workspace 构建 R_lifespan 并 `recover_interrupted_runs()`，既不安全也非确定性。隔离后 lifespan 用空临时 DB，套件从 ~23s 降到 ~13s 且不再触碰用户数据。
+  - `test_publish_request_returns_run_without_writing_vault` 增加轮询：发布请求返回 202 时 run 仍为 `running`，直接拆除 fixture 会在 graph task 仍在 portal loop 时杀死事件循环。现在轮询 `GET /api/agent/sessions/{sessionId}` 直到 `latestRun.status == waiting_for_approval`，与 `hitl_client._create_pending` 的稳定模式一致，保证 RunManager 已完成状态转换、task 离开 `_tasks` 后再拆除。
+- 预先存在的 flaky 测试（非 Task 6 回归）：`test_graph_tool_uses_runtime_context_not_graph_state` 偶发失败。在 Task 5 baseline（stash 掉 Task 6）同样复现，确认预先存在。临时在 `RunManager._execute` 异常分支注入 traceback 后捕获到 `OperationalError('database is locked')`——RunManager 同步 repository 连接与异步 checkpointer/audit 连接争用同一 `runtime.sqlite` 写锁（同步连接已设 `busy_timeout=5000`，仍偶发超时）。属 R1.2/R1.3 RunManager 连接模型的复杂状态机问题，按双轨分工由 Codex 主导；本次记录为已知欠项，不阻塞 Task 6 提交，Task 7 收口时在 verification 中显式标注。
+- 修复后 `test_draft_routes.py` 专项 4 passed；后端完整回归 234 passed（多次运行稳定），保留 1 个既有 Starlette warning。
+- 下一步 Task 7：DraftReview、ActionCenter 复用、浏览器验收与阶段文档收口。

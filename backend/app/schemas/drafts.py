@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.review import ReviewQuestion
 
@@ -15,6 +15,7 @@ class DraftModel(BaseModel):
         alias_generator=_to_camel,
         populate_by_name=True,
         from_attributes=True,
+        extra="forbid",
     )
 
 
@@ -42,3 +43,15 @@ class KnowledgeDraftResource(DraftModel):
 class UploadSourceResource(DraftModel):
     draft: KnowledgeDraftResource
     question: ReviewQuestion
+
+
+class UpdateKnowledgeDraftRequest(DraftModel):
+    version: int = Field(ge=1)
+    title: str | None = None
+    markdown: str
+
+
+class PublishDraftRunResource(DraftModel):
+    session_id: str
+    run_id: str
+    status: str

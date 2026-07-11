@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.api.routes_agent import router as agent_router
+from app.api.routes_drafts import router as drafts_router
 from app.api.routes_hitl import router as hitl_router
 from app.api.routes_knowledge import router as knowledge_router
 from app.api.routes_review import router as review_router
@@ -28,6 +29,13 @@ from app.hitl.repository import (
     PendingActionNotFoundError,
 )
 from app.knowledge.sources import SourceTooLargeError
+from app.knowledge.atomic_writer import ExternalDocumentChangedError
+from app.knowledge.drafts import (
+    DraftContentChangedError,
+    DraftNotEditableError,
+    DraftNotFoundError,
+    DraftVersionChangedError,
+)
 from app.runtime.repository import RuntimeRecordNotFoundError, SessionBusyError
 from app.runtime.service import AgentRuntime
 from app.security.workspace_paths import PathPolicyError
@@ -79,6 +87,7 @@ app.include_router(agent_router)
 app.include_router(hitl_router)
 app.include_router(settings_router)
 app.include_router(knowledge_router)
+app.include_router(drafts_router)
 app.include_router(review_router)
 
 
@@ -190,6 +199,41 @@ async def source_too_large(
     _request: Request, _error_value: SourceTooLargeError
 ) -> JSONResponse:
     return _error(413, "source_too_large", "上传资料超过 10 MiB 限制")
+
+
+@app.exception_handler(DraftNotFoundError)
+async def draft_not_found(
+    _request: Request, _error_value: DraftNotFoundError
+) -> JSONResponse:
+    return _error(404, "draft_not_found", "知识草稿不存在")
+
+
+@app.exception_handler(DraftVersionChangedError)
+async def draft_version_changed(
+    _request: Request, _error_value: DraftVersionChangedError
+) -> JSONResponse:
+    return _error(409, "draft_version_changed", "草稿已更新，请刷新后重试")
+
+
+@app.exception_handler(DraftNotEditableError)
+async def draft_not_editable(
+    _request: Request, _error_value: DraftNotEditableError
+) -> JSONResponse:
+    return _error(409, "draft_not_editable", "当前草稿状态不允许编辑")
+
+
+@app.exception_handler(DraftContentChangedError)
+async def draft_content_changed(
+    _request: Request, _error_value: DraftContentChangedError
+) -> JSONResponse:
+    return _error(409, "draft_content_changed", "草稿文件已被外部修改，请刷新后处理")
+
+
+@app.exception_handler(ExternalDocumentChangedError)
+async def external_document_changed(
+    _request: Request, _error_value: ExternalDocumentChangedError
+) -> JSONResponse:
+    return _error(409, "external_document_changed", "Vault 文档已被外部修改，请先处理冲突")
 
 
 @app.exception_handler(SessionBusyError)

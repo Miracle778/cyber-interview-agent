@@ -303,7 +303,7 @@ git commit -m "feat(knowledge): approve publication through runtime"
 
 **产出：** list/detail/update/publish-request；版本和外部冲突稳定映射；API 不暴露绝对路径。
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 `backend/tests/test_draft_routes.py` 覆盖 workspace 过滤、详情正文、PATCH version、stale 409、publish request 返回 session/run、Vault 在批准前为空、未知 draft 404、响应无绝对 path。
 
@@ -314,18 +314,18 @@ assert response.json()["status"] in {"running", "waiting_for_approval"}
 assert not list(vault.rglob("*.md"))
 ```
 
-- [ ] **步骤 2：运行 RED**
+- [x] **步骤 2：运行 RED**
 
 ```bash
 cd backend
 .venv/bin/pytest tests/test_draft_routes.py -v
 ```
 
-- [ ] **步骤 3：实现最小功能**
+- [x] **步骤 3：实现最小功能**
 
 新增 camelCase schemas 和 routes。PATCH 只接受 `{version, title?, markdown}`。publish-request 由 runtime 启动 Graph，不直接调用 writer。映射 `draft_version_changed`、`external_document_changed`、`publication_failed`，错误正文不返回内部异常。
 
-- [ ] **步骤 4：验证并提交**
+- [x] **步骤 4：验证并提交**
 
 ```bash
 cd backend

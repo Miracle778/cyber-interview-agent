@@ -17,6 +17,7 @@ from app.knowledge.drafts import (
     DraftNotFoundError,
     KnowledgeDraftRecord,
     KnowledgeDraftService,
+    UpdateDraftCommand,
 )
 from app.knowledge.publication import PublicationService
 from app.knowledge.publication_handler import KnowledgePublishActionHandler
@@ -180,6 +181,21 @@ class AgentRuntime:
             },
             model_bindings=self._model_binding_resolver(draft.workspace_id),
         )
+
+    async def list_drafts(
+        self, workspace_id: str
+    ) -> tuple[KnowledgeDraftRecord, ...]:
+        return await self._context(workspace_id).draft_service.list()
+
+    async def get_draft(self, draft_id: str) -> KnowledgeDraftRecord:
+        _context, draft = await self._locate_draft(draft_id)
+        return draft
+
+    async def update_draft(
+        self, draft_id: str, command: UpdateDraftCommand
+    ) -> KnowledgeDraftRecord:
+        context, _draft = await self._locate_draft(draft_id)
+        return await context.draft_service.update(draft_id, command)
 
     async def list_actions(
         self,

@@ -444,3 +444,10 @@
 - edited approval 的 action payload 保留请求时 draft version/hash，但 title/markdown 已是审核后的值。Handler 需要先用旧版本做一次乐观更新，再把新 version/hash 仅用于本次 publication delivery，不能篡改 action 的审计事实。
 - delivery 可能在草稿已升级、Vault 尚未写入时失败；重试必须识别“当前草稿恰好是期望版本 + 1 且内容等于审核编辑”的状态并复用，不能再次升级版本。
 - 同一 draft version/hash 的重复发布请求应复用 waiting run，而不是制造多个 pending action；草稿内容变化后才允许产生新的发布 run。
+
+## 2026-07-12：R1.5 Task 6 实施发现
+
+- `app.main.lifespan` 调用 `connect_app_database()` 不传参，解析到用户真实 app data；每个 `TestClient(app)` fixture 的 lifespan 都会打开真实 `app.sqlite`、为真实 workspace 构建 R_lifespan 并 `recover_interrupted_runs()`。新增 `backend/tests/conftest.py` 用 session 级 autouse fixture 把 `CYBER_INTERVIEW_AGENT_DATA_DIR` 指向临时目录，lifespan 改用空 DB，套件不再触碰用户数据且从 ~23s 降到 ~13s。fixtures 仍用显式 `data_dir` 参数创建自己的 app DB，不受影响。
+- `request_draft_publication` 调用 `manager.start(...)` 后立即返回，run 仍为 `running`；graph 在 portal loop 上异步推进到 `interrupt()`。若 publish-request 测试在 run 到达 `waiting_for_approval` 前拆除 `TestClient`，portal loop 关闭会杀死仍在执行的 graph task，跨 `asyncio.run(runtime.close())` 的 task 残留会污染后续测试。修复方式是轮询 `GET /api/agent/sessions/{sessionId}` 直到 `latestRun.status == waiting_for_approval`，与 `hitl_client._create_pending` 一致。
+- 预先存在的 flaky：`test_graph_tool_uses_runtime_context_not_graph_state` 偶发 `OperationalError('database is locked')`。在 Task 5 baseline 同样复现，非 R1.5 回归。临时在 `RunManager._execute` 异常分支注入 traceback 捕获到根因：RunManager 同步 repository 连接（已设 `busy_timeout=5000`）与异步 checkpointer/audit 连接争用同一 `runtime.sqlite` 写锁，偶发超时。属 R1.2/R1.3 RunManager 连接模型问题，按双轨分工交 Codex 主导修复，本次记录为已知欠项。
+- `DraftModel` 加 `extra="forbid"` 后，所有继承它的响应 schema（`KnowledgeDraftResource`、`UploadSourceResource` 等）拒绝未知字段；`from_attributes=True` 仍能从 record 读属性，未破坏既有 knowledge 路由。
