@@ -12,3 +12,5 @@ Before doing any project work, read and follow:
 6. The current stage spec and implementation plan
 
 `AGENTS.md` is the concise cross-agent rule entry. The design spec is the single detailed source of truth. Do not let user learning exercises block product development. Concurrent learning uses one active learning worktree, and each learning branch starts from its own stage completion baseline rather than another learning branch. Work only from the minimal repository context required for the assigned task, and leave review and final acceptance to Codex.
+
+For every product slice, incrementally maintain the ignored local file `docs/verification/<stage>.md`. After a branch merge, explicitly synchronize it into the main repository and verify the target exists; the product delivery is not closed until Codex confirms that synchronization.

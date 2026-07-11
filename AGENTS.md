@@ -26,6 +26,7 @@ Repository files and executable state are authoritative. Do not reconstruct proj
 - Keep frontend behavior evolving with backend capabilities.
 - Never modify or commit `docs/my_idea.md`.
 - Only commit formal documents under `docs/superpowers/`; keep `docs/learning/` and `docs/verification/` local and sync them explicitly after branch merges.
+- Maintain one incremental `docs/verification/<stage>.md` per product slice. Update it after every task, refresh final evidence before completion, and verify it is explicitly synchronized into the main repository after merges; delivery is not closed until this check passes.
 
 ## Completion Reporting
 
