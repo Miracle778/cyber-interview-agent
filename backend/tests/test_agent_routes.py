@@ -10,6 +10,7 @@ from langgraph.graph import END, START, StateGraph
 from app.api.dependencies import get_agent_runtime
 from app.main import app
 from app.runtime.graph_registry import GraphDefinition, GraphRegistry
+from app.runtime.default_graphs import create_default_graph_registry
 from app.runtime.service import AgentRuntime
 from app.services.workspace import WorkspaceError
 
@@ -238,3 +239,30 @@ async def test_runtime_rejects_missing_workspace_instead_of_recreating_it(tmp_pa
         )
 
     assert not missing.exists()
+
+
+def test_agent_route_accepts_registered_security_diagnostic(tmp_path: Path):
+    runtime = AgentRuntime(
+        graph_registry=create_default_graph_registry(),
+        workspace_resolver=lambda _workspace_id: tmp_path,
+        model_binding_resolver=lambda _workspace_id: {},
+        workspace_ids=lambda: ("w1",),
+    )
+    app.dependency_overrides[get_agent_runtime] = lambda: runtime
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/agent/sessions",
+                json={
+                    "workspaceId": "w1",
+                    "graphId": "test.tool-security",
+                    "graphVersion": 1,
+                    "title": "工具安全自检",
+                },
+            )
+
+        assert response.status_code == 201
+        assert response.json()["graphId"] == "test.tool-security"
+    finally:
+        app.dependency_overrides.clear()
+        asyncio.run(runtime.close())

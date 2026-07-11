@@ -4,6 +4,7 @@ from langgraph.graph import END, START, StateGraph
 
 from app.runtime.graph_build_context import GraphBuildContext
 from app.runtime.graph_registry import GraphDefinition, GraphRegistry
+from app.runtime.security_diagnostic_graph import create_security_diagnostic_graph
 
 
 class _EchoState(TypedDict, total=False):
@@ -30,6 +31,18 @@ def create_default_graph_registry() -> GraphRegistry:
             required_model_roles=frozenset(),
             allowed_tools=frozenset(),
             allowed_scopes=frozenset(),
+        )
+    )
+    registry.register(
+        GraphDefinition(
+            graph_id="test.tool-security",
+            graph_version=1,
+            factory=create_security_diagnostic_graph,
+            required_model_roles=frozenset(),
+            allowed_tools=frozenset(
+                {"diagnostic_read", "read_active_knowledge"}
+            ),
+            allowed_scopes=frozenset({"diagnostics.security"}),
         )
     )
     return registry
