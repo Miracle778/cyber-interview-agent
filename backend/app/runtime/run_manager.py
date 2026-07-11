@@ -1,12 +1,17 @@
 import asyncio
+from pathlib import Path
 from typing import Any
 
 from app.runtime.checkpoints import RuntimeCheckpointer
 from app.runtime.event_stream import EventStream
-from app.runtime.graph_build_context import GraphBuildContext, unavailable_tool_invoker
+from app.runtime.graph_build_context import GraphBuildContext
 from app.runtime.graph_registry import GraphRegistry
 from app.runtime.models import RunRecord
 from app.runtime.repository import InvalidRunTransitionError, RuntimeRepository
+from app.tools.audit import ToolAuditRepository
+from app.tools.context import ToolExecutionContext
+from app.tools.executor import BoundToolInvoker
+from app.tools.registry import ToolRegistry
 
 
 class RunManager:
@@ -17,11 +22,17 @@ class RunManager:
         event_stream: EventStream,
         graph_registry: GraphRegistry,
         checkpointer: RuntimeCheckpointer,
+        workspace_root: Path,
+        tool_registry: ToolRegistry,
+        audit_repository: ToolAuditRepository,
     ) -> None:
         self._repository = repository
         self._event_stream = event_stream
         self._graph_registry = graph_registry
         self._checkpointer = checkpointer
+        self._workspace_root = workspace_root
+        self._tool_registry = tool_registry
+        self._audit_repository = audit_repository
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._is_shutting_down = False
@@ -154,11 +165,27 @@ class RunManager:
                 definition = self._graph_registry.get(
                     session.graph_id, session.graph_version
                 )
+                tool_context = ToolExecutionContext(
+                    workspace_id=session.workspace_id,
+                    workspace_root=self._workspace_root,
+                    session_id=session.id,
+                    run_id=run.id,
+                    graph_id=definition.graph_id,
+                    graph_version=definition.graph_version,
+                    allowed_tools=definition.allowed_tools,
+                    allowed_scopes=definition.allowed_scopes,
+                )
+                invoker = BoundToolInvoker(
+                    context=tool_context,
+                    registry=self._tool_registry,
+                    audit_repository=self._audit_repository,
+                    event_stream=self._event_stream,
+                )
                 async with self._checkpointer.open() as checkpointer:
                     graph = definition.factory(
                         GraphBuildContext(
                             checkpointer=checkpointer,
-                            invoke_tool=unavailable_tool_invoker,
+                            invoke_tool=invoker.invoke_tool,
                         )
                     )
                     result = await graph.ainvoke(

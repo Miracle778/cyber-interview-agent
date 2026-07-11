@@ -12,6 +12,9 @@ from app.runtime.models import RunRecord, SessionRecord
 from app.runtime.repository import RuntimeRecordNotFoundError, RuntimeRepository
 from app.runtime.run_manager import RunManager
 from app.services.workspace import WorkspaceError
+from app.tools.audit import ToolAuditRepository
+from app.tools.defaults import create_default_tool_registry
+from app.tools.registry import ToolRegistry
 
 
 @dataclass(slots=True)
@@ -30,11 +33,13 @@ class AgentRuntime:
         workspace_resolver: Callable[[str], Path],
         model_binding_resolver: Callable[[str], dict[str, str]],
         workspace_ids: Callable[[], tuple[str, ...]],
+        tool_registry: ToolRegistry | None = None,
     ) -> None:
         self._graph_registry = graph_registry
         self._workspace_resolver = workspace_resolver
         self._model_binding_resolver = model_binding_resolver
         self._workspace_ids = workspace_ids
+        self._tool_registry = tool_registry or create_default_tool_registry()
         self._workspaces: dict[str, _WorkspaceRuntime] = {}
 
     async def create_session(
@@ -138,6 +143,9 @@ class AgentRuntime:
         root = self._workspace_resolver(workspace_id)
         if not root.is_dir():
             raise WorkspaceError("Workspace 路径不可用，请重新关联")
+        (root / ".cyber-interview-agent" / "diagnostics").mkdir(
+            parents=True, exist_ok=True
+        )
         connection = connect_runtime_database(root)
         repository = RuntimeRepository(connection)
         event_stream = EventStream(repository)
@@ -150,6 +158,9 @@ class AgentRuntime:
                 event_stream=event_stream,
                 graph_registry=self._graph_registry,
                 checkpointer=RuntimeCheckpointer(root),
+                workspace_root=root,
+                tool_registry=self._tool_registry,
+                audit_repository=ToolAuditRepository(root),
             ),
         )
         self._workspaces[workspace_id] = context

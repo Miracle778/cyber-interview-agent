@@ -21,9 +21,11 @@ from app.runtime.default_graphs import create_default_graph_registry
 from app.runtime.graph_registry import GraphVersionNotFoundError
 from app.runtime.repository import RuntimeRecordNotFoundError, SessionBusyError
 from app.runtime.service import AgentRuntime
+from app.security.workspace_paths import PathPolicyError
 from app.services.secrets import SecretStoreUnavailableError
 from app.services.workspace import WorkspaceError
 from app.services.workspace_service import WorkspaceService
+from app.tools.registry import ToolError
 
 
 @asynccontextmanager
@@ -143,6 +145,20 @@ async def graph_migration_required(
     _request: Request, _error_value: GraphVersionNotFoundError
 ) -> JSONResponse:
     return _error(409, "graph_migration_required", "当前 Agent 版本需要迁移")
+
+
+@app.exception_handler(PathPolicyError)
+async def workspace_path_denied(
+    _request: Request, _error_value: PathPolicyError
+) -> JSONResponse:
+    return _error(400, "workspace_path_denied", "Workspace 路径不在授权范围内")
+
+
+@app.exception_handler(ToolError)
+async def tool_request_rejected(
+    _request: Request, error_value: ToolError
+) -> JSONResponse:
+    return _error(400, error_value.code, "工具调用被安全策略拒绝")
 
 @app.get("/api/health")
 def health() -> dict[str, str]:

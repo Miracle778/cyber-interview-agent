@@ -10,11 +10,21 @@ from app.runtime.event_stream import EventStream
 from app.runtime.graph_registry import GraphDefinition, GraphRegistry
 from app.runtime.repository import RuntimeRepository, SessionBusyError
 from app.runtime.run_manager import RunManager
+from app.tools.audit import ToolAuditRepository
+from app.tools.defaults import create_default_tool_registry
 
 
 class EchoState(TypedDict, total=False):
     text: str
     response: str
+
+
+def security_args(connection, workspace_root):
+    return {
+        "workspace_root": workspace_root,
+        "tool_registry": create_default_tool_registry(),
+        "audit_repository": ToolAuditRepository(workspace_root),
+    }
 
 
 def echo_definition() -> GraphDefinition:
@@ -49,6 +59,7 @@ def runtime_parts(tmp_path):
         event_stream=EventStream(repository),
         graph_registry=registry,
         checkpointer=checkpointer,
+        **security_args(connection, tmp_path),
     )
     yield repository, registry, checkpointer, manager
     connection.close()
@@ -124,6 +135,7 @@ async def test_start_rejects_second_active_run(tmp_path):
         event_stream=EventStream(repository),
         graph_registry=registry,
         checkpointer=RuntimeCheckpointer(tmp_path),
+        **security_args(connection, tmp_path),
     )
     session = create_session(repository)
     first = await manager.start(session.id, input={"text": "one"}, model_bindings={})
@@ -232,6 +244,7 @@ async def test_failure_exposes_safe_message_without_exception_details(tmp_path):
         event_stream=EventStream(repository),
         graph_registry=registry,
         checkpointer=RuntimeCheckpointer(tmp_path),
+        **security_args(connection, tmp_path),
     )
     session = create_session(repository)
 
@@ -280,6 +293,7 @@ async def test_shutdown_interrupts_active_run_instead_of_cancelling(tmp_path):
         event_stream=EventStream(repository),
         graph_registry=registry,
         checkpointer=RuntimeCheckpointer(tmp_path),
+        **security_args(connection, tmp_path),
     )
     session = create_session(repository)
     run = await manager.start(session.id, input={"text": "hello"}, model_bindings={})
@@ -311,6 +325,7 @@ async def test_startup_failure_before_task_spawn_leaves_run_interrupted(tmp_path
         event_stream=FailingEventStream(repository),
         graph_registry=registry,
         checkpointer=RuntimeCheckpointer(tmp_path),
+        **security_args(connection, tmp_path),
     )
     session = create_session(repository)
 
@@ -339,6 +354,7 @@ async def test_resume_publish_failure_leaves_run_interrupted(tmp_path):
         event_stream=FailingEventStream(repository),
         graph_registry=registry,
         checkpointer=RuntimeCheckpointer(tmp_path),
+        **security_args(connection, tmp_path),
     )
     session = create_session(repository)
     run = repository.create_run(
@@ -355,4 +371,81 @@ async def test_resume_publish_failure_leaves_run_interrupted(tmp_path):
     interrupted = repository.get_run(run.id)
     assert interrupted.status == "interrupted"
     assert interrupted.resume_count == 1
+    connection.close()
+
+
+class ToolState(TypedDict, total=False):
+    path: str
+    workspace_root: str
+    response: str
+
+
+@pytest.mark.asyncio
+async def test_graph_tool_uses_runtime_context_not_graph_state(tmp_path):
+    for relative in (
+        "artifacts/review/sources",
+        "artifacts/review/drafts",
+        "knowledge-vault",
+        ".cyber-interview-agent/diagnostics",
+    ):
+        (tmp_path / relative).mkdir(parents=True, exist_ok=True)
+    (tmp_path / "artifacts/review/sources/notes.md").write_text(
+        "runtime-bound", encoding="utf-8"
+    )
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+    (outside / "notes.md").write_text("state-controlled", encoding="utf-8")
+
+    connection = connect_runtime_database(tmp_path)
+    repository = RuntimeRepository(connection)
+    registry = GraphRegistry()
+
+    def factory(context):
+        async def read_node(state):
+            result = await context.invoke_tool(
+                "read_source", {"path": state["path"]}
+            )
+            return {"response": result["text"]}
+
+        graph = StateGraph(ToolState)
+        graph.add_node("read", read_node)
+        graph.add_edge(START, "read")
+        graph.add_edge("read", END)
+        return graph.compile(checkpointer=context.checkpointer)
+
+    registry.register(
+        GraphDefinition(
+            graph_id="test.tools",
+            graph_version=1,
+            factory=factory,
+            required_model_roles=frozenset(),
+            allowed_tools=frozenset({"read_source"}),
+            allowed_scopes=frozenset({"review.sources"}),
+        )
+    )
+    manager = RunManager(
+        repository=repository,
+        event_stream=EventStream(repository),
+        graph_registry=registry,
+        checkpointer=RuntimeCheckpointer(tmp_path),
+        **security_args(connection, tmp_path),
+    )
+    session = repository.create_session(
+        workspace_id="w1",
+        graph_id="test.tools",
+        graph_version=1,
+        title="Tools",
+    )
+
+    run = await manager.start(
+        session.id,
+        input={"path": "notes.md", "workspace_root": str(outside)},
+        model_bindings={},
+    )
+    completed = await manager.wait(run.id)
+
+    assert completed.status == "completed"
+    assert repository.list_messages(session.id)[-1].content == "runtime-bound"
+    audits = await ToolAuditRepository(tmp_path).list_for_run(run.id)
+    assert audits[-1].status == "completed"
     connection.close()
