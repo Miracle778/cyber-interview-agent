@@ -186,7 +186,7 @@ R1.3 注册：
 ```text
 graph_id: test.tool-security
 graph_version: 1
-allowed_tools: diagnostic_read
+allowed_tools: diagnostic_read, read_active_knowledge
 allowed_scopes: diagnostics.security
 ```
 
@@ -194,7 +194,7 @@ allowed_scopes: diagnostics.security
 
 1. `diagnostic_read` 授权读取成功；
 2. 未注册 `shell` 在执行前被拒绝；
-3. 未授权 `read_active_knowledge` 被拒绝；
+3. Graph 允许但缺少 `knowledge.active` scope 的 `read_active_knowledge` 被拒绝；
 4. `diagnostic_read` 的 `../` 路径被拒绝；
 5. 审计和 SSE payload 不包含 probe 正文、绝对路径或注入 secret。
 

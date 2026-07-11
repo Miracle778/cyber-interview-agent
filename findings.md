@@ -376,3 +376,12 @@
 - 完成前独立代码审阅发现并关闭：Runtime connection 跨线程复用、优雅停机误取消、running 写入与 task 注册失败窗口、无 checkpoint 恢复、SSE keepalive/404、Graph migration 状态、历史 run 事件污染和旧 EventSource 延迟回调。
 - Start 和 resume 在单事务内进入 running；spawn 前失败会回到 interrupted，进程退出后的 running 仍由启动恢复处理，避免 active-run 唯一约束被无执行器的 run 占用。
 - Keepalive 必须退出 subscriber condition 临界区后再 yield，否则网络背压会让 publisher 等待内存锁，即使事件已经写入数据库。
+
+## 2026-07-11：R1.3 工具安全设计复核发现
+
+- R1.2 的 `GraphDefinition.allowed_tools` 和 `allowed_scopes` 只是权限元数据位置，尚未形成真实执行边界；R1.3 必须由 Runtime 构造不可变上下文，再通过绑定当前 run 的 invoker 注入 Graph。
+- 路径安全不能只检查最终 `resolve()` 结果。策略需要拒绝绝对路径、`.`、`..`、NUL 和路径链中的软链接，并在真正 I/O 前执行第二次校验。
+- 安全诊断必须区分“工具不在 allowlist”和“工具在 allowlist 但 scope 不足”。因此 `test.tool-security` 允许 `read_active_knowledge`，但只授予 `diagnostics.security` scope，以真实覆盖 scope 拒绝路径。
+- 工具审计和 SSE 事件只保存逻辑 scope、相对资源、状态、耗时、byte count 和 hash；正文、secret、请求头、绝对路径和异常堆栈不得进入持久化或前端。
+- R1.3 采用七任务纵向计划；设置页复用现有 session/run/SSE 协议运行确定性安全 Graph，不增加第二套诊断 API。
+- 本地 `docs/verification/r1_3_workspace_tool_security.md` 已建立骨架，后续必须在每个 Task 后增量更新，而不是阶段结束时一次性补写。

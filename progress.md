@@ -406,3 +406,14 @@
 - 本地掌握包写入 `docs/learning/<stage>/`，正式规格继续写入 `docs/superpowers/`。
 - 已生成本地 R1.2 Runtime 掌握包：`docs/learning/r1-2-runtime/`。
 - R1.2 非阻塞练习：增加 Run 详情查询接口；未完成不阻塞 R1.3。
+
+### R1.3 Workspace 工具安全启动
+
+- 在当前仓库创建普通分支 `codex/r1-3-workspace-tool-security`，未创建 worktree。
+- 完成设计复核并由用户批准：`docs/superpowers/specs/2026-07-11-r1-3-workspace-tool-security-design-review.md`。
+- 设计复核提交：`9363e48 docs: review R1.3 tool security design`。
+- 将原五任务计划重写为七个可独立验证任务：WorkspacePathPolicy、Registry/GraphBuildContext、授权文件工具、审计与 Runtime、旧文件边界迁移、确定性安全诊断 Graph、设置页安全自检。
+- 自审修正诊断权限：`read_active_knowledge` 位于 Graph tool allowlist，但 `knowledge.active` 不在 scope allowlist，从而覆盖真实 `tool_scope_denied`。
+- 计划通过 `git diff --check`、占位符扫描、接口一致性和规格覆盖检查。
+- 已创建本地增量验证骨架：`docs/verification/r1_3_workspace_tool_security.md`，按仓库规则忽略且不得提交。
+- 当前状态：R1.3 设计已批准、实施计划就绪，下一步按 TDD 执行 Task 1。
