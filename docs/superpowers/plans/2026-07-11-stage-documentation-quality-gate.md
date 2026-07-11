@@ -47,7 +47,7 @@
 - 测试期望 `scripts/check_stage_docs.py` 支持 `--verification PATH --learning DIR`。
 - 进程成功返回 `0`，失败返回 `1` 并把逐项原因写入 stderr。
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 使用 `tempfile.TemporaryDirectory()` 创建完整和缺陷样例。通过 `subprocess.run()` 调用仓库脚本，至少覆盖：
 
@@ -71,7 +71,7 @@ def test_readme_only_learning_fails(self):
 
 完整样例必须包含五个 verification 章节、shell 命令块、编号人工步骤，以及七个 learning 文件要求的最小真实标题。
 
-- [ ] **步骤 2：运行测试确认 RED**
+- [x] **步骤 2：运行测试确认 RED**
 
 ```bash
 python3 scripts/test_check_stage_docs.py
@@ -79,11 +79,11 @@ python3 scripts/test_check_stage_docs.py
 
 预期：FAIL，错误为 `scripts/check_stage_docs.py` 不存在。
 
-- [ ] **步骤 3：确认测试自身质量**
+- [x] **步骤 3：确认测试自身质量**
 
 检查每个失败样例只破坏一个要求；占位符、缺文件、缺章节和 Task 流水账分别有独立测试，不能用同一个全坏样例代替。
 
-- [ ] **步骤 4：暂不提交**
+- [x] **步骤 4：暂不提交**
 
 Task 1 与实现共同形成完整 RED/GREEN 交付，测试在 Task 2 GREEN 后提交。
 
@@ -108,7 +108,7 @@ def check_learning(directory: Path) -> list[CheckIssue]: ...
 def main(argv: Sequence[str] | None = None) -> int: ...
 ```
 
-- [ ] **步骤 1：实现 verification 检查**
+- [x] **步骤 1：实现 verification 检查**
 
 固定要求：
 
@@ -125,7 +125,7 @@ PLACEHOLDERS = ("TODO", "TBD", "待补充", "待完善")
 
 要求文件存在、非空、包含全部标题、至少一个 `bash`/`shell` 代码围栏、人工验证部分至少有一个 `### 1.` 或 `1.` 步骤，并拒绝以 `## Task 进度` 为主体的最终文档。
 
-- [ ] **步骤 2：实现 learning 检查**
+- [x] **步骤 2：实现 learning 检查**
 
 固定文件：
 
@@ -143,7 +143,7 @@ LEARNING_FILES = (
 
 对每个文件检查存在、非空、占位符和专属标题。`README.md` 不计入七件套；缺少任何固定文件都失败。
 
-- [ ] **步骤 3：实现 CLI 和稳定输出**
+- [x] **步骤 3：实现 CLI 和稳定输出**
 
 ```text
 Stage documentation gate passed
@@ -159,7 +159,7 @@ Stage documentation gate passed
 
 按路径和消息排序后写入 stderr，返回 `1`。
 
-- [ ] **步骤 4：运行测试确认 GREEN 并提交**
+- [x] **步骤 4：运行测试确认 GREEN 并提交**
 
 ```bash
 python3 scripts/test_check_stage_docs.py
