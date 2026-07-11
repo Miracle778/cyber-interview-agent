@@ -367,3 +367,14 @@
 - 本地人工验证指南：`docs/verification/2026-07-11-product-layout-redesign.md`。
 
 当前下一步保持不变：用户复核并合并布局分支后，执行 R1.2 Agent Runtime 与 SSE。
+
+### R1.2 Agent Runtime 与 SSE 启动
+
+- 创建分支：`codex/r1-2-agent-runtime-sse`。
+- 创建隔离 worktree：`/private/tmp/cyber-interview-agent-r1-2`。
+- 后端基线：78 passed，1 个既有 Starlette deprecation warning。
+- 前端基线：35 passed，production build passed。
+- 前端首次基线命令失败：worktree 链接的 `node_modules` 触发 pnpm 重装，受限网络无法访问 registry；改为直接调用主仓库已安装二进制后通过。
+- 已复核 R1 总规格和 R1.2 七任务计划，新增第 8 个“设置页 Runtime 自检闭环”任务。
+- 复杂度结论：R1.2 状态、事务、异步和前端 SSE 高耦合，本切片全部由 Codex 实现。
+- 设计复核文档：`docs/superpowers/specs/2026-07-11-r1-2-agent-runtime-sse-design-review.md`。

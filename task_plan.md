@@ -19,7 +19,7 @@
 | 阶段 | 名称 | 状态 | 成熟度说明 |
 |---|---|---|---|
 | R0 | 技术切片与质量基线 | 可人工验证 | 已能跑通单题单轮浏览器链路，不代表完整复习 Agent |
-| R1 | 共享 Agent 与知识库底座 | R1.1 与产品布局可人工验证，R1.2 待执行 | 真实 Provider 和可扩展前端骨架已落地；下一步接 LangGraph Runtime、会话和 SSE |
+| R1 | 共享 Agent 与知识库底座 | R1.1 与产品布局可人工验证，R1.2 设计复核完成待实现 | 真实 Provider 和可扩展前端骨架已落地；正在接 LangGraph Runtime、会话和 SSE |
 | R2 | 完整复习 Agent | 待开始 | 多题轮次、模式、追问、派生、单轮与全局掌握度 |
 | R3 | 个人信息 Agent | 待开始 | 简历、个人画像、资料对话、审核推送 |
 | R4 | 岗位与 JD 追踪 | 待开始 | 岗位索引、匹配度、竞争力、差距和准备聚合 |
@@ -91,13 +91,14 @@
 
 #### B. LangGraph Runtime
 
-- 状态：下一步执行 R1.2。
+- 状态：R1.2 设计复核完成，进入实现。
 - 定义共享 graph invocation 接口和每类 Agent 独立 state schema。
 - 使用 checkpoint 保存并恢复会话状态。
 - 会话创建、列表、标题、恢复和归档。
 - 长上下文压缩摘要。
 - token/context 用量记录。
 - 每类 Agent 独立 tool allowlist。
+- 设置页增加可操作的 Runtime 自检，用确定性 Graph 验证 session、run、SSE 和刷新恢复；不提前迁移复习业务。
 
 #### C. Workspace 沙箱与 HITL
 

@@ -47,6 +47,8 @@
 - `frontend/src/features/agent/agentApi.test.ts`
 - `frontend/src/features/agent/useAgentEvents.ts`
 - `frontend/src/features/agent/useAgentEvents.test.tsx`
+- `frontend/src/features/settings/RuntimeDiagnostics.tsx`
+- `frontend/src/features/settings/RuntimeDiagnostics.test.tsx`
 
 修改：
 
@@ -55,6 +57,8 @@
 - `backend/app/api/dependencies.py` — `get_agent_runtime`.
 - `backend/app/main.py` — 注册 Agent router 和启动恢复。
 - `frontend/src/shared/api/client.ts` — 在不改变错误语义的前提下支持 `202 Accepted` 资源。
+- `frontend/src/features/settings/SettingsPage.tsx` — Workspace 就绪后组合 Runtime 自检面板。
+- `frontend/src/app/global.css` — Runtime 状态和事件时间线响应式样式。
 
 ### 任务 1：Runtime 数据库与记录模型
 
@@ -321,7 +325,7 @@ git commit -m "feat(runtime): expose persistent agent sessions and SSE"
 
 **接口：**
 - 产出 typed session/run methods and `useAgentEvents(sessionId)`.
-- No business page is migrated in this slice.
+- 不迁移复习业务 Graph；为设置页 Runtime 自检提供 typed client。
 
 - [ ] **步骤 1：编写失败测试**
 
@@ -365,4 +369,47 @@ git add frontend/src/features/agent frontend/src/shared/api/client.ts
 git commit -m "feat(runtime): add browser agent session client"
 ```
 
-R1.2 验收：确定性 Graph session 可跨进程重启保存；running 变为 interrupted；断线后事件可重放；浏览器 client 使用 session detail 和持久化事件重建状态。
+### 任务 8：设置页 Runtime 自检闭环
+
+**接口：**
+- 产出 `RuntimeDiagnostics({ workspaceId })`。
+- 使用固定 `test.echo` version 1 创建/恢复“Agent Runtime 自检”session。
+- 展示最近 run、SSE 连接状态和经过整理的事件时间线。
+
+- [ ] **步骤 1：编写失败测试**
+
+创建 `RuntimeDiagnostics.test.tsx`，覆盖：首次加载恢复最近自检 session；没有 session 时显示可运行状态；点击“运行自检”后创建 session、启动 run；收到 `run.started`、`message.completed`、`run.completed` 后更新状态；`run.failed` 显示恢复建议；重复事件不重复渲染。
+
+更新 `SettingsPage.test.tsx`，断言 Workspace 注册恢复后组合 RuntimeDiagnostics；无 Workspace 时不渲染自检按钮。
+
+- [ ] **步骤 2：运行测试确认失败**
+
+运行：`pnpm --dir frontend test -- RuntimeDiagnostics.test.tsx SettingsPage.test.tsx`
+
+预期：失败，因为 RuntimeDiagnostics 尚不存在。
+
+- [ ] **步骤 3：实现最小功能**
+
+RuntimeDiagnostics 使用 React Query 加载 `listAgentSessions(workspaceId)` 和 session detail。运行自检时复用最近的 `test.echo` session，否则创建新 session，再用固定非敏感输入启动 run。`useAgentEvents` 只提供连接和增量事件；run 终态后重新获取 session detail。
+
+面板只显示产品状态和整理后的事件，不展示 checkpoint、原始 payload 或开发调试 JSON。使用 `aria-live="polite"` 告知连接和 run 变化；375px 下事件项和操作按钮换行。
+
+- [ ] **步骤 4：验证前端和浏览器闭环并提交**
+
+运行：
+
+```bash
+pnpm --dir frontend test
+pnpm --dir frontend build
+cd backend
+UV_CACHE_DIR=.uv-cache/backend uv run pytest
+```
+
+使用 Playwright 在 1440、1024、768、375px 验证设置页自检、刷新恢复和无水平溢出。创建忽略文件 `docs/verification/r1_2_agent_runtime_sse.md`，然后：
+
+```bash
+git add frontend/src/features/settings/RuntimeDiagnostics.tsx frontend/src/features/settings/RuntimeDiagnostics.test.tsx frontend/src/features/settings/SettingsPage.tsx frontend/src/features/settings/SettingsPage.test.tsx frontend/src/app/global.css
+git commit -m "feat(runtime): add browser runtime diagnostics"
+```
+
+R1.2 验收：确定性 Graph session 可跨进程重启保存；running 变为 interrupted；断线后事件可重放；设置页可完成一次真实 Runtime 自检，浏览器刷新后使用 session detail 和持久化事件恢复状态。
