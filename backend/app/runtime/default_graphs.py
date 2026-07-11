@@ -2,6 +2,7 @@ from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from app.runtime.approval_diagnostic_graph import create_approval_diagnostic_graph
 from app.runtime.graph_build_context import GraphBuildContext
 from app.runtime.graph_registry import GraphDefinition, GraphRegistry
 from app.runtime.security_diagnostic_graph import create_security_diagnostic_graph
@@ -23,6 +24,16 @@ def create_default_graph_registry() -> GraphRegistry:
         return graph.compile(checkpointer=context.checkpointer)
 
     registry = GraphRegistry()
+    registry.register(
+        GraphDefinition(
+            graph_id="test.approval",
+            graph_version=1,
+            factory=create_approval_diagnostic_graph,
+            required_model_roles=frozenset(),
+            allowed_tools=frozenset(),
+            allowed_scopes=frozenset(),
+        )
+    )
     registry.register(
         GraphDefinition(
             graph_id="test.echo",

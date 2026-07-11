@@ -466,3 +466,12 @@
 - 相同幂等键且已 delivered 时直接返回原结果；失败 receipt 可重试并复用原 decision。
 - 新增并发 RED 证明两个相同请求会重复恢复；改为数据库 delivery claim 后，只有一个请求进入回调。
 - Repository/Service 联合验证 14 passed；后端完整回归 181 passed，保留 1 个既有 Starlette deprecation warning。
+
+### R1.4 Task 3：LangGraph Interrupt/Resume
+
+- `GraphBuildContext.request_action` 由 Runtime 闭包绑定 Workspace/session/run，Graph state 无法伪造执行身份。
+- `RunManager` 显式识别 LangGraph `__interrupt__`，将 run/session 转为 waiting 后发布 `hitl.required`，不写 assistant message、不误标 completed。
+- `test.approval` 使用真实 `interrupt()` 和原 checkpoint；编辑批准或拒绝通过 `Command(resume=...)` 恢复原 run 并增加 resume count。
+- waiting run 取消会把 pending action 转为 cancelled；启动恢复会重试 pending/delivering/failed receipt，也覆盖 delivered 后进程崩溃导致 run interrupted 的窗口。
+- 首次 GREEN 暴露 `graph.ainvoke()` 插入位置错误，修正后 4 个重启集成测试和 32 个 Runtime/HITL 相关测试通过。
+- 完整回归发现旧 GraphBuildContext 构造缺少新参数；补充默认拒绝 requester 后，后端 185 passed，保留 1 个既有 Starlette deprecation warning。

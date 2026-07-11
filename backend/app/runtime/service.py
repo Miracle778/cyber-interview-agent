@@ -5,6 +5,14 @@ from pathlib import Path
 from typing import Any
 
 from app.db.runtime_database import connect_runtime_database
+from app.hitl.handlers import create_default_action_handler_registry
+from app.hitl.models import (
+    CreatePendingAction,
+    PendingActionRecord,
+    ResolveActionCommand,
+)
+from app.hitl.repository import PendingActionNotFoundError, PendingActionRepository
+from app.hitl.service import HitlService
 from app.runtime.checkpoints import RuntimeCheckpointer
 from app.runtime.event_stream import EventStream, encode_sse_event
 from app.runtime.graph_registry import GraphRegistry, GraphVersionNotFoundError
@@ -23,6 +31,8 @@ class _WorkspaceRuntime:
     repository: RuntimeRepository
     event_stream: EventStream
     manager: RunManager
+    hitl_repository: PendingActionRepository
+    hitl_service: HitlService
 
 
 class AgentRuntime:
@@ -113,6 +123,34 @@ class AgentRuntime:
         context = self._locate_run(run_id)
         return await context.manager.cancel(run_id)
 
+    async def list_actions(
+        self,
+        workspace_id: str,
+        *,
+        status: str | None = None,
+        session_id: str | None = None,
+    ) -> tuple[PendingActionRecord, ...]:
+        return await self._context(workspace_id).hitl_repository.list_actions(
+            workspace_id, status=status, session_id=session_id
+        )
+
+    async def get_action(self, action_id: str) -> PendingActionRecord:
+        context, action = await self._locate_action(action_id)
+        del context
+        return action
+
+    async def approve_action(
+        self, action_id: str, command: ResolveActionCommand
+    ) -> PendingActionRecord:
+        context, _action = await self._locate_action(action_id)
+        return await context.hitl_service.approve(action_id, command)
+
+    async def reject_action(
+        self, action_id: str, command: ResolveActionCommand
+    ) -> PendingActionRecord:
+        context, _action = await self._locate_action(action_id)
+        return await context.hitl_service.reject(action_id, command)
+
     async def events(
         self, session_id: str, *, after_id: int | None
     ) -> AsyncIterator[str]:
@@ -125,9 +163,9 @@ class AgentRuntime:
     async def recover_interrupted_runs(self) -> tuple[str, ...]:
         recovered: list[str] = []
         for workspace_id in self._workspace_ids():
-            recovered.extend(
-                await self._context(workspace_id).manager.recover_interrupted_runs()
-            )
+            context = self._context(workspace_id)
+            recovered.extend(await context.manager.recover_interrupted_runs())
+            await context.hitl_service.reconcile()
         return tuple(recovered)
 
     async def close(self) -> None:
@@ -149,20 +187,41 @@ class AgentRuntime:
         connection = connect_runtime_database(root)
         repository = RuntimeRepository(connection)
         event_stream = EventStream(repository, workspace_root=root)
+        hitl_repository = PendingActionRepository(root)
+        handlers = create_default_action_handler_registry()
+        service_holder: dict[str, HitlService] = {}
+
+        async def request_action(
+            request: CreatePendingAction,
+        ) -> PendingActionRecord:
+            return await service_holder["service"].create_action(request)
+
+        manager = RunManager(
+            repository=repository,
+            event_stream=event_stream,
+            graph_registry=self._graph_registry,
+            checkpointer=RuntimeCheckpointer(root),
+            workspace_root=root,
+            tool_registry=self._tool_registry,
+            audit_repository=ToolAuditRepository(root),
+            request_action=request_action,
+            cancel_pending_action=hitl_repository.cancel_pending_for_run,
+        )
+        hitl_service = HitlService(
+            repository=hitl_repository,
+            handlers=handlers,
+            event_stream=event_stream,
+            resume_action=manager.resume_approval,
+        )
         context = _WorkspaceRuntime(
             connection=connection,
             repository=repository,
             event_stream=event_stream,
-            manager=RunManager(
-                repository=repository,
-                event_stream=event_stream,
-                graph_registry=self._graph_registry,
-                checkpointer=RuntimeCheckpointer(root),
-                workspace_root=root,
-                tool_registry=self._tool_registry,
-                audit_repository=ToolAuditRepository(root),
-            ),
+            manager=manager,
+            hitl_repository=hitl_repository,
+            hitl_service=hitl_service,
         )
+        service_holder["service"] = hitl_service
         self._workspaces[workspace_id] = context
         return context
 
@@ -186,6 +245,17 @@ class AgentRuntime:
             except RuntimeRecordNotFoundError:
                 continue
         raise RuntimeRecordNotFoundError(f"run {run_id!r} not found")
+
+    async def _locate_action(
+        self, action_id: str
+    ) -> tuple[_WorkspaceRuntime, PendingActionRecord]:
+        for workspace_id in self._workspace_ids():
+            context = self._context(workspace_id)
+            try:
+                return context, await context.hitl_repository.get(action_id)
+            except PendingActionNotFoundError:
+                continue
+        raise PendingActionNotFoundError(f"action {action_id!r} not found")
 
     @staticmethod
     def _session_resource(session: SessionRecord) -> dict[str, Any]:

@@ -179,7 +179,7 @@ git commit -m "feat(hitl): resolve and resume approval actions"
 - 产出一个先创建确定性 action、再调用 `interrupt` 的测试 Graph。
 - RunManager 把 Graph interrupt 状态映射为 waiting-for-approval。
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 创建包含以下 StateGraph 节点的 `backend/tests/test_hitl_restart.py`，并新增生产确定性 `test.approval` Graph：
 
@@ -198,17 +198,17 @@ async def approval_node(state):
 
 断言 run 进入 waiting，重启后 action/checkpoint 保留，批准恢复同一个 run，重放不会创建第二个 action。
 
-- [ ] **步骤 2：运行测试确认失败**
+- [x] **步骤 2：运行测试确认失败**
 
 运行：`cd backend && UV_CACHE_DIR=.uv-cache/backend uv run pytest tests/test_hitl_restart.py -v`
 
 预期：失败，因为 RunManager 尚未映射 interrupt。
 
-- [ ] **步骤 3：实现最小功能**
+- [x] **步骤 3：实现最小功能**
 
 识别 `ainvoke()` 结果中的 `__interrupt__`，把 run/session 转换为 waiting-for-approval，并持久化 `hitl.required`。使用原 thread/session、原 `run_id` 和原 checkpoint，通过 `Command(resume=decision_payload)` 恢复；增加该 run 的 resume attempt 计数，不创建第二个 run。取消 waiting run 时同时取消 pending action。
 
-- [ ] **步骤 4：运行测试确认通过并提交**
+- [x] **步骤 4：运行测试确认通过并提交**
 
 运行：`cd backend && UV_CACHE_DIR=.uv-cache/backend uv run pytest tests/test_hitl_restart.py -v`
 

@@ -90,11 +90,24 @@ class PendingActionRepository:
     async def list_pending(
         self, workspace_id: str, *, session_id: str | None = None
     ) -> tuple[PendingActionRecord, ...]:
+        return await self.list_actions(
+            workspace_id, status="pending", session_id=session_id
+        )
+
+    async def list_actions(
+        self,
+        workspace_id: str,
+        *,
+        status: str | None = None,
+        session_id: str | None = None,
+    ) -> tuple[PendingActionRecord, ...]:
         query = (
-            "SELECT * FROM pending_actions "
-            "WHERE workspace_id = ? AND status = 'pending'"
+            "SELECT * FROM pending_actions WHERE workspace_id = ?"
         )
         parameters: list[str] = [workspace_id]
+        if status is not None:
+            query += " AND status = ?"
+            parameters.append(status)
         if session_id is not None:
             query += " AND session_id = ?"
             parameters.append(session_id)
@@ -246,6 +259,33 @@ class PendingActionRepository:
             rows = await cursor.fetchall()
         return tuple(self._receipt_from_row(row) for row in rows)
 
+    async def list_recoverable_resolutions(
+        self,
+    ) -> tuple[ResolutionReceipt, ...]:
+        async with self._connection() as connection:
+            cursor = await connection.execute(
+                "SELECT resolution.* FROM pending_action_resolutions resolution "
+                "JOIN pending_actions action ON action.id = resolution.action_id "
+                "JOIN agent_runs run ON run.id = action.run_id "
+                "WHERE resolution.delivery_status != 'delivered' "
+                "OR run.status IN ('waiting_for_approval', 'interrupted') "
+                "ORDER BY resolution.created_at, resolution.id"
+            )
+            rows = await cursor.fetchall()
+        return tuple(self._receipt_from_row(row) for row in rows)
+
+    async def prepare_delivery_retry(
+        self, receipt_id: str
+    ) -> ResolutionReceipt:
+        return await self._update_delivery(
+            receipt_id,
+            "UPDATE pending_action_resolutions "
+            "SET delivery_status = 'failed', "
+            "delivery_error_code = 'hitl_delivery_interrupted' "
+            "WHERE id = ? AND delivery_status IN ('delivering', 'delivered')",
+            allow_unchanged=True,
+        )
+
     async def cancel_pending_for_run(
         self, run_id: str
     ) -> PendingActionRecord | None:
@@ -361,25 +401,24 @@ class PendingActionRepository:
     def _ensure_same_create_request(
         existing: PendingActionRecord, request: CreatePendingAction
     ) -> None:
-        comparable = (
+        identity = (
             existing.workspace_id,
             existing.session_id,
             existing.run_id,
             existing.action_type,
-            existing.payload,
-            existing.preview,
             existing.editable_fields,
         )
-        requested = (
+        requested_identity = (
             request.workspace_id,
             request.session_id,
             request.run_id,
             request.action_type,
-            request.payload,
-            request.preview,
             request.editable_fields,
         )
-        if comparable != requested:
+        content_changed = existing.status == "pending" and (
+            existing.payload != request.payload or existing.preview != request.preview
+        )
+        if identity != requested_identity or content_changed:
             raise ActionIdempotencyConflictError(
                 "action idempotency key was reused with different content"
             )

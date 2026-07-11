@@ -108,6 +108,20 @@ class HitlService:
         await self._deliver(resolved, receipt, handler)
         return resolved
 
+    async def reconcile(self) -> tuple[str, ...]:
+        delivered: list[str] = []
+        for receipt in await self._repository.list_recoverable_resolutions():
+            action = await self._repository.get(receipt.action_id)
+            if receipt.delivery_status in {"delivering", "delivered"}:
+                receipt = await self._repository.prepare_delivery_retry(receipt.id)
+            handler = self._handlers.get(action.action_type)
+            try:
+                await self._deliver(action, receipt, handler)
+            except Exception:
+                continue
+            delivered.append(receipt.id)
+        return tuple(delivered)
+
     async def _deliver(self, action, receipt, handler) -> None:
         if receipt.delivery_status == "delivered":
             return

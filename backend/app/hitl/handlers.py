@@ -77,3 +77,9 @@ class ActionHandlerRegistry:
             raise UnknownActionTypeError(
                 f"no handler is registered for {action_type!r}"
             ) from error
+
+
+def create_default_action_handler_registry() -> ActionHandlerRegistry:
+    registry = ActionHandlerRegistry()
+    registry.register("test.approval", DefaultActionHandler())
+    return registry
