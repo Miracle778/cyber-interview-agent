@@ -12,7 +12,7 @@ def test_create_question_draft_from_text() -> None:
     assert draft.topics == ["uncategorized"]
 
 
-def test_upload_source_sanitizes_filename(tmp_path: Path) -> None:
+def test_upload_source_rejects_path_shaped_filename(tmp_path: Path) -> None:
     client = TestClient(app)
 
     response = client.post(
@@ -21,6 +21,7 @@ def test_upload_source_sanitizes_filename(tmp_path: Path) -> None:
         files={"file": ("../evil.txt", b"SQL injection?\nanswer", "text/plain")},
     )
 
-    assert response.status_code == 200
-    assert (tmp_path / "knowledge-vault" / "00_inbox" / "evil.txt").exists()
+    assert response.status_code == 400
+    assert response.json()["code"] == "workspace_path_denied"
+    assert not (tmp_path / "knowledge-vault" / "00_inbox" / "evil.txt").exists()
     assert not (tmp_path / "evil.txt").exists()
