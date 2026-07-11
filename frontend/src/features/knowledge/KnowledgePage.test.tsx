@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 import type { ReviewQuestion } from "../review/reviewTypes";
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import { KnowledgePage } from "./KnowledgePage";
@@ -28,7 +29,11 @@ describe("KnowledgePage", () => {
   });
 
   it("requires workspace before upload or rescan", () => {
-    render(<KnowledgePage workspace={null} draftQuestion={null} onDraftQuestionReady={vi.fn()} onVaultRescanned={vi.fn()} />);
+    render(
+      <MemoryRouter>
+        <KnowledgePage workspace={null} draftQuestion={null} onDraftQuestionReady={vi.fn()} onVaultRescanned={vi.fn()} />
+      </MemoryRouter>,
+    );
 
     expect(screen.getByText("请先初始化工作区")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "上传资料" })).toBeDisabled();

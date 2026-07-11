@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import { ReviewPage } from "./ReviewPage";
 import type { ReviewQuestion } from "./reviewTypes";
@@ -29,13 +30,15 @@ describe("ReviewPage", () => {
 
   it("requires a draft question before review", () => {
     render(
-      <ReviewPage
-        workspace={workspace}
-        draftQuestion={null}
-        latestReportMarkdown=""
-        onReportMarkdownChange={vi.fn()}
-        onReportConfirmed={vi.fn()}
-      />,
+      <MemoryRouter>
+        <ReviewPage
+          workspace={workspace}
+          draftQuestion={null}
+          latestReportMarkdown=""
+          onReportMarkdownChange={vi.fn()}
+          onReportConfirmed={vi.fn()}
+        />
+      </MemoryRouter>,
     );
 
     expect(screen.getByText("请先上传资料生成题库草稿")).toBeInTheDocument();

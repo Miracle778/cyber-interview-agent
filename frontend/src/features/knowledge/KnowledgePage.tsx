@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { AlertCircle, BookOpen, FileText, FolderLock, RefreshCw, Upload } from "lucide-react";
+import { Link } from "react-router-dom";
 import { Badge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
@@ -94,6 +95,9 @@ export function KnowledgePage({ workspace, draftQuestion, onDraftQuestionReady, 
               <FolderLock size={20} />
             </span>
             <p className="empty-state__text">请先初始化工作区</p>
+            <Link className="text-link" to="/settings">
+              前往设置
+            </Link>
           </div>
         ) : null}
 

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { AlertCircle, ClipboardCheck, FileCheck, Inbox, MessageSquareText } from "lucide-react";
+import { Link } from "react-router-dom";
 import { toActionableError, type ActionableError } from "../../shared/api/errorAdvice";
 import { Badge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
@@ -104,6 +105,9 @@ export function ReviewPage({
               <Inbox size={20} />
             </span>
             <p className="empty-state__text">请先上传资料生成题库草稿</p>
+            <Link className="text-link" to="/knowledge">
+              前往知识库
+            </Link>
           </div>
         ) : null}
 
