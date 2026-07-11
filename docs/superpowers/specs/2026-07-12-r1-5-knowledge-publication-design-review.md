@@ -60,6 +60,8 @@ artifacts/<domain>/drafts/<draft-id>.md
 
 草稿状态为 `draft`、`review_pending`、`rejected`、`published`。只有 `draft` 和 `review_pending` 可以编辑；更新必须提交当前 version，并在原子替换前后校验 content hash。
 
+Workspace 初始化或首次草稿操作会通过受限 layout helper 创建 `artifacts/<domain>/sources/` 和 `artifacts/<domain>/drafts/`。任何已存在的软链接或非目录节点都会使初始化失败，不能由普通 `mkdir` 绕过 R1.3 路径边界。
+
 ### 4.2 Publication Run
 
 `publication_runs` 以 action id 唯一，保存 draft id/version/hash、稳定 document id、target path、发布状态、写入 hash、错误码和时间。

@@ -511,3 +511,6 @@
 - 只读审计发现旧计划需适配 R1.4：publish request 必须通过真实 `knowledge.publish` Graph 创建 action，不能创建没有可恢复 run 的悬空 action。
 - 新增设计复核 `docs/superpowers/specs/2026-07-12-r1-5-knowledge-publication-design-review.md`，明确上传迁移、草稿模型、publication journal、active scope、冲突保护、前端闭环和七任务拆分。
 - 当前状态：设计已口头确认，等待用户快速复核书面 spec；之后立即修订实施计划并开始 TDD。
+- 用户已通过书面 spec。旧六任务计划重写为七任务，增加 Workspace artifacts 安全初始化、上传链路迁移、真实发布 Graph 和同页 ActionCenter。
+- 已创建本地增量 verification：`docs/verification/r1_5_knowledge_publication.md`，按 ignore 规则不提交。
+- 当前状态：实施计划就绪，下一步直接执行 Task 1 RED。
