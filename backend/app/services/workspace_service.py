@@ -51,6 +51,13 @@ class WorkspaceService:
         record = self.workspaces.get_current()
         return None if record is None else self._to_resource(record)
 
+    def resolve_root(self, workspace_id: str) -> Path:
+        record = self._require_workspace(workspace_id)
+        root = Path(record.root_path)
+        if not record.available or not root.is_dir():
+            raise WorkspaceError("Workspace 路径不可用，请重新关联")
+        return root
+
     def update_available(
         self, workspace_id: str, available: bool
     ) -> WorkspaceResource:

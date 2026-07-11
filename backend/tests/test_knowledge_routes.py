@@ -1,88 +1,155 @@
 import sqlite3
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
+from app.api.dependencies import get_workspace_service
+from app.db.app_database import connect_app_database
+from app.knowledge.workspace_layout import initialize_knowledge_artifacts
+from app.knowledge.sources import MAX_SOURCE_BYTES
 from app.main import app
-from app.services.vault import initialize_vault
+from app.services.workspace_service import WorkspaceService
 
 
-def test_rescan_indexes_markdown_documents_with_unique_relative_ids(tmp_path) -> None:
-    vault = tmp_path / "knowledge-vault"
-    question_dir = vault / "10_question_bank"
-    session_dir = vault / "20_review_sessions"
-    question_dir.mkdir(parents=True)
-    session_dir.mkdir(parents=True)
-    (question_dir / "same.md").write_text("SQL 注入 参数化查询", encoding="utf-8")
-    (session_dir / "same.md").write_text("复习报告 weak point", encoding="utf-8")
-
-    client = TestClient(app)
-    response = client.post("/api/knowledge/rescan", data={"workspacePath": str(tmp_path)})
-
-    assert response.status_code == 200
-    assert response.json() == {"indexed": 2}
-
-    db_path = vault / ".cyber-interview-agent" / "index.sqlite"
-    connection = sqlite3.connect(db_path)
-    rows = connection.execute("SELECT id, path FROM manifest_documents ORDER BY path").fetchall()
-
-    assert rows == [
-        ("10_question_bank__same", "10_question_bank/same.md"),
-        ("20_review_sessions__same", "20_review_sessions/same.md"),
-    ]
+@pytest.fixture
+def knowledge_client(tmp_path: Path):
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    connection = connect_app_database(tmp_path / "app-data")
+    service = WorkspaceService(connection)
+    workspace = service.register(str(workspace_root))
+    initialize_knowledge_artifacts(workspace_root, domain="review")
+    app.dependency_overrides[get_workspace_service] = lambda: service
+    try:
+        with TestClient(app) as client:
+            yield client, workspace_root, workspace.id
+    finally:
+        app.dependency_overrides.clear()
+        connection.close()
 
 
-def test_upload_accepts_unicode_filename(tmp_path: Path) -> None:
-    response = TestClient(app).post(
+def test_upload_creates_source_and_persistent_draft_outside_vault(
+    knowledge_client,
+) -> None:
+    client, workspace, workspace_id = knowledge_client
+
+    response = client.post(
         "/api/knowledge/sources",
-        data={"workspacePath": str(tmp_path)},
+        data={"workspaceId": workspace_id},
+        files={
+            "file": (
+                "缓存.md",
+                "缓存穿透是什么？\n缓存空值和布隆过滤器。".encode(),
+                "text/markdown",
+            )
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    draft = body["draft"]
+    assert body["question"]["title"] == "缓存穿透是什么？"
+    assert draft["workspaceId"] == workspace_id
+    assert draft["status"] == "draft"
+    assert draft["version"] == 1
+    assert draft["contentPath"].startswith("artifacts/review/drafts/")
+    assert (workspace / draft["contentPath"]).is_file()
+    assert len(list((workspace / "artifacts/review/sources").iterdir())) == 1
+    assert not list((workspace / "knowledge-vault").rglob("*.md"))
+
+
+def test_upload_accepts_unicode_filename(knowledge_client) -> None:
+    client, workspace, workspace_id = knowledge_client
+
+    response = client.post(
+        "/api/knowledge/sources",
+        data={"workspaceId": workspace_id},
         files={"file": ("面试记录.md", "赛博产品设计".encode(), "text/markdown")},
     )
 
-    assert response.status_code == 200
-    assert (tmp_path / "knowledge-vault/00_inbox/面试记录.md").is_file()
+    assert response.status_code == 201
+    assert list((workspace / "artifacts/review/sources").glob("*.md"))
 
 
-def test_upload_rejects_symlinked_inbox(tmp_path: Path) -> None:
-    vault = initialize_vault(tmp_path)
-    outside = tmp_path.parent / f"{tmp_path.name}-outside"
-    outside.mkdir()
-    inbox = vault / "00_inbox"
-    inbox.rmdir()
-    inbox.symlink_to(outside, target_is_directory=True)
+@pytest.mark.parametrize("filename", ["../evil.txt", "nested/evil.txt"])
+def test_upload_rejects_path_shaped_filename(
+    knowledge_client, filename: str
+) -> None:
+    client, workspace, workspace_id = knowledge_client
 
-    response = TestClient(app).post(
+    response = client.post(
         "/api/knowledge/sources",
-        data={"workspacePath": str(tmp_path)},
+        data={"workspaceId": workspace_id},
+        files={"file": (filename, b"unsafe", "text/plain")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "workspace_path_denied"
+    assert not list((workspace / "artifacts/review/sources").iterdir())
+
+
+def test_upload_rejects_symlinked_sources_directory(
+    knowledge_client, tmp_path: Path
+) -> None:
+    client, workspace, workspace_id = knowledge_client
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sources = workspace / "artifacts/review/sources"
+    sources.rmdir()
+    sources.symlink_to(outside, target_is_directory=True)
+
+    response = client.post(
+        "/api/knowledge/sources",
+        data={"workspaceId": workspace_id},
         files={"file": ("notes.md", b"safe", "text/markdown")},
     )
 
     assert response.status_code == 400
     assert response.json()["code"] == "workspace_path_denied"
-    assert not (outside / "notes.md").exists()
+    assert not list(outside.iterdir())
 
 
-def test_rescan_rejects_symlinked_markdown_file(tmp_path: Path) -> None:
-    vault = initialize_vault(tmp_path)
-    outside = tmp_path.parent / f"{tmp_path.name}-outside.md"
-    outside.write_text("private", encoding="utf-8")
-    (vault / "10_question_bank/escape.md").symlink_to(outside)
+def test_upload_rejects_unknown_workspace(knowledge_client) -> None:
+    client, _workspace, _workspace_id = knowledge_client
 
-    response = TestClient(app).post(
-        "/api/knowledge/rescan", data={"workspacePath": str(tmp_path)}
+    response = client.post(
+        "/api/knowledge/sources",
+        data={"workspaceId": "missing"},
+        files={"file": ("notes.md", b"safe", "text/markdown")},
     )
 
-    assert response.status_code == 400
-    assert response.json()["code"] == "workspace_path_denied"
+    assert response.status_code == 404
+    assert response.json()["code"] == "workspace_not_found"
 
 
-def test_knowledge_routes_do_not_recreate_missing_workspace(tmp_path: Path) -> None:
-    missing = tmp_path / "missing"
+def test_upload_rejects_source_over_size_limit(knowledge_client) -> None:
+    client, _workspace, workspace_id = knowledge_client
 
-    response = TestClient(app).post(
-        "/api/knowledge/rescan", data={"workspacePath": str(missing)}
+    response = client.post(
+        "/api/knowledge/sources",
+        data={"workspaceId": workspace_id},
+        files={"file": ("large.txt", b"x" * (MAX_SOURCE_BYTES + 1), "text/plain")},
     )
 
-    assert response.status_code == 400
-    assert response.json()["code"] == "workspace_path_denied"
-    assert not missing.exists()
+    assert response.status_code == 413
+    assert response.json()["code"] == "source_too_large"
+
+
+def test_rescan_uses_workspace_id(knowledge_client) -> None:
+    client, workspace, workspace_id = knowledge_client
+    vault = workspace / "knowledge-vault"
+    (vault / "10_question_bank/question.md").write_text(
+        "---\nid: q1\ntype: question\nstatus: ingested\ningestion:\n  confirmed_by_user: true\n---\n# Question\n",
+        encoding="utf-8",
+    )
+
+    response = client.post(
+        "/api/knowledge/rescan", data={"workspaceId": workspace_id}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"indexed": 1}
+    db_path = vault / ".cyber-interview-agent/index.sqlite"
+    connection = sqlite3.connect(db_path)
+    assert connection.execute("SELECT COUNT(*) FROM manifest_documents").fetchone()[0] == 1

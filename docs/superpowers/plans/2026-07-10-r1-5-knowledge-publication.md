@@ -130,7 +130,7 @@ git commit -m "feat(knowledge): persist drafts outside vault"
 
 **产出：** source 写入 `artifacts/review/sources/`，上传响应为持久化 draft；知识 API 不再接受 raw path。
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 在 `backend/tests/test_knowledge_routes.py` 替换旧 inbox 断言：
 
@@ -151,7 +151,7 @@ def test_upload_creates_source_and_persistent_draft_outside_vault(client, worksp
 
 继续覆盖 Unicode 文件名、路径形文件名、source/draft 软链接和未知 workspace id。
 
-- [ ] **步骤 2：运行 RED**
+- [x] **步骤 2：运行 RED**
 
 ```bash
 cd backend
@@ -160,11 +160,11 @@ cd backend
 
 预期：旧接口仍要求 `workspacePath`，且写入 Vault inbox。
 
-- [ ] **步骤 3：实现最小功能**
+- [x] **步骤 3：实现最小功能**
 
 `routes_knowledge` 通过 `WorkspaceService` 解析 `workspaceId`，使用 `review.sources` scope 保存 source，再调用当前确定性 question draft 生成器和 `KnowledgeDraftService`。后端 legacy Workspace resource 与前端 `WorkspaceConfig` 补稳定 id，AppShell 恢复和 Settings 初始化都保留该 id；上传/rescan 只传 id。
 
-- [ ] **步骤 4：验证并提交**
+- [x] **步骤 4：验证并提交**
 
 ```bash
 cd backend

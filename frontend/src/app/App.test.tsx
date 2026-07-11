@@ -77,6 +77,7 @@ describe("App", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
+            id: "w1",
             workspacePath: "/tmp/cyber-demo",
             vaultPath: "/tmp/cyber-demo/knowledge-vault",
           }),
@@ -113,6 +114,7 @@ describe("App", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
+            id: "w1",
             workspacePath: "/tmp/cyber-demo",
             vaultPath: "/tmp/cyber-demo/knowledge-vault",
           }),

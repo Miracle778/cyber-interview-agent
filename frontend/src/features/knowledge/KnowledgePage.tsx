@@ -46,7 +46,8 @@ export function KnowledgePage({ workspace, draftQuestion, onDraftQuestionReady, 
     }
     setIsUploading(true);
     try {
-      const question = await uploadSource(workspace.workspacePath, selectedFile);
+      const result = await uploadSource(workspace.id, selectedFile);
+      const question = result.question;
       setVisibleDraftQuestion(question);
       onDraftQuestionReady(question);
     } catch (caught) {
@@ -64,7 +65,7 @@ export function KnowledgePage({ workspace, draftQuestion, onDraftQuestionReady, 
     }
     setIsRescanning(true);
     try {
-      const result = await rescanVault(workspace.workspacePath);
+      const result = await rescanVault(workspace.id);
       setIndexedCount(result.indexed);
       onVaultRescanned(result.indexed);
     } catch (caught) {

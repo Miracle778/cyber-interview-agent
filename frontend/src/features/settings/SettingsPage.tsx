@@ -71,6 +71,7 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
     try {
       const registered = await registerWorkspace(trimmedPath);
       const ready = {
+        id: registered.id,
         workspacePath: registered.rootPath,
         vaultPath: registered.vaultPath,
       };

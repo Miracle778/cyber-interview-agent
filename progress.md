@@ -523,3 +523,13 @@
 - `KnowledgeDraftService` 使用独立 aiosqlite 事务、同目录临时文件、fsync/replace、version 和 content hash 管理草稿。
 - 首次 GREEN 暴露异步连接 helper 不是 context manager，改为 `asynccontextmanager` 后专项 13 passed。
 - 后端完整回归 199 passed，保留 1 个既有 Starlette deprecation warning；下一步 Task 2 迁移上传链路与 Workspace ID。
+
+### R1.5 Task 2：上传链路迁移与 Workspace ID
+
+- RED：新路由测试 8 项全部因旧接口仍要求 `workspacePath` 返回 422。
+- 新增 source 原子保存与 10 MiB 限制；路径形文件名、sources 软链接和未知 Workspace 均返回稳定错误。
+- 知识 upload/rescan 改用稳定 `workspaceId`；legacy Workspace resource 补 id，AppShell 与 Settings 保留同一 id。
+- 上传资料写入 `artifacts/review/sources/`，生成的 Markdown 草稿写入 `artifacts/review/drafts/`，Vault 不产生 Markdown。
+- 为保持 R1.6 前现有单题入口可用，上传响应同时返回持久化 draft 和过渡 `ReviewQuestion`；发布链路只使用 draft。
+- 完整验证：后端 204 passed；前端 47 passed；TypeScript 与 production build 通过，保留 1 个既有 Starlette warning。
+- 下一步 Task 3：Document Registry、严格 frontmatter 与通用原子 writer。

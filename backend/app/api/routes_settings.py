@@ -178,6 +178,7 @@ def get_legacy_workspace(
     if workspace is None:
         return None
     return WorkspaceConfig(
+        id=workspace.id,
         workspacePath=workspace.root_path,
         vaultPath=workspace.vault_path,
     )
@@ -190,6 +191,7 @@ def set_legacy_workspace(
 ) -> WorkspaceConfig:
     workspace = service.register(command.workspace_path)
     return WorkspaceConfig(
+        id=workspace.id,
         workspacePath=workspace.root_path,
         vaultPath=workspace.vault_path,
     )

@@ -54,6 +54,7 @@ describe("SettingsPage", () => {
     installSettingsFetch();
     const workspace: WorkspaceConfig = {
       workspacePath: workspaceResource.rootPath,
+      id: workspaceResource.id,
       vaultPath: workspaceResource.vaultPath,
     };
 
@@ -80,6 +81,7 @@ describe("SettingsPage", () => {
     await waitFor(() =>
       expect(onWorkspaceReady).toHaveBeenCalledWith({
         workspacePath: workspaceResource.rootPath,
+        id: workspaceResource.id,
         vaultPath: workspaceResource.vaultPath,
       }),
     );

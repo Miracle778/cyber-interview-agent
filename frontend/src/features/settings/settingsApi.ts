@@ -16,6 +16,7 @@ import type {
 export type { ProviderFormat } from "./providerTypes";
 
 export interface WorkspaceConfig {
+  id: string;
   workspacePath: string;
   vaultPath: string;
 }

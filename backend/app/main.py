@@ -27,6 +27,7 @@ from app.hitl.repository import (
     ActionVersionConflictError,
     PendingActionNotFoundError,
 )
+from app.knowledge.sources import SourceTooLargeError
 from app.runtime.repository import RuntimeRecordNotFoundError, SessionBusyError
 from app.runtime.service import AgentRuntime
 from app.security.workspace_paths import PathPolicyError
@@ -182,6 +183,13 @@ async def unknown_action_type(
     _request: Request, _error_value: UnknownActionTypeError
 ) -> JSONResponse:
     return _error(422, "unknown_action_type", "待确认动作类型不受支持")
+
+
+@app.exception_handler(SourceTooLargeError)
+async def source_too_large(
+    _request: Request, _error_value: SourceTooLargeError
+) -> JSONResponse:
+    return _error(413, "source_too_large", "上传资料超过 10 MiB 限制")
 
 
 @app.exception_handler(SessionBusyError)

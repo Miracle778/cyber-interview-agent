@@ -1,5 +1,6 @@
 import { ApiError } from "../../shared/api/client";
 import type { ReviewQuestion } from "../review/reviewTypes";
+import type { KnowledgeDraft } from "./draftTypes";
 
 export interface RescanVaultResponse {
   indexed: number;
@@ -21,18 +22,23 @@ async function readError(response: Response, fallback: string): Promise<never> {
   throw new ApiError("api_error", fallback);
 }
 
-export async function uploadSource(workspacePath: string, file: File): Promise<ReviewQuestion> {
+export interface UploadSourceResponse {
+  draft: KnowledgeDraft;
+  question: ReviewQuestion;
+}
+
+export async function uploadSource(workspaceId: string, file: File): Promise<UploadSourceResponse> {
   const form = new FormData();
-  form.set("workspacePath", workspacePath);
+  form.set("workspaceId", workspaceId);
   form.set("file", file);
   const response = await fetch("/api/knowledge/sources", { method: "POST", body: form });
   if (!response.ok) await readError(response, "上传失败");
-  return response.json() as Promise<ReviewQuestion>;
+  return response.json() as Promise<UploadSourceResponse>;
 }
 
-export async function rescanVault(workspacePath: string): Promise<RescanVaultResponse> {
+export async function rescanVault(workspaceId: string): Promise<RescanVaultResponse> {
   const form = new FormData();
-  form.set("workspacePath", workspacePath);
+  form.set("workspaceId", workspaceId);
   const response = await fetch("/api/knowledge/rescan", { method: "POST", body: form });
   if (!response.ok) await readError(response, "重新扫描失败");
   return response.json() as Promise<RescanVaultResponse>;

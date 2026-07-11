@@ -183,13 +183,14 @@ def test_legacy_workspace_endpoints_use_persistent_service(client, tmp_path):
         "/api/settings/workspace", json={"workspacePath": str(root)}
     )
     assert response.status_code == 200
-    assert response.json() == {
-        "workspacePath": str(root.resolve()),
-        "vaultPath": str((root / "knowledge-vault").resolve()),
-    }
+    created = response.json()
+    assert created["id"]
+    assert created["workspacePath"] == str(root.resolve())
+    assert created["vaultPath"] == str((root / "knowledge-vault").resolve())
 
     response = client.get("/api/settings/workspace")
     assert response.status_code == 200
+    assert response.json()["id"] == created["id"]
     assert response.json()["workspacePath"] == str(root.resolve())
 
 

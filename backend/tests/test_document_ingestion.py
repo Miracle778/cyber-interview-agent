@@ -1,8 +1,9 @@
 from pathlib import Path
 
-from fastapi.testclient import TestClient
+import pytest
 
-from app.main import app
+from app.knowledge.sources import save_source
+from app.security.workspace_paths import PathPolicyError
 from app.services.document_ingestion import create_question_draft
 
 
@@ -12,16 +13,11 @@ def test_create_question_draft_from_text() -> None:
     assert draft.topics == ["uncategorized"]
 
 
-def test_upload_source_rejects_path_shaped_filename(tmp_path: Path) -> None:
-    client = TestClient(app)
+@pytest.mark.parametrize("filename", ["../evil.txt", "nested/evil.txt", "C:\\evil.txt"])
+def test_save_source_rejects_path_shaped_filename(
+    tmp_path: Path, filename: str
+) -> None:
+    with pytest.raises(PathPolicyError):
+        save_source(tmp_path, original_filename=filename, content=b"unsafe")
 
-    response = client.post(
-        "/api/knowledge/sources",
-        data={"workspacePath": str(tmp_path)},
-        files={"file": ("../evil.txt", b"SQL injection?\nanswer", "text/plain")},
-    )
-
-    assert response.status_code == 400
-    assert response.json()["code"] == "workspace_path_denied"
-    assert not (tmp_path / "knowledge-vault" / "00_inbox" / "evil.txt").exists()
-    assert not (tmp_path / "evil.txt").exists()
+    assert not (tmp_path / "artifacts").exists()

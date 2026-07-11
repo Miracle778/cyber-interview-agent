@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import aiosqlite
 
-from app.db.runtime_database import runtime_database_path
+from app.db.runtime_database import connect_runtime_database, runtime_database_path
 from app.knowledge.workspace_layout import initialize_knowledge_artifacts
 from app.security.workspace_paths import WorkspacePathPolicy
 
@@ -119,6 +119,7 @@ class KnowledgeDraftService:
         self._workspace_root = workspace_root
         self._workspace_id = workspace_id
         self._database_path = runtime_database_path(workspace_root)
+        connect_runtime_database(workspace_root).close()
 
     async def create(self, command: CreateDraftCommand) -> KnowledgeDraftRecord:
         initialize_knowledge_artifacts(

@@ -434,3 +434,5 @@
 - 用户要求简化开发流程：本阶段使用普通分支，由 Codex 直接实现，不创建 worktree、不委派；测试、审阅和文档门禁仍保留。
 - 草稿 metadata 与 Markdown 分属 SQLite 和文件系统，无法获得单一 ACID 事务；实现通过 `BEGIN IMMEDIATE`、写前后 hash 校验、同目录原子替换和创建失败清理缩小不一致窗口，后续 publication journal 负责更关键的发布恢复。
 - WorkspacePathPolicy 要求 scope 根目录已经存在；R1.5 增加受限 artifacts layout helper，逐级创建目录并拒绝任何已存在软链接或非目录节点，不能用普通递归 mkdir 绕过 R1.3 边界。
+- 上传响应暂时同时返回持久化 draft 和 legacy `ReviewQuestion`：知识发布只依赖 draft，而当前单题复习页继续消费 question；该兼容桥将在 R1.6 Runtime 迁移时移除。
+- Multipart 客户端可能在应用收到请求前规范化 Windows 路径形文件名；路由覆盖 POSIX/nested 输入，底层 source service 单测直接覆盖 Windows 路径，避免把框架预处理误认为策略验证。

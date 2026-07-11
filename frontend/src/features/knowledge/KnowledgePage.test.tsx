@@ -6,6 +6,7 @@ import type { WorkspaceConfig } from "../settings/settingsApi";
 import { KnowledgePage } from "./KnowledgePage";
 
 const workspace: WorkspaceConfig = {
+  id: "w1",
   workspacePath: "/tmp/cyber-demo",
   vaultPath: "/tmp/cyber-demo/knowledge-vault",
 };
@@ -42,8 +43,18 @@ describe("KnowledgePage", () => {
 
   it("uploads source and displays the generated draft question", async () => {
     const onDraftQuestionReady = vi.fn();
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(JSON.stringify(question), {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        draft: {
+          id: "d1", workspaceId: "w1", sessionId: null, runId: null,
+          agentType: null, domain: "review", documentType: "question",
+          documentId: "q1", title: "缓存穿透", markdown: "# 缓存穿透",
+          contentPath: "artifacts/review/drafts/d1.md", sourceRefs: [],
+          relationRefs: [], status: "draft", version: 1, contentHash: "abc",
+          createdAt: "now", updatedAt: "now",
+        },
+        question,
+      }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       }),
@@ -63,6 +74,9 @@ describe("KnowledgePage", () => {
     fireEvent.click(screen.getByRole("button", { name: "上传资料" }));
 
     await waitFor(() => expect(onDraftQuestionReady).toHaveBeenCalledWith(question));
+    const form = fetchMock.mock.calls[0][1]?.body as FormData;
+    expect(form.get("workspaceId")).toBe("w1");
+    expect(form.get("workspacePath")).toBeNull();
     expect(await screen.findByText("缓存穿透")).toBeInTheDocument();
     expect(screen.getByText("缓存穿透是什么？")).toBeInTheDocument();
     expect(screen.getByText("关键点：缓存空值、布隆过滤器")).toBeInTheDocument();

@@ -28,6 +28,7 @@ class ProviderConfig(BaseModel):
     model_config = {"populate_by_name": True}
 
 class WorkspaceConfig(BaseModel):
+    id: str
     workspace_path: str = Field(alias="workspacePath")
     vault_path: str = Field(alias="vaultPath")
 

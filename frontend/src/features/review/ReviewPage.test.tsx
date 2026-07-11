@@ -6,6 +6,7 @@ import { ReviewPage } from "./ReviewPage";
 import type { ReviewQuestion } from "./reviewTypes";
 
 const workspace: WorkspaceConfig = {
+  id: "w1",
   workspacePath: "/tmp/cyber-demo",
   vaultPath: "/tmp/cyber-demo/knowledge-vault",
 };
