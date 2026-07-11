@@ -443,3 +443,11 @@
 - 真实运行 R1.3 文档门禁通过：`r1_3_workspace_tool_security.md` 与 `r1-3-tool-security/` 七份文件均合格。
 - `AGENTS.md`、`CLAUDE.md` 和双轨工作流已统一阶段关闭规则；R1.4 最终任务已接入同一门禁。
 - 产品下一任务保持 R1.4 持久化 HITL；本次只加固协作与文档质量机制，不改变产品成熟度。
+
+### R1.4 持久化 HITL 启动
+
+- 从 `main@8602ad7` 创建 `codex/r1-4-persistent-hitl`，worktree 位于 `/private/tmp/cyber-interview-agent-r1-4`。
+- 基线验证：后端 167 passed；前端 42 passed；TypeScript 与 production build 通过。pnpm 在链接依赖时尝试重装并访问受限 registry，改用主仓库既有二进制完成验证。
+- 独立只读审阅发现旧计划与 R1.3 后 Runtime 存在 async SQLite、Graph 注入、interrupt 返回、resume 签名、Workspace service 生命周期和恢复投递窗口等偏差。
+- 新增 R1.4 设计复核并修订实施计划；产品决策不变，补充异步 Repository、delivery reconciliation、`test.approval` Graph 和设置页真实 ActionCenter 闭环。
+- 用户选择在基础设施层完成后统一学习；R1.4 掌握包仍会沉淀，但当前不安排练习、不阻塞产品开发。

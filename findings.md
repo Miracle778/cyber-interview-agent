@@ -403,3 +403,11 @@
 - `progress.md` 应承担 Task 状态、测试数字和失败尝试；最终 verification 必须重新整理为“实现内容、代码地图、自动验证、人工验证、当前边界”的用户指南。
 - learning 固定为七件套。机器门禁检查文件、章节、命令、步骤和明显占位符；Codex 人工对照上一阶段，负责判断代码对应关系与内容深度。
 - 本地文档继续由 Git 忽略，正式模板、检查脚本和工作流规则进入仓库。用户练习仍是非阻塞理解债务，不纳入产品阶段关闭条件。
+
+## 2026-07-11：R1.4 持久化 HITL 设计复核发现
+
+- LangGraph 1.2.8 的 `interrupt()` 不会从 `ainvoke()` 抛出业务异常，而是返回 `__interrupt__`；RunManager 必须显式识别，否则会把 waiting run 错标为 completed。
+- HITL action 在 Graph 节点中写入与 checkpointer 共用的 `runtime.sqlite`。Repository 必须使用独立 aiosqlite 连接，不能复用同步 Runtime connection 阻塞 event loop。
+- Graph 不能从 state 接收 workspace/session/run 身份；这些字段由 Runtime 闭包绑定，只向 `GraphBuildContext` 注入窄化 `request_action` 接口。
+- resolution receipt 需要持久化 delivery 状态并在启动时 reconciliation，覆盖“action 已解决但恢复命令尚未投递”的崩溃窗口。
+- 旧计划只有 ActionCenter 列表，没有创建真实 action 的浏览器入口；R1.4 增加 `test.approval` 确定性 Graph，并接入设置页完成暂停、刷新、重启和恢复闭环。
