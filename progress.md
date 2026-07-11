@@ -397,3 +397,10 @@
 - 审阅加固覆盖：单 event-loop Runtime DB 访问、优雅停机 interrupted、无 checkpoint 输入重放、安全错误、SSE keepalive 与预检 404、Graph migration_required、Workspace 缺失保护、多 run 时间线和 EventSource 旧回调隔离。
 - 审阅修正后的真实浏览器回归再次运行同一 session：历史“运行完成”由 1 条增加为 2 条，最终按钮可用、状态为“自检完成”、控制台无 warning/error。
 - 独立审阅最终复核无 Critical/Important；补充 resume 发布失败恢复和 keepalive 背压测试后，后端总计 114 passed。
+
+### 双轨开发工作流
+
+- 已确认产品进度与用户掌握进度分离。
+- 用户所有权练习为非阻塞任务，未完成项进入理解债务。
+- Codex 与 Claude 使用仓库级入口恢复同一规则。
+- 本地掌握包写入 `docs/learning/<stage>/`，正式规格继续写入 `docs/superpowers/`。
