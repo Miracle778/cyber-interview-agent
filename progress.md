@@ -378,3 +378,4 @@
 - 已复核 R1 总规格和 R1.2 七任务计划，新增第 8 个“设置页 Runtime 自检闭环”任务。
 - 复杂度结论：R1.2 状态、事务、异步和前端 SSE 高耦合，本切片全部由 Codex 实现。
 - 设计复核文档：`docs/superpowers/specs/2026-07-11-r1-2-agent-runtime-sse-design-review.md`。
+- Task 1 首次 GREEN 失败：Runtime migration 在索引中引用 SQLite 隐式 `rowid`，报 `no such column: rowid`；改为显式 `(session_id, created_at, id)` 后重试。
