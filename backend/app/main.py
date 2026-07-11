@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.api.routes_agent import router as agent_router
+from app.api.routes_hitl import router as hitl_router
 from app.api.routes_knowledge import router as knowledge_router
 from app.api.routes_review import router as review_router
 from app.api.routes_settings import router as settings_router
@@ -19,6 +20,12 @@ from app.core.errors import (
 from app.db.app_database import connect_app_database
 from app.runtime.default_graphs import create_default_graph_registry
 from app.runtime.graph_registry import GraphVersionNotFoundError
+from app.hitl.handlers import ActionPayloadValidationError, UnknownActionTypeError
+from app.hitl.repository import (
+    ActionAlreadyResolvedError,
+    ActionVersionConflictError,
+    PendingActionNotFoundError,
+)
 from app.runtime.repository import RuntimeRecordNotFoundError, SessionBusyError
 from app.runtime.service import AgentRuntime
 from app.security.workspace_paths import PathPolicyError
@@ -67,6 +74,7 @@ async def lifespan(application: FastAPI):
 
 app = FastAPI(title="Cyber Interview Agent API", lifespan=lifespan)
 app.include_router(agent_router)
+app.include_router(hitl_router)
 app.include_router(settings_router)
 app.include_router(knowledge_router)
 app.include_router(review_router)
@@ -131,6 +139,41 @@ async def runtime_record_not_found(
     _request: Request, _error_value: RuntimeRecordNotFoundError
 ) -> JSONResponse:
     return _error(404, "runtime_record_not_found", "Agent 运行记录不存在")
+
+
+@app.exception_handler(PendingActionNotFoundError)
+async def pending_action_not_found(
+    _request: Request, _error_value: PendingActionNotFoundError
+) -> JSONResponse:
+    return _error(404, "action_not_found", "待确认动作不存在")
+
+
+@app.exception_handler(ActionVersionConflictError)
+async def action_version_conflict(
+    _request: Request, _error_value: ActionVersionConflictError
+) -> JSONResponse:
+    return _error(409, "action_version_conflict", "待确认内容已经更新，请刷新后重试")
+
+
+@app.exception_handler(ActionAlreadyResolvedError)
+async def action_already_resolved(
+    _request: Request, _error_value: ActionAlreadyResolvedError
+) -> JSONResponse:
+    return _error(409, "action_already_resolved", "待确认动作已经处理")
+
+
+@app.exception_handler(ActionPayloadValidationError)
+async def invalid_action_payload(
+    _request: Request, _error_value: ActionPayloadValidationError
+) -> JSONResponse:
+    return _error(422, "invalid_action_payload", "待确认内容不符合编辑要求")
+
+
+@app.exception_handler(UnknownActionTypeError)
+async def unknown_action_type(
+    _request: Request, _error_value: UnknownActionTypeError
+) -> JSONResponse:
+    return _error(422, "unknown_action_type", "待确认动作类型不受支持")
 
 
 @app.exception_handler(SessionBusyError)

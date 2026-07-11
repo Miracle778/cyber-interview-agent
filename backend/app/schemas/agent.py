@@ -57,7 +57,15 @@ class MessageResource(AgentModel):
     created_at: str
 
 
+class PendingActionSummaryResource(AgentModel):
+    id: str
+    action_type: str
+    preview: dict[str, Any]
+    status: str
+    version: int
+
+
 class SessionDetailResource(SessionResource):
     messages: list[MessageResource]
     latest_run: RunResource | None
-    pending_action: None = None
+    pending_action: PendingActionSummaryResource | None = None

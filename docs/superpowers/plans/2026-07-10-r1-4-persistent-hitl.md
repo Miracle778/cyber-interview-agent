@@ -223,7 +223,7 @@ git commit -m "feat(hitl): pause and resume langgraph runs"
 - 产出 list/detail/approve/reject endpoints exactly from the spec.
 - 使用 typed 409 code：`action_version_conflict` 和 `action_already_resolved`。
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 创建 `backend/tests/test_hitl_routes.py`，验证 Workspace/status 过滤、脱敏详情、编辑后批准、带原因拒绝、重复幂等批准和冲突的第二次决定。
 
@@ -233,17 +233,17 @@ assert response.status_code == 200
 assert response.json()["status"] == "edited_and_approved"
 ```
 
-- [ ] **步骤 2：运行测试确认失败**
+- [x] **步骤 2：运行测试确认失败**
 
 运行：`cd backend && UV_CACHE_DIR=.uv-cache/backend uv run pytest tests/test_hitl_routes.py -v`
 
 预期：失败，因为 schema/route 尚不存在。
 
-- [ ] **步骤 3：实现最小功能**
+- [x] **步骤 3：实现最小功能**
 
 返回 camelCase 资源。列表支持 Workspace、status 和可选 session 过滤；session detail 返回 pending action 摘要。不能返回 checkpoint 数据、secret payload 字段或内部 handler 异常。在 `main.py` 注册 router，并补齐 typed 409 exception handlers。
 
-- [ ] **步骤 4：运行测试确认通过并提交**
+- [x] **步骤 4：运行测试确认通过并提交**
 
 运行：`cd backend && UV_CACHE_DIR=.uv-cache/backend uv run pytest tests/test_hitl_routes.py -v`
 

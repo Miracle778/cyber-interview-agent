@@ -76,8 +76,12 @@ class AgentRuntime:
     def list_sessions(self, workspace_id: str) -> tuple[SessionRecord, ...]:
         return self._context(workspace_id).repository.list_sessions(workspace_id)
 
-    def session_detail(self, session_id: str) -> dict[str, Any]:
+    async def session_detail(self, session_id: str) -> dict[str, Any]:
         context, session = self._locate_session(session_id)
+        pending = await context.hitl_repository.list_pending(
+            session.workspace_id, session_id=session.id
+        )
+        pending_action = pending[0] if pending else None
         return {
             **self._session_resource(session),
             "messages": [
@@ -93,7 +97,17 @@ class AgentRuntime:
             "latestRun": self._run_resource(
                 context.repository.latest_run(session.id)
             ),
-            "pendingAction": None,
+            "pendingAction": (
+                None
+                if pending_action is None
+                else {
+                    "id": pending_action.id,
+                    "actionType": pending_action.action_type,
+                    "preview": pending_action.preview,
+                    "status": pending_action.status,
+                    "version": pending_action.version,
+                }
+            ),
         }
 
     def ensure_session(self, session_id: str) -> None:

@@ -46,7 +46,7 @@ async def list_sessions(
 async def get_session(
     session_id: str, runtime: AgentRuntime = Depends(get_agent_runtime)
 ):
-    return runtime.session_detail(session_id)
+    return await runtime.session_detail(session_id)
 
 
 @router.post(

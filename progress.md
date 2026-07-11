@@ -475,3 +475,11 @@
 - waiting run 取消会把 pending action 转为 cancelled；启动恢复会重试 pending/delivering/failed receipt，也覆盖 delivered 后进程崩溃导致 run interrupted 的窗口。
 - 首次 GREEN 暴露 `graph.ainvoke()` 插入位置错误，修正后 4 个重启集成测试和 32 个 Runtime/HITL 相关测试通过。
 - 完整回归发现旧 GraphBuildContext 构造缺少新参数；补充默认拒绝 requester 后，后端 185 passed，保留 1 个既有 Starlette deprecation warning。
+
+### R1.4 Task 4：HITL REST API
+
+- 新增 action list/detail/approve/reject 路由，支持 Workspace、status 和 session 过滤。
+- API 只返回 preview、editable fields 和状态元数据，不返回内部 payload、创建幂等 key 或 checkpoint。
+- session detail 读取当前 pending action 摘要；原同步接口改为 async 并保持既有路由兼容。
+- 版本过期和不同 key 二次决定分别返回 `action_version_conflict`、`action_already_resolved`；非法编辑返回 `invalid_action_payload`。
+- HITL 与既有 Agent 路由联合验证 11 passed；后端完整回归 189 passed，保留 1 个既有 Starlette deprecation warning。
