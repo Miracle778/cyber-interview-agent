@@ -221,7 +221,7 @@ git commit -m "feat(knowledge): render canonical vault documents"
 
 **产出：** action-id 幂等发布状态机；只索引 active frontmatter；rescan 修复 index stale。
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 `backend/tests/test_publication_service.py` 覆盖：
 
@@ -236,18 +236,18 @@ assert len(list((vault / "10_question_bank").glob("*.md"))) == 1
 
 另测 stale draft、外部文件 hash 冲突、文件成功后 index 异常进入 `index_stale`。扩展 `test_search_index.py`：未确认文档不进入 FTS，rescan 修复 stale publication。
 
-- [ ] **步骤 2：运行 RED**
+- [x] **步骤 2：运行 RED**
 
 ```bash
 cd backend
 .venv/bin/pytest tests/test_publication_service.py tests/test_search_index.py -v
 ```
 
-- [ ] **步骤 3：实现最小功能**
+- [x] **步骤 3：实现最小功能**
 
 `PublicationRepository` 对 journal 状态使用 expected-state 更新。Service 校验 action draft/version/hash，渲染并写入稳定路径，随后 upsert manifest/FTS；索引失败保留文件和 result hash。rescan 解析严格 frontmatter，只写 active 文档并清理已不存在或不 active 的派生行。
 
-- [ ] **步骤 4：验证并提交**
+- [x] **步骤 4：验证并提交**
 
 ```bash
 cd backend

@@ -140,7 +140,7 @@ def test_rescan_uses_workspace_id(knowledge_client) -> None:
     client, workspace, workspace_id = knowledge_client
     vault = workspace / "knowledge-vault"
     (vault / "10_question_bank/question.md").write_text(
-        "---\nid: q1\ntype: question\nstatus: ingested\ningestion:\n  confirmed_by_user: true\n---\n# Question\n",
+        "---\nid: q1\ntype: question\ntitle: Question\nstatus: ingested\ningestion:\n  confirmed_by_user: true\n---\n# Question\n",
         encoding="utf-8",
     )
 
@@ -149,7 +149,7 @@ def test_rescan_uses_workspace_id(knowledge_client) -> None:
     )
 
     assert response.status_code == 200
-    assert response.json() == {"indexed": 1}
+    assert response.json() == {"indexed": 1, "skipped": 0, "repaired": 0}
     db_path = vault / ".cyber-interview-agent/index.sqlite"
     connection = sqlite3.connect(db_path)
     assert connection.execute("SELECT COUNT(*) FROM manifest_documents").fetchone()[0] == 1

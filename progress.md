@@ -542,3 +542,12 @@
 - atomic writer 覆盖新建、expected hash 覆盖、外部冲突、replace 失败清理和 symlink target 拒绝。
 - 专项 17 passed；后端完整回归 220 passed，保留 1 个既有 Starlette warning。
 - 下一步 Task 4：publication journal、Service 与 active index/rescan。
+
+### R1.5 Task 4：Publication Journal、Service 与 Active Index
+
+- RED：publication module/rescan API 不存在；新增 invalid frontmatter 与 index-stale 修复测试均按预期失败。
+- PublicationRepository 以 action id 唯一，记录 prepared/file_written/indexed/completed/index_stale 状态与 result hash。
+- PublicationService 使用 action resolved time 稳定渲染，重复 action 返回同一 target；stale draft 和外部 target 均保持不变并报冲突。
+- 文件写入后立即标记 draft published；索引失败保留 Markdown 并进入 index_stale。
+- rescan 只索引 confirmed ingested 文档，跳过 draft 和非法 frontmatter，并在 hash 一致时修复 stale journal。
+- 后端完整回归 225 passed，保留 1 个既有 Starlette warning；下一步 Task 5 接入真实 publish Graph 与 HITL handler。

@@ -248,6 +248,31 @@ class KnowledgeDraftService:
                 raise
         return self._record_from_row(updated_row)
 
+    async def mark_published(
+        self, draft_id: str, *, expected_version: int, expected_hash: str
+    ) -> KnowledgeDraftRecord:
+        async with self._connection() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+            row = await self._require_row(connection, draft_id)
+            current = self._record_from_row(row)
+            if (
+                current.version != expected_version
+                or current.content_hash != expected_hash
+            ):
+                await connection.rollback()
+                raise DraftVersionChangedError(
+                    f"draft {draft_id!r} changed before publication"
+                )
+            if current.status != "published":
+                await connection.execute(
+                    "UPDATE knowledge_drafts SET status = 'published', "
+                    "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (draft_id,),
+                )
+            published_row = await self._require_row(connection, draft_id)
+            await connection.commit()
+        return self._record_from_row(published_row)
+
     @asynccontextmanager
     async def _connection(self) -> AsyncIterator[aiosqlite.Connection]:
         async with aiosqlite.connect(self._database_path) as connection:

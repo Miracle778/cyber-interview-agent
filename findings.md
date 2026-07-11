@@ -438,3 +438,5 @@
 - Multipart 客户端可能在应用收到请求前规范化 Windows 路径形文件名；路由覆盖 POSIX/nested 输入，底层 source service 单测直接覆盖 Windows 路径，避免把框架预处理误认为策略验证。
 - canonical frontmatter 由严格 Pydantic model 生成，不接受任意 metadata 合并；这比渲染后再递归删除 secret 更容易证明禁止字段不会进入 Vault。
 - 通用 atomic writer 只负责单文件 compare-and-swap；Workspace scope 与父目录链安全仍由 PublicationService 在调用前通过 R1.3 PathPolicy 保证，两个边界不能互相替代。
+- `resolved_at` 是 action 重试间稳定的发布时间来源；若每次 delivery 都取当前时间，重渲染 hash 会变化并把自己的已写文件误判成外部冲突。
+- rescan 负责从 Vault 重建 active 派生索引，PublicationService 只在确认文件 hash 仍等于 journal result hash 后把 `index_stale` 收口，避免把被外部修改的文件误标为已恢复。

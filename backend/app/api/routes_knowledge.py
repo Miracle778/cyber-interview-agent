@@ -6,11 +6,12 @@ from app.api.dependencies import get_workspace_service
 from app.db.connection import connect_index
 from app.knowledge.drafts import CreateDraftCommand, KnowledgeDraftService
 from app.knowledge.sources import MAX_SOURCE_BYTES, SourceTooLargeError, save_source
+from app.knowledge.publication import PublicationService
 from app.schemas.drafts import KnowledgeDraftResource, UploadSourceResource
 from app.security.workspace_paths import WorkspacePathPolicy
 from app.services.document_ingestion import create_question_draft, extract_text
 from app.services.markdown import render_question_markdown
-from app.services.search_index import IndexedDocument, upsert_document
+from app.services.search_index import rescan_active_documents
 from app.services.vault import initialize_vault
 from app.services.workspace_service import WorkspaceService
 
@@ -57,7 +58,7 @@ async def upload_source(
 
 
 @router.post("/rescan")
-def rescan_vault(
+async def rescan_vault(
     workspace_id: str = Form(alias="workspaceId"),
     workspaces: WorkspaceService = Depends(get_workspace_service),
 ) -> dict[str, int]:
@@ -67,25 +68,13 @@ def rescan_vault(
     db_relative = ".cyber-interview-agent/index.sqlite"
     db_path = policy.resolve_for_create("knowledge.active", db_relative)
     connection = connect_index(db_path)
-    count = 0
     for path in vault.rglob("*.md"):
-        relative_path = path.relative_to(vault)
-        safe_path = policy.resolve_for_read(
-            "knowledge.active", relative_path.as_posix()
-        )
-        body = safe_path.read_text(encoding="utf-8")
-        document_id = relative_path.with_suffix("").as_posix().replace("/", "__")
-        upsert_document(
-            connection,
-            IndexedDocument(
-                id=document_id,
-                path=str(relative_path),
-                title=path.stem,
-                type="source",
-                status="reviewed",
-                body=body,
-            ),
-        )
-        count += 1
-    connection.close()
-    return {"indexed": count}
+        policy.resolve_for_read("knowledge.active", path.relative_to(vault).as_posix())
+    try:
+        result = rescan_active_documents(connection, vault)
+    finally:
+        connection.close()
+    repaired = await PublicationService(
+        workspace, workspace_id=workspace_id
+    ).repair_index_stale_after_rescan()
+    return {**result, "repaired": repaired}
