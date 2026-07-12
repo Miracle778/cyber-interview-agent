@@ -1,6 +1,5 @@
 # R1.2 Agent Runtime 与 SSE 实施计划
 
-> **面向执行 Agent：** 必须使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans，按任务逐项执行本计划。步骤使用复选框（`- [x]`）跟踪。
 
 **目标：** 持久化 Agent session、run、message、checkpoint 和可重放事件，通过 REST 暴露异步命令，通过 SSE 暴露运行进度。
 

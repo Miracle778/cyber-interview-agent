@@ -1,7 +1,5 @@
 # Frontend MVP Review Loop Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Connect the existing React pages to the existing FastAPI endpoints so a user can complete the MVP loop in the browser: initialize workspace, test provider config, upload a source, review the generated question, confirm the report, and rescan the Vault.
 
 **Architecture:** Keep the app as a single-page React/Vite UI. Store cross-section MVP state in `AppShell` with React state and pass it down to `SettingsPage`, `KnowledgePage`, and `ReviewPage`. Keep API details inside feature API modules and keep UI components focused on rendering and local form state.

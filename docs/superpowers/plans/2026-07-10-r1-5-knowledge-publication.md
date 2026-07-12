@@ -1,6 +1,5 @@
 # R1.5 知识草稿与发布实施计划
 
-> **面向执行 Agent：** 必须使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans，按任务逐项执行本计划。步骤使用复选框（`- [ ]`）跟踪。
 
 **目标：** 把上传资料和领域草稿保留在 Vault 外，通过真实 `knowledge.publish` Graph 与持久化 HITL 审核，再将批准版本幂等发布为 Obsidian-compatible Markdown，并保证 active index 可恢复。
 

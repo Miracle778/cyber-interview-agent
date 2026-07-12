@@ -105,12 +105,15 @@ class StageDocumentationGateTests(unittest.TestCase):
         self,
         verification: str,
         learning_files: dict[str, str],
+        plan: str = "- [x] 浏览器和重启验收\n",
     ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             verification_path = root / "verification.md"
             learning_path = root / "learning"
+            plan_path = root / "plan.md"
             verification_path.write_text(verification, encoding="utf-8")
+            plan_path.write_text(plan, encoding="utf-8")
             learning_path.mkdir()
             for name, content in learning_files.items():
                 (learning_path / name).write_text(content, encoding="utf-8")
@@ -123,6 +126,8 @@ class StageDocumentationGateTests(unittest.TestCase):
                     str(verification_path),
                     "--learning",
                     str(learning_path),
+                    "--plan",
+                    str(plan_path),
                 ],
                 capture_output=True,
                 text=True,
@@ -181,6 +186,30 @@ class StageDocumentationGateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("architecture.md", result.stderr)
         self.assertIn("占位符", result.stderr)
+
+    def test_unchecked_browser_plan_blocks_stage_closure(self) -> None:
+        result = self.run_gate(
+            valid_verification(),
+            valid_learning_files(),
+            plan="- [ ] 浏览器和重启验收\n",
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("浏览器验收尚未完成", result.stderr)
+
+    def test_browser_claim_conflicting_with_plan_fails(self) -> None:
+        verification = valid_verification().replace(
+            "运行启动命令并打开页面。",
+            "浏览器验收已经完成并通过。",
+        )
+        result = self.run_gate(
+            verification,
+            valid_learning_files(),
+            plan="- [ ] 浏览器和重启验收\n",
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("verification 声称浏览器已通过", result.stderr)
 
 
 if __name__ == "__main__":

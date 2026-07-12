@@ -99,6 +99,33 @@ def check_verification(path: Path) -> list[CheckIssue]:
     return issues
 
 
+def check_plan(path: Path, verification_text: str) -> list[CheckIssue]:
+    text, issues = _read_text(path)
+    if text is None:
+        return issues
+
+    browser_step = re.search(
+        r"^- \[([ xX])\].*(?:浏览器|browser).*$",
+        text,
+        re.MULTILINE | re.IGNORECASE,
+    )
+    if browser_step is None:
+        issues.append(CheckIssue(path, "实施计划缺少浏览器验收复选项"))
+    elif browser_step.group(1).strip().lower() != "x":
+        issues.append(CheckIssue(path, "浏览器验收尚未完成，不能关闭阶段"))
+
+    claims_browser_passed = bool(
+        re.search(
+            r"浏览器(?:验收|验证).{0,12}(?:通过|完成|覆盖)",
+            verification_text,
+            re.IGNORECASE,
+        )
+    )
+    if browser_step is not None and browser_step.group(1).strip().lower() != "x" and claims_browser_passed:
+        issues.append(CheckIssue(path, "verification 声称浏览器已通过，但计划仍未勾选"))
+    return issues
+
+
 def _check_learning_structure(path: Path, name: str, text: str) -> list[CheckIssue]:
     issues: list[CheckIssue] = []
     for heading in LEARNING_REQUIREMENTS.get(name, ()):
@@ -140,12 +167,18 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Validate stage documentation")
     parser.add_argument("--verification", required=True, type=Path)
     parser.add_argument("--learning", required=True, type=Path)
+    parser.add_argument("--plan", required=True, type=Path)
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
-    issues = check_verification(args.verification) + check_learning(args.learning)
+    verification_text, read_issues = _read_text(args.verification)
+    issues = read_issues
+    if verification_text is not None:
+        issues.extend(check_verification(args.verification))
+        issues.extend(check_plan(args.plan, verification_text))
+    issues.extend(check_learning(args.learning))
     if issues:
         for issue in sorted(issues, key=lambda item: (str(item.path), item.message)):
             print(f"{issue.path}: {issue.message}", file=sys.stderr)
@@ -154,6 +187,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print("Stage documentation gate passed")
     print(f"  verification: {args.verification}")
     print(f"  learning: {args.learning} ({len(LEARNING_FILES)} files)")
+    print(f"  plan: {args.plan}")
     return 0
 
 

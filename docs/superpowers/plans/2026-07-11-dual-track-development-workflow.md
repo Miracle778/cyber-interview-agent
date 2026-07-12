@@ -1,7 +1,5 @@
 # 双轨开发与项目所有权工作流实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
-
 **Goal:** 建立 Codex、Claude、新会话和上下文压缩后都能恢复的双轨规则，并生成首份 R1.2 掌握包。
 
 **Architecture:** `AGENTS.md` 与 `CLAUDE.md` 是工具入口，共同引用唯一权威规格；`task_plan.md` 跟踪产品与掌握状态；被 Git 忽略的 `docs/learning/` 保存详细学习材料。

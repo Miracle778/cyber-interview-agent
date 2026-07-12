@@ -1,6 +1,5 @@
 # 阶段文档质量门禁实施计划
 
-> **面向执行 Agent：** 必须使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans，按任务逐项执行本计划。步骤使用复选框（`- [ ]`）跟踪。
 
 **目标：** 将 verification 用户指南和 learning 七件套的结构要求固化为仓库规则、正式模板和可执行本地门禁。
 

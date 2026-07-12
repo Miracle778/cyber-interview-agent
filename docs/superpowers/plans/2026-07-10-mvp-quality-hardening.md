@@ -1,7 +1,5 @@
 # P1 MVP Quality Hardening Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Turn the P0 browser loop from “can run once” into a repeatable MVP that shows backend health, restores workspace state, explains workflow progress, gives actionable errors, includes sample input, and produces a local verification guide.
 
 **Architecture:** Keep the existing single-page React/Vite structure. Add small shared frontend helpers for health and error advice, keep cross-step flow state in `AppShell`, and pass explicit callbacks to feature pages. Do not change backend business behavior unless a test proves a tiny compatibility fix is required.

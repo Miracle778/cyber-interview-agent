@@ -1,6 +1,5 @@
 # R1.1 Provider 与设置实施计划
 
-> **面向执行 Agent：** 必须使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans，按任务逐项执行本计划。步骤使用复选框（`- [ ]`）跟踪。
 
 **目标：** 持久化全局 Provider 和 Workspace，使用 SecretStore 保护 API Key，通过真实协议 adapter 逐模型测试连接，并为每个 Workspace 绑定模型用途。
 

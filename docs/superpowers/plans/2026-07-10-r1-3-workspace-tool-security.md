@@ -1,6 +1,5 @@
 # R1.3 Workspace 工具安全实施计划
 
-> **面向执行 Agent：** 必须使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans，按任务逐项执行本计划。步骤使用复选框（`- [ ]`）跟踪。
 
 **目标：** 建立默认拒绝的 Agent 工具执行边界、Workspace 相对路径 scope、软链接越界拒绝、脱敏工具审计，以及可在设置页运行的工具安全自检。
 

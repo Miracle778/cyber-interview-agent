@@ -1,7 +1,5 @@
 # Cyber Interview Agent MVP 实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **目标：** 实现 MVP 复习闭环：配置 Provider 和工作区，初始化 Obsidian-compatible 知识库，导入资料，生成题库，运行 LangGraph 复习 agent，生成单轮报告和全局掌握度更新建议。
 
 **架构：** 采用 Web 前后端分离架构，不做桌面端。前端是 React/Vite/TypeScript 单页应用；后端是 Python/FastAPI 服务，负责文件沙箱、Vault 读写、索引、Provider 调用和 LangGraph agent 工作流。知识库源数据始终是 Markdown + YAML frontmatter，SQLite/FTS、关系索引和 LangGraph checkpoint 都是可重建或可迁移的运行时数据。

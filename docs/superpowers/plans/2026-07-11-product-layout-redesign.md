@@ -1,7 +1,5 @@
 # Product Layout Redesign Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Replace the single stacked MVP page with routed, responsive product navigation while preserving every existing Settings, Knowledge, and Review workflow.
 
 **Architecture:** React Router owns three real routes inside one stateful `AppShell`. A shared navigation definition renders as a persistent desktop sidebar and an accessible mobile drawer; route pages consume the existing top-level Workspace, question, report, and index state through explicit props. Page-level layout classes prepare Review for the future session/conversation/context workspace without implementing R1.2 behavior.

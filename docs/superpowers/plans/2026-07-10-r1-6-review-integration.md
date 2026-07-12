@@ -1,6 +1,5 @@
 # R1.6 单题复习 Runtime 集成计划
 
-> **面向执行 Agent：** 必须使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans，按任务逐项执行本计划。步骤使用复选框（`- [ ]`）跟踪。
 
 **目标：** 把现有单题复习流程迁移到真实 Provider 模型、持久化 Agent Runtime/SSE、scope 工具、HITL 和批准后 Vault 发布，同时不实现 R2 多题行为。
 

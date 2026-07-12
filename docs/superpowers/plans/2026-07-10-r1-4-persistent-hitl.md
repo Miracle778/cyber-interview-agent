@@ -1,6 +1,5 @@
 # R1.4 持久化 HITL 实施计划
 
-> **面向执行 Agent：** 必须使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans，按任务逐项执行本计划。步骤使用复选框（`- [ ]`）跟踪。
 
 **目标：** 持久化人工确认请求、暂停 LangGraph run，使用乐观并发和幂等支持接受/编辑/拒绝，并在重启后恢复同一个 run。
 

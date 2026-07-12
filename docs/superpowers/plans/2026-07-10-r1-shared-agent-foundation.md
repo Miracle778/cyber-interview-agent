@@ -1,6 +1,5 @@
 # R1 共享 Agent 底座实施总计划
 
-> **面向执行 Agent：** 必须使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans，按任务逐项执行本计划。步骤使用复选框（`- [ ]`）跟踪。
 
 **目标：** 交付 R1 spec 中定义的共享 Provider、Agent Runtime、沙箱、HITL、知识发布和单题复习集成底座。
 
