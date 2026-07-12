@@ -21,6 +21,7 @@ import {
 } from "./settingsApi";
 import { SettingsNavigation, type SettingsSection } from "./SettingsNavigation";
 import { SettingsOverview, type SettingsStatusItem } from "./SettingsOverview";
+import { SettingsDisclosure } from "./SettingsDisclosure";
 
 interface SettingsPageProps {
   workspace: WorkspaceConfig | null;
@@ -224,9 +225,15 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
 
           {section === "diagnostics" && workspaceId ? (
             <div className="settings-stack">
-              <RuntimeDiagnostics workspaceId={workspaceId} />
-              <SecurityDiagnostics workspaceId={workspaceId} />
-              <ActionCenter workspaceId={workspaceId} />
+              <SettingsDisclosure id="runtime" title="Agent Runtime" description="运行 Runtime 自检并查看事件流">
+                <RuntimeDiagnostics workspaceId={workspaceId} />
+              </SettingsDisclosure>
+              <SettingsDisclosure id="security" title="工具安全" description="检查工具白名单、Scope 与路径边界">
+                <SecurityDiagnostics workspaceId={workspaceId} />
+              </SettingsDisclosure>
+              <SettingsDisclosure id="approval" title="人工确认" description={actionsQuery.data?.length ? `${actionsQuery.data.length} 个动作等待决定` : "没有待处理动作"} defaultExpanded={Boolean(actionsQuery.data?.length)}>
+                <ActionCenter workspaceId={workspaceId} />
+              </SettingsDisclosure>
             </div>
           ) : null}
         </div>

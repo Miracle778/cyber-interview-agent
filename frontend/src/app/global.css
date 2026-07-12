@@ -593,6 +593,36 @@ pre {
 .settings-guidance p { margin: 0; }
 .settings-guidance p + p { margin-top: var(--space-1); color: var(--text-muted); }
 
+.settings-disclosure {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.settings-disclosure__trigger {
+  display: flex;
+  width: 100%;
+  min-height: 64px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  color: var(--text);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.settings-disclosure__title,
+.settings-disclosure__description { display: block; }
+.settings-disclosure__title { font-weight: 700; }
+.settings-disclosure__description { margin-top: 4px; color: var(--text-muted); font-size: .88rem; }
+.settings-disclosure__icon { transition: transform 180ms ease; }
+.settings-disclosure__trigger[aria-expanded="true"] .settings-disclosure__icon { transform: rotate(180deg); }
+.settings-disclosure__panel { padding: 0 var(--space-4) var(--space-4); }
+
 .page-section__header {
   display: flex;
   min-height: 32px;
