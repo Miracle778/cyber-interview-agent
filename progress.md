@@ -103,3 +103,12 @@
 - 正式设计已提交；四任务实施计划已完成自检。
 - R1.2 context compression/token usage 确认为独立 Pre-R2 遗漏，不与 UI 改造混做。
 - 下一步：按单 Agent、针对性 TDD 执行 Task 1。
+
+## 2026-07-12：Pre-R2 体验稳定化收尾
+
+- source metadata/list、分组知识工作区、Markdown 阅读/编辑和按需确认已完成。
+- 最终后端 253 passed；前端 65 passed；TypeScript/Vite build 通过。
+- Playwright 真实闭环 1 passed，覆盖 UI 上传、1440/375、键盘、刷新和发布。
+- 应用内浏览器完成批准、刷新、后端重启恢复；1280px 无溢出且控制台 0 error/warning。
+- learning 七件套与 verification 已按最终证据生成，待文档门禁和分支复核。
+- 下一产品任务：R1.2 context compression and token/context usage foundation。

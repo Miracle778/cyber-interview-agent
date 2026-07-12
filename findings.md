@@ -29,11 +29,12 @@
 
 ## Pre-R2 体验稳定化发现
 
-- 知识上传只保存随机化 source 文件和生成草稿，没有 source metadata 或列表 API；“暂无文档”不是单纯前端渲染错误。
-- `DraftReview` 始终显示 Markdown textarea，缺少阅读态；前端当前没有 Markdown 渲染依赖。
-- 非诊断 `ActionCenter` 在无 pending action 时仍渲染空卡片，与按需人工确认目标冲突。
-- 复习页已经具备单题持久化链路，本切片只调整信息层级，不提前加入 R2 行为。
-- roadmap 明确要求 R1 提供上下文压缩与 token/context 用量记录，但 R1.2 实施计划和验收没有相应任务；当前仅有 tokenUsage 脱敏保留测试，基础能力尚未实现。
+- source 文件与 metadata 现在由 Workspace 范围服务共同管理；跨文件系统/SQLite 的后续失败采用显式补偿清理。
+- source 与 draft 保持独立生命周期，通过可空 draft ID 关联；列表 API 只返回安全相对路径。
+- Markdown 阅读态禁用 raw HTML，并只隐藏有闭合分隔符的 YAML frontmatter；编辑态保留完整原文。
+- 非诊断 ActionCenter 在无 watch/action/error 时从首帧隐藏；watch、超时重试和 pending action 是显式可见状态。
+- 复习页只增加语义区域和响应式层级，没有新增 API、状态转换或 R2 行为。
+- roadmap 的 context compression/token usage 仍未实现，下一切片必须单独补齐。
 
 ## R1.5 修正结果
 

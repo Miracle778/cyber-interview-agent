@@ -62,7 +62,7 @@
 - Produces: `GET /api/knowledge/sources?workspaceId=<id> -> KnowledgeSourceResource[]`.
 - Produces: `POST /api/knowledge/sources -> { source, draft, question }`.
 
-- [ ] **Step 1: Add failing persistence and workspace-isolation route tests**
+- [x] **Step 1: Add failing persistence and workspace-isolation route tests**
 
 Add tests that upload `缓存资料.md`, restart the `TestClient`, then assert:
 
@@ -86,13 +86,13 @@ assert not listed.json()[0]["storedPath"].startswith("/")
 
 Register a second workspace and assert its list is empty. Add a failure-injection test around draft creation and assert neither a database row nor source file remains after compensation.
 
-- [ ] **Step 2: Run the route tests and verify RED**
+- [x] **Step 2: Run the route tests and verify RED**
 
 Run: `cd backend && pytest -q tests/test_knowledge_routes.py -x --tb=short`
 
 Expected: FAIL because GET is not defined and upload has no `source` resource.
 
-- [ ] **Step 3: Add the Runtime migration and source record service**
+- [x] **Step 3: Add the Runtime migration and source record service**
 
 Create `005_knowledge_sources.sql` with this schema:
 
@@ -131,7 +131,7 @@ class KnowledgeSourceRecord:
 
 Implement `KnowledgeSourceService.create` with keyword-only `original_filename: str`, `content_type: str`, and `content: bytes`, returning `KnowledgeSourceRecord`. Implement `attach_draft(source_id: str, *, draft_id: str) -> KnowledgeSourceRecord`, `list() -> tuple[KnowledgeSourceRecord, ...]`, and `delete(source_id: str) -> None`. `create` must validate the original filename, atomically write bytes under `review.sources`, and insert metadata in one guarded operation. On insert failure, unlink the new file. `delete` must resolve the stored relative path through `WorkspacePathPolicy`, delete only that source, and remove its row.
 
-- [ ] **Step 4: Expose source resources and compensate failed upload orchestration**
+- [x] **Step 4: Expose source resources and compensate failed upload orchestration**
 
 Add camel-case Pydantic resources:
 
@@ -167,13 +167,13 @@ async def list_sources(
     return [KnowledgeSourceResource.model_validate(item) for item in records]
 ```
 
-- [ ] **Step 5: Run targeted backend tests**
+- [x] **Step 5: Run targeted backend tests**
 
 Run: `cd backend && pytest -q tests/test_knowledge_routes.py tests/test_knowledge_drafts.py -x --tb=short`
 
 Expected: all selected tests PASS; no absolute workspace path is returned.
 
-- [ ] **Step 6: Commit Task 1**
+- [x] **Step 6: Commit Task 1**
 
 ```bash
 git add backend/app/db/migrations/runtime/005_knowledge_sources.sql backend/app/knowledge/source_registry.py backend/app/knowledge/sources.py backend/app/schemas/drafts.py backend/app/api/routes_knowledge.py backend/tests/test_knowledge_routes.py
@@ -201,13 +201,13 @@ git commit -m "feat(knowledge): persist uploaded source metadata"
 - Produces: `<MarkdownView markdown: string />` with raw HTML disabled.
 - Produces: `<DraftReview workspaceId selectedId? onSelectedIdChange? onPublicationRequested? />`.
 
-- [ ] **Step 1: Install the Markdown dependencies**
+- [x] **Step 1: Install the Markdown dependencies**
 
 Run: `cd frontend && pnpm add react-markdown remark-gfm`
 
 Expected: `package.json` and `pnpm-lock.yaml` include both direct dependencies.
 
-- [ ] **Step 2: Add failing tests for grouped resources and safe Markdown reading**
+- [x] **Step 2: Add failing tests for grouped resources and safe Markdown reading**
 
 Add a `MarkdownView` test:
 
@@ -220,13 +220,13 @@ expect(document.querySelector('script')).toBeNull();
 
 Also force the renderer child to throw through a test-only failing component and assert the boundary shows the Markdown as plain text. Update `KnowledgePage.test.tsx` to mock `GET /api/knowledge/sources?workspaceId=w1` and drafts, then assert the two group headings, original filename, draft title, and selected detail. Add a rejected source-list request and assert the upload toolbar remains available with a `重试读取资料` action. Update `DraftReview.test.tsx` to assert Markdown is rendered initially, textarea is absent, clicking `编辑` reveals it, `取消编辑` restores server content, and save returns to read mode.
 
-- [ ] **Step 3: Run the frontend tests and verify RED**
+- [x] **Step 3: Run the frontend tests and verify RED**
 
 Run: `cd frontend && pnpm test -- src/features/knowledge/MarkdownView.test.tsx src/features/knowledge/KnowledgePage.test.tsx src/features/knowledge/DraftReview.test.tsx --reporter=dot`
 
 Expected: FAIL because the renderer, source list, grouped workspace, and explicit edit mode do not exist.
 
-- [ ] **Step 4: Add API types and safe Markdown rendering**
+- [x] **Step 4: Add API types and safe Markdown rendering**
 
 Define:
 
@@ -250,7 +250,7 @@ export function listSources(workspaceId: string): Promise<KnowledgeSource[]> {
 
 Implement `MarkdownView` with `ReactMarkdown` and `remarkGfm`; do not add `rehype-raw`. Render links with `target="_blank"` and `rel="noreferrer noopener"` only for external URLs. Wrap output in `<article className="markdown-view">`. Add a focused React error boundary in the same file whose fallback is `<pre className="markdown-view markdown-view--fallback">{markdown}</pre>`; it must never use `dangerouslySetInnerHTML`.
 
-- [ ] **Step 5: Convert DraftReview to controlled selection and explicit read/edit states**
+- [x] **Step 5: Convert DraftReview to controlled selection and explicit read/edit states**
 
 Add optional selection props and local mode:
 
@@ -267,7 +267,7 @@ const dirty = title !== selected?.title || markdown !== selected?.markdown;
 
 Remove the component-owned draft list when it is rendered inside `KnowledgePage`. In read mode show `MarkdownView`, metadata, publication state, target path, and an `编辑` button only for editable statuses. In edit mode show inputs plus `保存草稿` and `取消编辑`; if `dirty`, call `globalThis.confirm("放弃未保存的修改？")` before cancelling or changing selection. Publishing remains available only under the existing status rules.
 
-- [ ] **Step 6: Replace the knowledge card stream with a grouped workspace**
+- [x] **Step 6: Replace the knowledge card stream with a grouped workspace**
 
 Use one TanStack query for sources and reuse the drafts query key. Keep state as a discriminated selection:
 
@@ -282,11 +282,11 @@ Render a `knowledge-toolbar` containing the labelled file input, upload button, 
 
 On upload success invalidate `knowledge-sources` and `knowledge-drafts`, then select `{ kind: "draft", id: result.draft.id }`. Source detail displays original filename, MIME type, formatted size, created time, safe relative path, and a button to open its linked draft. Remove the duplicated in-memory question card and the misleading global “暂无文档” state.
 
-- [ ] **Step 7: Add responsive and accessible workspace styling**
+- [x] **Step 7: Add responsive and accessible workspace styling**
 
 At desktop widths use `grid-template-columns: minmax(220px, 280px) minmax(0, 1fr)`; cap Markdown text measure at `75ch`. At widths below 768px switch to one column. Resource buttons use at least 44px min-height, visible `:focus-visible`, selected `aria-current`, 150–200ms color/border transitions, and no layout-changing transforms. Add `@media (prefers-reduced-motion: reduce)` to remove non-essential transitions.
 
-- [ ] **Step 8: Run targeted frontend tests and typecheck**
+- [x] **Step 8: Run targeted frontend tests and typecheck**
 
 Run: `cd frontend && pnpm test -- src/features/knowledge/MarkdownView.test.tsx src/features/knowledge/KnowledgePage.test.tsx src/features/knowledge/DraftReview.test.tsx --reporter=dot`
 
@@ -294,7 +294,7 @@ Run: `cd frontend && pnpm exec tsc --noEmit`
 
 Expected: all selected tests PASS and TypeScript exits 0.
 
-- [ ] **Step 9: Commit Task 2**
+- [x] **Step 9: Commit Task 2**
 
 ```bash
 git add frontend/package.json frontend/pnpm-lock.yaml frontend/src/features/knowledge frontend/src/app/global.css
@@ -317,7 +317,7 @@ git commit -m "feat(knowledge): add grouped markdown workspace"
 - Produces: `ActionCenter` returns `null` only when `showDiagnostic === false`, loading has completed, no filtered actions exist, no `watchRunId` exists, and there is no local error/message.
 - Preserves: settings diagnostics, approval mutations, single-review run/session behavior, and review publication decisions.
 
-- [ ] **Step 1: Add failing conditional-disclosure and layout regression tests**
+- [x] **Step 1: Add failing conditional-disclosure and layout regression tests**
 
 Add tests for these exact states:
 
@@ -332,13 +332,13 @@ expect(container).toBeEmptyDOMElement();
 
 Keep the card visible when `watchRunId` is set and assert “正在等待待确认动作…”. Force the watch to time out, assert a `重新检查` button appears, click it, and assert polling restarts. Keep the diagnostic variant visible with “暂无待确认动作”. In `ReviewPage.test.tsx`, assert `复习会话`, `当前练习`, and `复习结果` region labels while retaining all existing API and button assertions.
 
-- [ ] **Step 2: Run affected tests and verify RED**
+- [x] **Step 2: Run affected tests and verify RED**
 
 Run: `cd frontend && pnpm test -- src/features/agent/ActionCenter.test.tsx src/features/knowledge/KnowledgePage.test.tsx src/features/review/ReviewPage.test.tsx --reporter=dot`
 
 Expected: FAIL because the empty non-diagnostic card and new layout regions are not implemented.
 
-- [ ] **Step 3: Implement ActionCenter's explicit visibility predicate**
+- [x] **Step 3: Implement ActionCenter's explicit visibility predicate**
 
 After hooks and mutations are declared, calculate:
 
@@ -354,17 +354,17 @@ if (hidden) return null;
 
 Render “正在等待待确认动作…” for `waitingForAction`. Add `watchAttempt` state to the watch effect dependency list; a `重新检查` button clears `localError` and increments `watchAttempt`. Do not conditionally skip hooks. After approval/rejection, `onResolved` clears the parent run ID and the panel disappears immediately when the resolved action is removed. The diagnostic variant may continue to show its success message.
 
-- [ ] **Step 4: Restructure review markup without changing behavior**
+- [x] **Step 4: Restructure review markup without changing behavior**
 
 Move session selection into `<section className="review-session-bar" aria-label="复习会话">`, the question/messages/input into `<section className="review-practice" aria-label="当前练习">`, and the report into `<section className="review-results" aria-label="复习结果">`. Keep pending publication in its own conditional region. In `AppShell`, rename the existing outer `review-workspace` to `review-layout`, its main child to `review-layout__main`, and its `FlowSummary` aside to `review-layout__aside`. `ReviewPage` remains responsible only for the main-column regions; `AppShell` remains the sole owner of `FlowSummary` and its Runtime-derived props.
 
 Do not add new controls, API requests, state transitions, or review modes.
 
-- [ ] **Step 5: Add review and approval responsive styling**
+- [x] **Step 5: Add review and approval responsive styling**
 
 At 1024px and above use a main column plus 300px sticky summary. Below 1024px place the summary after practice/results. Keep approval as the contextual right rail on wide knowledge layouts and as a normal block after detail on small screens. Verify focus order follows DOM order.
 
-- [ ] **Step 6: Run targeted tests and typecheck**
+- [x] **Step 6: Run targeted tests and typecheck**
 
 Run: `cd frontend && pnpm test -- src/features/agent/ActionCenter.test.tsx src/features/knowledge/KnowledgePage.test.tsx src/features/review/ReviewPage.test.tsx src/app/App.test.tsx --reporter=dot`
 
@@ -372,11 +372,11 @@ Run: `cd frontend && pnpm exec tsc --noEmit`
 
 Expected: all selected tests PASS and TypeScript exits 0.
 
-- [ ] **Step 7: Run the minimal browser happy path before final documentation**
+- [x] **Step 7: Run the minimal browser happy path before final documentation**
 
 Start the isolated backend/frontend services, then verify: upload → both resource groups update → rendered Markdown → edit/save → request publish → approval appears → approve → approval disappears and published path remains. Record only factual evidence in `docs/verification/pre-r2-experience-stabilization.md`.
 
-- [ ] **Step 8: Commit Task 3**
+- [x] **Step 8: Commit Task 3**
 
 ```bash
 git add frontend/src/features/agent frontend/src/features/knowledge frontend/src/features/review frontend/src/app/layout/AppShell.tsx frontend/src/app/global.css docs/verification/pre-r2-experience-stabilization.md
@@ -401,13 +401,13 @@ git commit -m "feat(ui): disclose contextual actions on demand"
 **Interfaces:**
 - Produces: final user guide evidence, seven-file learning pack, and a clean handoff to the separate R1.2 context-budget slice.
 
-- [ ] **Step 1: Run the only final backend regression**
+- [x] **Step 1: Run the only final backend regression**
 
 Run: `cd backend && pytest -q --tb=short`
 
 Expected: all backend tests PASS; record the exact count from this command.
 
-- [ ] **Step 2: Run the only final frontend regression and production build**
+- [x] **Step 2: Run the only final frontend regression and production build**
 
 Run: `cd frontend && pnpm test -- --reporter=dot`
 
@@ -415,15 +415,15 @@ Run: `cd frontend && pnpm build`
 
 Expected: all frontend tests PASS; TypeScript and Vite production build exit 0. Record exact counts/output summaries.
 
-- [ ] **Step 3: Run one complete browser/restart acceptance pass**
+- [x] **Step 3: Run one complete browser/restart acceptance pass**
 
 Verify desktop 1440×1000 and mobile 375×812 for grouped resources, upload, rendered/read mode, edit/cancel/save, approval hidden/pending/resolved, refresh, backend restart recovery, keyboard focus, console errors, and horizontal overflow. Re-run only a failed affected scenario after a fix.
 
-- [ ] **Step 4: Finalize verification and the learning pack once**
+- [x] **Step 4: Finalize verification and the learning pack once**
 
 Reshape verification into the final user guide with prerequisites, startup paths, happy path, recovery steps, known maturity boundary, and exact automated/browser evidence. Generate the seven learning files from the repository templates. Compare both artifacts with the previous stage and remove copied claims that are not supported by this stage's commands.
 
-- [ ] **Step 5: Run the documentation gate and manual evidence check**
+- [x] **Step 5: Run the documentation gate and manual evidence check**
 
 Run:
 
@@ -436,7 +436,7 @@ python3 scripts/check_stage_docs.py \
 
 Expected: PASS. Manually confirm every test count comes from Steps 1–2 and browser claims come from Step 3.
 
-- [ ] **Step 6: Update short state files and commit acceptance evidence**
+- [x] **Step 6: Update short state files and commit acceptance evidence**
 
 Set the current task to complete in `task_plan.md`, record only durable architecture findings in `findings.md`, and add a handoff under 10 lines in `progress.md`. Name the next product task “R1.2 context compression and token/context usage foundation”; do not mark that debt complete.
 
