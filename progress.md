@@ -74,3 +74,10 @@
 - Provider error 脱敏与等待审批重启恢复专项共 12 项通过。
 - 最小浏览器（mock API）通过恢复、批准、published/completed/target path；控制台 0 warning/error。
 - Task 4 仍须真实后端/Provider、完整浏览器、最终全量回归与文档门禁。
+
+## 2026-07-12：R1.6 技术验收收尾
+
+- 隔离真实前后端 E2E 1 passed：adapter、SSE、刷新、批准/拒绝、重复批准、Vault、375px。
+- E2E 发现并修复用户消息未持久化、同秒 session 恢复顺序和 FlowSummary 状态真相。
+- 最终后端 250 passed；前端 57 passed；TypeScript/Vite production build 通过。
+- verification 与 learning 七件套已生成；外部真实 OpenAI/Anthropic 证据仍缺失。

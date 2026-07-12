@@ -57,13 +57,17 @@ describe("ReviewPage persistent runtime flow", () => {
 
   it("creates a review.single session and starts a run", async () => {
     const calls: string[] = [];
+    let runBody: string | undefined;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       const method = init?.method ?? "GET";
       calls.push(`${method} ${url}`);
       if (url.includes("/api/agent/sessions?")) return Response.json([]);
       if (url === "/api/agent/sessions" && method === "POST") return Response.json(session, { status: 201 });
-      if (url === "/api/agent/sessions/s1/runs") return Response.json({ id: "r1", sessionId: "s1", status: "running", resumeCount: 0, errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: null }, { status: 202 });
+      if (url === "/api/agent/sessions/s1/runs") {
+        runBody = init?.body as string | undefined;
+        return Response.json({ id: "r1", sessionId: "s1", status: "running", resumeCount: 0, errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: null }, { status: 202 });
+      }
       if (url === "/api/agent/sessions/s1") return Response.json({ ...session, messages: [{ id: "m1", runId: "r1", role: "user", content: "缓存空值", createdAt: "now" }], latestRun: { id: "r1", sessionId: "s1", status: "running", resumeCount: 0, errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: null }, pendingAction: null });
       if (url.includes("/api/agent/actions?")) return Response.json([]);
       throw new Error(`unexpected ${method} ${url}`);
@@ -75,10 +79,20 @@ describe("ReviewPage persistent runtime flow", () => {
 
     await waitFor(() => expect(calls).toContain("POST /api/agent/sessions"));
     expect(calls).toContain("POST /api/agent/sessions/s1/runs");
+    expect(JSON.parse(runBody ?? "{}").input).toMatchObject({
+      text: "缓存空值",
+      user_answer: "缓存空值",
+    });
     expect(await screen.findByText((_, node) => node?.tagName === "P" && node.textContent === "你：缓存空值")).toBeInTheDocument();
   });
 
   it("restores evaluation, draft and pending publication from persisted APIs", async () => {
+    const olderSession = {
+      ...session,
+      id: "s-old",
+      title: "旧复习会话",
+      lastRunId: "r-old",
+    };
     const action = {
       id: "a1", workspaceId: "w1", sessionId: "s1", runId: "r1",
       actionType: "knowledge.publish", preview: {
@@ -89,7 +103,7 @@ describe("ReviewPage persistent runtime flow", () => {
     };
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
-      if (url.includes("/api/agent/sessions?")) return Response.json([session]);
+      if (url.includes("/api/agent/sessions?")) return Response.json([session, olderSession]);
       if (url === "/api/agent/sessions/s1") return Response.json({ ...session, messages: [], latestRun: { id: "r1", sessionId: "s1", status: "waiting_for_approval", resumeCount: 0, errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: null }, pendingAction: action });
       if (url.includes("/api/agent/actions?")) return Response.json([action]);
       if (url === "/api/knowledge/drafts/d1") return Response.json({ id: "d1", workspaceId: "w1", sessionId: "s1", runId: "r1", agentType: "review.single", domain: "review", documentType: "session_report", documentId: "doc1", title: "报告", markdown: "# 报告", contentPath: "draft.md", sourceRefs: ["q1"], relationRefs: [], status: "review_pending", version: 1, contentHash: "h1", createdAt: "now", updatedAt: "now", publication: null });
@@ -99,6 +113,7 @@ describe("ReviewPage persistent runtime flow", () => {
     render(<MemoryRouter><ReviewPage workspace={workspace} draftQuestion={null} /></MemoryRouter>);
 
     expect(await screen.findByText("评分：partial")).toBeInTheDocument();
+    expect(screen.getByLabelText("历史会话")).toHaveValue("s1");
     expect(screen.getByText("草稿状态：review_pending")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "批准发布" })).toBeInTheDocument();
   });

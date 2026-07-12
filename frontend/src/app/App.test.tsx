@@ -156,11 +156,12 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("后端连接：已连接")).toBeInTheDocument();
-    expect(screen.getByText("Workspace：待初始化")).toBeInTheDocument();
-    expect(screen.getByText("题库草稿：待生成")).toBeInTheDocument();
-    expect(screen.getByText("复习报告：待生成")).toBeInTheDocument();
-    expect(screen.getByText("Vault 索引：待扫描")).toBeInTheDocument();
-    expect(screen.getByText("下一步：初始化工作区")).toBeInTheDocument();
+    const summary = await screen.findByLabelText("流程状态");
+    expect(summary).toHaveTextContent("后端连接：已连接");
+    expect(summary).toHaveTextContent("Workspace：待初始化");
+    expect(summary).toHaveTextContent("题库草稿：待生成");
+    expect(summary).toHaveTextContent("复习报告：待生成");
+    expect(summary).toHaveTextContent("Vault 索引：待扫描");
+    expect(summary).toHaveTextContent("下一步：初始化工作区");
   });
 });

@@ -88,7 +88,7 @@ class RuntimeRepository:
     def list_sessions(self, workspace_id: str) -> tuple[SessionRecord, ...]:
         rows = self._connection.execute(
             "SELECT * FROM agent_sessions WHERE workspace_id = ? "
-            "ORDER BY updated_at DESC, id",
+            "ORDER BY updated_at DESC, rowid DESC",
             (workspace_id,),
         ).fetchall()
         return tuple(self._session_from_row(row) for row in rows)

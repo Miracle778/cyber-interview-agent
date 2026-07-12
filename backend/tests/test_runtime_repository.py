@@ -24,6 +24,25 @@ def create_session(repository: RuntimeRepository):
     )
 
 
+def test_list_sessions_uses_insertion_order_when_timestamps_tie(repository):
+    older = repository.create_session(
+        workspace_id="w1",
+        graph_id="test.echo",
+        graph_version=1,
+        title="Older",
+        session_id="z-older",
+    )
+    newer = repository.create_session(
+        workspace_id="w1",
+        graph_id="test.echo",
+        graph_version=1,
+        title="Newer",
+        session_id="a-newer",
+    )
+
+    assert repository.list_sessions("w1") == (newer, older)
+
+
 def test_failed_run_returns_session_to_active(repository):
     session = create_session(repository)
     run = repository.create_run(

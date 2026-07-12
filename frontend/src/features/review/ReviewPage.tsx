@@ -68,7 +68,7 @@ export function ReviewPage({ workspace, draftQuestion }: ReviewPageProps) {
       if (cancelled) return;
       const reviewSessions = items.filter((item) => item.graphId === "review.single");
       setSessions(reviewSessions);
-      const latest = reviewSessions.at(-1) ?? null;
+      const latest = reviewSessions[0] ?? null;
       setSessionId(latest?.id ?? null);
       if (latest) void refreshSession(latest.id);
     }).catch((caught) => {
@@ -113,6 +113,7 @@ export function ReviewPage({ workspace, draftQuestion }: ReviewPageProps) {
       }
       await startAgentRun(targetId, {
         question: draftQuestion,
+        text: answer.trim(),
         user_answer: answer.trim(),
       });
       await refreshSession(targetId);
