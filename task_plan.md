@@ -23,6 +23,8 @@
 
 本切片只重构设置页前端信息架构；下一独立 Pre-R2 基础切片为 Runtime Middleware 1.0：补齐 pipeline 基础、R1.2 压缩/token-context、标题、循环检测和 HITL adapter，只定义 TodoCandidate 契约，并用 R1.6 Agent 验收。
 
+Runtime Middleware 1.0 独立设计已形成，当前等待用户审阅；未进入实施计划或生产代码。
+
 ## 当前分支
 
 - 分支：`codex/settings-experience`
@@ -30,6 +32,7 @@
 - 基线：`main@eb4bcc5`
 - 当前设计：`docs/superpowers/specs/2026-07-12-settings-experience-redesign-design.md`
 - 当前实施：`docs/superpowers/plans/2026-07-12-settings-experience-redesign.md`
+- 下一阶段设计：`docs/superpowers/specs/2026-07-12-runtime-middleware-1-0-design.md`
 
 ## 执行预算
 
