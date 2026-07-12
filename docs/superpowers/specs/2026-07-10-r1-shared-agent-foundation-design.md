@@ -403,6 +403,36 @@ LangGraph checkpoint 只用于恢复 Graph 执行状态。
 - `waiting_for_approval` 在重启后继续等待，不自动失败。
 - 用户取消 run 时在下一个安全节点停止。
 
+### 7.6 Middleware 设计规则
+
+后续 Runtime 增加统一 middleware 层，用于承载跨 Graph、跨 Agent、与具体业务节点无关的横切能力。判断一项功能是否应实现为 middleware，至少满足以下多数条件：
+
+- 对多个 Graph/Agent 使用相同触发时机和处理规则；
+- 关注模型调用、消息、工具调用或 run 生命周期，而不是领域状态转换；
+- 可以通过 before/after hook、包装调用或标准事件完成；
+- 失败时能够采用统一降级策略，不应部分提交领域副作用；
+- 输入输出可以定义稳定、可测试、可组合的窄契约；
+- middleware 顺序、幂等性和可观测性能够明确说明。
+
+优先通过 middleware 实现：
+
+- 模型调用 token、context、耗时和费用统计；
+- context budget 检查、消息裁剪和上下文压缩触发；
+- 会话标题自动总结，以及其他不改变业务状态机的消息后处理；
+- 通用 tracing、审计、敏感信息脱敏、错误归一化和重试策略；
+- 普通工具调用的统一 approve/edit/reject 拦截。
+
+不应仅通过 middleware 隐藏实现：
+
+- 知识发布、草稿版本推进、Vault 写入和索引更新等领域状态机；
+- 需要用户明确理解的业务分支、长事务和补偿流程；
+- 依赖 action version、content hash、operation id 或领域幂等键的副作用；
+- 必须在 Graph 拓扑中显式表达的编排步骤。
+
+HITL 采用分层方案：保留现有 `HitlService`、pending action repository、resolution receipt、handler 和 `interrupt()/Command(resume=...)` 持久化语义；在其上补一层 middleware/adapter，统一普通工具审批和 action 创建模板。`knowledge.publish` 等复杂领域审批继续使用显式 Graph 节点与 handler，不把业务状态机迁入 middleware。
+
+所有 middleware 必须声明：适用范围、执行顺序、持久化边界、失败/降级策略、幂等键、产生的事件与指标，以及不允许承载的领域副作用。Graph 或 Agent 新增横切能力前，先完成“middleware / 显式节点 / 应用服务”归属判断，禁止在各 Graph 中复制相同包装逻辑。
+
 ## 8. SSE 事件协议
 
 ### 8.1 事件持久化

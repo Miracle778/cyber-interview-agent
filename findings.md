@@ -44,6 +44,13 @@
 - 诊断历史没有可复用的统一成功摘要，概览只承诺“待检查”或 pending action 数量，不虚构最近成功状态。
 - 本切片没有后端改动，最终不重复执行后端全量回归。
 
+## Runtime Middleware 架构决策
+
+- 现有 HITL 使用 LangGraph `interrupt`/`Command(resume=...)`，但 action 持久化、审批和恢复由项目服务编排，尚无 middleware 抽象。
+- 后续保留 HITL repository、receipt、handler 和领域幂等语义，在其上增加 middleware/adapter；知识发布仍保持显式 Graph/Service 状态机。
+- token/context 用量、context budget、压缩触发、会话标题总结、tracing、脱敏和普通工具审批属于跨 Agent 横切能力，优先实现为可组合 middleware。
+- 领域状态转换、Vault/索引副作用、长事务及补偿流程不放入通用 middleware；新增能力必须先判定归属并声明顺序、持久化、失败降级和幂等边界。
+
 ## R1.5 修正结果
 
 - publish-request 成功后以 version/hash 把草稿推进为 `review_pending`；启动后状态推进失败会取消 run。

@@ -136,7 +136,7 @@ R1 已打通工作区、Provider、Agent Runtime、知识草稿发布和单题�
 ## 11. 阶段顺序与完成边界
 
 1. 完成本设计对应的 UI/知识库体验稳定化。
-2. 独立设计并补齐 R1.2 上下文压缩、context budget 和 token/context 用量记录。
+2. 独立设计并补齐 Runtime middleware 基础层，首批覆盖 R1.2 上下文压缩、context budget、token/context 用量记录和会话标题总结；同时为现有 HITL 增加 middleware adapter，但不重写持久化业务状态机。
 3. 两个 Pre-R2 切片验收后开始 R2。
 
 本切片完成不代表 R1.2 Runtime 债务已经清偿，也不代表 R2 已开始。

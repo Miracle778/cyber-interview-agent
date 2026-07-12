@@ -134,3 +134,10 @@
 - Task 3 Runtime/安全/人工确认折叠完成，4 项针对性测试通过。
 - 最终前端回归 70 passed；TypeScript 与 Vite build 通过。
 - Playwright 脚本已添加；真实后端启动因环境缺少 `langchain_anthropic` 依赖而阻塞，未宣称浏览器通过。
+
+## 2026-07-12：Runtime Middleware 后续约束
+
+- 确认现有 HITL 是原生 interrupt + 自建持久化状态机，不是 middleware 形式。
+- 正式基础设计新增 middleware 归属规则、适用/禁用场景和 HITL 分层迁移原则。
+- 下一 Pre-R2 切片扩展为 Runtime middleware 基础：token/context 统计、context budget/压缩、会话标题总结和 HITL adapter。
+- 该记录只确定后续设计约束，本轮未修改 Runtime 生产代码。
