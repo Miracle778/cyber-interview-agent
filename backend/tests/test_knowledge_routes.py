@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.api.dependencies import get_workspace_service
 from app.db.app_database import connect_app_database
+from app.knowledge.drafts import KnowledgeDraftService
 from app.knowledge.workspace_layout import initialize_knowledge_artifacts
 from app.knowledge.sources import MAX_SOURCE_BYTES
 from app.main import app
@@ -48,7 +49,17 @@ def test_upload_creates_source_and_persistent_draft_outside_vault(
 
     assert response.status_code == 201
     body = response.json()
+    source = body["source"]
     draft = body["draft"]
+    assert source["workspaceId"] == workspace_id
+    assert source["originalFilename"] == "缓存.md"
+    assert source["contentType"] == "text/markdown"
+    assert source["sizeBytes"] == len(
+        "缓存穿透是什么？\n缓存空值和布隆过滤器。".encode()
+    )
+    assert source["storedPath"].startswith("artifacts/review/sources/")
+    assert not source["storedPath"].startswith("/")
+    assert source["draftId"] == draft["id"]
     assert body["question"]["title"] == "缓存穿透是什么？"
     assert draft["workspaceId"] == workspace_id
     assert draft["status"] == "draft"
@@ -57,6 +68,62 @@ def test_upload_creates_source_and_persistent_draft_outside_vault(
     assert (workspace / draft["contentPath"]).is_file()
     assert len(list((workspace / "artifacts/review/sources").iterdir())) == 1
     assert not list((workspace / "knowledge-vault").rglob("*.md"))
+
+
+def test_list_sources_persists_original_filename_and_isolates_workspace(
+    knowledge_client, tmp_path: Path
+) -> None:
+    client, _workspace, workspace_id = knowledge_client
+    content = "缓存穿透是什么？\n缓存空值。".encode()
+    uploaded = client.post(
+        "/api/knowledge/sources",
+        data={"workspaceId": workspace_id},
+        files={"file": ("缓存资料.md", content, "text/markdown")},
+    ).json()
+
+    response = client.get(
+        "/api/knowledge/sources", params={"workspaceId": workspace_id}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == [uploaded["source"]]
+    assert response.json()[0]["originalFilename"] == "缓存资料.md"
+    assert response.json()[0]["draftId"] == uploaded["draft"]["id"]
+
+    second_root = tmp_path / "second-workspace"
+    second_root.mkdir()
+    service = app.dependency_overrides[get_workspace_service]()
+    second = service.register(str(second_root))
+    isolated = client.get(
+        "/api/knowledge/sources", params={"workspaceId": second.id}
+    )
+    assert isolated.status_code == 200
+    assert isolated.json() == []
+
+
+def test_upload_removes_source_when_draft_creation_fails(
+    knowledge_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, workspace, workspace_id = knowledge_client
+
+    async def fail_create(*_args, **_kwargs):
+        raise RuntimeError("draft creation failed")
+
+    monkeypatch.setattr(KnowledgeDraftService, "create", fail_create)
+
+    with pytest.raises(RuntimeError, match="draft creation failed"):
+        client.post(
+            "/api/knowledge/sources",
+            data={"workspaceId": workspace_id},
+            files={"file": ("notes.md", b"question", "text/markdown")},
+        )
+
+    assert list((workspace / "artifacts/review/sources").iterdir()) == []
+    listed = client.get(
+        "/api/knowledge/sources", params={"workspaceId": workspace_id}
+    )
+    assert listed.status_code == 200
+    assert listed.json() == []
 
 
 def test_upload_accepts_unicode_filename(knowledge_client) -> None:

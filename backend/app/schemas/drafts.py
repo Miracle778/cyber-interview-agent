@@ -47,7 +47,19 @@ class PublicationSummaryResource(DraftModel):
     error_code: str | None
 
 
+class KnowledgeSourceResource(DraftModel):
+    id: str
+    workspace_id: str
+    original_filename: str
+    stored_path: str
+    content_type: str
+    size_bytes: int
+    created_at: str
+    draft_id: str | None
+
+
 class UploadSourceResource(DraftModel):
+    source: KnowledgeSourceResource
     draft: KnowledgeDraftResource
     question: ReviewQuestion
 
