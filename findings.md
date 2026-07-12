@@ -49,6 +49,8 @@
 - 现有 HITL 使用 LangGraph `interrupt`/`Command(resume=...)`，但 action 持久化、审批和恢复由项目服务编排，尚无 middleware 抽象。
 - 后续保留 HITL repository、receipt、handler 和领域幂等语义，在其上增加 middleware/adapter；知识发布仍保持显式 Graph/Service 状态机。
 - token/context 用量、context budget、压缩触发、会话标题总结、tracing、脱敏和普通工具审批属于跨 Agent 横切能力，优先实现为可组合 middleware。
+- 待办事项由 post-processing middleware 提取候选，再交 Todo Service 去重和持久化；无限循环由 guard middleware 综合路径、工具参数、错误、无进展、token、时间与费用判断。
+- Pipeline 固定为 Guard → Invocation → Post-processing；首批范围限定为 token/context、压缩、标题、待办候选、循环检测和 HITL adapter。
 - 领域状态转换、Vault/索引副作用、长事务及补偿流程不放入通用 middleware；新增能力必须先判定归属并声明顺序、持久化、失败降级和幂等边界。
 
 ## R1.5 修正结果

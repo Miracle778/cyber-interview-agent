@@ -141,3 +141,5 @@
 - 正式基础设计新增 middleware 归属规则、适用/禁用场景和 HITL 分层迁移原则。
 - 下一 Pre-R2 切片扩展为 Runtime middleware 基础：token/context 统计、context budget/压缩、会话标题总结和 HITL adapter。
 - 该记录只确定后续设计约束，本轮未修改 Runtime 生产代码。
+- 用户补充待办事项与无限循环检测；正式设计已明确候选提取/领域持久化边界和软硬循环阈值。
+- Middleware pipeline 确认为 Guard → Invocation → Post-processing，并记录候选目录、收益、代价与首批六项范围。
