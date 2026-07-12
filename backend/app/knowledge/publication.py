@@ -86,6 +86,18 @@ class PublicationRepository:
             rows = await cursor.fetchall()
         return tuple(self._record(row) for row in rows)
 
+    async def latest_for_draft(
+        self, draft_id: str
+    ) -> PublicationRecord | None:
+        async with self._connection() as connection:
+            cursor = await connection.execute(
+                "SELECT * FROM publication_runs WHERE draft_id = ? "
+                "ORDER BY updated_at DESC, rowid DESC LIMIT 1",
+                (draft_id,),
+            )
+            row = await cursor.fetchone()
+        return None if row is None else self._record(row)
+
     @asynccontextmanager
     async def _connection(self) -> AsyncIterator[aiosqlite.Connection]:
         async with aiosqlite.connect(self._database_path) as connection:
@@ -175,6 +187,11 @@ class PublicationService:
             if completed.state == "completed":
                 repaired += 1
         return repaired
+
+    async def latest_for_draft(
+        self, draft_id: str
+    ) -> PublicationRecord | None:
+        return await self._repository.latest_for_draft(draft_id)
 
 
 def _index_document(vault: Path, document: PublishedDocument, rendered: str, target_path: str) -> None:

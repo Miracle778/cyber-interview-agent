@@ -39,6 +39,7 @@ describe("ActionCenter", () => {
   });
 
   it("restores a pending action and submits an edited approval once", async () => {
+    const onResolved = vi.fn();
     let resolveApproval: ((response: Response) => void) | undefined;
     const approval = new Promise<Response>((resolve) => {
       resolveApproval = resolve;
@@ -52,7 +53,7 @@ describe("ActionCenter", () => {
       },
     );
 
-    render(<ActionCenter workspaceId="w1" />, { wrapper });
+    render(<ActionCenter workspaceId="w1" onResolved={onResolved} />, { wrapper });
     expect(await screen.findByText("original")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("summary"), {
       target: { value: "edited" },
@@ -83,6 +84,7 @@ describe("ActionCenter", () => {
       }),
     );
     expect(await screen.findByText("确认动作已批准")).toBeInTheDocument();
+    expect(onResolved).toHaveBeenCalledOnce();
   });
 
   it("requires a rejection reason and sends the decision", async () => {
@@ -280,5 +282,37 @@ describe("ActionCenter", () => {
     expect(await screen.findByText("缓存穿透")).toBeInTheDocument();
     // the test.approval action is filtered out
     expect(screen.queryByText("original")).toBeNull();
+  });
+
+  it("watches the run returned by publish-request until its action appears", async () => {
+    const publishAction: PendingAction = {
+      ...action,
+      id: "pub1",
+      runId: "publish-run",
+      actionType: "knowledge.publish",
+      preview: { title: "缓存穿透" },
+      editableFields: ["title", "markdown"],
+    };
+    let reads = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).includes("/api/agent/actions?")) {
+        reads += 1;
+        return Response.json(reads < 3 ? [] : [publishAction]);
+      }
+      return Response.json([], { status: 200 });
+    });
+
+    render(
+      <ActionCenter
+        workspaceId="w1"
+        showDiagnostic={false}
+        actionType="knowledge.publish"
+        watchRunId="publish-run"
+      />,
+      { wrapper },
+    );
+
+    expect(await screen.findByText("缓存穿透")).toBeInTheDocument();
+    expect(reads).toBeGreaterThanOrEqual(3);
   });
 });

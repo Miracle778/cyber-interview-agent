@@ -38,6 +38,13 @@ class KnowledgeDraftResource(DraftModel):
     content_hash: str
     created_at: str
     updated_at: str
+    publication: "PublicationSummaryResource | None" = None
+
+
+class PublicationSummaryResource(DraftModel):
+    state: str
+    target_path: str
+    error_code: str | None
 
 
 class UploadSourceResource(DraftModel):

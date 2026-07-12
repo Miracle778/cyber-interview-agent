@@ -1,5 +1,11 @@
 export type KnowledgeDraftStatus = "draft" | "review_pending" | "rejected" | "published";
 
+export interface PublicationSummary {
+  state: "prepared" | "file_written" | "indexed" | "completed" | "index_stale" | "failed";
+  targetPath: string;
+  errorCode: string | null;
+}
+
 export interface KnowledgeDraft {
   id: string;
   workspaceId: string;
@@ -19,4 +25,5 @@ export interface KnowledgeDraft {
   contentHash: string;
   createdAt: string;
   updatedAt: string;
+  publication: PublicationSummary | null;
 }

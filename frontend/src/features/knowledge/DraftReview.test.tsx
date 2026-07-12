@@ -25,6 +25,7 @@ const draft: KnowledgeDraft = {
   contentHash: "abc",
   createdAt: "now",
   updatedAt: "now",
+  publication: null,
 };
 
 
@@ -142,12 +143,17 @@ describe("DraftReview", () => {
       return [];
     });
 
-    render(<DraftReview workspaceId="w1" />, { wrapper });
+    const onPublicationRequested = vi.fn();
+    render(
+      <DraftReview workspaceId="w1" onPublicationRequested={onPublicationRequested} />,
+      { wrapper },
+    );
     await screen.findByText("缓存穿透");
     fireEvent.click(screen.getByRole("button", { name: "请求发布" }));
 
     expect(await screen.findByText("已请求发布，等待人工确认")).toBeInTheDocument();
     expect(await screen.findByText("等待人工确认，批准后会发布到 Vault")).toBeInTheDocument();
+    expect(onPublicationRequested).toHaveBeenCalledWith("r1");
   });
 
   it("shows the published path once a draft is published", async () => {
@@ -155,7 +161,11 @@ describe("DraftReview", () => {
       ...draft,
       status: "published" as const,
       version: 2,
-      contentPath: "artifacts/review/drafts/d1.md",
+      publication: {
+        state: "completed" as const,
+        targetPath: "10_question_bank/q1.md",
+        errorCode: null,
+      },
     };
     mockFetchDrafts((url) => {
       if (url.includes("/api/knowledge/drafts?")) return [published];
@@ -163,7 +173,25 @@ describe("DraftReview", () => {
     });
 
     render(<DraftReview workspaceId="w1" />, { wrapper });
-    expect(await screen.findByText("已发布路径：artifacts/review/drafts/d1.md")).toBeInTheDocument();
+    expect(await screen.findByText("已发布路径：knowledge-vault/10_question_bank/q1.md")).toBeInTheDocument();
+  });
+
+  it("shows how to repair an index-stale publication", async () => {
+    const stale = {
+      ...draft,
+      status: "published" as const,
+      publication: {
+        state: "index_stale" as const,
+        targetPath: "10_question_bank/q1.md",
+        errorCode: "publication_index_failed",
+      },
+    };
+    mockFetchDrafts((url) => (url.includes("/api/knowledge/drafts?") ? [stale] : []));
+
+    render(<DraftReview workspaceId="w1" />, { wrapper });
+
+    expect(await screen.findByText(/索引尚未更新/)).toBeInTheDocument();
+    expect(screen.getByText(/重新扫描 Vault/)).toBeInTheDocument();
   });
 
   it("maps an external-document conflict to actionable advice", async () => {

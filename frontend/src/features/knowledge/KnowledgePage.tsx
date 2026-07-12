@@ -34,6 +34,7 @@ export function KnowledgePage({ workspace, draftQuestion, onDraftQuestionReady, 
   const [error, setError] = useState<ActionableError | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isRescanning, setIsRescanning] = useState(false);
+  const [publicationRunId, setPublicationRunId] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
   const hasWorkspace = workspace !== null;
@@ -81,6 +82,13 @@ export function KnowledgePage({ workspace, draftQuestion, onDraftQuestionReady, 
   }
 
   const questionToDisplay = visibleDraftQuestion ?? draftQuestion;
+
+  function handlePublicationResolved() {
+    if (!workspace) return;
+    queryClient.invalidateQueries({ queryKey: ["knowledge-drafts", workspace.id] });
+    queryClient.invalidateQueries({ queryKey: ["pending-actions", workspace.id] });
+    setPublicationRunId(null);
+  }
 
   return (
     <section className="page-section" aria-labelledby="knowledge-title">
@@ -190,11 +198,16 @@ export function KnowledgePage({ workspace, draftQuestion, onDraftQuestionReady, 
 
       {hasWorkspace ? (
         <>
-          <DraftReview workspaceId={workspace!.id} />
+          <DraftReview
+            workspaceId={workspace!.id}
+            onPublicationRequested={setPublicationRunId}
+          />
           <ActionCenter
             workspaceId={workspace!.id}
             showDiagnostic={false}
             actionType="knowledge.publish"
+            watchRunId={publicationRunId}
+            onResolved={handlePublicationResolved}
           />
         </>
       ) : null}

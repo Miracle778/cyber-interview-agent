@@ -25,9 +25,10 @@ const STATUS_LABEL: Record<KnowledgeDraftStatus, string> = {
 
 interface DraftReviewProps {
   workspaceId: string;
+  onPublicationRequested?: (runId: string) => void;
 }
 
-export function DraftReview({ workspaceId }: DraftReviewProps) {
+export function DraftReview({ workspaceId, onPublicationRequested }: DraftReviewProps) {
   const queryClient = useQueryClient();
   const queryKey = ["knowledge-drafts", workspaceId] as const;
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -91,9 +92,10 @@ export function DraftReview({ workspaceId }: DraftReviewProps) {
       setMessage(null);
       setError(null);
     },
-    onSuccess: () => {
+    onSuccess: (run) => {
       setMessage("已请求发布，等待人工确认");
       queryClient.invalidateQueries({ queryKey });
+      onPublicationRequested?.(run.runId);
     },
     onError: (caught) => {
       if (caught instanceof ApiError && caught.code === "external_document_changed") {
@@ -168,8 +170,15 @@ export function DraftReview({ workspaceId }: DraftReviewProps) {
               />
             </div>
 
-            {selected.status === "published" ? (
-              <p className="status-note">已发布路径：{selected.contentPath}</p>
+            {selected.status === "published" && selected.publication ? (
+              <p className="status-note">
+                已发布路径：knowledge-vault/{selected.publication.targetPath}
+              </p>
+            ) : null}
+            {selected.publication?.state === "index_stale" ? (
+              <p className="status-note status-note--warning">
+                Markdown 已发布，但索引尚未更新；请运行“重新扫描 Vault”修复。
+              </p>
             ) : null}
             {selected.status === "review_pending" ? (
               <p className="status-note">等待人工确认，批准后会发布到 Vault</p>

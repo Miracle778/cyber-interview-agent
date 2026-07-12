@@ -127,6 +127,86 @@ def test_publish_request_returns_run_without_writing_vault(draft_client) -> None
     else:
         raise AssertionError("publish run did not reach waiting_for_approval")
 
+    pending = client.get(f"/api/knowledge/drafts/{draft.id}")
+    assert pending.json()["status"] == "review_pending"
+
+
+def test_approval_exposes_vault_publication_result(draft_client) -> None:
+    client, _runtime, _roots, workspace_id, _second_id = draft_client
+    draft = _create_draft(_roots[workspace_id], workspace_id)
+
+    requested = client.post(
+        f"/api/knowledge/drafts/{draft.id}/publish-request"
+    ).json()
+    for _ in range(100):
+        actions = client.get(
+            "/api/agent/actions",
+            params={"workspaceId": workspace_id, "status": "pending"},
+        ).json()
+        action = next(
+            (item for item in actions if item["runId"] == requested["runId"]),
+            None,
+        )
+        if action is not None:
+            break
+        asyncio.run(asyncio.sleep(0.01))
+    else:
+        raise AssertionError("publication action did not appear")
+
+    approved = client.post(
+        f"/api/agent/actions/{action['id']}/approve",
+        json={
+            "version": action["version"],
+            "idempotencyKey": "publish-route-approve",
+        },
+    )
+    detail = client.get(f"/api/knowledge/drafts/{draft.id}")
+
+    assert approved.status_code == 200
+    assert detail.json()["status"] == "published"
+    assert detail.json()["publication"] == {
+        "state": "completed",
+        "targetPath": f"10_question_bank/question-{workspace_id}.md",
+        "errorCode": None,
+    }
+
+
+def test_rejection_marks_the_bound_draft_rejected(draft_client) -> None:
+    client, _runtime, roots, workspace_id, _second_id = draft_client
+    draft = _create_draft(roots[workspace_id], workspace_id)
+    requested = client.post(
+        f"/api/knowledge/drafts/{draft.id}/publish-request"
+    ).json()
+    for _ in range(100):
+        actions = client.get(
+            "/api/agent/actions",
+            params={"workspaceId": workspace_id, "status": "pending"},
+        ).json()
+        action = next(
+            (item for item in actions if item["runId"] == requested["runId"]),
+            None,
+        )
+        if action is not None:
+            break
+        asyncio.run(asyncio.sleep(0.01))
+    else:
+        raise AssertionError("publication action did not appear")
+
+    rejected = client.post(
+        f"/api/agent/actions/{action['id']}/reject",
+        json={
+            "version": action["version"],
+            "idempotencyKey": "publish-route-reject",
+            "reason": "内容不准确",
+        },
+    )
+    detail = client.get(f"/api/knowledge/drafts/{draft.id}")
+
+    assert rejected.status_code == 200
+    assert detail.json()["status"] == "rejected"
+    assert detail.json()["publication"] is None
+    assert not list((roots[workspace_id] / "knowledge-vault").rglob("*.md"))
+
 
 def test_unknown_draft_returns_typed_404(draft_client) -> None:
     client, _runtime, _roots, _first_id, _second_id = draft_client

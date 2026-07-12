@@ -53,7 +53,7 @@ async def test_publish_graph_rejection_does_not_write_vault(tmp_path: Path) -> N
     completed = await runtime.wait_run(run.id)
 
     assert completed.status == "completed"
-    assert (await drafts.get(draft.id)).status == "draft"
+    assert (await drafts.get(draft.id)).status == "rejected"
     assert not list((tmp_path / "knowledge-vault").rglob("*.md"))
     await runtime.close()
 

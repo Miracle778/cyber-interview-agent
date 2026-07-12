@@ -1,6 +1,6 @@
 import sqlite3
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -163,6 +163,11 @@ class AgentRuntime:
             ):
                 run = context.repository.get_run(action.run_id)
                 if run.status == "waiting_for_approval":
+                    await context.draft_service.mark_review_pending(
+                        draft.id,
+                        expected_version=draft.version,
+                        expected_hash=draft.content_hash,
+                    )
                     return run
         session = await self.create_session(
             workspace_id=draft.workspace_id,
@@ -170,7 +175,7 @@ class AgentRuntime:
             graph_version=1,
             title=f"知识发布：{draft.title}",
         )
-        return await context.manager.start(
+        run = await context.manager.start(
             session.id,
             input={
                 "draftId": draft.id,
@@ -181,21 +186,56 @@ class AgentRuntime:
             },
             model_bindings=self._model_binding_resolver(draft.workspace_id),
         )
+        try:
+            await context.draft_service.mark_review_pending(
+                draft.id,
+                expected_version=draft.version,
+                expected_hash=draft.content_hash,
+            )
+        except Exception:
+            await context.manager.cancel(run.id)
+            raise
+        return run
 
     async def list_drafts(
         self, workspace_id: str
-    ) -> tuple[KnowledgeDraftRecord, ...]:
-        return await self._context(workspace_id).draft_service.list()
+    ) -> tuple[dict[str, Any], ...]:
+        context = self._context(workspace_id)
+        drafts = await context.draft_service.list()
+        return tuple(
+            [await self._draft_resource(context, draft) for draft in drafts]
+        )
 
-    async def get_draft(self, draft_id: str) -> KnowledgeDraftRecord:
-        _context, draft = await self._locate_draft(draft_id)
-        return draft
+    async def get_draft(self, draft_id: str) -> dict[str, Any]:
+        context, draft = await self._locate_draft(draft_id)
+        return await self._draft_resource(context, draft)
 
     async def update_draft(
         self, draft_id: str, command: UpdateDraftCommand
-    ) -> KnowledgeDraftRecord:
+    ) -> dict[str, Any]:
         context, _draft = await self._locate_draft(draft_id)
-        return await context.draft_service.update(draft_id, command)
+        updated = await context.draft_service.update(draft_id, command)
+        return await self._draft_resource(context, updated)
+
+    @staticmethod
+    async def _draft_resource(
+        context: _WorkspaceRuntime, draft: KnowledgeDraftRecord
+    ) -> dict[str, Any]:
+        publication = await context.publication_service.latest_for_draft(
+            draft.id
+        )
+        return {
+            **asdict(draft),
+            "publication": (
+                None
+                if publication is None
+                else {
+                    "state": publication.state,
+                    "target_path": publication.target_path,
+                    "error_code": publication.error_code,
+                }
+            ),
+        }
 
     async def list_actions(
         self,

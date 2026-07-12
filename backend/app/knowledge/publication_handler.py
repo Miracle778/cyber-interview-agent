@@ -62,6 +62,11 @@ class KnowledgePublishActionHandler:
         _receipt: ResolutionReceipt,
     ) -> None:
         if action.status == "rejected":
+            await self._drafts.mark_rejected(
+                str(action.payload["draftId"]),
+                expected_version=int(action.payload["draftVersion"]),
+                expected_hash=str(action.payload["contentHash"]),
+            )
             return
 
         effective_action = action

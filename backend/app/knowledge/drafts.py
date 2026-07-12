@@ -273,6 +273,67 @@ class KnowledgeDraftService:
             await connection.commit()
         return self._record_from_row(published_row)
 
+    async def mark_review_pending(
+        self, draft_id: str, *, expected_version: int, expected_hash: str
+    ) -> KnowledgeDraftRecord:
+        return await self._set_status(
+            draft_id,
+            expected_version=expected_version,
+            expected_hash=expected_hash,
+            target_status="review_pending",
+            allowed_statuses=("draft", "review_pending"),
+        )
+
+    async def mark_rejected(
+        self, draft_id: str, *, expected_version: int, expected_hash: str
+    ) -> KnowledgeDraftRecord:
+        return await self._set_status(
+            draft_id,
+            expected_version=expected_version,
+            expected_hash=expected_hash,
+            target_status="rejected",
+            allowed_statuses=("draft", "review_pending", "rejected"),
+        )
+
+    async def _set_status(
+        self,
+        draft_id: str,
+        *,
+        expected_version: int,
+        expected_hash: str,
+        target_status: DraftStatus,
+        allowed_statuses: tuple[DraftStatus, ...],
+    ) -> KnowledgeDraftRecord:
+        async with self._connection() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = await self._require_row(connection, draft_id)
+                current = self._record_from_row(row)
+                if (
+                    current.version != expected_version
+                    or current.content_hash != expected_hash
+                ):
+                    raise DraftVersionChangedError(
+                        f"draft {draft_id!r} changed before status transition"
+                    )
+                if current.status not in allowed_statuses:
+                    raise DraftNotEditableError(
+                        f"draft {draft_id!r} cannot transition from "
+                        f"{current.status!r} to {target_status!r}"
+                    )
+                if current.status != target_status:
+                    await connection.execute(
+                        "UPDATE knowledge_drafts SET status = ?, "
+                        "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (target_status, draft_id),
+                    )
+                updated = await self._require_row(connection, draft_id)
+                await connection.commit()
+            except Exception:
+                await connection.rollback()
+                raise
+        return self._record_from_row(updated)
+
     @asynccontextmanager
     async def _connection(self) -> AsyncIterator[aiosqlite.Connection]:
         async with aiosqlite.connect(self._database_path) as connection:

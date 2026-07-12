@@ -47,11 +47,24 @@ export interface ActionCenterProps {
   showDiagnostic?: boolean;
   /** Restrict the list to a single action type, e.g. "knowledge.publish". */
   actionType?: string;
+  /** Poll until the pending action produced by this run appears. */
+  watchRunId?: string | null;
+  /** Notify the owning page after approve/reject delivery finishes. */
+  onResolved?: () => void;
 }
 
-export function ActionCenter({ workspaceId, showDiagnostic = true, actionType }: ActionCenterProps) {
+export function ActionCenter({
+  workspaceId,
+  showDiagnostic = true,
+  actionType,
+  watchRunId,
+  onResolved,
+}: ActionCenterProps) {
   const queryClient = useQueryClient();
-  const queryKey = ["pending-actions", workspaceId] as const;
+  const queryKey = useMemo(
+    () => ["pending-actions", workspaceId] as const,
+    [workspaceId],
+  );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [reason, setReason] = useState("");
@@ -88,6 +101,23 @@ export function ActionCenter({ workspaceId, showDiagnostic = true, actionType }:
     );
     setReason("");
   }, [selected?.id]);
+
+  useEffect(() => {
+    if (!watchRunId) return;
+    let cancelled = false;
+    waitForPendingAction(workspaceId, watchRunId)
+      .then((pending) => {
+        if (!cancelled) queryClient.setQueryData(queryKey, pending);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setLocalError(error instanceof Error ? error.message : "待确认动作尚未出现");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [queryClient, queryKey, watchRunId, workspaceId]);
 
   const runMutation = useMutation({
     mutationFn: async () => {
@@ -146,6 +176,7 @@ export function ActionCenter({ workspaceId, showDiagnostic = true, actionType }:
         current.filter((item) => item.id !== resolved.id),
       );
       setMessage("确认动作已批准");
+      onResolved?.();
     },
     onError: (error) =>
       setLocalError(
@@ -185,6 +216,7 @@ export function ActionCenter({ workspaceId, showDiagnostic = true, actionType }:
         current.filter((item) => item.id !== resolved.id),
       );
       setMessage("确认动作已拒绝");
+      onResolved?.();
     },
     onError: (error) =>
       setLocalError(error instanceof Error ? error.message : "拒绝失败"),
