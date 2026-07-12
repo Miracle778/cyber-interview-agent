@@ -46,8 +46,8 @@
 **产出：** 自动回归、真实 Provider 与浏览器证据、最终 verification 用户指南、七件 learning pack。
 
 - [x] 增加真实前后端发布闭环 E2E；完整验收覆盖桌面、移动、刷新、重启、拒绝与重复发布（重启由真实 Runtime 集成测试覆盖）。
-- [ ] OpenAI-compatible 与 Anthropic-compatible 至少各完成一次人工连接/调用证据；缺少外部凭据时明确标为外部阻塞，不伪造通过。
-- [x] 最终后端 250 passed、前端修复后 57 passed，TypeScript/Vite build 通过；数字来自最新命令。
+- [x] OpenAI-compatible GLM 完成结构化评价，Anthropic-compatible Claude Haiku 完成流式报告；两者连接测试均成功。
+- [x] 最终后端 251 passed、前端 57 passed，TypeScript/Vite build 通过；数字来自最新命令。
 - [x] 更新 `docs/verification/r1-6.md` 和 `docs/learning/r1-6/`，与 R1.5 对比并通过门禁：
 
 ```bash

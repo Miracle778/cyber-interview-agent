@@ -3,9 +3,14 @@ import openai
 import pytest
 from langchain_core.messages import AIMessage
 from langchain_openai import ChatOpenAI
+from pydantic import BaseModel
 
 from app.providers.base import ProviderErrorCode
 from app.providers.openai_compatible import OpenAICompatibleAdapter
+
+
+class _StructuredResult(BaseModel):
+    score: str
 
 
 def _response(status_code: int) -> httpx.Response:
@@ -123,3 +128,36 @@ async def test_openai_adapter_message_does_not_leak_api_key_or_backend_text(monk
     )
     assert "sk-secret" not in result.message
     assert "leaked" not in result.message
+
+
+@pytest.mark.asyncio
+async def test_structured_invocation_uses_function_calling_for_compatibility(
+    monkeypatch,
+):
+    capture = {}
+
+    class FakeRunnable:
+        async def ainvoke(self, messages):
+            capture["messages"] = messages
+            return _StructuredResult(score="partial")
+
+    def fake_with_structured_output(self, schema, **kwargs):
+        capture["schema"] = schema
+        capture["method"] = kwargs.get("method")
+        return FakeRunnable()
+
+    monkeypatch.setattr(
+        ChatOpenAI, "with_structured_output", fake_with_structured_output
+    )
+
+    result = await OpenAICompatibleAdapter().invoke_structured(
+        base_url="https://example.test/v1",
+        model_id="gpt-x",
+        api_key="sk-secret",
+        schema=_StructuredResult,
+        messages=[{"role": "user", "content": "answer"}],
+    )
+
+    assert result == _StructuredResult(score="partial")
+    assert capture["schema"] is _StructuredResult
+    assert capture["method"] == "function_calling"

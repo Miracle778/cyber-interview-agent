@@ -1,15 +1,17 @@
 import { defineConfig } from "@playwright/test";
 
+const python = process.env.CYBER_E2E_PYTHON ?? "backend/.venv/bin/python";
+
 export default defineConfig({
   testDir: "./tests/e2e",
   webServer: [
     {
-      command: "backend/.venv/bin/python tests/e2e/support/mock_openai_provider.py",
+      command: `${python} tests/e2e/support/mock_openai_provider.py`,
       url: "http://127.0.0.1:9017/health",
       reuseExistingServer: false,
     },
     {
-      command: "backend/.venv/bin/python tests/e2e/support/start_backend.py",
+      command: `${python} tests/e2e/support/start_backend.py`,
       url: "http://127.0.0.1:8017/api/health",
       reuseExistingServer: false,
     },

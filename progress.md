@@ -81,3 +81,10 @@
 - E2E 发现并修复用户消息未持久化、同秒 session 恢复顺序和 FlowSummary 状态真相。
 - 最终后端 250 passed；前端 57 passed；TypeScript/Vite production build 通过。
 - verification 与 learning 七件套已生成；外部真实 OpenAI/Anthropic 证据仍缺失。
+
+## 2026-07-12：R1.6 真实 Provider 验收
+
+- OpenAI-compatible GLM 首次暴露 `json_schema` 不支持；改为 function calling，17 项专项测试通过。
+- 真实 GLM 结构化评价有效；真实 Anthropic-compatible Claude Haiku 流式报告返回 5 个 chunk。
+- 受影响隔离 E2E 1 passed；第二次后端全量 251 passed，前端最终证据保持 57 passed/build 通过。
+- R1.6 已满足“场景可用”，进入提交、main 合并和本地文档同步。

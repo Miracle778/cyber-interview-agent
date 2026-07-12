@@ -11,7 +11,7 @@
 | R0 | 可人工验证 | 单题单轮技术切片 |
 | R1.1-R1.4 | 可人工验证并已合入 main | Provider、Runtime、工具安全、持久化 HITL |
 | R1.5 | 可人工验证并已合入 main | 草稿分层、持久化审核发布、publication journal、active scope 与浏览器闭环 |
-| R1.6 | 技术验证通过，真实协议待验收 | 单题复习迁移到共享 Runtime、Provider 协议与持久化发布闭环 |
+| R1.6 | 场景可用，待合入 main | 单题复习迁移到共享 Runtime、真实 Provider 与持久化发布闭环 |
 | R2-R8 | 待开始 | 见正式产品路线 |
 
 ## 当前任务：R1.6 单题复习 Runtime 集成
@@ -24,9 +24,9 @@
    - 覆盖错误恢复并移除旧 `/api/review/*` 绕过接口。
 3. **持久化 Review UI（已完成）**
    - 代码、组件测试与本地 mock API 最小浏览器 happy path 已完成。
-4. **验收与合并（进行中）**
-   - 自动回归、隔离浏览器/重启已完成；外部真实 Provider 待用户提供可验收配置。
-   - 文档门禁与提交收尾中；真实协议未完成前不合入 main。
+4. **验收与合并（已完成）**
+   - 自动回归、隔离浏览器/重启、两种真实 Provider 与文档门禁均完成。
+   - 下一步：提交验收修复并 fast-forward 合入 main，同步本地 verification/learning。
 
 ## 当前分支
 

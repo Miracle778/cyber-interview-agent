@@ -45,3 +45,5 @@
 - knowledge.publish 节点恢复时会再次进入 request_action；副作用必须按 action.status 保持幂等。
 - 新 worktree 安装依赖受 DNS 限制；复用 main 锁定的 venv/node_modules 避免了网络重试。
 - action resource 不暴露 payload；Review 刷新所需 draftId/question/evaluation 放入安全 preview。
+- 真实 OpenAI-compatible GLM 不支持默认 `json_schema` response format；adapter 必须显式使用兼容面更广的 function calling。
+- 真实 OpenAI-compatible 结构化评价与 Anthropic-compatible 流式报告均已通过，不再有外部协议阻塞。

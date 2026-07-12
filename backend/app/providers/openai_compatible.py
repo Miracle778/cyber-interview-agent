@@ -55,7 +55,9 @@ class OpenAICompatibleAdapter:
     ) -> object:
         try:
             chat = self._chat(base_url, model_id, api_key)
-            return await chat.with_structured_output(schema).ainvoke(messages)
+            return await chat.with_structured_output(
+                schema, method="function_calling"
+            ).ainvoke(messages)
         except Exception as error:
             raise self._invocation_error(error) from error
 
