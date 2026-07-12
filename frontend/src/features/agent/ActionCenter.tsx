@@ -41,7 +41,15 @@ async function waitForPendingAction(workspaceId: string, runId: string) {
 }
 
 
-export function ActionCenter({ workspaceId }: { workspaceId: string }) {
+export interface ActionCenterProps {
+  workspaceId: string;
+  /** Show the diagnostic "运行确认测试" button. Defaults to true (settings page). */
+  showDiagnostic?: boolean;
+  /** Restrict the list to a single action type, e.g. "knowledge.publish". */
+  actionType?: string;
+}
+
+export function ActionCenter({ workspaceId, showDiagnostic = true, actionType }: ActionCenterProps) {
   const queryClient = useQueryClient();
   const queryKey = ["pending-actions", workspaceId] as const;
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -55,7 +63,10 @@ export function ActionCenter({ workspaceId }: { workspaceId: string }) {
     queryKey,
     queryFn: () => listActions(workspaceId, { status: "pending" }),
   });
-  const actions = actionsQuery.data ?? [];
+  const allActions = actionsQuery.data ?? [];
+  const actions = actionType
+    ? allActions.filter((item) => item.actionType === actionType)
+    : allActions;
   const selected = useMemo(
     () => actions.find((item) => item.id === selectedId) ?? actions[0] ?? null,
     [actions, selectedId],
@@ -186,15 +197,17 @@ export function ActionCenter({ workspaceId }: { workspaceId: string }) {
       title="人工确认"
       icon={<ShieldQuestion size={18} />}
       actions={
-        <Button
-          size="sm"
-          variant="secondary"
-          loading={runMutation.isPending}
-          onClick={() => runMutation.mutate()}
-        >
-          <Play size={15} aria-hidden="true" />
-          运行确认测试
-        </Button>
+        showDiagnostic ? (
+          <Button
+            size="sm"
+            variant="secondary"
+            loading={runMutation.isPending}
+            onClick={() => runMutation.mutate()}
+          >
+            <Play size={15} aria-hidden="true" />
+            运行确认测试
+          </Button>
+        ) : undefined
       }
     >
       <div className="action-center" aria-live="polite">

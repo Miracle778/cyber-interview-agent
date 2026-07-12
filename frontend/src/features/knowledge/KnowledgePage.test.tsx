@@ -1,4 +1,6 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import type { ReviewQuestion } from "../review/reviewTypes";
@@ -23,6 +25,33 @@ const question: ReviewQuestion = {
   mastery: "unknown",
 };
 
+function wrapper({ children }: { children: ReactNode }) {
+  return (
+    <MemoryRouter>
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        {children}
+      </QueryClientProvider>
+    </MemoryRouter>
+  );
+}
+
+/** Routes fetch by URL so DraftReview/ActionCenter queries resolve to empty. */
+function mockRoute(routes: Record<string, (init?: RequestInit) => unknown>) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    for (const [prefix, handler] of Object.entries(routes)) {
+      if (url.includes(prefix)) {
+        const result = handler(init);
+        if (result instanceof Response) return result;
+        return Response.json(result);
+      }
+    }
+    return Response.json([], { status: 200 });
+  });
+}
+
 describe("KnowledgePage", () => {
   afterEach(() => {
     cleanup();
@@ -30,11 +59,7 @@ describe("KnowledgePage", () => {
   });
 
   it("requires workspace before upload or rescan", () => {
-    render(
-      <MemoryRouter>
-        <KnowledgePage workspace={null} draftQuestion={null} onDraftQuestionReady={vi.fn()} onVaultRescanned={vi.fn()} />
-      </MemoryRouter>,
-    );
+    render(<KnowledgePage workspace={null} draftQuestion={null} onDraftQuestionReady={vi.fn()} onVaultRescanned={vi.fn()} />, { wrapper });
 
     expect(screen.getByText("请先初始化工作区")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "上传资料" })).toBeDisabled();
@@ -43,8 +68,8 @@ describe("KnowledgePage", () => {
 
   it("uploads source and displays the generated draft question", async () => {
     const onDraftQuestionReady = vi.fn();
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(JSON.stringify({
+    const fetchMock = mockRoute({
+      "/api/knowledge/sources": () => ({
         draft: {
           id: "d1", workspaceId: "w1", sessionId: null, runId: null,
           agentType: null, domain: "review", documentType: "question",
@@ -54,11 +79,8 @@ describe("KnowledgePage", () => {
           createdAt: "now", updatedAt: "now",
         },
         question,
-      }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
       }),
-    );
+    });
 
     render(
       <KnowledgePage
@@ -67,6 +89,7 @@ describe("KnowledgePage", () => {
         onDraftQuestionReady={onDraftQuestionReady}
         onVaultRescanned={vi.fn()}
       />,
+      { wrapper },
     );
 
     const file = new File(["缓存穿透是什么？"], "cache.txt", { type: "text/plain" });
@@ -74,7 +97,7 @@ describe("KnowledgePage", () => {
     fireEvent.click(screen.getByRole("button", { name: "上传资料" }));
 
     await waitFor(() => expect(onDraftQuestionReady).toHaveBeenCalledWith(question));
-    const form = fetchMock.mock.calls[0][1]?.body as FormData;
+    const form = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/knowledge/sources"))?.[1]?.body as FormData;
     expect(form.get("workspaceId")).toBe("w1");
     expect(form.get("workspacePath")).toBeNull();
     expect(await screen.findByText("缓存穿透")).toBeInTheDocument();
@@ -84,12 +107,7 @@ describe("KnowledgePage", () => {
 
   it("rescans the vault and displays indexed count", async () => {
     const onVaultRescanned = vi.fn();
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(JSON.stringify({ indexed: 3 }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
+    mockRoute({ "/api/knowledge/rescan": () => ({ indexed: 3 }) });
 
     render(
       <KnowledgePage
@@ -98,6 +116,7 @@ describe("KnowledgePage", () => {
         onDraftQuestionReady={vi.fn()}
         onVaultRescanned={onVaultRescanned}
       />,
+      { wrapper },
     );
 
     fireEvent.click(screen.getByRole("button", { name: "重新扫描 Vault" }));
@@ -114,11 +133,42 @@ describe("KnowledgePage", () => {
         onDraftQuestionReady={vi.fn()}
         onVaultRescanned={vi.fn()}
       />,
+      { wrapper },
     );
 
     fireEvent.click(screen.getByRole("button", { name: "上传资料" }));
 
     expect(screen.getByText("错误：请选择资料文件")).toBeInTheDocument();
     expect(screen.getByText("下一步：选择一份 txt、Markdown 或 PDF 资料")).toBeInTheDocument();
+  });
+
+  it("renders the draft review and publish action center when a workspace exists", async () => {
+    mockRoute({
+      "/api/knowledge/drafts?": () => [
+        {
+          id: "d1", workspaceId: "w1", sessionId: null, runId: null,
+          agentType: null, domain: "review", documentType: "question",
+          documentId: "q1", title: "缓存穿透", markdown: "# 缓存穿透",
+          contentPath: "artifacts/review/drafts/d1.md", sourceRefs: [],
+          relationRefs: [], status: "draft", version: 1, contentHash: "abc",
+          createdAt: "now", updatedAt: "now",
+        },
+      ],
+    });
+
+    render(
+      <KnowledgePage
+        workspace={workspace}
+        draftQuestion={null}
+        onDraftQuestionReady={vi.fn()}
+        onVaultRescanned={vi.fn()}
+      />,
+      { wrapper },
+    );
+
+    expect(await screen.findByRole("heading", { name: "草稿审核" })).toBeInTheDocument();
+    expect(await screen.findByText("缓存穿透")).toBeInTheDocument();
+    // knowledge page hides the diagnostic test button
+    expect(screen.queryByRole("button", { name: "运行确认测试" })).toBeNull();
   });
 });

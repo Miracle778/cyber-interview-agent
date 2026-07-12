@@ -19,7 +19,7 @@
 | 阶段 | 名称 | 状态 | 成熟度说明 |
 |---|---|---|---|
 | R0 | 技术切片与质量基线 | 可人工验证 | 已能跑通单题单轮浏览器链路，不代表完整复习 Agent |
-| R1 | 共享 Agent 与知识库底座 | R1.1-R1.4 可人工验证；R1.5 实施中 | Provider、Runtime、工具安全和持久化 HITL 已落地；知识草稿与发布七任务计划就绪 |
+| R1 | 共享 Agent 与知识库底座 | R1.1-R1.5 可人工验证 | Provider、Runtime、工具安全、持久化 HITL 与知识草稿/发布已落地 |
 | R2 | 完整复习 Agent | 待开始 | 多题轮次、模式、追问、派生、单轮与全局掌握度 |
 | R3 | 个人信息 Agent | 待开始 | 简历、个人画像、资料对话、审核推送 |
 | R4 | 岗位与 JD 追踪 | 待开始 | 岗位索引、匹配度、竞争力、差距和准备聚合 |
@@ -38,7 +38,7 @@
 | R1.2 | 可人工验证 | 尚未验收 | Runtime 分层、RunManager、恢复语义与 SSE 重放（掌握包已生成） | 增加一个 Runtime 查询能力 | 增加 Run 详情查询接口 |
 | R1.3 | 可人工验证 | 尚未验收 | Workspace scope、默认拒绝工具权限、路径与软链接安全、脱敏审计（掌握包已生成） | 解释 Runtime 如何绑定工具上下文 | 实现或审阅一个路径校验用例 |
 | R1.4 | 可人工验证，已合入 main | 尚未验收 | pending action、interrupt/resume、幂等决定与重启恢复（掌握包已生成） | 追踪一次批准决定从 API 到原 run 恢复 | 解释 resolution receipt 如何跨重启避免重复恢复 |
-| R1.5 | 实施中 | 尚未验收 | 草稿分层、发布 journal、active scope 与 Obsidian 冲突保护 | 待实现后生成 | 待实现后生成，不阻塞产品开发 |
+| R1.5 | 可人工验证 | 尚未验收 | 草稿分层、发布 journal、active scope、复用 R1.4 HITL 发布与外部修改保护（掌握包已生成） | 追踪一次发布从 publish-request 到 Vault 写入 | 实现草稿批量拒绝入口 |
 
 状态定义：
 
@@ -285,9 +285,9 @@
 
 ## 下一步
 
-R1.5“知识发布与审核流”Task 1-5 已通过自动验证：
+R1.5“知识发布与审核流”七任务全部完成，后端 234 passed、前端 56 passed、TypeScript 与 build 通过，阶段文档门禁通过，产品成熟度“可人工验证”：
 
-1. 下一步执行 Task 6：Draft REST API、发布请求 API 与 typed errors。
-2. 随后执行 Task 7：知识页草稿浏览、编辑、发布审批闭环和最终文档门禁。
-3. 继续在普通 `codex/r1-5-knowledge-publication` 分支直接实现，不创建 worktree、不委派。
-4. R1.5 不提前混入 R1.6 真实模型与复习 Graph，也不实现 R7 高级 Obsidian 冲突合并。
+1. 用户按 `docs/verification/r1_5_knowledge_publication.md` 人工验证上传、草稿编辑、发布审批、重启恢复与 rescan。
+2. 验证通过后将 `codex/r1-5-knowledge-publication` 合入 `main`，并把本地 verification 与 learning 七件套显式同步到主仓库。
+3. 合入后开始 R1.6“单题复习 Runtime 集成”：把复习业务迁移到共享 Runtime，接入 R1.1 模型绑定；移除上传响应中的过渡 `ReviewQuestion` 桥接。
+4. 已知欠项：RunManager 偶发 SQLite 写锁争用（预先存在，非 R1.5 回归），按双轨分工交 Codex 主导修复，不阻塞 R1.6。

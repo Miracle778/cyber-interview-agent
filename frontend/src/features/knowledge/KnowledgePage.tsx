@@ -1,13 +1,16 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, BookOpen, FileText, FolderLock, RefreshCw, Upload } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Badge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
 import { toActionableError, type ActionableError } from "../../shared/api/errorAdvice";
+import { ActionCenter } from "../agent/ActionCenter";
 import type { ReviewQuestion, MasteryState } from "../review/reviewTypes";
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import { rescanVault, uploadSource } from "./knowledgeApi";
+import { DraftReview } from "./DraftReview";
 
 interface KnowledgePageProps {
   workspace: WorkspaceConfig | null;
@@ -31,6 +34,7 @@ export function KnowledgePage({ workspace, draftQuestion, onDraftQuestionReady, 
   const [error, setError] = useState<ActionableError | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isRescanning, setIsRescanning] = useState(false);
+  const queryClient = useQueryClient();
 
   const hasWorkspace = workspace !== null;
 
@@ -50,6 +54,7 @@ export function KnowledgePage({ workspace, draftQuestion, onDraftQuestionReady, 
       const question = result.question;
       setVisibleDraftQuestion(question);
       onDraftQuestionReady(question);
+      queryClient.invalidateQueries({ queryKey: ["knowledge-drafts", workspace.id] });
     } catch (caught) {
       setError(toActionableError(caught, "上传失败"));
     } finally {
@@ -182,6 +187,17 @@ export function KnowledgePage({ workspace, draftQuestion, onDraftQuestionReady, 
           </div>
         </Card>
       )}
+
+      {hasWorkspace ? (
+        <>
+          <DraftReview workspaceId={workspace!.id} />
+          <ActionCenter
+            workspaceId={workspace!.id}
+            showDiagnostic={false}
+            actionType="knowledge.publish"
+          />
+        </>
+      ) : null}
 
       {error ? (
         <div className="error-banner" role="alert" aria-live="polite">

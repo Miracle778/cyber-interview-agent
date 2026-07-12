@@ -241,4 +241,44 @@ describe("ActionCenter", () => {
 
     expect(bodies[0].idempotencyKey).not.toBe(bodies[1].idempotencyKey);
   });
+
+  it("hides the diagnostic button when showDiagnostic is false", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/api/agent/actions?")) return Response.json([action]);
+      return Response.json([], { status: 200 });
+    });
+
+    render(<ActionCenter workspaceId="w1" showDiagnostic={false} />, { wrapper });
+    expect(await screen.findByText("original")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "运行确认测试" })).toBeNull();
+    // approve/reject controls remain available for existing pending actions
+    expect(screen.getByRole("button", { name: "批准" })).toBeInTheDocument();
+  });
+
+  it("filters the list to the requested action type", async () => {
+    const publishAction: PendingAction = {
+      ...action,
+      id: "pub1",
+      runId: "pub-run",
+      actionType: "knowledge.publish",
+      preview: { title: "缓存穿透" },
+      editableFields: ["title", "markdown"],
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/api/agent/actions?")) {
+        return Response.json([action, publishAction]);
+      }
+      return Response.json([], { status: 200 });
+    });
+
+    render(
+      <ActionCenter workspaceId="w1" actionType="knowledge.publish" />,
+      { wrapper },
+    );
+    expect(await screen.findByText("缓存穿透")).toBeInTheDocument();
+    // the test.approval action is filtered out
+    expect(screen.queryByText("original")).toBeNull();
+  });
 });

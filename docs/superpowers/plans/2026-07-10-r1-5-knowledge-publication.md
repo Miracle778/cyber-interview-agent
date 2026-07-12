@@ -338,22 +338,22 @@ git commit -m "feat(knowledge): expose draft review workflow"
 
 **产出：** 知识页可恢复、编辑、请求发布、同页确认并查看发布结果；完成浏览器和阶段文档验收。
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 `DraftReview.test.tsx` 覆盖草稿加载、带版本编辑、409 后重载、publish request、pending 状态、published path、index-stale 和 external conflict。扩展 ActionCenter 测试，断言 `showDiagnostic={false}` 时无诊断按钮，`actionType="knowledge.publish"` 只展示发布 action。
 
-- [ ] **步骤 2：运行 RED**
+- [x] **步骤 2：运行 RED**
 
 ```bash
 cd frontend
 pnpm test -- DraftReview.test.tsx KnowledgePage.test.tsx ActionCenter.test.tsx
 ```
 
-- [ ] **步骤 3：实现最小功能**
+- [x] **步骤 3：实现最小功能**
 
 新增 typed draft API 与 DraftReview。知识页使用稳定 workspace id，上传后刷新持久化草稿。ActionCenter 增加可选 `showDiagnostic` 和 `actionType`，知识页关闭测试入口并过滤发布 action。决定完成后刷新 drafts/actions，不在请求发布时提前显示成功。
 
-- [ ] **步骤 4：完整自动验证**
+- [x] **步骤 4：完整自动验证**
 
 ```bash
 cd backend && .venv/bin/pytest
@@ -363,9 +363,11 @@ cd .. && git diff --check
 
 - [ ] **步骤 5：浏览器和重启验收**
 
+> 自动验证与文档门禁已通过；浏览器/重启人工验收步骤已写入 `docs/verification/r1_5_knowledge_publication.md` 第 4、5 节，由用户在本地执行（独立 app data/Workspace、桌面与移动宽度）。
+
 在独立 app data/Workspace 完成：上传、刷新恢复、编辑、请求发布、批准、重复请求、拒绝、后端重启、外部修改冲突、index stale/rescan；检查 1440x1000 与 375x812 无溢出，控制台无 warning/error。
 
-- [ ] **步骤 6：整理本地文档并运行门禁**
+- [x] **步骤 6：整理本地文档并运行门禁**
 
 将 `docs/verification/r1_5_knowledge_publication.md` 整理为最终用户指南，生成 `docs/learning/r1-5-knowledge-publication/` 七件套，对照 R1.4 深度后运行：
 
@@ -375,7 +377,7 @@ python3 scripts/check_stage_docs.py \
   --learning docs/learning/r1-5-knowledge-publication/
 ```
 
-- [ ] **步骤 7：提交阶段收口**
+- [x] **步骤 7：提交阶段收口**
 
 ```bash
 git add frontend/src/features/agent/ActionCenter.tsx frontend/src/features/agent/ActionCenter.test.tsx frontend/src/features/knowledge backend/app progress.md findings.md task_plan.md docs/superpowers/plans/2026-07-10-r1-5-knowledge-publication.md

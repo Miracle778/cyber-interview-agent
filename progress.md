@@ -575,3 +575,15 @@
 - 预先存在的 flaky 测试（非 Task 6 回归）：`test_graph_tool_uses_runtime_context_not_graph_state` 偶发失败。在 Task 5 baseline（stash 掉 Task 6）同样复现，确认预先存在。临时在 `RunManager._execute` 异常分支注入 traceback 后捕获到 `OperationalError('database is locked')`——RunManager 同步 repository 连接与异步 checkpointer/audit 连接争用同一 `runtime.sqlite` 写锁（同步连接已设 `busy_timeout=5000`，仍偶发超时）。属 R1.2/R1.3 RunManager 连接模型的复杂状态机问题，按双轨分工由 Codex 主导；本次记录为已知欠项，不阻塞 Task 6 提交，Task 7 收口时在 verification 中显式标注。
 - 修复后 `test_draft_routes.py` 专项 4 passed；后端完整回归 234 passed（多次运行稳定），保留 1 个既有 Starlette warning。
 - 下一步 Task 7：DraftReview、ActionCenter 复用、浏览器验收与阶段文档收口。
+
+### R1.5 Task 7：DraftReview、ActionCenter 复用与阶段收口（Claude 接手）
+
+- 新增 `frontend/src/features/knowledge/draftApi.ts`：typed 草稿 API client（listDrafts/getDraft/updateDraft/requestPublication），复用 `apiGet/apiPatch/apiPost` 获得 `ApiError(code,message)` typed 错误。
+- 新增 `DraftReview.tsx` + `DraftReview.test.tsx`：草稿列表、Markdown 编辑（标题 + textarea，version 乐观并发）、保存、请求发布、状态展示（draft/review_pending/rejected/published）、409 自动重载、external_document_changed 可操作建议；6 个测试覆盖加载、带版本保存、409 重载、发布请求、pending、published path、外部冲突。
+- `ActionCenter.tsx` 新增可选 `showDiagnostic`（默认 true）与 `actionType` 过滤；知识页用 `showDiagnostic={false}` + `actionType="knowledge.publish"` 复用同一套批准/拒绝逻辑，不复制第二套。ActionCenter 测试从 5 增至 7（诊断入口开关、action type 过滤）。
+- `KnowledgePage.tsx` 集成 DraftReview 与 ActionCenter；上传成功后 `invalidateQueries(["knowledge-drafts", workspaceId])` 让 DraftReview 拉取新草稿。KnowledgePage 测试从 4 增至 5（验证草稿审核区与诊断入口关闭），并改用 `QueryClientProvider` wrapper 与按 URL 路由的 fetch mock。
+- 前端复用主仓库 `node_modules` 软链接（gitignore，不提交）运行 Vitest/tsc/Vite。
+- 最终自动验证：后端 234 passed；前端 56 passed（较 Task 5 的 47 增加 9）；TypeScript `noEmit` 与 Vite production build 通过；保留 1 个既有 Starlette deprecation warning。
+- 阶段文档：`docs/verification/r1_5_knowledge_publication.md` 重写为最终五节用户指南；`docs/learning/r1-5-knowledge-publication/` 七件套基于最终代码与真实故障生成；`python3 scripts/check_stage_docs.py` 门禁通过。
+- 已知欠项（写入 verification 与 failure-journal）：RunManager 偶发 SQLite 写锁争用，预先存在，非 R1.5 回归，交 Codex 主导。
+- 产品成熟度：R1.5“可人工验证”。用户尚未完成 R1.5 学习和练习，作为非阻塞理解债务保留。下一步：用户人工验证后合入 main，同步 verification/learning 到主仓库，开始 R1.6。
