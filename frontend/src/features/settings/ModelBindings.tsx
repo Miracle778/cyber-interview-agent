@@ -27,9 +27,10 @@ const EMPTY_BINDINGS: Record<ModelRole, string> = {
 interface ModelBindingsProps {
   workspaceId: string;
   refreshKey?: number;
+  onBindingsChanged?: () => void;
 }
 
-export function ModelBindings({ workspaceId, refreshKey = 0 }: ModelBindingsProps) {
+export function ModelBindings({ workspaceId, refreshKey = 0, onBindingsChanged }: ModelBindingsProps) {
   const [providers, setProviders] = useState<ProviderResource[]>([]);
   const [bindings, setBindings] = useState<Record<ModelRole, string>>(EMPTY_BINDINGS);
   const [loading, setLoading] = useState(true);
@@ -88,6 +89,7 @@ export function ModelBindings({ workspaceId, refreshKey = 0 }: ModelBindingsProp
       const resource = await replaceWorkspaceModelBindings(workspaceId, bindings);
       setBindings({ ...EMPTY_BINDINGS, ...resource.bindings });
       setSaved(true);
+      onBindingsChanged?.();
     } catch (caught) {
       setError(toActionableError(caught, "保存模型绑定失败"));
     } finally {
@@ -99,7 +101,10 @@ export function ModelBindings({ workspaceId, refreshKey = 0 }: ModelBindingsProp
     <Card title="模型用途绑定" icon={<Workflow size={18} aria-hidden="true" />}>
       {loading ? <p className="status-note">加载中…</p> : null}
       {!loading && models.length === 0 ? (
-        <p className="status-note status-note--warning">没有可用于绑定的模型</p>
+        <div className="settings-guidance" role="status">
+          <p>没有可用于绑定的模型</p>
+          <p>请先在上方 Provider 中添加模型并完成连接测试。</p>
+        </div>
       ) : null}
       <div className="binding-grid">
         {(Object.keys(ROLE_LABELS) as ModelRole[]).map((role) => (

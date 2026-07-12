@@ -77,6 +77,7 @@ export function ProviderManager({ onProvidersChanged }: ProviderManagerProps = {
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
+  const [createExpanded, setCreateExpanded] = useState(false);
 
   useEffect(() => {
     void loadProviders();
@@ -115,6 +116,7 @@ export function ProviderManager({ onProvidersChanged }: ProviderManagerProps = {
       setName("");
       setBaseUrl("");
       setApiKey("");
+      setCreateExpanded(false);
     } catch (caught) {
       setError(toActionableError(caught, "创建 Provider 失败"));
     } finally {
@@ -132,9 +134,19 @@ export function ProviderManager({ onProvidersChanged }: ProviderManagerProps = {
     onProvidersChanged?.();
   }
 
+  function closeCreateForm() {
+    const dirty = Boolean(name.trim() || baseUrl.trim() || apiKey.trim());
+    if (dirty && !globalThis.confirm("放弃未保存的 Provider 配置？")) return;
+    setName("");
+    setBaseUrl("");
+    setApiKey("");
+    setCreateExpanded(false);
+  }
+
   return (
     <Card title="Provider 管理" icon={<Server size={18} aria-hidden="true" />}>
-      <div className="field-group provider-form-grid">
+      <div className="btn-row"><Button variant={createExpanded ? "secondary" : "primary"} aria-expanded={createExpanded} aria-controls="provider-create-form" onClick={() => setCreateExpanded((expanded) => !expanded)}><Plus size={16} aria-hidden="true" />添加 Provider</Button></div>
+      {createExpanded ? <div id="provider-create-form" className="settings-disclosure-panel"><div className="field-group provider-form-grid">
         <Field label="Provider 名称" name="new-provider-name" value={name} onChange={(e) => setName(e.target.value)} />
         <div className="field">
           <label className="field__label" htmlFor="new-provider-format">
@@ -170,10 +182,11 @@ export function ProviderManager({ onProvidersChanged }: ProviderManagerProps = {
       </div>
       <div className="btn-row">
         <Button onClick={handleCreate} loading={saving} disabled={saving}>
-          <Plus size={16} aria-hidden="true" />
-          添加 Provider
+          保存 Provider
         </Button>
+        <Button variant="ghost" onClick={closeCreateForm} disabled={saving}>取消添加</Button>
       </div>
+      </div> : null}
 
       {loading ? <p className="status-note">加载中…</p> : null}
       {!loading && providers.length === 0 ? <p className="status-note">暂无 Provider</p> : null}

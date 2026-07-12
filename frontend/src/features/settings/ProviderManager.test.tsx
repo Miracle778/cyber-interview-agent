@@ -71,13 +71,18 @@ describe("ProviderManager", () => {
     render(<ProviderManager />);
 
     await waitFor(() => expect(screen.getByRole("button", { name: "添加 Provider" })).toBeEnabled());
+    expect(screen.getByRole("button", { name: "添加 Provider" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByLabelText("Provider 名称")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "添加 Provider" }));
+    expect(screen.getByRole("button", { name: "添加 Provider" })).toHaveAttribute("aria-expanded", "true");
 
     fireEvent.change(screen.getByLabelText("Provider 名称"), { target: { value: "P" } });
     fireEvent.change(screen.getByLabelText("Base URL"), { target: { value: "https://example.test/v1" } });
     fireEvent.change(screen.getByLabelText("API Key"), { target: { value: "sk-test-secret" } });
-    fireEvent.click(screen.getByRole("button", { name: "添加 Provider" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存 Provider" }));
 
     await screen.findByText("P");
+    expect(screen.queryByLabelText("Provider 名称")).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("Model ID"), { target: { value: "model-a" } });
     fireEvent.change(screen.getByLabelText("显示名称"), { target: { value: "Model A" } });
@@ -121,5 +126,19 @@ describe("ProviderManager", () => {
     expect(screen.getByText(/解除.*绑定/)).toBeInTheDocument();
     // provider is retained (not removed) on conflict
     expect(screen.getByText("P")).toBeInTheDocument();
+  });
+
+  it("protects dirty Provider creation fields when closing the form", () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse([]));
+    const confirm = vi.spyOn(globalThis, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+
+    render(<ProviderManager />);
+    fireEvent.click(screen.getByRole("button", { name: "添加 Provider" }));
+    fireEvent.change(screen.getByLabelText("Provider 名称"), { target: { value: "未保存" } });
+    fireEvent.click(screen.getByRole("button", { name: "取消添加" }));
+    expect(confirm).toHaveBeenCalledWith("放弃未保存的 Provider 配置？");
+    expect(screen.getByLabelText("Provider 名称")).toHaveValue("未保存");
+    fireEvent.click(screen.getByRole("button", { name: "取消添加" }));
+    expect(screen.queryByLabelText("Provider 名称")).not.toBeInTheDocument();
   });
 });

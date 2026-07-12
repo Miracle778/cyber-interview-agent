@@ -214,7 +214,11 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
                   void queryClient.invalidateQueries({ queryKey: ["workspace-model-bindings", workspaceId] });
                 }}
               />
-              <ModelBindings workspaceId={workspaceId} refreshKey={providerRevision} />
+              <ModelBindings
+                workspaceId={workspaceId}
+                refreshKey={providerRevision}
+                onBindingsChanged={() => void queryClient.invalidateQueries({ queryKey: ["workspace-model-bindings", workspaceId] })}
+              />
             </div>
           ) : null}
 

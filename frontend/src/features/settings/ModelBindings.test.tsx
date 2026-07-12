@@ -69,7 +69,8 @@ describe("ModelBindings", () => {
       return Response.json({ code: "unexpected", message: url }, { status: 500 });
     });
 
-    render(<ModelBindings workspaceId="w1" />);
+    const onBindingsChanged = vi.fn();
+    render(<ModelBindings workspaceId="w1" onBindingsChanged={onBindingsChanged} />);
 
     expect(await screen.findByLabelText("题目生成模型")).toHaveValue("m1");
     expect(screen.getByLabelText("回答评估模型")).toHaveValue("m1");
@@ -86,6 +87,7 @@ describe("ModelBindings", () => {
         bindings: { ...roles, agent_chat: "m2" },
       }),
     );
+    expect(onBindingsChanged).toHaveBeenCalledTimes(1);
   });
 
   it("shows a visible validation error when no enabled model is available", async () => {

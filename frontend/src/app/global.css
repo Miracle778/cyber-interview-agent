@@ -583,6 +583,16 @@ pre {
   overflow-wrap: anywhere;
 }
 
+.settings-guidance {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+}
+
+.settings-guidance p { margin: 0; }
+.settings-guidance p + p { margin-top: var(--space-1); color: var(--text-muted); }
+
 .page-section__header {
   display: flex;
   min-height: 32px;
