@@ -1,185 +1,192 @@
-import { useState } from "react";
-import { AlertCircle, ClipboardCheck, FileCheck, Inbox, MessageSquareText } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertCircle, ClipboardCheck, Inbox, MessageSquareText } from "lucide-react";
 import { Link } from "react-router-dom";
+import type { AgentSession, AgentSessionDetail } from "../agent/agentTypes";
+import type { PendingAction } from "../agent/hitlTypes";
+import { useAgentEvents } from "../agent/useAgentEvents";
+import type { KnowledgeDraft } from "../knowledge/draftTypes";
+import type { WorkspaceConfig } from "../settings/settingsApi";
 import { toActionableError, type ActionableError } from "../../shared/api/errorAdvice";
 import { Badge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
-import type { WorkspaceConfig } from "../settings/settingsApi";
-import { confirmReport, runReview, type ConfirmReportResponse, type ReviewRunResponse } from "./reviewApi";
+import {
+  approveAction,
+  createAgentSession,
+  getAgentSession,
+  getDraft,
+  listActions,
+  listAgentSessions,
+  rejectAction,
+  startAgentRun,
+} from "./reviewSessionApi";
 import type { ReviewQuestion } from "./reviewTypes";
 
 interface ReviewPageProps {
   workspace: WorkspaceConfig | null;
   draftQuestion: ReviewQuestion | null;
-  latestReportMarkdown: string;
-  onReportMarkdownChange: (markdown: string) => void;
-  onReportConfirmed: () => void;
 }
 
-export function ReviewPage({
-  workspace,
-  draftQuestion,
-  latestReportMarkdown,
-  onReportMarkdownChange,
-  onReportConfirmed,
-}: ReviewPageProps) {
-  const [answer, setAnswer] = useState("");
-  const [reviewResult, setReviewResult] = useState<ReviewRunResponse | null>(null);
-  const [confirmedReport, setConfirmedReport] = useState<ConfirmReportResponse | null>(null);
-  const [error, setError] = useState<ActionableError | null>(null);
-  const [isSending, setIsSending] = useState(false);
-  const [isConfirming, setIsConfirming] = useState(false);
+type Evaluation = {
+  score: "poor" | "partial" | "good";
+  missing_key_points: string[];
+  evidence: string;
+};
 
-  const activeReportMarkdown = reviewResult?.report_markdown ?? latestReportMarkdown;
+export function ReviewPage({ workspace, draftQuestion }: ReviewPageProps) {
+  const [sessions, setSessions] = useState<AgentSession[]>([]);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<AgentSessionDetail | null>(null);
+  const [action, setAction] = useState<PendingAction | null>(null);
+  const [draft, setDraft] = useState<KnowledgeDraft | null>(null);
+  const [answer, setAnswer] = useState("");
+  const [rejectReason, setRejectReason] = useState("");
+  const [error, setError] = useState<ActionableError | null>(null);
+  const [busy, setBusy] = useState(false);
+  const stream = useAgentEvents(sessionId);
+
+  const refreshSession = useCallback(async (targetId: string) => {
+    const nextDetail = await getAgentSession(targetId);
+    setDetail(nextDetail);
+    if (!workspace) return;
+    const actions = await listActions(workspace.id, { sessionId: targetId });
+    const latest = actions.at(-1) ?? null;
+    setAction(latest);
+    const draftId = latest?.preview.draftId;
+    setDraft(typeof draftId === "string" ? await getDraft(draftId) : null);
+  }, [workspace]);
+
+  useEffect(() => {
+    if (!workspace) {
+      setSessions([]);
+      setSessionId(null);
+      setDetail(null);
+      return;
+    }
+    let cancelled = false;
+    void listAgentSessions(workspace.id).then((items) => {
+      if (cancelled) return;
+      const reviewSessions = items.filter((item) => item.graphId === "review.single");
+      setSessions(reviewSessions);
+      const latest = reviewSessions.at(-1) ?? null;
+      setSessionId(latest?.id ?? null);
+      if (latest) void refreshSession(latest.id);
+    }).catch((caught) => {
+      if (!cancelled) setError(toActionableError(caught, "恢复复习会话失败"));
+    });
+    return () => { cancelled = true; };
+  }, [workspace, refreshSession]);
+
+  useEffect(() => {
+    if (sessionId && stream.events.length > 0) void refreshSession(sessionId);
+  }, [sessionId, stream.events.length, refreshSession]);
+
+  const evaluation = useMemo(() => {
+    const value = action?.preview.evaluation;
+    return value && typeof value === "object" ? value as Evaluation : null;
+  }, [action]);
+  const shownQuestion = (action?.preview.question as ReviewQuestion | undefined) ?? draftQuestion;
 
   async function handleRunReview() {
     setError(null);
-    if (!draftQuestion) {
+    if (!workspace || !draftQuestion) {
       setError(toActionableError(new Error("请先上传资料生成题库草稿"), "复习评估失败"));
       return;
     }
-    const trimmedAnswer = answer.trim();
-    if (!trimmedAnswer) {
+    if (!answer.trim()) {
       setError(toActionableError(new Error("请输入你的回答"), "复习评估失败"));
       return;
     }
-    setIsSending(true);
+    setBusy(true);
     try {
-      const result = await runReview({
-        questions: [draftQuestion],
-        settings: {
-          selectedTopics: [],
-          questionCount: 1,
-          mode: "weak-point",
-        },
-        userAnswer: trimmedAnswer,
+      let targetId = sessionId;
+      if (!targetId || detail?.latestRun?.status === "completed" || detail?.latestRun?.status === "failed") {
+        const created = await createAgentSession({
+          workspaceId: workspace.id,
+          graphId: "review.single",
+          graphVersion: 1,
+          title: `单题复习：${draftQuestion.title}`,
+        });
+        targetId = created.id;
+        setSessions((current) => [...current, created]);
+        setSessionId(targetId);
+      }
+      await startAgentRun(targetId, {
+        question: draftQuestion,
+        user_answer: answer.trim(),
       });
-      setReviewResult(result);
-      setConfirmedReport(null);
-      onReportMarkdownChange(result.report_markdown);
+      await refreshSession(targetId);
     } catch (caught) {
       setError(toActionableError(caught, "复习评估失败"));
     } finally {
-      setIsSending(false);
+      setBusy(false);
     }
   }
 
-  async function handleConfirmReport() {
-    setError(null);
-    if (!workspace || !activeReportMarkdown) {
-      setError(toActionableError(new Error("请先生成报告"), "确认报告失败"));
+  async function resolve(decision: "approve" | "reject") {
+    if (!action) return;
+    if (decision === "reject" && !rejectReason.trim()) {
+      setError(toActionableError(new Error("请填写拒绝原因"), "处理发布请求失败"));
       return;
     }
-    setIsConfirming(true);
+    setBusy(true);
+    setError(null);
     try {
-      const result = await confirmReport({
-        workspacePath: workspace.workspacePath,
-        reportMarkdown: activeReportMarkdown,
-      });
-      setConfirmedReport(result);
-      onReportConfirmed();
+      const request = {
+        version: action.version,
+        idempotencyKey: `${decision}-${action.id}-${action.version}`,
+      };
+      if (decision === "approve") await approveAction(action.id, request);
+      else await rejectAction(action.id, { ...request, reason: rejectReason.trim() });
+      if (sessionId) await refreshSession(sessionId);
     } catch (caught) {
-      setError(toActionableError(caught, "确认报告失败"));
+      setError(toActionableError(caught, "处理发布请求失败"));
     } finally {
-      setIsConfirming(false);
+      setBusy(false);
     }
   }
 
   return (
     <section className="page-section" aria-labelledby="review-title">
       <div className="page-section__header">
-        <span className="page-section__icon" aria-hidden="true">
-          <MessageSquareText size={18} />
-        </span>
-        <h2 id="review-title" className="page-section__title">
-          复习
-        </h2>
-        {draftQuestion ? <Badge tone="primary">weak-point · 1 题</Badge> : null}
+        <span className="page-section__icon" aria-hidden="true"><MessageSquareText size={18} /></span>
+        <h2 id="review-title" className="page-section__title">复习</h2>
+        {shownQuestion ? <Badge tone="primary">单题 · 持久化会话</Badge> : null}
       </div>
 
+      {sessions.length > 0 ? (
+        <label className="field">
+          <span className="field__label">历史会话</span>
+          <select className="field__input" value={sessionId ?? ""} onChange={(event) => {
+            setSessionId(event.target.value);
+            void refreshSession(event.target.value);
+          }}>
+            {sessions.map((session) => <option key={session.id} value={session.id}>{session.title}</option>)}
+          </select>
+        </label>
+      ) : null}
+
       <Card title="复习对话" icon={<MessageSquareText size={18} />}>
-        {!draftQuestion ? (
-          <div className="empty-state">
-            <span className="empty-state__icon" aria-hidden="true">
-              <Inbox size={20} />
-            </span>
-            <p className="empty-state__text">请先上传资料生成题库草稿</p>
-            <Link className="text-link" to="/knowledge">
-              前往知识库
-            </Link>
-          </div>
-        ) : null}
-
-        {draftQuestion ? (
-          <article aria-label="当前题目">
-            <h3 className="question-card__title">{draftQuestion.title}</h3>
-            <p className="question-card__text">{draftQuestion.questionText}</p>
-          </article>
-        ) : null}
-
-        <div className="field">
-          <label className="field__label" htmlFor="reviewAnswer">
-            你的回答
-          </label>
-          <textarea
-            id="reviewAnswer"
-            name="reviewAnswer"
-            className="field__input field__input--area"
-            value={answer}
-            disabled={!draftQuestion || isSending}
-            onChange={(event) => setAnswer(event.target.value)}
-          />
-        </div>
-
-        <div className="btn-row">
-          <Button onClick={handleRunReview} disabled={!draftQuestion || isSending} loading={isSending}>
-            发送回答
-          </Button>
-        </div>
+        {!shownQuestion ? <div className="empty-state"><Inbox size={20} /><p>请先上传资料生成题库草稿</p><Link className="text-link" to="/knowledge">前往知识库</Link></div> : null}
+        {shownQuestion ? <article aria-label="当前题目"><h3>{shownQuestion.title}</h3><p>{shownQuestion.questionText}</p></article> : null}
+        {detail?.messages.map((message) => <p key={message.id} className="result-line"><strong>{message.role === "user" ? "你" : "Agent"}：</strong>{message.content}</p>)}
+        <div className="field"><label className="field__label" htmlFor="reviewAnswer">你的回答</label><textarea id="reviewAnswer" className="field__input field__input--area" value={answer} disabled={!draftQuestion || busy} onChange={(event) => setAnswer(event.target.value)} /></div>
+        <Button onClick={handleRunReview} disabled={!draftQuestion || busy} loading={busy}>发送回答</Button>
+        {sessionId ? <p className="muted-text">事件流：{stream.status}</p> : null}
       </Card>
 
-      {reviewResult ? (
-        <Card title="复习评估" icon={<ClipboardCheck size={18} />} ariaLabel="复习评估">
-          <p className="eval-score" data-score={reviewResult.evaluation.score}>
-            评分：{reviewResult.evaluation.score}
-          </p>
-          <p className="eval-line">缺失点：{reviewResult.evaluation.missing_key_points.join("、") || "无"}</p>
-          <p className="eval-line">证据：{reviewResult.evaluation.evidence || "无"}</p>
+      {evaluation || draft ? <Card title="复习报告" icon={<ClipboardCheck size={18} />}>
+        {evaluation ? <><p>评分：{evaluation.score}</p><p>缺失点：{evaluation.missing_key_points.join("、") || "无"}</p><p>证据：{evaluation.evidence}</p></> : null}
+        {draft ? <><pre className="report-preview">{draft.markdown}</pre><p>草稿状态：{draft.status}</p>{draft.publication ? <><p>发布状态：{draft.publication.state}</p><p>目标路径：{draft.publication.targetPath}</p>{draft.publication.state === "index_stale" ? <p role="alert">索引需要重新扫描</p> : null}</> : null}</> : null}
+      </Card> : null}
 
-          <div>
-            <p className="muted-text" style={{ marginBottom: "var(--space-2)" }}>
-              报告预览
-            </p>
-            <pre className="report-preview">{reviewResult.report_markdown}</pre>
-          </div>
-        </Card>
-      ) : null}
+      {action?.status === "pending" ? <Card title="发布审批" icon={<ClipboardCheck size={18} />}>
+        <p>报告已保存为草稿，批准后才会写入 Vault。</p>
+        <div className="field"><label className="field__label" htmlFor="rejectReason">拒绝原因</label><input id="rejectReason" className="field__input" value={rejectReason} onChange={(event) => setRejectReason(event.target.value)} /></div>
+        <div className="btn-row"><Button onClick={() => void resolve("approve")} disabled={busy}>批准发布</Button><Button onClick={() => void resolve("reject")} disabled={busy}>拒绝</Button></div>
+      </Card> : null}
 
-      {workspace && activeReportMarkdown ? (
-        <Card title="确认报告" icon={<FileCheck size={18} />}>
-          <p className="muted-text">将本轮报告与掌握度写入 Vault。</p>
-          <div className="btn-row">
-            <Button onClick={handleConfirmReport} disabled={isConfirming} loading={isConfirming}>
-              确认报告
-            </Button>
-          </div>
-          {confirmedReport ? (
-            <div>
-              <p className="result-line">报告：{confirmedReport.reportPath}</p>
-              <p className="result-line">掌握度：{confirmedReport.masteryPath}</p>
-            </div>
-          ) : null}
-        </Card>
-      ) : null}
-
-      {error ? (
-        <div className="error-banner" role="alert" aria-live="polite">
-          <AlertCircle size={16} aria-hidden="true" />
-          <span>错误：{error.message}</span>
-          <span>{error.advice}</span>
-        </div>
-      ) : null}
+      {(error || stream.runError) ? <div className="error-banner" role="alert"><AlertCircle size={16} /><span>错误：{error?.message ?? stream.runError?.message}</span><span>{error?.advice ?? "下一步：检查模型绑定和 Provider 连接后重试"}</span></div> : null}
     </section>
   );
 }

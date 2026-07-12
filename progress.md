@@ -55,3 +55,22 @@
 - 主仓库保持 `main`；verification 与 learning 七件套已显式同步并准备逐文件 hash 核对。
 - R1.5 产品成熟度为“可人工验证”；用户所有权仍为待学习、待实践，不阻塞 R1.6。
 - 下一产品任务：按新执行预算重整并启动 R1.6。
+
+## 2026-07-12：R1.6 启动
+
+- 从干净 `main@66c26c3` 创建 `codex/r1-6-review-runtime-integration`。
+- 产品 worktree：`/private/tmp/cyber-interview-agent-r1-6`；主仓库保持 main。
+- 读取 R1.6 正式计划和 R1 spec 相关章节，初步确认 Provider 网关、Graph 注册、绕过 API 和持久化 UI 四条边界。
+- 使用一次 `planning-with-files-zh` 更新三份短状态；分支、基线、四任务骨架已落盘，达到退出条件。
+- 下一步：完成接口审计、把正式六任务计划压缩为四任务，并编写任务 1 RED。
+
+## 2026-07-12：R1.6 Task 1-3 主链
+
+- Task 1 完成：snapshot gateway、resolver、`review.single` Graph；10 项专项测试通过。
+- Task 2 主链完成：Runtime/draft/HITL 集成，旧 review bypass 返回 404；26 项相关测试通过。
+- Task 3 代码完成：持久化 session/SSE/draft/publication UI；build 与 5 项前端测试通过。
+- 修复恢复缺陷：终态 action 不再把 draft 回写为 review_pending。
+- 待办：Provider error/restart 专项、最小浏览器、最终验收与文档。
+- Provider error 脱敏与等待审批重启恢复专项共 12 项通过。
+- 最小浏览器（mock API）通过恢复、批准、published/completed/target path；控制台 0 warning/error。
+- Task 4 仍须真实后端/Provider、完整浏览器、最终全量回归与文档门禁。

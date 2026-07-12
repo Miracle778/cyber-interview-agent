@@ -9,6 +9,7 @@ from app.runtime.knowledge_publication_graph import (
     create_knowledge_publication_graph,
 )
 from app.runtime.security_diagnostic_graph import create_security_diagnostic_graph
+from app.agents.review_definition import single_review_definition
 
 
 class _EchoState(TypedDict, total=False):
@@ -27,6 +28,7 @@ def create_default_graph_registry() -> GraphRegistry:
         return graph.compile(checkpointer=context.checkpointer)
 
     registry = GraphRegistry()
+    registry.register(single_review_definition())
     registry.register(
         GraphDefinition(
             graph_id="knowledge.publish",

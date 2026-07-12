@@ -8,7 +8,6 @@ from app.api.routes_agent import router as agent_router
 from app.api.routes_drafts import router as drafts_router
 from app.api.routes_hitl import router as hitl_router
 from app.api.routes_knowledge import router as knowledge_router
-from app.api.routes_review import router as review_router
 from app.api.routes_settings import router as settings_router
 from app.core.errors import (
     ErrorResponse,
@@ -19,6 +18,10 @@ from app.core.errors import (
     WorkspaceNotFoundError,
 )
 from app.db.app_database import connect_app_database
+from app.providers.anthropic_compatible import AnthropicCompatibleAdapter
+from app.providers.chat_gateway import ChatModelGateway
+from app.providers.openai_compatible import OpenAICompatibleAdapter
+from app.repositories.provider_repository import ProviderRepository
 from app.runtime.default_graphs import create_default_graph_registry
 from app.runtime.graph_registry import GraphVersionNotFoundError
 from app.hitl.handlers import ActionPayloadValidationError, UnknownActionTypeError
@@ -37,9 +40,15 @@ from app.knowledge.drafts import (
     DraftVersionChangedError,
 )
 from app.runtime.repository import RuntimeRecordNotFoundError, SessionBusyError
+from app.runtime.run_manager import MissingModelBindingError
 from app.runtime.service import AgentRuntime
+from app.runtime.model_resolver import ModelBindingResolver
 from app.security.workspace_paths import PathPolicyError
-from app.services.secrets import SecretStoreUnavailableError
+from app.services.secrets import (
+    EnvironmentSecretStore,
+    KeyringSecretStore,
+    SecretStoreUnavailableError,
+)
 from app.services.workspace import WorkspaceError
 from app.services.workspace_service import WorkspaceService
 from app.tools.registry import ToolError
@@ -51,6 +60,17 @@ async def lifespan(application: FastAPI):
     runtime: AgentRuntime | None = None
     try:
         workspaces = WorkspaceService(connection)
+        provider_adapters = {
+            "openai-compatible": OpenAICompatibleAdapter(),
+            "anthropic-compatible": AnthropicCompatibleAdapter(),
+        }
+        resolved_models = ModelBindingResolver(
+            ProviderRepository(connection),
+            {
+                "keyring": KeyringSecretStore(),
+                "environment": EnvironmentSecretStore(),
+            },
+        )
 
         def workspace_record(workspace_id: str):
             record = workspaces.workspaces.get(workspace_id)
@@ -72,6 +92,12 @@ async def lifespan(application: FastAPI):
                 for item in workspaces.workspaces.list_workspaces()
                 if item.available and Path(item.root_path).is_dir()
             ),
+            chat_gateway=ChatModelGateway(provider_adapters),
+            resolve_model_binding=lambda role, provider_model_id: (
+                resolved_models.resolve(
+                    role=role, provider_model_id=provider_model_id
+                )
+            ),
         )
         application.state.agent_runtime = runtime
         await runtime.recover_interrupted_runs()
@@ -88,12 +114,18 @@ app.include_router(hitl_router)
 app.include_router(settings_router)
 app.include_router(knowledge_router)
 app.include_router(drafts_router)
-app.include_router(review_router)
 
 
 def _error(status_code: int, code: str, message: str) -> JSONResponse:
     content = ErrorResponse(code=code, message=message).model_dump()
     return JSONResponse(status_code=status_code, content=content)
+
+
+@app.exception_handler(MissingModelBindingError)
+async def missing_model_binding(
+    _request: Request, error: MissingModelBindingError
+) -> JSONResponse:
+    return _error(409, "model_binding_missing", str(error))
 
 
 @app.exception_handler(ProviderNotFoundError)

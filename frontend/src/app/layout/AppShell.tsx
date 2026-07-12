@@ -10,7 +10,6 @@ import { getWorkspace, type WorkspaceConfig } from "../../features/settings/sett
 import { MobileNavigation } from "../navigation/MobileNavigation";
 import { PrimaryNavigation } from "../navigation/PrimaryNavigation";
 import { PageHeader } from "./PageHeader";
-import { FlowSummary } from "../../features/review/FlowSummary";
 
 type HealthState = {
   status: "checking" | "connected" | "disconnected";
@@ -24,9 +23,7 @@ export function AppShell() {
   });
   const [workspace, setWorkspace] = useState<WorkspaceConfig | null>(null);
   const [draftQuestion, setDraftQuestion] = useState<ReviewQuestion | null>(null);
-  const [latestReportMarkdown, setLatestReportMarkdown] = useState("");
-  const [reportConfirmed, setReportConfirmed] = useState(false);
-  const [indexedCount, setIndexedCount] = useState<number | null>(null);
+  const [, setIndexedCount] = useState<number | null>(null);
 
   useEffect(() => {
     let ignore = false;
@@ -103,27 +100,8 @@ export function AppShell() {
                 >
                   <div className="review-workspace">
                     <div className="review-workspace__main">
-                      <ReviewPage
-                        workspace={workspace}
-                        draftQuestion={draftQuestion}
-                        latestReportMarkdown={latestReportMarkdown}
-                        onReportMarkdownChange={(markdown) => {
-                          setLatestReportMarkdown(markdown);
-                          setReportConfirmed(false);
-                        }}
-                        onReportConfirmed={() => setReportConfirmed(true)}
-                      />
+                      <ReviewPage workspace={workspace} draftQuestion={draftQuestion} />
                     </div>
-                    <aside className="review-workspace__aside">
-                      <FlowSummary
-                        healthStatus={health.status}
-                        workspace={workspace}
-                        draftQuestion={draftQuestion}
-                        latestReportMarkdown={latestReportMarkdown}
-                        reportConfirmed={reportConfirmed}
-                        indexedCount={indexedCount}
-                      />
-                    </aside>
                   </div>
                 </PageFrame>
               }
@@ -142,8 +120,6 @@ export function AppShell() {
                     draftQuestion={draftQuestion}
                     onDraftQuestionReady={(question) => {
                       setDraftQuestion(question);
-                      setLatestReportMarkdown("");
-                      setReportConfirmed(false);
                     }}
                     onVaultRescanned={setIndexedCount}
                   />
@@ -164,8 +140,6 @@ export function AppShell() {
                     onWorkspaceReady={(readyWorkspace) => {
                       setWorkspace(readyWorkspace);
                       setDraftQuestion(null);
-                      setLatestReportMarkdown("");
-                      setReportConfirmed(false);
                       setIndexedCount(null);
                     }}
                   />

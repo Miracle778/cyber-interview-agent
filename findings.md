@@ -34,3 +34,14 @@
 - 草稿 API 现在附带最新 publication 的 `state/targetPath/errorCode`，不再把 artifacts 路径当发布路径。
 - KnowledgePage 用 publish run id 驱动 ActionCenter 获取对应 action，决定完成后统一刷新 drafts/actions。
 - ActionCenter watch query key 使用 memo 保持稳定，避免 render 触发重复轮询。
+
+## R1.6 启动发现
+
+- Runtime 已保存 run model-binding snapshot，GraphDefinition 已声明 `required_model_roles`；R1.6 应复用，不新建第二套运行绑定状态。
+- OpenAI/Anthropic adapter 当前只实现最小连接测试，业务结构化/流式调用需要窄 ChatModelGateway。
+- 现有复习页仍调用 `/api/review/run` 与 `/api/review/reports/confirm`，是必须移除的 Runtime/HITL 绕过路径。
+- 旧实施计划有 6 个任务，按新执行预算合并为 4 个纵向任务。
+- RunManager SQLite 写锁风险单独跟踪，不混入 R1.6 业务范围，除非定向测试证明它阻塞新链路。
+- knowledge.publish 节点恢复时会再次进入 request_action；副作用必须按 action.status 保持幂等。
+- 新 worktree 安装依赖受 DNS 限制；复用 main 锁定的 venv/node_modules 避免了网络重试。
+- action resource 不暴露 payload；Review 刷新所需 draftId/question/evaluation 放入安全 preview。

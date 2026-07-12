@@ -21,6 +21,7 @@ from app.knowledge.drafts import (
 )
 from app.knowledge.publication import PublicationService
 from app.knowledge.publication_handler import KnowledgePublishActionHandler
+from app.providers.chat_gateway import ChatModelGateway, ResolvedModelBinding
 from app.runtime.checkpoints import RuntimeCheckpointer
 from app.runtime.event_stream import EventStream, encode_sse_event
 from app.runtime.graph_registry import GraphRegistry, GraphVersionNotFoundError
@@ -54,12 +55,18 @@ class AgentRuntime:
         model_binding_resolver: Callable[[str], dict[str, str]],
         workspace_ids: Callable[[], tuple[str, ...]],
         tool_registry: ToolRegistry | None = None,
+        chat_gateway: ChatModelGateway | None = None,
+        resolve_model_binding: Callable[
+            [str, str], ResolvedModelBinding
+        ] | None = None,
     ) -> None:
         self._graph_registry = graph_registry
         self._workspace_resolver = workspace_resolver
         self._model_binding_resolver = model_binding_resolver
         self._workspace_ids = workspace_ids
         self._tool_registry = tool_registry or create_default_tool_registry()
+        self._chat_gateway = chat_gateway
+        self._resolve_model_binding = resolve_model_binding
         self._workspaces: dict[str, _WorkspaceRuntime] = {}
 
     async def create_session(
@@ -330,6 +337,10 @@ class AgentRuntime:
             audit_repository=ToolAuditRepository(root),
             request_action=request_action,
             cancel_pending_action=hitl_repository.cancel_pending_for_run,
+            chat_gateway=self._chat_gateway,
+            resolve_model_binding=self._resolve_model_binding,
+            create_draft=draft_service.create,
+            mark_draft_review_pending=draft_service.mark_review_pending,
         )
         hitl_service = HitlService(
             repository=hitl_repository,

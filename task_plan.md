@@ -11,39 +11,33 @@
 | R0 | 可人工验证 | 单题单轮技术切片 |
 | R1.1-R1.4 | 可人工验证并已合入 main | Provider、Runtime、工具安全、持久化 HITL |
 | R1.5 | 可人工验证并已合入 main | 草稿分层、持久化审核发布、publication journal、active scope 与浏览器闭环 |
-| R1.6 | 待开始 | 单题复习迁移到共享 Runtime |
+| R1.6 | 实施中 | 单题复习迁移到共享 Runtime、真实 Provider 与持久化发布闭环 |
 | R2-R8 | 待开始 | 见正式产品路线 |
 
-## 当前任务：R1.5 收口与流程提速
+## 当前任务：R1.6 单题复习 Runtime 集成
 
-1. **协作流程优化（完成）**
-   - 压缩启动上下文并归档历史。
-   - 明确定向测试、全量回归、浏览器和文档预算。
-   - 删除未安装 `superpowers:*` skill 的强制模板文案。
-   - 加强阶段文档证据一致性门禁。
-2. **R1.5 产品修正（完成）**
-   - 同步 pending action 与 knowledge draft 查询。
-   - 实现 `review_pending` / `rejected` 真实状态转换。
-   - 暴露 publication target path、state 和 index-stale。
-   - 增加真实发布闭环测试。
-3. **R1.5 最终验收（完成）**
-   - 一次最终全量后端/前端/type/build。
-   - 一次浏览器与重启验收。
-   - 修正文档、运行门禁、独立静态复核。
-4. **合并收尾（完成）**
-   - 合入 main。
-   - 同步 verification/learning 到主仓库。
+1. **模型网关与单题 Graph（已完成）**
+   - 解析 run binding snapshot，复用现有 Provider/SecretStore。
+   - 结构化评估、流式报告、session-report 草稿和发布 interrupt。
+2. **Runtime 与 API 收口（进行中）**
+   - 注册 `review.single/v1`、必需模型角色和工具 scope。
+   - 覆盖错误恢复并移除旧 `/api/review/*` 绕过接口。
+3. **持久化 Review UI（已完成）**
+   - 代码、组件测试与本地 mock API 最小浏览器 happy path 已完成。
+4. **验收与合并（待开始）**
+   - 最终全量回归、浏览器/重启、真实 Provider、文档门禁和 main 合并。
 
-## 下一产品任务
+## 当前分支
 
-- 开始 R1.6 单题复习 Runtime 集成前，先按新预算把旧实施计划压缩为 3–4 个纵向任务。
-- RunManager SQLite 写锁争用作为已知基础设施风险单独处理，不混入 R1.6 业务实现。
+- 分支：`codex/r1-6-review-runtime-integration`
+- worktree：`/private/tmp/cyber-interview-agent-r1-6`
+- 基线：`main@66c26c3`
 
 ## 执行预算
 
 - 启动必读入口合计不超过 400 行。
 - 单次工具输出默认不超过 4,000 tokens。
-- 针对性 TDD；本次剩余工作只做一次最终全量回归。
+- 针对性 TDD；跨层接通后可做一次集成回归，最终验收再做一次全量回归。
 - 完整浏览器验收一次；失败只重跑受影响场景。
 - 中途 Agent 交接为 0；不创建 subagent。
 - 相同失败最多重复一次，第二次相同失败转根因诊断。
@@ -60,6 +54,6 @@
 
 - 工作流：`docs/superpowers/specs/2026-07-11-dual-track-development-workflow-design.md`
 - 产品路线：`docs/superpowers/specs/2026-07-10-product-development-roadmap-design.md`
-- 当前设计：`docs/superpowers/specs/2026-07-12-r1-5-knowledge-publication-design-review.md`
-- 当前实施：`docs/superpowers/plans/2026-07-10-r1-5-knowledge-publication.md`
+- 当前设计：`docs/superpowers/specs/2026-07-10-r1-shared-agent-foundation-design.md`（R1.6 章节）
+- 当前实施：`docs/superpowers/plans/2026-07-10-r1-6-review-integration.md`
 - 历史归档：`docs/superpowers/history/2026-07-12-pre-context-optimization/`

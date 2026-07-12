@@ -1,11 +1,18 @@
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any
 
 from langgraph.types import Command
+from pydantic import BaseModel
 
 from app.hitl.models import CreatePendingAction, PendingActionRecord
+from app.knowledge.drafts import CreateDraftCommand, KnowledgeDraftRecord
+from app.providers.chat_gateway import (
+    ChatModelGateway,
+    ProviderInvocationError,
+    ResolvedModelBinding,
+)
 from app.runtime.checkpoints import RuntimeCheckpointer
 from app.runtime.event_stream import EventStream
 from app.runtime.graph_build_context import GraphBuildContext
@@ -16,6 +23,54 @@ from app.tools.audit import ToolAuditRepository
 from app.tools.context import ToolExecutionContext
 from app.tools.executor import BoundToolInvoker
 from app.tools.registry import ToolRegistry
+
+
+class MissingModelBindingError(RuntimeError):
+    pass
+
+
+class _BoundModelInvoker:
+    def __init__(
+        self,
+        *,
+        bindings: dict[str, str],
+        resolver: Callable[[str, str], ResolvedModelBinding],
+        gateway: ChatModelGateway,
+    ) -> None:
+        self._bindings = bindings
+        self._resolver = resolver
+        self._gateway = gateway
+        self._resolved: dict[str, ResolvedModelBinding] = {}
+
+    def _binding(self, role: str) -> ResolvedModelBinding:
+        try:
+            provider_model_id = self._bindings[role]
+        except KeyError as error:
+            raise MissingModelBindingError(
+                f"缺少模型用途绑定：{role}"
+            ) from error
+        if role not in self._resolved:
+            self._resolved[role] = self._resolver(role, provider_model_id)
+        return self._resolved[role]
+
+    async def invoke_structured(
+        self,
+        *,
+        role: str,
+        schema: type[BaseModel],
+        messages: Sequence[Any],
+    ) -> BaseModel:
+        return await self._gateway.invoke_structured(
+            binding=self._binding(role), schema=schema, messages=messages
+        )
+
+    async def stream_text(
+        self, *, role: str, messages: Sequence[Any]
+    ) -> AsyncIterator[str]:
+        async for chunk in self._gateway.stream_text(
+            binding=self._binding(role), messages=messages
+        ):
+            yield chunk
 
 
 class RunManager:
@@ -35,6 +90,15 @@ class RunManager:
         cancel_pending_action: Callable[
             [str], Awaitable[PendingActionRecord | None]
         ] | None = None,
+        chat_gateway: ChatModelGateway | None = None,
+        resolve_model_binding: Callable[
+            [str, str], ResolvedModelBinding
+        ] | None = None,
+        create_draft: Callable[
+            [CreateDraftCommand], Awaitable[KnowledgeDraftRecord]
+        ] | None = None,
+        mark_draft_review_pending: Callable[..., Awaitable[KnowledgeDraftRecord]]
+        | None = None,
     ) -> None:
         self._repository = repository
         self._event_stream = event_stream
@@ -47,6 +111,10 @@ class RunManager:
         self._cancel_pending_action = (
             cancel_pending_action or self._no_pending_action
         )
+        self._chat_gateway = chat_gateway
+        self._resolve_model_binding = resolve_model_binding
+        self._create_draft = create_draft
+        self._mark_draft_review_pending = mark_draft_review_pending
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._is_shutting_down = False
@@ -69,7 +137,14 @@ class RunManager:
         model_bindings: dict[str, str],
     ) -> RunRecord:
         session = self._repository.get_session(session_id)
-        self._graph_registry.get(session.graph_id, session.graph_version)
+        definition = self._graph_registry.get(
+            session.graph_id, session.graph_version
+        )
+        missing_roles = definition.required_model_roles - model_bindings.keys()
+        if missing_roles:
+            raise MissingModelBindingError(
+                "缺少模型用途绑定：" + ", ".join(sorted(missing_roles))
+            )
         run = self._repository.create_run(
             session_id,
             input=input,
@@ -247,6 +322,47 @@ class RunManager:
                 )
                 requested_action_ids: set[str] = set()
 
+                if definition.required_model_roles:
+                    if (
+                        self._chat_gateway is None
+                        or self._resolve_model_binding is None
+                    ):
+                        raise RuntimeError("Model invocation is not configured")
+                    model_invoker = _BoundModelInvoker(
+                        bindings=run.model_bindings,
+                        resolver=self._resolve_model_binding,
+                        gateway=self._chat_gateway,
+                    )
+                else:
+                    from app.runtime.graph_build_context import (
+                        UnavailableModelInvoker,
+                    )
+
+                    model_invoker = UnavailableModelInvoker()
+
+                async def create_draft(
+                    *,
+                    title: str,
+                    markdown: str,
+                    source_refs: tuple[str, ...],
+                    relation_refs: tuple[str, ...],
+                ) -> KnowledgeDraftRecord:
+                    if self._create_draft is None:
+                        raise RuntimeError("Draft creation is not configured")
+                    return await self._create_draft(
+                        CreateDraftCommand(
+                            domain="review",
+                            document_type="session_report",
+                            title=title,
+                            markdown=markdown,
+                            source_refs=source_refs,
+                            relation_refs=relation_refs,
+                            session_id=session.id,
+                            run_id=run.id,
+                            agent_type=definition.graph_id,
+                        )
+                    )
+
                 async def request_action(
                     *,
                     action_type: str,
@@ -267,6 +383,16 @@ class RunManager:
                             idempotency_key=f"{run.id}:{idempotency_key}",
                         )
                     )
+                    if (
+                        action_type == "knowledge.publish"
+                        and action.status == "pending"
+                        and self._mark_draft_review_pending is not None
+                    ):
+                        await self._mark_draft_review_pending(
+                            str(payload["draftId"]),
+                            expected_version=int(payload["draftVersion"]),
+                            expected_hash=str(payload["contentHash"]),
+                        )
                     requested_action_ids.add(action.id)
                     return action
 
@@ -276,6 +402,8 @@ class RunManager:
                             checkpointer=checkpointer,
                             invoke_tool=invoker.invoke_tool,
                             request_action=request_action,
+                            invoke_model=model_invoker,
+                            create_draft=create_draft,
                         )
                     )
                     result = await graph.ainvoke(
@@ -337,18 +465,27 @@ class RunManager:
         except Exception as error:
             current = self._repository.get_run(run_id)
             if current.status in {"queued", "running"}:
+                if isinstance(error, ProviderInvocationError):
+                    error_code = error.code.value
+                    error_message = str(error)
+                elif isinstance(error, MissingModelBindingError):
+                    error_code = "model_binding_missing"
+                    error_message = str(error)
+                else:
+                    error_code = "runtime_error"
+                    error_message = "Agent 运行失败"
                 failed = self._repository.transition_run(
                     run_id,
                     expected=current.status,
                     target="failed",
-                    error_code="runtime_error",
-                    error_message="Agent 运行失败",
+                    error_code=error_code,
+                    error_message=error_message,
                 )
                 await self._event_stream.publish(
                     failed.session_id,
                     failed.id,
                     "run.failed",
-                    {"code": "runtime_error", "message": "Agent 运行失败"},
+                    {"code": error_code, "message": error_message},
                 )
 
     async def _mark_cancelled(self, run_id: str) -> None:

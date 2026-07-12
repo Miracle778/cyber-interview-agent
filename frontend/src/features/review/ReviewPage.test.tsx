@@ -1,9 +1,17 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import { ReviewPage } from "./ReviewPage";
 import type { ReviewQuestion } from "./reviewTypes";
+
+class FakeEventSource {
+  onopen: ((event: Event) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+  constructor(public url: string) {}
+  addEventListener() {}
+  close() {}
+}
 
 const workspace: WorkspaceConfig = {
   id: "w1",
@@ -15,7 +23,7 @@ const question: ReviewQuestion = {
   id: "q1",
   title: "缓存穿透",
   questionText: "缓存穿透是什么？",
-  referenceAnswer: "缓存穿透是请求不存在的数据导致缓存无法命中。",
+  referenceAnswer: "请求不存在的数据导致缓存无法命中。",
   topics: ["缓存"],
   difficulty: "medium",
   keyPoints: ["缓存空值", "布隆过滤器"],
@@ -23,108 +31,75 @@ const question: ReviewQuestion = {
   mastery: "unknown",
 };
 
-describe("ReviewPage", () => {
+const session = {
+  id: "s1", workspaceId: "w1", graphId: "review.single", graphVersion: 1,
+  title: "单题复习：缓存穿透", status: "active", createdAt: "now",
+  updatedAt: "now", lastRunId: "r1",
+};
+
+describe("ReviewPage persistent runtime flow", () => {
+  beforeEach(() => vi.stubGlobal("EventSource", FakeEventSource));
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
-  it("requires a draft question before review", () => {
-    render(
-      <MemoryRouter>
-        <ReviewPage
-          workspace={workspace}
-          draftQuestion={null}
-          latestReportMarkdown=""
-          onReportMarkdownChange={vi.fn()}
-          onReportConfirmed={vi.fn()}
-        />
-      </MemoryRouter>,
+  it("requires a draft question before review", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json([], { status: 200 }),
     );
+    render(<MemoryRouter><ReviewPage workspace={workspace} draftQuestion={null} /></MemoryRouter>);
 
     expect(screen.getByText("请先上传资料生成题库草稿")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "发送回答" })).toBeDisabled();
   });
 
-  it("runs review and displays evaluation report", async () => {
-    const onReportMarkdownChange = vi.fn();
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          current_question: question,
-          evaluation: {
-            score: "partial",
-            missing_key_points: ["布隆过滤器"],
-            evidence: "可以缓存空值。",
-          },
-          report_markdown: "# 单轮复习报告\n\n得分：72",
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
-    );
+  it("creates a review.single session and starts a run", async () => {
+    const calls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      calls.push(`${method} ${url}`);
+      if (url.includes("/api/agent/sessions?")) return Response.json([]);
+      if (url === "/api/agent/sessions" && method === "POST") return Response.json(session, { status: 201 });
+      if (url === "/api/agent/sessions/s1/runs") return Response.json({ id: "r1", sessionId: "s1", status: "running", resumeCount: 0, errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: null }, { status: 202 });
+      if (url === "/api/agent/sessions/s1") return Response.json({ ...session, messages: [{ id: "m1", runId: "r1", role: "user", content: "缓存空值", createdAt: "now" }], latestRun: { id: "r1", sessionId: "s1", status: "running", resumeCount: 0, errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: null }, pendingAction: null });
+      if (url.includes("/api/agent/actions?")) return Response.json([]);
+      throw new Error(`unexpected ${method} ${url}`);
+    });
+    render(<MemoryRouter><ReviewPage workspace={workspace} draftQuestion={question} /></MemoryRouter>);
 
-    render(
-      <ReviewPage
-        workspace={workspace}
-        draftQuestion={question}
-        latestReportMarkdown=""
-        onReportMarkdownChange={onReportMarkdownChange}
-        onReportConfirmed={vi.fn()}
-      />,
-    );
-
-    fireEvent.change(screen.getByLabelText("你的回答"), { target: { value: "可以缓存空值。" } });
+    fireEvent.change(screen.getByLabelText("你的回答"), { target: { value: "缓存空值" } });
     fireEvent.click(screen.getByRole("button", { name: "发送回答" }));
+
+    await waitFor(() => expect(calls).toContain("POST /api/agent/sessions"));
+    expect(calls).toContain("POST /api/agent/sessions/s1/runs");
+    expect(await screen.findByText((_, node) => node?.tagName === "P" && node.textContent === "你：缓存空值")).toBeInTheDocument();
+  });
+
+  it("restores evaluation, draft and pending publication from persisted APIs", async () => {
+    const action = {
+      id: "a1", workspaceId: "w1", sessionId: "s1", runId: "r1",
+      actionType: "knowledge.publish", preview: {
+        draftId: "d1", question,
+        evaluation: { score: "partial", missing_key_points: ["布隆过滤器"], evidence: "提到缓存空值" },
+      }, editableFields: ["title", "markdown"], status: "pending", version: 1,
+      createdAt: "now", resolvedAt: null,
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/api/agent/sessions?")) return Response.json([session]);
+      if (url === "/api/agent/sessions/s1") return Response.json({ ...session, messages: [], latestRun: { id: "r1", sessionId: "s1", status: "waiting_for_approval", resumeCount: 0, errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: null }, pendingAction: action });
+      if (url.includes("/api/agent/actions?")) return Response.json([action]);
+      if (url === "/api/knowledge/drafts/d1") return Response.json({ id: "d1", workspaceId: "w1", sessionId: "s1", runId: "r1", agentType: "review.single", domain: "review", documentType: "session_report", documentId: "doc1", title: "报告", markdown: "# 报告", contentPath: "draft.md", sourceRefs: ["q1"], relationRefs: [], status: "review_pending", version: 1, contentHash: "h1", createdAt: "now", updatedAt: "now", publication: null });
+      throw new Error(`unexpected ${url}`);
+    });
+
+    render(<MemoryRouter><ReviewPage workspace={workspace} draftQuestion={null} /></MemoryRouter>);
 
     expect(await screen.findByText("评分：partial")).toBeInTheDocument();
-    expect(screen.getByText("缺失点：布隆过滤器")).toBeInTheDocument();
-    expect(screen.getByText("证据：可以缓存空值。")).toBeInTheDocument();
-    await waitFor(() => expect(onReportMarkdownChange).toHaveBeenCalledWith("# 单轮复习报告\n\n得分：72"));
-  });
-
-  it("confirms report and displays written paths", async () => {
-    const onReportConfirmed = vi.fn();
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          reportPath: "/tmp/cyber-demo/knowledge-vault/20_review_sessions/session.md",
-          masteryPath: "/tmp/cyber-demo/knowledge-vault/30_mastery/global_mastery_review_pending.md",
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
-    );
-
-    render(
-      <ReviewPage
-        workspace={workspace}
-        draftQuestion={question}
-        latestReportMarkdown="# 单轮复习报告"
-        onReportMarkdownChange={vi.fn()}
-        onReportConfirmed={onReportConfirmed}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "确认报告" }));
-
-    expect(await screen.findByText("报告：/tmp/cyber-demo/knowledge-vault/20_review_sessions/session.md")).toBeInTheDocument();
-    expect(screen.getByText("掌握度：/tmp/cyber-demo/knowledge-vault/30_mastery/global_mastery_review_pending.md")).toBeInTheDocument();
-    await waitFor(() => expect(onReportConfirmed).toHaveBeenCalled());
-  });
-
-  it("shows actionable advice when answer is empty", () => {
-    render(
-      <ReviewPage
-        workspace={workspace}
-        draftQuestion={question}
-        latestReportMarkdown=""
-        onReportMarkdownChange={vi.fn()}
-        onReportConfirmed={vi.fn()}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "发送回答" }));
-
-    expect(screen.getByText("错误：请输入你的回答")).toBeInTheDocument();
-    expect(screen.getByText("下一步：根据当前题目输入一段回答")).toBeInTheDocument();
+    expect(screen.getByText("草稿状态：review_pending")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "批准发布" })).toBeInTheDocument();
   });
 });
