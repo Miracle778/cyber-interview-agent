@@ -1,16 +1,17 @@
-import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, BookOpen, FileText, FolderLock, RefreshCw, Upload } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertCircle, BookOpen, File, FileText, FolderLock, RefreshCw, Upload } from "lucide-react";
 import { Link } from "react-router-dom";
-import { Badge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
 import { toActionableError, type ActionableError } from "../../shared/api/errorAdvice";
 import { ActionCenter } from "../agent/ActionCenter";
-import type { ReviewQuestion, MasteryState } from "../review/reviewTypes";
+import type { ReviewQuestion } from "../review/reviewTypes";
 import type { WorkspaceConfig } from "../settings/settingsApi";
-import { rescanVault, uploadSource } from "./knowledgeApi";
 import { DraftReview } from "./DraftReview";
+import { listDrafts } from "./draftApi";
+import type { KnowledgeDraftStatus } from "./draftTypes";
+import { listSources, rescanVault, uploadSource } from "./knowledgeApi";
 
 interface KnowledgePageProps {
   workspace: WorkspaceConfig | null;
@@ -19,25 +20,84 @@ interface KnowledgePageProps {
   onVaultRescanned: (indexedCount: number) => void;
 }
 
-const MASTERY_TONE: Record<MasteryState, "neutral" | "danger" | "warning" | "primary" | "success"> = {
-  unknown: "neutral",
-  weak: "danger",
-  partial: "warning",
-  stable: "primary",
-  strong: "success",
+type ResourceSelection =
+  | { kind: "source"; id: string }
+  | { kind: "draft"; id: string }
+  | null;
+
+const STATUS_LABEL: Record<KnowledgeDraftStatus, string> = {
+  draft: "草稿",
+  review_pending: "等待确认",
+  rejected: "已拒绝",
+  published: "已发布",
 };
 
-export function KnowledgePage({ workspace, draftQuestion, onDraftQuestionReady, onVaultRescanned }: KnowledgePageProps) {
+function formatBytes(size: number) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatDate(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN");
+}
+
+export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanned }: KnowledgePageProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [visibleDraftQuestion, setVisibleDraftQuestion] = useState<ReviewQuestion | null>(draftQuestion);
+  const [selection, setSelection] = useState<ResourceSelection>(null);
+  const [draftDirty, setDraftDirty] = useState(false);
   const [indexedCount, setIndexedCount] = useState<number | null>(null);
   const [error, setError] = useState<ActionableError | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isRescanning, setIsRescanning] = useState(false);
   const [publicationRunId, setPublicationRunId] = useState<string | null>(null);
   const queryClient = useQueryClient();
-
+  const workspaceId = workspace?.id ?? "";
   const hasWorkspace = workspace !== null;
+
+  const sourcesQuery = useQuery({
+    queryKey: ["knowledge-sources", workspaceId],
+    queryFn: () => listSources(workspaceId),
+    enabled: hasWorkspace,
+  });
+  const draftsQuery = useQuery({
+    queryKey: ["knowledge-drafts", workspaceId],
+    queryFn: () => listDrafts(workspaceId),
+    enabled: hasWorkspace,
+  });
+  const sources = useMemo(() => sourcesQuery.data ?? [], [sourcesQuery.data]);
+  const drafts = useMemo(() => draftsQuery.data ?? [], [draftsQuery.data]);
+
+  useEffect(() => {
+    if (!workspace) {
+      setSelection(null);
+      return;
+    }
+    setSelection((current) => {
+      const currentExists = current?.kind === "source"
+        ? sources.some((item) => item.id === current.id)
+        : current?.kind === "draft"
+          ? drafts.some((item) => item.id === current.id)
+          : false;
+      if (currentExists) return current;
+      if (drafts[0]) return { kind: "draft", id: drafts[0].id };
+      if (sources[0]) return { kind: "source", id: sources[0].id };
+      return null;
+    });
+  }, [drafts, sources, workspace]);
+
+  const selectedSource = selection?.kind === "source"
+    ? sources.find((item) => item.id === selection.id) ?? null
+    : null;
+
+  function selectResource(next: Exclude<ResourceSelection, null>) {
+    if (selection?.kind === next.kind && selection.id === next.id) return true;
+    if (draftDirty && !globalThis.confirm("放弃未保存的修改？")) return false;
+    setDraftDirty(false);
+    setSelection(next);
+    return true;
+  }
 
   async function handleUpload() {
     setError(null);
@@ -52,10 +112,12 @@ export function KnowledgePage({ workspace, draftQuestion, onDraftQuestionReady, 
     setIsUploading(true);
     try {
       const result = await uploadSource(workspace.id, selectedFile);
-      const question = result.question;
-      setVisibleDraftQuestion(question);
-      onDraftQuestionReady(question);
-      queryClient.invalidateQueries({ queryKey: ["knowledge-drafts", workspace.id] });
+      onDraftQuestionReady(result.question);
+      selectResource({ kind: "draft", id: result.draft.id });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["knowledge-sources", workspace.id] }),
+        queryClient.invalidateQueries({ queryKey: ["knowledge-drafts", workspace.id] }),
+      ]);
     } catch (caught) {
       setError(toActionableError(caught, "上传失败"));
     } finally {
@@ -81,8 +143,6 @@ export function KnowledgePage({ workspace, draftQuestion, onDraftQuestionReady, 
     }
   }
 
-  const questionToDisplay = visibleDraftQuestion ?? draftQuestion;
-
   function handlePublicationResolved() {
     if (!workspace) return;
     queryClient.invalidateQueries({ queryKey: ["knowledge-drafts", workspace.id] });
@@ -93,123 +153,145 @@ export function KnowledgePage({ workspace, draftQuestion, onDraftQuestionReady, 
   return (
     <section className="page-section" aria-labelledby="knowledge-title">
       <div className="page-section__header">
-        <span className="page-section__icon" aria-hidden="true">
-          <BookOpen size={18} />
-        </span>
-        <h2 id="knowledge-title" className="page-section__title">
-          知识文档
-        </h2>
-        {hasWorkspace ? <span className="page-section__hint">上传资料自动生成题库草稿</span> : null}
+        <span className="page-section__icon" aria-hidden="true"><BookOpen size={18} /></span>
+        <h2 id="knowledge-title" className="page-section__title">知识文档</h2>
+        {hasWorkspace ? <span className="page-section__hint">管理资料、草稿和发布状态</span> : null}
       </div>
 
-      <Card title="资料上传" icon={<Upload size={18} />}>
+      <Card className="knowledge-toolbar" ariaLabel="知识库工具栏">
         {!hasWorkspace ? (
           <div className="empty-state">
-            <span className="empty-state__icon" aria-hidden="true">
-              <FolderLock size={20} />
-            </span>
+            <span className="empty-state__icon" aria-hidden="true"><FolderLock size={20} /></span>
             <p className="empty-state__text">请先初始化工作区</p>
-            <Link className="text-link" to="/settings">
-              前往设置
-            </Link>
+            <Link className="text-link" to="/settings">前往设置</Link>
           </div>
         ) : null}
-
-        <label className="file-field" htmlFor="sourceFile">
-          <span className="file-field__label">选择资料文件</span>
-          <input
-            id="sourceFile"
-            name="sourceFile"
-            type="file"
-            className="file-field__input"
-            disabled={!hasWorkspace || isUploading}
-            onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
-          />
-        </label>
-
-        <div className="btn-row">
-          <Button onClick={handleUpload} disabled={!hasWorkspace || isUploading} loading={isUploading}>
-            <Upload size={16} aria-hidden="true" />
-            上传资料
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={handleRescan}
-            disabled={!hasWorkspace || isRescanning}
-            loading={isRescanning}
-          >
-            <RefreshCw size={16} aria-hidden="true" />
-            重新扫描 Vault
-          </Button>
-          {indexedCount !== null ? (
-            <span className="status-note">索引文档数：{indexedCount}</span>
-          ) : null}
+        <div className="knowledge-toolbar__controls">
+          <label className="file-field" htmlFor="sourceFile">
+            <span className="file-field__label">选择资料文件</span>
+            <input
+              id="sourceFile"
+              name="sourceFile"
+              type="file"
+              className="file-field__input"
+              disabled={!hasWorkspace || isUploading}
+              onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
+            />
+          </label>
+          <div className="btn-row">
+            <Button onClick={handleUpload} disabled={!hasWorkspace || isUploading} loading={isUploading}>
+              <Upload size={16} aria-hidden="true" />上传资料
+            </Button>
+            <Button variant="secondary" onClick={handleRescan} disabled={!hasWorkspace || isRescanning} loading={isRescanning}>
+              <RefreshCw size={16} aria-hidden="true" />重新扫描 Vault
+            </Button>
+            {indexedCount !== null ? <span className="status-note">索引文档数：{indexedCount}</span> : null}
+          </div>
         </div>
       </Card>
 
-      {questionToDisplay ? (
-        <Card title="题库草稿" icon={<FileText size={18} />} ariaLabel="题库草稿">
-          <h3 className="question-card__title">{questionToDisplay.title}</h3>
-          <p className="question-card__text">{questionToDisplay.questionText}</p>
+      {hasWorkspace ? (
+        <div className="knowledge-workspace">
+          <nav className="knowledge-resources" aria-label="知识库资源">
+            <section className="resource-group" aria-labelledby="source-group-title">
+              <div className="resource-group__heading">
+                <File size={16} aria-hidden="true" />
+                <h3 id="source-group-title">原始资料</h3>
+                <span>{sources.length}</span>
+              </div>
+              {sourcesQuery.isLoading ? <p className="status-note">正在读取资料…</p> : null}
+              {sourcesQuery.isError ? (
+                <div className="resource-error" role="alert">
+                  <p>资料读取失败</p>
+                  <Button size="sm" variant="ghost" onClick={() => sourcesQuery.refetch()}>
+                    重试读取资料
+                  </Button>
+                </div>
+              ) : null}
+              {!sourcesQuery.isLoading && !sourcesQuery.isError && sources.length === 0 ? <p className="status-note">尚未上传资料</p> : null}
+              {sources.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="resource-item"
+                  aria-current={selection?.kind === "source" && selection.id === item.id}
+                  onClick={() => selectResource({ kind: "source", id: item.id })}
+                >
+                  <span className="resource-item__title">{item.originalFilename}</span>
+                  <span className="resource-item__meta">{formatBytes(item.sizeBytes)}</span>
+                </button>
+              ))}
+            </section>
 
-          <div>
-            <p className="muted-text" style={{ marginBottom: "var(--space-2)" }}>
-              参考答案
-            </p>
-            <pre className="reference-block">{questionToDisplay.referenceAnswer}</pre>
-          </div>
+            <section className="resource-group" aria-labelledby="draft-group-title">
+              <div className="resource-group__heading">
+                <FileText size={16} aria-hidden="true" />
+                <h3 id="draft-group-title">生成草稿</h3>
+                <span>{drafts.length}</span>
+              </div>
+              {draftsQuery.isLoading ? <p className="status-note">正在读取草稿…</p> : null}
+              {!draftsQuery.isLoading && drafts.length === 0 ? <p className="status-note">上传资料后自动生成</p> : null}
+              {drafts.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="resource-item"
+                  aria-current={selection?.kind === "draft" && selection.id === item.id}
+                  onClick={() => selectResource({ kind: "draft", id: item.id })}
+                >
+                  <span className="resource-item__title">{item.title}</span>
+                  <span className="resource-item__meta">{STATUS_LABEL[item.status]}</span>
+                </button>
+              ))}
+            </section>
+          </nav>
 
-          <div className="meta-row">
-            <span>
-              主题：
-              {questionToDisplay.topics.length ? (
-                questionToDisplay.topics.map((topic) => (
-                  <span className="tag" key={topic}>
-                    {topic}
-                  </span>
-                ))
-              ) : (
-                <span className="muted-text">未标记</span>
-              )}
-            </span>
-          </div>
-
-          <div className="meta-row">
-            <span>
-              难度：<Badge tone="primary">{questionToDisplay.difficulty}</Badge>
-            </span>
-            <span>
-              掌握度：<Badge tone={MASTERY_TONE[questionToDisplay.mastery]}>{questionToDisplay.mastery}</Badge>
-            </span>
-          </div>
-
-          <p className="eval-line">关键点：{questionToDisplay.keyPoints.join("、") || "无"}</p>
-        </Card>
-      ) : (
-        <Card>
-          <div className="empty-state">
-            <span className="empty-state__icon" aria-hidden="true">
-              <FileText size={20} />
-            </span>
-            <p className="empty-state__text">暂无文档</p>
-          </div>
-        </Card>
-      )}
+          <section className="knowledge-detail" aria-label="知识内容">
+            {selection?.kind === "draft" ? (
+              <DraftReview
+                workspaceId={workspace.id}
+                selectedId={selection.id}
+                onSelectedIdChange={(id) => setSelection({ kind: "draft", id })}
+                onDirtyChange={setDraftDirty}
+                showList={false}
+                onPublicationRequested={setPublicationRunId}
+              />
+            ) : null}
+            {selectedSource ? (
+              <Card title={selectedSource.originalFilename} icon={<File size={18} />}>
+                <dl className="source-detail">
+                  <div><dt>文件类型</dt><dd>{selectedSource.contentType}</dd></div>
+                  <div><dt>文件大小</dt><dd>{formatBytes(selectedSource.sizeBytes)}</dd></div>
+                  <div><dt>上传时间</dt><dd>{formatDate(selectedSource.createdAt)}</dd></div>
+                  <div><dt>存储位置</dt><dd>{selectedSource.storedPath}</dd></div>
+                </dl>
+                {selectedSource.draftId ? (
+                  <Button variant="secondary" onClick={() => selectResource({ kind: "draft", id: selectedSource.draftId! })}>
+                    查看关联草稿
+                  </Button>
+                ) : null}
+              </Card>
+            ) : null}
+            {!selection && !draftsQuery.isLoading && !sourcesQuery.isLoading ? (
+              <Card>
+                <div className="empty-state">
+                  <span className="empty-state__icon" aria-hidden="true"><FileText size={20} /></span>
+                  <p className="empty-state__text">上传第一份资料，开始建立知识库</p>
+                </div>
+              </Card>
+            ) : null}
+          </section>
+        </div>
+      ) : null}
 
       {hasWorkspace ? (
-        <>
-          <DraftReview
-            workspaceId={workspace!.id}
-            onPublicationRequested={setPublicationRunId}
-          />
-          <ActionCenter
-            workspaceId={workspace!.id}
-            showDiagnostic={false}
-            actionType="knowledge.publish"
-            watchRunId={publicationRunId}
-            onResolved={handlePublicationResolved}
-          />
-        </>
+        <ActionCenter
+          workspaceId={workspace.id}
+          showDiagnostic={false}
+          actionType="knowledge.publish"
+          watchRunId={publicationRunId}
+          onResolved={handlePublicationResolved}
+        />
       ) : null}
 
       {error ? (

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileText, Save, Send } from "lucide-react";
+import { FileText, Pencil, Save, Send, X } from "lucide-react";
 import { ApiError } from "../../shared/api/client";
 import { toActionableError, type ActionableError } from "../../shared/api/errorAdvice";
 import { Badge } from "../../shared/ui/Badge";
@@ -8,6 +8,7 @@ import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
 import { listDrafts, requestPublication, updateDraft } from "./draftApi";
 import type { KnowledgeDraftStatus } from "./draftTypes";
+import { MarkdownView } from "./MarkdownView";
 
 const STATUS_TONE: Record<KnowledgeDraftStatus, "neutral" | "warning" | "danger" | "success"> = {
   draft: "neutral",
@@ -25,15 +26,27 @@ const STATUS_LABEL: Record<KnowledgeDraftStatus, string> = {
 
 interface DraftReviewProps {
   workspaceId: string;
+  selectedId?: string | null;
+  onSelectedIdChange?: (id: string) => void;
+  onDirtyChange?: (dirty: boolean) => void;
+  showList?: boolean;
   onPublicationRequested?: (runId: string) => void;
 }
 
-export function DraftReview({ workspaceId, onPublicationRequested }: DraftReviewProps) {
+export function DraftReview({
+  workspaceId,
+  selectedId: controlledSelectedId,
+  onSelectedIdChange,
+  onDirtyChange,
+  showList = true,
+  onPublicationRequested,
+}: DraftReviewProps) {
   const queryClient = useQueryClient();
   const queryKey = ["knowledge-drafts", workspaceId] as const;
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [localSelectedId, setLocalSelectedId] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [markdown, setMarkdown] = useState("");
+  const [isEditing, setIsEditing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<ActionableError | null>(null);
 
@@ -42,6 +55,7 @@ export function DraftReview({ workspaceId, onPublicationRequested }: DraftReview
     queryFn: () => listDrafts(workspaceId),
   });
   const drafts = draftsQuery.data ?? [];
+  const selectedId = controlledSelectedId ?? localSelectedId;
   const selected = useMemo(
     () => drafts.find((item) => item.id === selectedId) ?? drafts[0] ?? null,
     [drafts, selectedId],
@@ -56,10 +70,10 @@ export function DraftReview({ workspaceId, onPublicationRequested }: DraftReview
       setMarkdown("");
       return;
     }
-    setSelectedId(selected.id);
+    if (controlledSelectedId === undefined) setLocalSelectedId(selected.id);
     setTitle(selected.title);
     setMarkdown(selected.markdown);
-  }, [selected?.id, selected?.version]);
+  }, [controlledSelectedId, selected?.id, selected?.version]);
 
   useEffect(() => {
     if (selected?.status === "published" || selected?.status === "rejected") {
@@ -68,6 +82,28 @@ export function DraftReview({ workspaceId, onPublicationRequested }: DraftReview
   }, [selected?.status]);
 
   const editable = selected?.status === "draft" || selected?.status === "review_pending";
+  const dirty = Boolean(selected) && (title !== selected!.title || markdown !== selected!.markdown);
+
+  useEffect(() => {
+    onDirtyChange?.(isEditing && dirty);
+  }, [dirty, isEditing, onDirtyChange]);
+
+  function discardEdits() {
+    if (dirty && !globalThis.confirm("放弃未保存的修改？")) return false;
+    if (selected) {
+      setTitle(selected.title);
+      setMarkdown(selected.markdown);
+    }
+    setIsEditing(false);
+    return true;
+  }
+
+  function selectDraft(id: string) {
+    if (id === selected?.id) return;
+    if (isEditing && !discardEdits()) return;
+    setLocalSelectedId(id);
+    onSelectedIdChange?.(id);
+  }
 
   const saveMutation = useMutation({
     mutationFn: () =>
@@ -78,10 +114,12 @@ export function DraftReview({ workspaceId, onPublicationRequested }: DraftReview
     },
     onSuccess: () => {
       setMessage("草稿已保存");
+      setIsEditing(false);
       queryClient.invalidateQueries({ queryKey });
     },
     onError: (caught) => {
       if (caught instanceof ApiError && caught.code === "draft_version_changed") {
+        setIsEditing(false);
         queryClient.invalidateQueries({ queryKey });
         setError(
           toActionableError(new Error("草稿已被其他操作更新，已自动刷新"), "保存失败"),
@@ -127,7 +165,7 @@ export function DraftReview({ workspaceId, onPublicationRequested }: DraftReview
           <p className="status-note">暂无草稿，上传资料后会自动生成</p>
         ) : null}
 
-        {drafts.length > 0 ? (
+        {showList && drafts.length > 0 ? (
           <div className="draft-review__list" role="list" aria-label="知识草稿">
             {drafts.map((item) => (
               <button
@@ -135,7 +173,7 @@ export function DraftReview({ workspaceId, onPublicationRequested }: DraftReview
                 type="button"
                 className="draft-review__list-item"
                 aria-current={selected?.id === item.id}
-                onClick={() => setSelectedId(item.id)}
+                onClick={() => selectDraft(item.id)}
               >
                 <span>{item.title}</span>
                 <Badge tone={STATUS_TONE[item.status]}>{STATUS_LABEL[item.status]}</Badge>
@@ -151,30 +189,36 @@ export function DraftReview({ workspaceId, onPublicationRequested }: DraftReview
               <span>版本 {selected.version}</span>
             </div>
 
-            <div className="field">
-              <label className="field__label" htmlFor="draftTitle">标题</label>
-              <input
-                id="draftTitle"
-                name="draftTitle"
-                className="field__input"
-                value={title}
-                disabled={!editable || busy}
-                onChange={(event) => setTitle(event.target.value)}
-              />
-            </div>
+            {isEditing ? (
+              <div className="draft-review__editor">
+                <div className="field">
+                  <label className="field__label" htmlFor="draftTitle">标题</label>
+                  <input
+                    id="draftTitle"
+                    name="draftTitle"
+                    className="field__input"
+                    value={title}
+                    disabled={!editable || busy}
+                    onChange={(event) => setTitle(event.target.value)}
+                  />
+                </div>
 
-            <div className="field">
-              <label className="field__label" htmlFor="draftMarkdown">Markdown 正文</label>
-              <textarea
-                id="draftMarkdown"
-                name="draftMarkdown"
-                className="field__input field__input--textarea"
-                rows={8}
-                value={markdown}
-                disabled={!editable || busy}
-                onChange={(event) => setMarkdown(event.target.value)}
-              />
-            </div>
+                <div className="field">
+                  <label className="field__label" htmlFor="draftMarkdown">Markdown 正文</label>
+                  <textarea
+                    id="draftMarkdown"
+                    name="draftMarkdown"
+                    className="field__input field__input--textarea"
+                    rows={14}
+                    value={markdown}
+                    disabled={!editable || busy}
+                    onChange={(event) => setMarkdown(event.target.value)}
+                  />
+                </div>
+              </div>
+            ) : (
+              <MarkdownView markdown={selected.markdown} />
+            )}
 
             {selected.status === "published" && selected.publication ? (
               <p className="status-note">
@@ -194,23 +238,42 @@ export function DraftReview({ workspaceId, onPublicationRequested }: DraftReview
             ) : null}
 
             <div className="btn-row">
-              <Button
-                onClick={() => saveMutation.mutate()}
-                loading={saveMutation.isPending}
-                disabled={!editable || busy}
-              >
-                <Save size={16} aria-hidden="true" />
-                保存草稿
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => publishMutation.mutate()}
-                loading={publishMutation.isPending}
-                disabled={!editable || busy}
-              >
-                <Send size={16} aria-hidden="true" />
-                请求发布
-              </Button>
+              {isEditing ? (
+                <>
+                  <Button
+                    onClick={() => saveMutation.mutate()}
+                    loading={saveMutation.isPending}
+                    disabled={!editable || busy || !dirty}
+                  >
+                    <Save size={16} aria-hidden="true" />
+                    保存草稿
+                  </Button>
+                  <Button variant="ghost" onClick={discardEdits} disabled={busy}>
+                    <X size={16} aria-hidden="true" />
+                    取消编辑
+                  </Button>
+                </>
+              ) : (
+                <>
+                  {editable ? (
+                    <Button onClick={() => setIsEditing(true)} disabled={busy}>
+                      <Pencil size={16} aria-hidden="true" />
+                      编辑
+                    </Button>
+                  ) : null}
+                  {editable ? (
+                    <Button
+                      variant="secondary"
+                      onClick={() => publishMutation.mutate()}
+                      loading={publishMutation.isPending}
+                      disabled={busy}
+                    >
+                      <Send size={16} aria-hidden="true" />
+                      请求发布
+                    </Button>
+                  ) : null}
+                </>
+              )}
             </div>
           </div>
         ) : null}

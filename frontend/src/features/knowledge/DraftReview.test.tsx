@@ -56,16 +56,20 @@ describe("DraftReview", () => {
     vi.restoreAllMocks();
   });
 
-  it("loads and lists drafts, then shows the selected draft body", async () => {
+  it("renders the selected draft and only shows source after entering edit mode", async () => {
     mockFetchDrafts((url) => {
       if (url.includes("/api/knowledge/drafts?")) return [draft];
       return [];
     });
 
     render(<DraftReview workspaceId="w1" />, { wrapper });
-    expect(await screen.findByText("缓存穿透")).toBeInTheDocument();
-    expect(screen.getByLabelText("Markdown 正文")).toHaveValue("# 缓存穿透\n");
+    expect(await screen.findByRole("heading", { level: 1, name: "缓存穿透" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "缓存穿透" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Markdown 正文")).toBeNull();
     expect(screen.getByText("版本 1")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    expect(screen.getByLabelText("Markdown 正文")).toHaveValue("# 缓存穿透\n");
   });
 
   it("saves the draft with the current version", async () => {
@@ -81,7 +85,8 @@ describe("DraftReview", () => {
     });
 
     render(<DraftReview workspaceId="w1" />, { wrapper });
-    await screen.findByText("缓存穿透");
+    await screen.findByRole("heading", { level: 1, name: "缓存穿透" });
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
     fireEvent.change(screen.getByLabelText("标题"), { target: { value: "缓存穿透（修订）" } });
     fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
 
@@ -120,13 +125,33 @@ describe("DraftReview", () => {
     });
 
     render(<DraftReview workspaceId="w1" />, { wrapper });
-    await screen.findByText("缓存穿透");
+    await screen.findByRole("heading", { level: 1, name: "缓存穿透" });
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
     fireEvent.change(screen.getByLabelText("标题"), { target: { value: "本地编辑" } });
     fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
 
     expect(await screen.findByText(/草稿已被其他操作更新/)).toBeInTheDocument();
     expect(await screen.findByText("服务端已改")).toBeInTheDocument();
-    expect(screen.getByLabelText("Markdown 正文")).toHaveValue("# 服务端\n");
+    expect(screen.getByRole("heading", { level: 1, name: "服务端" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Markdown 正文")).toBeNull();
+  });
+
+  it("confirms before discarding unsaved edits", async () => {
+    mockFetchDrafts((url) => (url.includes("/api/knowledge/drafts?") ? [draft] : []));
+    const confirm = vi.spyOn(globalThis, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+
+    render(<DraftReview workspaceId="w1" />, { wrapper });
+    await screen.findByRole("heading", { level: 1, name: "缓存穿透" });
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    fireEvent.change(screen.getByLabelText("Markdown 正文"), { target: { value: "# 本地修改" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "取消编辑" }));
+    expect(confirm).toHaveBeenCalledWith("放弃未保存的修改？");
+    expect(screen.getByLabelText("Markdown 正文")).toHaveValue("# 本地修改");
+
+    fireEvent.click(screen.getByRole("button", { name: "取消编辑" }));
+    expect(screen.queryByLabelText("Markdown 正文")).toBeNull();
+    expect(screen.getByRole("heading", { level: 1, name: "缓存穿透" })).toBeInTheDocument();
   });
 
   it("requests publication and shows the waiting state", async () => {
@@ -148,7 +173,7 @@ describe("DraftReview", () => {
       <DraftReview workspaceId="w1" onPublicationRequested={onPublicationRequested} />,
       { wrapper },
     );
-    await screen.findByText("缓存穿透");
+    await screen.findByRole("heading", { level: 1, name: "缓存穿透" });
     fireEvent.click(screen.getByRole("button", { name: "请求发布" }));
 
     expect(await screen.findByText("已请求发布，等待人工确认")).toBeInTheDocument();
@@ -208,7 +233,7 @@ describe("DraftReview", () => {
     });
 
     render(<DraftReview workspaceId="w1" />, { wrapper });
-    await screen.findByText("缓存穿透");
+    await screen.findByRole("heading", { level: 1, name: "缓存穿透" });
     fireEvent.click(screen.getByRole("button", { name: "请求发布" }));
 
     expect(await screen.findByText(/Vault 文档已被外部修改/)).toBeInTheDocument();

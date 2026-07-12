@@ -38,12 +38,12 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 /** Routes fetch by URL so DraftReview/ActionCenter queries resolve to empty. */
-function mockRoute(routes: Record<string, (init?: RequestInit) => unknown>) {
+function mockRoute(routes: Record<string, (init?: RequestInit, url?: string) => unknown>) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     for (const [prefix, handler] of Object.entries(routes)) {
       if (url.includes(prefix)) {
-        const result = handler(init);
+        const result = handler(init, url);
         if (result instanceof Response) return result;
         return Response.json(result);
       }
@@ -68,18 +68,29 @@ describe("KnowledgePage", () => {
 
   it("uploads source and displays the generated draft question", async () => {
     const onDraftQuestionReady = vi.fn();
+    let uploaded = false;
+    const source = {
+      id: "src1", workspaceId: "w1", originalFilename: "cache.txt",
+      storedPath: "artifacts/review/sources/source_1.txt", contentType: "text/plain",
+      sizeBytes: 15, createdAt: "2026-07-12T10:00:00Z", draftId: "d1",
+    };
+    const generatedDraft = {
+      id: "d1", workspaceId: "w1", sessionId: null, runId: null,
+      agentType: null, domain: "review", documentType: "question",
+      documentId: "q1", title: "缓存穿透", markdown: "# 缓存穿透",
+      contentPath: "artifacts/review/drafts/d1.md", sourceRefs: [],
+      relationRefs: [], status: "draft", version: 1, contentHash: "abc",
+      createdAt: "now", updatedAt: "now",
+    };
     const fetchMock = mockRoute({
-      "/api/knowledge/sources": () => ({
-        draft: {
-          id: "d1", workspaceId: "w1", sessionId: null, runId: null,
-          agentType: null, domain: "review", documentType: "question",
-          documentId: "q1", title: "缓存穿透", markdown: "# 缓存穿透",
-          contentPath: "artifacts/review/drafts/d1.md", sourceRefs: [],
-          relationRefs: [], status: "draft", version: 1, contentHash: "abc",
-          createdAt: "now", updatedAt: "now",
-        },
-        question,
-      }),
+      "/api/knowledge/sources": (init) => {
+        if (init?.method === "POST") {
+          uploaded = true;
+          return { source, draft: generatedDraft, question };
+        }
+        return uploaded ? [source] : [];
+      },
+      "/api/knowledge/drafts?": () => uploaded ? [generatedDraft] : [],
     });
 
     render(
@@ -97,12 +108,12 @@ describe("KnowledgePage", () => {
     fireEvent.click(screen.getByRole("button", { name: "上传资料" }));
 
     await waitFor(() => expect(onDraftQuestionReady).toHaveBeenCalledWith(question));
-    const form = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/knowledge/sources"))?.[1]?.body as FormData;
+    const form = fetchMock.mock.calls.find(
+      ([url, init]) => String(url).includes("/api/knowledge/sources") && init?.method === "POST",
+    )?.[1]?.body as FormData;
     expect(form.get("workspaceId")).toBe("w1");
     expect(form.get("workspacePath")).toBeNull();
-    expect(await screen.findByText("缓存穿透")).toBeInTheDocument();
-    expect(screen.getByText("缓存穿透是什么？")).toBeInTheDocument();
-    expect(screen.getByText("关键点：缓存空值、布隆过滤器")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "缓存穿透" })).toBeInTheDocument();
   });
 
   it("rescans the vault and displays indexed count", async () => {
@@ -142,8 +153,43 @@ describe("KnowledgePage", () => {
     expect(screen.getByText("下一步：选择一份 txt、Markdown 或 PDF 资料")).toBeInTheDocument();
   });
 
-  it("renders the draft review and publish action center when a workspace exists", async () => {
+  it("keeps upload available and retries a failed source list", async () => {
+    let sourceReads = 0;
     mockRoute({
+      "/api/knowledge/sources?": () => {
+        sourceReads += 1;
+        return sourceReads === 1
+          ? Response.json({ code: "api_error", message: "读取失败" }, { status: 500 })
+          : [];
+      },
+    });
+
+    render(
+      <KnowledgePage
+        workspace={workspace}
+        draftQuestion={null}
+        onDraftQuestionReady={vi.fn()}
+        onVaultRescanned={vi.fn()}
+      />,
+      { wrapper },
+    );
+
+    expect(await screen.findByText("资料读取失败")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "上传资料" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "重试读取资料" }));
+    expect(await screen.findByText("尚未上传资料")).toBeInTheDocument();
+    expect(sourceReads).toBe(2);
+  });
+
+  it("groups persisted source documents and generated drafts", async () => {
+    mockRoute({
+      "/api/knowledge/sources?": () => [
+        {
+          id: "src1", workspaceId: "w1", originalFilename: "缓存资料.md",
+          storedPath: "artifacts/review/sources/source_1.md", contentType: "text/markdown",
+          sizeBytes: 1024, createdAt: "2026-07-12T10:00:00Z", draftId: "d1",
+        },
+      ],
       "/api/knowledge/drafts?": () => [
         {
           id: "d1", workspaceId: "w1", sessionId: null, runId: null,
@@ -166,8 +212,23 @@ describe("KnowledgePage", () => {
       { wrapper },
     );
 
-    expect(await screen.findByRole("heading", { name: "草稿审核" })).toBeInTheDocument();
-    expect(await screen.findByText("缓存穿透")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "原始资料" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "生成草稿" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /缓存资料\.md/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /缓存穿透/ })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "缓存穿透" })).toBeInTheDocument();
+
+    const confirm = vi.spyOn(globalThis, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    fireEvent.change(screen.getByLabelText("Markdown 正文"), { target: { value: "# 未保存修改" } });
+    fireEvent.click(screen.getByRole("button", { name: /缓存资料\.md/ }));
+    expect(confirm).toHaveBeenCalledWith("放弃未保存的修改？");
+    expect(screen.getByLabelText("Markdown 正文")).toHaveValue("# 未保存修改");
+
+    fireEvent.click(screen.getByRole("button", { name: /缓存资料\.md/ }));
+    expect(screen.getByRole("heading", { name: "缓存资料.md" })).toBeInTheDocument();
+    expect(screen.getByText("artifacts/review/sources/source_1.md")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "查看关联草稿" })).toBeInTheDocument();
     // knowledge page hides the diagnostic test button
     expect(screen.queryByRole("button", { name: "运行确认测试" })).toBeNull();
   });

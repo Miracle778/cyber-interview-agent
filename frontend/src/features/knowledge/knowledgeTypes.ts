@@ -9,3 +9,14 @@ export interface VaultDocument {
   status: DocumentStatus;
   updatedAt: string;
 }
+
+export interface KnowledgeSource {
+  id: string;
+  workspaceId: string;
+  originalFilename: string;
+  storedPath: string;
+  contentType: string;
+  sizeBytes: number;
+  createdAt: string;
+  draftId: string | null;
+}
