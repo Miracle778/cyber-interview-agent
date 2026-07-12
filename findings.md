@@ -46,6 +46,7 @@
 
 ## Runtime Middleware 架构决策
 
+- Middleware 是跨 R1-R8 的全局架构规则，权威定义迁移到产品总设计；R1 shared foundation 只保留该阶段的落地引用与兼容边界。
 - 现有 HITL 使用 LangGraph `interrupt`/`Command(resume=...)`，但 action 持久化、审批和恢复由项目服务编排，尚无 middleware 抽象。
 - 后续保留 HITL repository、receipt、handler 和领域幂等语义，在其上增加 middleware/adapter；知识发布仍保持显式 Graph/Service 状态机。
 - token/context 用量、context budget、压缩触发、会话标题总结、tracing、脱敏和普通工具审批属于跨 Agent 横切能力，优先实现为可组合 middleware。

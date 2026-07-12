@@ -80,7 +80,38 @@ Provider、模型选择、LangGraph Runtime、会话恢复、HITL 和知识库�
 - 长会话保存结构化状态与压缩摘要，不依赖无限增长的完整上下文。
 - 模拟面试由主 Agent 委派面试子 Agent，面试结束后只把结构化总结交回主 Agent。
 
-### 3.4 数据与知识库
+### 3.4 Middleware 架构规则
+
+Runtime 使用统一 middleware pipeline 承载跨 Graph、跨 Agent、与具体业务节点无关的横切能力。满足以下多数条件的能力优先实现为 middleware：多个 Agent 使用相同触发时机和规则；关注模型、消息、工具或 run 生命周期而非领域状态转换；可通过 hook 或调用包装完成；可统一降级；具有稳定、可组合、可测试的窄契约。
+
+Pipeline 固定为三层并按顺序执行：
+
+1. **Guard middleware**：权限和 scope、HITL 拦截、最大节点步数、工具调用数、运行时间、token/费用预算、无限循环和无进展检测；
+2. **Invocation middleware**：模型/工具调用包装、token/费用/耗时统计、超时、限流、重试、fallback、schema 校验、tracing、错误归一化和脱敏；
+3. **Post-processing middleware**：会话标题、阶段摘要、待办事项候选、主题标签、关键结论、长期记忆候选和下一步建议。
+
+候选能力包括：
+
+- **模型治理**：token/context/费用/耗时、context budget、压缩、限流、重试、fallback 和响应格式校验；
+- **运行保护**：无限循环、最大步骤、重复工具调用、无状态进展、连续错误、超时、费用熔断和取消传播；
+- **会话增强**：标题、摘要、待办候选、主题分类、关键结论、偏好和记忆候选；
+- **工具治理**：参数 schema、scope、审批、频率限制、只读缓存、敏感参数清理和重复副作用拦截；
+- **可观测性**：tracing、审计、质量评分、低置信度标记、模型/Prompt 版本和统一指标；
+- **体验事件**：长任务进度、失败恢复建议、预算预警和统一状态说明。
+
+无限循环检测综合重复节点路径、工具名与规范化参数、连续相同错误、token 增长、连续无产品状态变化、运行时间和费用预算。软阈值产生诊断事件并允许一次受控纠偏；硬阈值终止 run，保存稳定错误码和恢复说明。Middleware 不得自动重复启动新 run。
+
+待办事项采用“候选提取 + 领域服务确认”：post-processing middleware 只输出带来源、置信度、建议标题、截止时间和关联对象的候选；Todo Service 负责去重、持久化、状态转换、撤销和用户确认。Middleware 不得静默创建不可撤销的正式待办。
+
+HITL 采用分层方案：保留 `HitlService`、pending action repository、resolution receipt、handler 和 `interrupt()/Command(resume=...)` 的持久化语义；在其上增加 middleware/adapter，统一普通工具审批和 action 创建模板。知识发布等复杂领域审批继续使用显式 Graph 节点与 handler。
+
+以下能力不得仅由 middleware 隐藏实现：知识发布、草稿状态转换、Vault 写入、索引更新、用户必须理解的业务分支、长事务和补偿流程，以及依赖领域 version/hash/operation id 的副作用。它们必须保留在显式 Graph 或应用服务中。
+
+每个 middleware 必须声明适用范围、执行顺序、持久化边界、失败/降级策略、幂等键、事件与指标，以及禁止承载的领域副作用。首批范围限定为 token/context 统计、context budget 与上下文压缩、会话标题总结、待办事项候选、无限循环检测和 HITL adapter。
+
+采用 middleware 的收益是一次实现供全部 Agent/Graph 复用、业务节点保持聚焦、安全成本质量规则统一、新 Agent 默认获得治理能力，并支持独立测试、替换、开关和观测。代价是执行顺序、共享状态、额外模型调用和失败传播更复杂，因此禁止形成持有全部 Runtime 状态的“大中间件”。
+
+### 3.5 数据与知识库
 
 - Markdown + YAML frontmatter 是用户可读、可迁移的长期可信数据。
 - Obsidian-compatible Vault 可以脱离本项目独立阅读、编辑、搜索和备份。
@@ -88,7 +119,7 @@ Provider、模型选择、LangGraph Runtime、会话恢复、HITL 和知识库�
 - 第一版检索使用 metadata、关键词搜索和关系索引；语义检索按实际质量需求后加。
 - Pydantic schema 约束 Provider 输出和 Agent 结构化产物。
 
-### 3.5 Provider
+### 3.6 Provider
 
 - 支持保存多个 Provider，并在 Provider 下保存多个模型。
 - 第一版同时定义 OpenAI-compatible 和 Anthropic-compatible adapter。

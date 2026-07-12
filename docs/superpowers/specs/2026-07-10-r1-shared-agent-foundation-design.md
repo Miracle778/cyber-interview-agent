@@ -405,56 +405,9 @@ LangGraph checkpoint 只用于恢复 Graph 执行状态。
 
 ### 7.6 Middleware 设计规则
 
-后续 Runtime 增加统一 middleware 层，用于承载跨 Graph、跨 Agent、与具体业务节点无关的横切能力。判断一项功能是否应实现为 middleware，至少满足以下多数条件：
+全局 middleware 归属规则、三层 pipeline、候选能力、收益与禁止边界以产品总设计的“3.4 Middleware 架构规则”为权威来源，本 R1 文档不重复定义。
 
-- 对多个 Graph/Agent 使用相同触发时机和处理规则；
-- 关注模型调用、消息、工具调用或 run 生命周期，而不是领域状态转换；
-- 可以通过 before/after hook、包装调用或标准事件完成；
-- 失败时能够采用统一降级策略，不应部分提交领域副作用；
-- 输入输出可以定义稳定、可测试、可组合的窄契约；
-- middleware 顺序、幂等性和可观测性能够明确说明。
-
-优先通过 middleware 实现：
-
-- 模型调用 token、context、耗时和费用统计；
-- context budget 检查、消息裁剪和上下文压缩触发；
-- 会话标题自动总结、待办事项候选提取、关键结论和长期记忆候选提取；
-- 通用 tracing、审计、敏感信息脱敏、错误归一化和重试策略；
-- 普通工具调用的统一 approve/edit/reject 拦截。
-
-Middleware pipeline 固定分为三层，按以下顺序执行：
-
-1. **Guard middleware**：权限和 scope、HITL 拦截、最大节点步数、工具调用数、运行时间、token/费用预算、无限循环和无进展检测；
-2. **Invocation middleware**：模型/工具调用包装、token/费用/耗时统计、超时、限流、重试、fallback、schema 校验、tracing、错误归一化和脱敏；
-3. **Post-processing middleware**：会话标题、阶段摘要、待办事项候选、主题标签、关键结论、长期记忆候选和下一步建议。
-
-无限循环检测必须综合多个信号，不能只依赖固定步数：重复节点路径、重复工具名与规范化参数、连续相同错误、token 持续增长、连续多轮无产品状态变化、运行时间和费用预算。达到软阈值时先产生诊断事件并允许一次受控纠偏；达到硬阈值时终止 run，保存稳定错误码和可恢复说明。不得由 middleware 自动重复启动新 run。
-
-待办事项采用“候选提取 + 领域服务确认”边界。Post-processing middleware 只输出带来源消息、置信度、建议标题、截止时间和关联对象的候选项；Todo Service 负责去重、持久化、状态转换、撤销和用户确认。Middleware 不得静默创建不可撤销的正式待办。
-
-候选能力目录：
-
-- **模型治理**：token/context/费用/耗时、context budget、压缩、限流、重试、fallback、响应格式校验；
-- **运行保护**：无限循环、最大步骤、重复工具调用、无状态进展、连续错误、超时、费用熔断和取消传播；
-- **会话增强**：标题、摘要、待办候选、主题分类、关键结论、偏好和记忆候选；
-- **工具治理**：参数 schema、scope、审批、频率限制、只读缓存、敏感参数清理和重复副作用拦截；
-- **可观测性**：tracing、审计、质量评分、低置信度标记、模型/Prompt 版本和统一指标；
-- **体验事件**：长任务进度、失败恢复建议、预算预警和统一状态说明。
-
-首批只实现六项：token/context 统计、context budget 与上下文压缩、会话标题总结、待办事项候选提取、无限循环检测、HITL middleware adapter。其他候选项保留为后续扩展，不得在首批中顺带实现。
-
-不应仅通过 middleware 隐藏实现：
-
-- 知识发布、草稿版本推进、Vault 写入和索引更新等领域状态机；
-- 需要用户明确理解的业务分支、长事务和补偿流程；
-- 依赖 action version、content hash、operation id 或领域幂等键的副作用；
-- 必须在 Graph 拓扑中显式表达的编排步骤。
-
-HITL 采用分层方案：保留现有 `HitlService`、pending action repository、resolution receipt、handler 和 `interrupt()/Command(resume=...)` 持久化语义；在其上补一层 middleware/adapter，统一普通工具审批和 action 创建模板。`knowledge.publish` 等复杂领域审批继续使用显式 Graph 节点与 handler，不把业务状态机迁入 middleware。
-
-所有 middleware 必须声明：适用范围、执行顺序、持久化边界、失败/降级策略、幂等键、产生的事件与指标，以及不允许承载的领域副作用。Graph 或 Agent 新增横切能力前，先完成“middleware / 显式节点 / 应用服务”归属判断，禁止在各 Graph 中复制相同包装逻辑。
-
-采用 middleware 的预期收益是：一次实现供全部 Agent/Graph 复用；业务节点只表达领域编排；安全、成本和质量策略保持一致；新 Agent 默认获得基础治理；每项能力可独立测试、替换、开关和观测；执行预算和错误语义可以集中配置。对应代价是 pipeline 顺序、共享状态、额外模型调用和失败传播更复杂，因此 middleware 必须保持单一职责，禁止形成一个拥有全部 Runtime 状态的“大中间件”。
+R1 的落地边界是：现有 HITL 继续使用 `HitlService`、pending action repository、resolution receipt、handler 和 LangGraph `interrupt()/Command(resume=...)`；后续 middleware adapter 只统一普通工具审批和 action 创建模板，不迁移 `knowledge.publish` 的领域状态机。R1.2 遗留的 token/context、压缩和标题能力按总设计的首批 middleware 范围补齐。
 
 ## 8. SSE 事件协议
 
