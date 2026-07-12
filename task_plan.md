@@ -19,15 +19,15 @@
 1. **原始资料持久化与列表 API（完成）**
 2. **知识库分组工作区与 Markdown 阅读/编辑（完成）**
 3. **按需人工确认与复习页布局（完成）**
-4. **浏览器、最终回归与文档收尾（完成，待合并）**
+4. **浏览器、最终回归与文档收尾（完成，已合入 main）**
 
 R1.2 上下文压缩与 token/context 用量记录已确认遗漏；作为下一个独立 Pre-R2 基础切片补齐，不混入当前 UI 改造。
 
 ## 当前分支
 
-- 分支：`codex/pre-r2-experience-stabilization`
-- worktree：`/private/tmp/cyber-interview-agent-pre-r2`
-- 基线：`main@3031b40`
+- 分支：`main`
+- worktree：`/Users/miracle778/Project/cyber-interview-agent-new`
+- 合入提交：`b27f648`
 - 当前设计：`docs/superpowers/specs/2026-07-12-pre-r2-experience-stabilization-design.md`
 - 当前实施：`docs/superpowers/plans/2026-07-12-pre-r2-experience-stabilization.md`
 

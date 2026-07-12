@@ -112,3 +112,9 @@
 - 应用内浏览器完成批准、刷新、后端重启恢复；1280px 无溢出且控制台 0 error/warning。
 - learning 七件套与 verification 已按最终证据生成，文档门禁和分支复核通过。
 - 下一产品任务：R1.2 context compression and token/context usage foundation。
+
+## 2026-07-12：Pre-R2 合入 main
+
+- `codex/pre-r2-experience-stabilization` 已 fast-forward 合入 `main@b27f648`。
+- verification 与 learning 七件套已显式同步到主仓库并通过文档门禁。
+- 合并后后端 254 passed；前端 65 passed；build 通过。
