@@ -27,6 +27,14 @@
 - `docs/verification/` 和 `docs/learning/` 本地保留，合并后显式同步。
 - 当前切片由 Codex 负责到底，不委派。
 
+## Pre-R2 体验稳定化发现
+
+- 知识上传只保存随机化 source 文件和生成草稿，没有 source metadata 或列表 API；“暂无文档”不是单纯前端渲染错误。
+- `DraftReview` 始终显示 Markdown textarea，缺少阅读态；前端当前没有 Markdown 渲染依赖。
+- 非诊断 `ActionCenter` 在无 pending action 时仍渲染空卡片，与按需人工确认目标冲突。
+- 复习页已经具备单题持久化链路，本切片只调整信息层级，不提前加入 R2 行为。
+- roadmap 明确要求 R1 提供上下文压缩与 token/context 用量记录，但 R1.2 实施计划和验收没有相应任务；当前仅有 tokenUsage 脱敏保留测试，基础能力尚未实现。
+
 ## R1.5 修正结果
 
 - publish-request 成功后以 version/hash 把草稿推进为 `review_pending`；启动后状态推进失败会取消 run。

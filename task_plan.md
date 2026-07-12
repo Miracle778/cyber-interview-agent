@@ -14,25 +14,22 @@
 | R1.6 | 场景可用并已合入 main | 单题复习迁移到共享 Runtime、真实 Provider 与持久化发布闭环 |
 | R2-R8 | 待开始 | 见正式产品路线 |
 
-## 当前任务：R1.6 单题复习 Runtime 集成
+## 当前任务：Pre-R2 页面与知识库体验稳定化
 
-1. **模型网关与单题 Graph（已完成）**
-   - 解析 run binding snapshot，复用现有 Provider/SecretStore。
-   - 结构化评估、流式报告、session-report 草稿和发布 interrupt。
-2. **Runtime 与 API 收口（已完成）**
-   - 注册 `review.single/v1`、必需模型角色和工具 scope。
-   - 覆盖错误恢复并移除旧 `/api/review/*` 绕过接口。
-3. **持久化 Review UI（已完成）**
-   - 代码、组件测试与本地 mock API 最小浏览器 happy path 已完成。
-4. **验收与合并（已完成）**
-   - 自动回归、隔离浏览器/重启、两种真实 Provider 与文档门禁均完成。
-   - `codex/r1-6-review-runtime-integration` 已 fast-forward 合入 main，本地 verification/learning 已同步。
+1. **原始资料持久化与列表 API（待实施）**
+2. **知识库分组工作区与 Markdown 阅读/编辑（待实施）**
+3. **按需人工确认与复习页布局（待实施）**
+4. **浏览器、最终回归与文档收尾（待实施）**
+
+R1.2 上下文压缩与 token/context 用量记录已确认遗漏；作为下一个独立 Pre-R2 基础切片补齐，不混入当前 UI 改造。
 
 ## 当前分支
 
-- 分支：`main`
+- 分支：`codex/pre-r2-experience-stabilization`
 - worktree：`/Users/miracle778/Project/cyber-interview-agent-new`
-- R1.6 完成提交：`eaf5edf`
+- 基线：`main@3031b40`
+- 当前设计：`docs/superpowers/specs/2026-07-12-pre-r2-experience-stabilization-design.md`
+- 当前实施：`docs/superpowers/plans/2026-07-12-pre-r2-experience-stabilization.md`
 
 ## 执行预算
 
@@ -49,12 +46,12 @@
 - 已掌握：尚未由用户验收。
 - 待掌握：R1.1-R1.5 架构和代码链路。
 - 待实践：发布请求到 Vault 写入追踪、SQLite 并发诊断。
-- 学习练习不阻塞 R1.5 修正、合并或 R1.6。
+- 学习练习不阻塞当前 Pre-R2 产品切片。
 
 ## 权威资料
 
 - 工作流：`docs/superpowers/specs/2026-07-11-dual-track-development-workflow-design.md`
 - 产品路线：`docs/superpowers/specs/2026-07-10-product-development-roadmap-design.md`
-- 当前设计：`docs/superpowers/specs/2026-07-10-r1-shared-agent-foundation-design.md`（R1.6 章节）
-- 当前实施：`docs/superpowers/plans/2026-07-10-r1-6-review-integration.md`
+- 当前设计：`docs/superpowers/specs/2026-07-12-pre-r2-experience-stabilization-design.md`
+- 当前实施：`docs/superpowers/plans/2026-07-12-pre-r2-experience-stabilization.md`
 - 历史归档：`docs/superpowers/history/2026-07-12-pre-context-optimization/`
