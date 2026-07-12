@@ -59,7 +59,7 @@
 - Produces: `SettingsStatusItem` and `<SettingsOverview items recommendedSection onSelect />`.
 - Consumes: `listProviders`, `getWorkspaceModelBindings`, and `listActions` with existing response types.
 
-- [ ] **Step 1: Add failing navigation and overview component tests**
+- [x] **Step 1: Add failing navigation and overview component tests**
 
 Create tests with these exact public contracts:
 
@@ -97,7 +97,7 @@ fireEvent.click(screen.getByRole("button", { name: "下一步：配置模型服�
 expect(onSelect).toHaveBeenCalledWith("models");
 ```
 
-- [ ] **Step 2: Run the new component tests and verify RED**
+- [x] **Step 2: Run the new component tests and verify RED**
 
 Run:
 
@@ -111,7 +111,7 @@ cd frontend
 
 Expected: FAIL because both modules are missing.
 
-- [ ] **Step 3: Implement the navigation and overview presentational boundaries**
+- [x] **Step 3: Implement the navigation and overview presentational boundaries**
 
 Define in `SettingsNavigation.tsx`:
 
@@ -150,7 +150,7 @@ interface SettingsOverviewProps {
 
 Render one status list with icon, title, textual state, description, and a ghost “查看” button for each item. Render exactly one primary CTA using these labels: 工作区 → `下一步：初始化工作区`, models → `下一步：配置模型服务`, diagnostics → `下一步：运行诊断`.
 
-- [ ] **Step 4: Add failing SettingsPage integration tests for default overview and single-panel routing**
+- [x] **Step 4: Add failing SettingsPage integration tests for default overview and single-panel routing**
 
 Update `installSettingsFetch` to return:
 
@@ -176,7 +176,7 @@ expect(screen.queryByText("Agent Runtime")).not.toBeInTheDocument();
 
 For `workspace=null`, assert the overview CTA is `下一步：初始化工作区`, click it, and assert the Workspace Path field becomes visible.
 
-- [ ] **Step 5: Run SettingsPage tests and verify RED**
+- [x] **Step 5: Run SettingsPage tests and verify RED**
 
 Run:
 
@@ -187,7 +187,7 @@ cd frontend
 
 Expected: FAIL because SettingsPage still renders the flat stack and has no overview navigation.
 
-- [ ] **Step 6: Implement summary queries and the single content panel**
+- [x] **Step 6: Implement summary queries and the single content panel**
 
 In `SettingsPage`, add:
 
@@ -242,7 +242,7 @@ const recommendedSection: Exclude<SettingsSection, "overview"> = !workspaceId
 
 Render `settings-layout` with `SettingsNavigation` and one `settings-content` panel. Mount only the selected section. Keep the existing Workspace form in the workspace section; render `ProviderManager` then `ModelBindings` only in models; diagnostics will be temporarily rendered as its existing stack until Task 3. Disable models and diagnostics navigation while Workspace restoration is incomplete, but keep the overview and workspace available.
 
-- [ ] **Step 7: Add the base settings shell styles**
+- [x] **Step 7: Add the base settings shell styles**
 
 Add desktop rules:
 
@@ -267,7 +267,7 @@ Add desktop rules:
 
 Use existing semantic variables for surfaces, border, text, and focus. At `max-width: 1023px`, change to one column, remove sticky positioning, and render `.settings-nav__list` as a wrapping grid with `grid-template-columns: repeat(2, minmax(0, 1fr))`; at `max-width: 520px`, use one column. Do not use horizontal overflow.
 
-- [ ] **Step 8: Run Task 1 targeted tests and typecheck**
+- [x] **Step 8: Run Task 1 targeted tests and typecheck**
 
 Run:
 
@@ -284,7 +284,7 @@ cd frontend
 
 Expected: all selected tests PASS and TypeScript exits 0.
 
-- [ ] **Step 9: Record Task 1 evidence and commit**
+- [x] **Step 9: Record Task 1 evidence and commit**
 
 Append the exact command and count to `docs/verification/settings-experience-redesign.md`, then:
 
@@ -312,7 +312,7 @@ git commit -m "feat(settings): add configuration overview"
 - Produces: Provider creation trigger `aria-expanded` and controlled region `provider-create-form`.
 - Extends: `<ModelBindings workspaceId refreshKey? onBindingsChanged? />`; its four-role save payload remains unchanged.
 
-- [ ] **Step 1: Add failing Provider creation disclosure tests**
+- [x] **Step 1: Add failing Provider creation disclosure tests**
 
 Update the existing ProviderManager lifecycle test to assert:
 
@@ -329,7 +329,7 @@ expect(screen.getByLabelText("Provider 名称")).toBeInTheDocument();
 
 After filling and submitting with `保存 Provider`, assert the form disappears and the new Provider card remains. Add a dirty-close test that fills the name, clicks `取消添加`, declines `globalThis.confirm("放弃未保存的 Provider 配置？")`, and asserts the form remains open; accepting closes and clears the fields.
 
-- [ ] **Step 2: Run Provider tests and verify RED**
+- [x] **Step 2: Run Provider tests and verify RED**
 
 Run:
 
@@ -340,7 +340,7 @@ cd frontend
 
 Expected: FAIL because the creation form is always visible and has no disclosure semantics.
 
-- [ ] **Step 3: Implement the Provider creation disclosure**
+- [x] **Step 3: Implement the Provider creation disclosure**
 
 Add:
 
@@ -359,7 +359,7 @@ function closeCreateForm() {
 
 Move the four creation fields and actions into `<div id="provider-create-form">`. Render a secondary `添加 Provider` trigger with `aria-expanded` and `aria-controls`. Inside the region use `保存 Provider` as the only primary action and `取消添加` as a ghost action. On successful create, clear secrets and close the region. Existing Provider cards must remain visible regardless of form state.
 
-- [ ] **Step 4: Add model-binding empty-state guidance**
+- [x] **Step 4: Add model-binding empty-state guidance**
 
 When no enabled model is available, replace the current single warning line with:
 
@@ -384,7 +384,7 @@ interface ModelBindingsProps {
 
 Call `onBindingsChanged?.()` only after `replaceWorkspaceModelBindings` succeeds. In `SettingsPage`, pass a callback that invalidates `["workspace-model-bindings", workspaceId]` so returning to overview immediately shows the new binding count. Add a test that saves four roles and asserts the callback fires once.
 
-- [ ] **Step 5: Run model-service tests and typecheck**
+- [x] **Step 5: Run model-service tests and typecheck**
 
 Run:
 
@@ -400,7 +400,7 @@ cd frontend
 
 Expected: all selected tests PASS and TypeScript exits 0.
 
-- [ ] **Step 6: Record Task 2 evidence and commit**
+- [x] **Step 6: Record Task 2 evidence and commit**
 
 Append the exact command and count to verification, then:
 
@@ -426,7 +426,7 @@ git commit -m "feat(settings): disclose model configuration progressively"
 - Consumes: pending actions from `actionsQuery` in Task 1.
 - Preserves: `RuntimeDiagnostics`, `SecurityDiagnostics`, and diagnostic `ActionCenter` behavior.
 
-- [ ] **Step 1: Add failing disclosure component tests**
+- [x] **Step 1: Add failing disclosure component tests**
 
 Create:
 
@@ -446,7 +446,7 @@ expect(screen.getByRole("region", { name: "Agent Runtime" })).toHaveTextContent(
 
 Render two disclosures and assert expanding one does not collapse the other.
 
-- [ ] **Step 2: Run disclosure tests and verify RED**
+- [x] **Step 2: Run disclosure tests and verify RED**
 
 Run:
 
@@ -457,7 +457,7 @@ cd frontend
 
 Expected: FAIL because `SettingsDisclosure` is missing.
 
-- [ ] **Step 3: Implement `SettingsDisclosure`**
+- [x] **Step 3: Implement `SettingsDisclosure`**
 
 Use internal state initialized from `defaultExpanded`. The trigger must be a native button with `aria-expanded`, `aria-controls="<id>-panel"`, and a Chevron icon that is decorative. Mount children only while expanded so hidden diagnostics do not begin network work. The panel must be:
 
@@ -469,7 +469,7 @@ Use internal state initialized from `defaultExpanded`. The trigger must be a nat
 
 Add an effect that opens the region if `defaultExpanded` changes from false to true, so a newly observed pending action can reveal approval.
 
-- [ ] **Step 4: Add failing SettingsPage diagnostic integration tests**
+- [x] **Step 4: Add failing SettingsPage diagnostic integration tests**
 
 Navigate to 运行诊断 and assert:
 
@@ -487,7 +487,7 @@ expect(await screen.findByRole("button", { name: "运行自检" })).toBeInTheDoc
 
 Mock one pending action, navigate to diagnostics, and assert the 人工确认 trigger has `aria-expanded="true"` and its approve/reject controls are visible.
 
-- [ ] **Step 5: Integrate independent diagnostic disclosures**
+- [x] **Step 5: Integrate independent diagnostic disclosures**
 
 Replace the diagnostic flat stack with three disclosures:
 
@@ -510,11 +510,11 @@ Replace the diagnostic flat stack with three disclosures:
 
 Do not alter diagnostic components or ActionCenter props.
 
-- [ ] **Step 6: Finish responsive, focus, and reduced-motion styles**
+- [x] **Step 6: Finish responsive, focus, and reduced-motion styles**
 
 Add styles for `.settings-overview__item`, `.settings-disclosure__trigger`, and `.settings-disclosure__panel` using existing surface/border tokens. Require `min-height: 44px`, wrapping button rows, `min-width: 0`, and `overflow-wrap: anywhere` for paths and URLs. Use a visible `:focus-visible` ring consistent with existing buttons. Chevron rotation may use a 150ms transform; remove it under reduced motion. Verify no selector animates width, height, top, or left.
 
-- [ ] **Step 7: Run Task 3 targeted tests and typecheck**
+- [x] **Step 7: Run Task 3 targeted tests and typecheck**
 
 Run:
 
@@ -533,11 +533,11 @@ cd frontend
 
 Expected: all selected tests PASS and TypeScript exits 0.
 
-- [ ] **Step 8: Run the minimal browser path before final documentation**
+- [x] **Step 8: Run the minimal browser path before final documentation**
 
 Using isolated services, verify: open settings → default overview → enter Workspace → return to overview → enter Models → open/close Provider creation → enter Diagnostics → expand Runtime and Security. Verify empty approval remains collapsed. Record only factual evidence in `docs/verification/settings-experience-redesign.md`.
 
-- [ ] **Step 9: Record Task 3 evidence and commit**
+- [x] **Step 9: Record Task 3 evidence and commit**
 
 ```bash
 git add frontend/src/features/settings/SettingsDisclosure.tsx \
@@ -570,7 +570,7 @@ git commit -m "feat(settings): organize runtime diagnostics"
 - Produces: final user guide and seven-file ownership pack.
 - Preserves: next product task `R1.2 context compression and token/context usage foundation`.
 
-- [ ] **Step 1: Add the real browser acceptance test**
+- [x] **Step 1: Add the real browser acceptance test**
 
 Create a Playwright test that registers `/private/tmp/cyber-settings-e2e-workspace`, opens `/settings`, and verifies:
 
@@ -617,7 +617,7 @@ await expect(page.getByRole("button", { name: "工作区" })).toBeFocused();
 
 Capture console warning/error messages and assert the list is empty. Focus the 配置概览 navigation button, press Tab, and assert focus advances according to DOM order.
 
-- [ ] **Step 2: Run the only final frontend regression and build**
+- [x] **Step 2: Run the only final frontend regression and build**
 
 Run:
 
@@ -630,19 +630,19 @@ cd frontend
 
 Expected: all frontend tests PASS; TypeScript and Vite build exit 0. Record exact test counts and build summary.
 
-- [ ] **Step 3: Run one complete browser acceptance pass**
+- [x] **Step 3: Run one complete browser acceptance pass**
 
 Run only the new settings E2E with the repository Playwright config. Verify 1440×1000, 375×812, keyboard order, refresh-to-overview, Provider form disclosure, diagnostic disclosure, console logs, and horizontal overflow. If a scenario fails, re-run only that test after the fix.
 
-- [ ] **Step 4: Finalize verification and learning once**
+- [x] **Step 4: Finalize verification and learning once**
 
 Reshape verification into the final user guide using `docs/superpowers/templates/stage-verification-template.md`. Generate all seven learning files using `docs/superpowers/templates/stage-learning-pack-template.md`. Record only this slice's actual failures in `failure-journal.md`; do not copy Pre-R2 knowledge-workspace claims.
 
-- [ ] **Step 5: Update the formal checklist and short state**
+- [x] **Step 5: Update the formal checklist and short state**
 
 Mark completed plan checkboxes. Update `task_plan.md` to this slice and its branch/worktree, add only durable settings architecture findings to `findings.md`, and add a handoff under 10 lines to `progress.md`. Keep R1.2 context/token work explicitly pending.
 
-- [ ] **Step 6: Run the document gate**
+- [x] **Step 6: Run the document gate**
 
 Run:
 
@@ -655,7 +655,7 @@ python3 scripts/check_stage_docs.py \
 
 Expected: `Stage documentation gate passed`. Manually verify test counts come from Step 2 and browser claims come from Step 3.
 
-- [ ] **Step 7: Commit acceptance evidence**
+- [x] **Step 7: Commit acceptance evidence**
 
 Only formal documents and short state are tracked:
 
@@ -668,7 +668,7 @@ git commit -m "docs: close settings experience redesign"
 
 Keep `docs/verification/` and `docs/learning/` local, then explicitly synchronize them after merge.
 
-- [ ] **Step 8: Final branch review**
+- [x] **Step 8: Final branch review**
 
 Run:
 

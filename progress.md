@@ -126,3 +126,11 @@
 - 正式设计已提交；实施计划拆为概览、模型服务、诊断、验收四个纵向任务。
 - 设置相关基线 21 passed；隔离 worktree 为 `/private/tmp/cyber-interview-agent-settings-ux`。
 - 下一步：按计划执行 Task 1；R1.2 context/token 基础仍保持待办。
+
+## 2026-07-12：设置页体验重构实现
+
+- Task 1 概览、分组导航、响应式设置外壳完成，18 项针对性测试通过。
+- Task 2 Provider 创建渐进披露、脏表单确认、模型绑定刷新完成，8 项针对性测试通过。
+- Task 3 Runtime/安全/人工确认折叠完成，4 项针对性测试通过。
+- 最终前端回归 70 passed；TypeScript 与 Vite build 通过。
+- Playwright 脚本已添加；真实后端启动因环境缺少 `langchain_anthropic` 依赖而阻塞，未宣称浏览器通过。
