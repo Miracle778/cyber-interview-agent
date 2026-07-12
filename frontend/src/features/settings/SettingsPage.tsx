@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, FolderCog, Server } from "lucide-react";
 import { toActionableError, type ActionableError } from "../../shared/api/errorAdvice";
 import { Badge } from "../../shared/ui/Badge";
@@ -10,11 +11,16 @@ import { ProviderManager } from "./ProviderManager";
 import { RuntimeDiagnostics } from "./RuntimeDiagnostics";
 import { SecurityDiagnostics } from "./SecurityDiagnostics";
 import { ActionCenter } from "../agent/ActionCenter";
+import { listActions } from "../agent/hitlApi";
 import {
   listWorkspaces,
+  listProviders,
+  getWorkspaceModelBindings,
   registerWorkspace,
   type WorkspaceConfig,
 } from "./settingsApi";
+import { SettingsNavigation, type SettingsSection } from "./SettingsNavigation";
+import { SettingsOverview, type SettingsStatusItem } from "./SettingsOverview";
 
 interface SettingsPageProps {
   workspace: WorkspaceConfig | null;
@@ -28,6 +34,8 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
   const [error, setError] = useState<ActionableError | null>(null);
   const [isInitializingWorkspace, setIsInitializingWorkspace] = useState(false);
   const [providerRevision, setProviderRevision] = useState(0);
+  const [section, setSection] = useState<SettingsSection>("overview");
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     if (!workspace) {
@@ -58,6 +66,69 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
       cancelled = true;
     };
   }, [workspace]);
+
+  const providersQuery = useQuery({
+    queryKey: ["settings-providers-summary"],
+    queryFn: listProviders,
+    enabled: Boolean(workspaceId),
+  });
+  const bindingsQuery = useQuery({
+    queryKey: ["workspace-model-bindings", workspaceId],
+    queryFn: () => getWorkspaceModelBindings(workspaceId!),
+    enabled: Boolean(workspaceId),
+  });
+  const actionsQuery = useQuery({
+    queryKey: ["pending-actions", workspaceId],
+    queryFn: () => listActions(workspaceId!, { status: "pending" }),
+    enabled: Boolean(workspaceId),
+  });
+
+  const overviewItems = useMemo<SettingsStatusItem[]>(() => {
+    const bindingCount = Object.values(bindingsQuery.data?.bindings ?? {}).filter(Boolean).length;
+    const pendingCount = actionsQuery.data?.length ?? 0;
+    return [
+      {
+        id: "workspace",
+        title: "工作区",
+        status: workspace ? "已就绪" : "未初始化",
+        description: workspace?.workspacePath ?? "需要先初始化 Workspace",
+        tone: workspace ? "success" : "warning",
+        section: "workspace",
+      },
+      {
+        id: "providers",
+        title: "Provider",
+        status: providersQuery.isError ? "读取失败" : providersQuery.isLoading ? "加载中…" : `${providersQuery.data?.length ?? 0} 个已配置`,
+        description: providersQuery.isError ? "进入模型服务查看错误和恢复建议" : providersQuery.data?.length ? "模型服务已准备好继续绑定用途" : "尚未添加 Provider",
+        tone: providersQuery.isError ? "danger" : providersQuery.data?.length ? "success" : "warning",
+        section: "models",
+      },
+      {
+        id: "bindings",
+        title: "模型用途绑定",
+        status: bindingsQuery.isError ? "读取失败" : `${bindingCount}/4 已绑定`,
+        description: bindingsQuery.isError ? "进入模型服务查看绑定状态" : bindingCount === 4 ? "四种用途均已有模型" : "完成四种用途绑定后才能运行复习",
+        tone: bindingsQuery.isError ? "danger" : bindingCount === 4 ? "success" : "warning",
+        section: "models",
+      },
+      {
+        id: "diagnostics",
+        title: "运行诊断",
+        status: pendingCount > 0 ? `${pendingCount} 个待确认动作` : "待检查",
+        description: pendingCount > 0 ? "有动作需要人工决定" : "Runtime、自检和安全检查按需运行",
+        tone: pendingCount > 0 ? "danger" : "neutral",
+        section: "diagnostics",
+      },
+    ];
+  }, [actionsQuery.data, bindingsQuery.data, bindingsQuery.isError, providersQuery.data, providersQuery.isError, providersQuery.isLoading, workspace]);
+
+  const recommendedSection: Exclude<SettingsSection, "overview"> = !workspaceId
+    ? "workspace"
+    : (providersQuery.data?.length ?? 0) === 0
+      ? "models"
+      : Object.values(bindingsQuery.data?.bindings ?? {}).filter(Boolean).length < 4
+        ? "models"
+        : "diagnostics";
 
   async function handleWorkspaceInit() {
     setError(null);
@@ -97,40 +168,65 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
         {workspace ? <span className="page-section__hint">配置 Provider 与工作区</span> : null}
       </div>
 
-      <Card title="工作区" icon={<FolderCog size={18} />}>
-        <Field
-          label="Workspace Path"
-          name="workspacePath"
-          value={workspacePath}
-          onChange={(event) => setWorkspacePath(event.target.value)}
-          helper="初始化会创建 Obsidian 兼容的 knowledge-vault 目录结构"
+      <div className="settings-layout">
+        <SettingsNavigation
+          current={section}
+          onSelect={setSection}
+          disabledSections={workspaceId ? [] : ["models", "diagnostics"]}
         />
-        <div className="btn-row">
-          <Button onClick={handleWorkspaceInit} loading={isInitializingWorkspace}>
-            初始化工作区
-          </Button>
-          {workspace ? (
-            <Badge tone="success" dot>
-              {workspace.workspacePath}
-            </Badge>
+        <div className="settings-content">
+          {section === "overview" ? (
+            <SettingsOverview
+              items={overviewItems}
+              recommendedSection={recommendedSection}
+              onSelect={(next) => {
+                if (next === "workspace" && !workspace) setSection("workspace");
+                else setSection(next);
+              }}
+            />
+          ) : null}
+
+          {section === "workspace" ? (
+            <Card title="工作区" icon={<FolderCog size={18} />}>
+              <Field
+                label="Workspace Path"
+                name="workspacePath"
+                value={workspacePath}
+                onChange={(event) => setWorkspacePath(event.target.value)}
+                helper="初始化会创建 Obsidian 兼容的 knowledge-vault 目录结构"
+              />
+              <div className="btn-row">
+                <Button onClick={handleWorkspaceInit} loading={isInitializingWorkspace}>
+                  初始化工作区
+                </Button>
+                {workspace ? <Badge tone="success" dot>{workspace.workspacePath}</Badge> : null}
+              </div>
+              {workspaceMessage ? <p className="status-note">{workspaceMessage}</p> : null}
+            </Card>
+          ) : null}
+
+          {section === "models" && workspaceId ? (
+            <div className="settings-stack">
+              <ProviderManager
+                onProvidersChanged={() => {
+                  setProviderRevision((revision) => revision + 1);
+                  void queryClient.invalidateQueries({ queryKey: ["settings-providers-summary"] });
+                  void queryClient.invalidateQueries({ queryKey: ["workspace-model-bindings", workspaceId] });
+                }}
+              />
+              <ModelBindings workspaceId={workspaceId} refreshKey={providerRevision} />
+            </div>
+          ) : null}
+
+          {section === "diagnostics" && workspaceId ? (
+            <div className="settings-stack">
+              <RuntimeDiagnostics workspaceId={workspaceId} />
+              <SecurityDiagnostics workspaceId={workspaceId} />
+              <ActionCenter workspaceId={workspaceId} />
+            </div>
           ) : null}
         </div>
-        {workspaceMessage ? <p className="status-note">{workspaceMessage}</p> : null}
-      </Card>
-
-      {workspaceId ? (
-        <div className="settings-stack">
-          <ProviderManager
-            onProvidersChanged={() => setProviderRevision((revision) => revision + 1)}
-          />
-          <ModelBindings workspaceId={workspaceId} refreshKey={providerRevision} />
-          <RuntimeDiagnostics workspaceId={workspaceId} />
-          <SecurityDiagnostics workspaceId={workspaceId} />
-          <ActionCenter workspaceId={workspaceId} />
-        </div>
-      ) : workspace ? (
-        <p className="status-note">正在恢复 Workspace 配置…</p>
-      ) : null}
+      </div>
 
       {error ? (
         <div className="error-banner" role="alert" aria-live="polite">

@@ -40,6 +40,9 @@ function installSettingsFetch() {
     if (url === "/api/agent/sessions?workspaceId=w1") {
       return Response.json([]);
     }
+    if (url === "/api/agent/actions?workspaceId=w1&status=pending") {
+      return Response.json([]);
+    }
     return Response.json({ code: "unexpected", message: url }, { status: 500 });
   });
 }
@@ -60,11 +63,15 @@ describe("SettingsPage", () => {
 
     renderSettings(workspace);
 
+    expect(await screen.findByRole("heading", { name: "配置概览" })).toBeInTheDocument();
+    expect(screen.queryByText("Provider 管理")).not.toBeInTheDocument();
+    expect(screen.queryByText("Agent Runtime")).not.toBeInTheDocument();
+    expect(screen.getByText(workspace.workspacePath)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "模型服务" }));
     expect(await screen.findByText("Provider 管理")).toBeInTheDocument();
     expect(screen.getByText("模型用途绑定")).toBeInTheDocument();
-    expect(screen.getByText("Agent Runtime")).toBeInTheDocument();
-    expect(screen.getByText("工具安全")).toBeInTheDocument();
-    expect(screen.getByText(workspace.workspacePath)).toBeInTheDocument();
+    expect(screen.queryByText("Agent Runtime")).not.toBeInTheDocument();
   });
 
   it("initializes workspace and reports it to AppShell", async () => {
@@ -73,6 +80,7 @@ describe("SettingsPage", () => {
 
     renderSettings(null, onWorkspaceReady);
 
+    fireEvent.click(screen.getByRole("button", { name: "下一步：初始化工作区" }));
     fireEvent.change(screen.getByLabelText("Workspace Path"), {
       target: { value: workspaceResource.rootPath },
     });
@@ -86,14 +94,15 @@ describe("SettingsPage", () => {
       }),
     );
     expect(await screen.findByText(`Vault：${workspaceResource.vaultPath}`)).toBeInTheDocument();
-    expect(screen.getByText("Provider 管理")).toBeInTheDocument();
-    expect(screen.getByText("Agent Runtime")).toBeInTheDocument();
-    expect(screen.getByText("工具安全")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "配置概览" }));
+    expect(await screen.findByRole("heading", { name: "配置概览" })).toBeInTheDocument();
+    expect(screen.getByText("下一步：配置模型服务")).toBeInTheDocument();
   });
 
   it("shows actionable advice when workspace path is empty", () => {
     renderSettings(null);
 
+    fireEvent.click(screen.getByRole("button", { name: "下一步：初始化工作区" }));
     fireEvent.click(screen.getByRole("button", { name: "初始化工作区" }));
 
     expect(screen.getByText("错误：请输入 Workspace Path")).toBeInTheDocument();
