@@ -14,22 +14,22 @@
 | R1.6 | 场景可用并已合入 main | 单题复习迁移到共享 Runtime、真实 Provider 与持久化发布闭环 |
 | R2-R8 | 待开始 | 见正式产品路线 |
 
-## 当前任务：Pre-R2 页面与知识库体验稳定化
+## 当前任务：设置页体验重构
 
-1. **原始资料持久化与列表 API（完成）**
-2. **知识库分组工作区与 Markdown 阅读/编辑（完成）**
-3. **按需人工确认与复习页布局（完成）**
-4. **浏览器、最终回归与文档收尾（完成，已合入 main）**
+1. **设置外壳、分组导航与配置概览（待实施）**
+2. **模型服务渐进披露（待实施）**
+3. **运行诊断与响应式可访问性（待实施）**
+4. **浏览器、最终回归与文档收尾（待实施）**
 
-R1.2 上下文压缩与 token/context 用量记录已确认遗漏；作为下一个独立 Pre-R2 基础切片补齐，不混入当前 UI 改造。
+本切片只重构设置页前端信息架构；R1.2 上下文压缩与 token/context 用量记录仍是下一独立 Pre-R2 基础切片。
 
 ## 当前分支
 
-- 分支：`main`
-- worktree：`/Users/miracle778/Project/cyber-interview-agent-new`
-- 合入提交：`b27f648`
-- 当前设计：`docs/superpowers/specs/2026-07-12-pre-r2-experience-stabilization-design.md`
-- 当前实施：`docs/superpowers/plans/2026-07-12-pre-r2-experience-stabilization.md`
+- 分支：`codex/settings-experience`
+- worktree：`/private/tmp/cyber-interview-agent-settings-ux`
+- 基线：`main@eb4bcc5`
+- 当前设计：`docs/superpowers/specs/2026-07-12-settings-experience-redesign-design.md`
+- 当前实施：`docs/superpowers/plans/2026-07-12-settings-experience-redesign.md`
 
 ## 执行预算
 

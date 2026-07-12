@@ -118,3 +118,11 @@
 - `codex/pre-r2-experience-stabilization` 已 fast-forward 合入 `main@b27f648`。
 - verification 与 learning 七件套已显式同步到主仓库并通过文档门禁。
 - 合并后后端 254 passed；前端 65 passed；build 通过。
+
+## 2026-07-12：设置页体验重构规划
+
+- 用户确认默认进入配置概览，并采用左侧分组导航与单内容面板。
+- `ui-ux-pro-max` 约束为渐进披露、单主操作、44px、键盘语义和 375px 无溢出。
+- 正式设计已提交；实施计划拆为概览、模型服务、诊断、验收四个纵向任务。
+- 设置相关基线 21 passed；隔离 worktree 为 `/private/tmp/cyber-interview-agent-settings-ux`。
+- 下一步：按计划执行 Task 1；R1.2 context/token 基础仍保持待办。

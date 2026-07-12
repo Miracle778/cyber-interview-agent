@@ -36,6 +36,14 @@
 - 复习页只增加语义区域和响应式层级，没有新增 API、状态转换或 R2 行为。
 - roadmap 的 context compression/token usage 仍未实现，下一切片必须单独补齐。
 
+## 设置页体验重构发现
+
+- 当前设置页把 Workspace、Provider、模型绑定、Runtime、安全和 HITL 完整卡片纵向平铺，没有任务域或配置顺序。
+- 设置页现有业务组件边界可保留；主要改动是页面导航、概览摘要、Provider 创建表单和诊断详情的渐进披露。
+- ProviderManager 与 ModelBindings 使用本地 effect 状态；概览摘要使用稳定 TanStack Query key，并在保存成功后显式失效，避免建立第二套业务状态。
+- 诊断历史没有可复用的统一成功摘要，概览只承诺“待检查”或 pending action 数量，不虚构最近成功状态。
+- 本切片没有后端改动，最终不重复执行后端全量回归。
+
 ## R1.5 修正结果
 
 - publish-request 成功后以 version/hash 把草稿推进为 `review_pending`；启动后状态推进失败会取消 run。
