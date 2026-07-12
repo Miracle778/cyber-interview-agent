@@ -48,3 +48,10 @@
 - 唯一一次最终全量回归：后端 236 passed；前端 58 passed；TypeScript 与 production build 通过。
 - `index_stale` 故障注入由自动测试覆盖，浏览器验证用户 rescan 入口；未虚构浏览器故障注入证据。
 - 下一步：运行新文档门禁和静态最终复核，提交并合入 main。
+
+## 2026-07-12：R1.5 合并收尾
+
+- `codex/r1-5-knowledge-publication` 已 fast-forward 合入 `main`。
+- 主仓库保持 `main`；verification 与 learning 七件套已显式同步并准备逐文件 hash 核对。
+- R1.5 产品成熟度为“可人工验证”；用户所有权仍为待学习、待实践，不阻塞 R1.6。
+- 下一产品任务：按新执行预算重整并启动 R1.6。
