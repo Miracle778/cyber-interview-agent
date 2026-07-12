@@ -26,11 +26,11 @@
    - 实现 `review_pending` / `rejected` 真实状态转换。
    - 暴露 publication target path、state 和 index-stale。
    - 增加真实发布闭环测试。
-3. **R1.5 最终验收（进行中）**
+3. **R1.5 最终验收（完成）**
    - 一次最终全量后端/前端/type/build。
    - 一次浏览器与重启验收。
    - 修正文档、运行门禁、独立静态复核。
-4. **合并收尾（待开始）**
+4. **合并收尾（进行中）**
    - 合入 main。
    - 同步 verification/learning 到主仓库。
 

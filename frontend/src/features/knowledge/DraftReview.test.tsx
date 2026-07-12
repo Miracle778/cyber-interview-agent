@@ -174,6 +174,7 @@ describe("DraftReview", () => {
 
     render(<DraftReview workspaceId="w1" />, { wrapper });
     expect(await screen.findByText("已发布路径：knowledge-vault/10_question_bank/q1.md")).toBeInTheDocument();
+    expect(screen.queryByText("已请求发布，等待人工确认")).toBeNull();
   });
 
   it("shows how to repair an index-stale publication", async () => {

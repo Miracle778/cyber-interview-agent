@@ -61,6 +61,12 @@ export function DraftReview({ workspaceId, onPublicationRequested }: DraftReview
     setMarkdown(selected.markdown);
   }, [selected?.id, selected?.version]);
 
+  useEffect(() => {
+    if (selected?.status === "published" || selected?.status === "rejected") {
+      setMessage(null);
+    }
+  }, [selected?.status]);
+
   const editable = selected?.status === "draft" || selected?.status === "review_pending";
 
   const saveMutation = useMutation({

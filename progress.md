@@ -3,7 +3,7 @@
 ## 2026-07-12：R1.5 接管审阅
 
 - 定位真实分支：`codex/r1-5-knowledge-publication`，worktree 为 `/private/tmp/cyber-interview-agent-r1-5`。
-- 重新验证：后端 234 passed；前端 56 passed；TypeScript、Vite build 和旧文档门禁通过。
+- 重新验证：后端 236 passed；前端 58 passed；TypeScript、Vite build 和旧文档门禁通过。
 - 审阅确认前端查询刷新、草稿状态、发布结果展示和文档证据存在缺口，R1.5 暂不合并。
 - 记录已知 RunManager SQLite 写锁风险；专项测试连续 8 次通过，但不能证明竞争已消失。
 
@@ -39,3 +39,12 @@
 - 前端相关 20 passed，TypeScript `--noEmit` 通过。
 - 自审修正 ActionCenter watch effect 的不稳定 query key，避免重复轮询。
 - 未运行全量回归，按预算留到浏览器验收前一次执行。
+- 最小浏览器 happy path 已跑通上传、请求发布、同页 action、批准和真实 Vault path；发现并修正批准后旧等待提示残留。
+
+## 2026-07-12：R1.5 最终验收
+
+- 浏览器完整验收通过：批准、拒绝、重复请求、重启恢复、rescan、外部冲突。
+- 响应式：1440×1000 与 375×812 无横向溢出；控制台无 warning/error。
+- 唯一一次最终全量回归：后端 236 passed；前端 58 passed；TypeScript 与 production build 通过。
+- `index_stale` 故障注入由自动测试覆盖，浏览器验证用户 rescan 入口；未虚构浏览器故障注入证据。
+- 下一步：运行新文档门禁和静态最终复核，提交并合入 main。

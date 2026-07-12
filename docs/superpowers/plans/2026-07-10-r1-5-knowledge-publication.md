@@ -360,9 +360,9 @@ cd ../frontend && pnpm test && pnpm exec tsc --noEmit && pnpm build
 cd .. && git diff --check
 ```
 
-- [ ] **步骤 5：浏览器和重启验收**
+- [x] **步骤 5：浏览器和重启验收**
 
-> 自动验证与文档门禁已通过；浏览器/重启人工验收步骤已写入 `docs/verification/r1_5_knowledge_publication.md` 第 4、5 节，由用户在本地执行（独立 app data/Workspace、桌面与移动宽度）。
+> 已使用独立 app data/Workspace 完成真实浏览器验收，结果记录在 `docs/verification/r1_5_knowledge_publication.md`。
 
 在独立 app data/Workspace 完成：上传、刷新恢复、编辑、请求发布、批准、重复请求、拒绝、后端重启、外部修改冲突、index stale/rescan；检查 1440x1000 与 375x812 无溢出，控制台无 warning/error。
 
