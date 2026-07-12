@@ -11,7 +11,7 @@
 | R0 | 可人工验证 | 单题单轮技术切片 |
 | R1.1-R1.4 | 可人工验证并已合入 main | Provider、Runtime、工具安全、持久化 HITL |
 | R1.5 | 可人工验证并已合入 main | 草稿分层、持久化审核发布、publication journal、active scope 与浏览器闭环 |
-| R1.6 | 场景可用，待合入 main | 单题复习迁移到共享 Runtime、真实 Provider 与持久化发布闭环 |
+| R1.6 | 场景可用并已合入 main | 单题复习迁移到共享 Runtime、真实 Provider 与持久化发布闭环 |
 | R2-R8 | 待开始 | 见正式产品路线 |
 
 ## 当前任务：R1.6 单题复习 Runtime 集成
@@ -26,13 +26,13 @@
    - 代码、组件测试与本地 mock API 最小浏览器 happy path 已完成。
 4. **验收与合并（已完成）**
    - 自动回归、隔离浏览器/重启、两种真实 Provider 与文档门禁均完成。
-   - 下一步：提交验收修复并 fast-forward 合入 main，同步本地 verification/learning。
+   - `codex/r1-6-review-runtime-integration` 已 fast-forward 合入 main，本地 verification/learning 已同步。
 
 ## 当前分支
 
-- 分支：`codex/r1-6-review-runtime-integration`
-- worktree：`/private/tmp/cyber-interview-agent-r1-6`
-- 基线：`main@66c26c3`
+- 分支：`main`
+- worktree：`/Users/miracle778/Project/cyber-interview-agent-new`
+- R1.6 完成提交：`eaf5edf`
 
 ## 执行预算
 

@@ -22,7 +22,7 @@
 
 ## 约束
 
-- 主仓库保持 `main`，R1.6 产品改动只在 `/private/tmp/cyber-interview-agent-r1-6` worktree。
+- R1.6 已合入 `main@eaf5edf`；后续产品阶段继续使用独立分支/worktree。
 - 不修改或提交 `docs/my_idea.md`。
 - `docs/verification/` 和 `docs/learning/` 本地保留，合并后显式同步。
 - 当前切片由 Codex 负责到底，不委派。

@@ -88,3 +88,10 @@
 - 真实 GLM 结构化评价有效；真实 Anthropic-compatible Claude Haiku 流式报告返回 5 个 chunk。
 - 受影响隔离 E2E 1 passed；第二次后端全量 251 passed，前端最终证据保持 57 passed/build 通过。
 - R1.6 已满足“场景可用”，进入提交、main 合并和本地文档同步。
+
+## 2026-07-12：R1.6 合并收尾
+
+- `codex/r1-6-review-runtime-integration` 已 fast-forward 合入 `main@eaf5edf`。
+- verification 与 learning 七件套已同步到主仓库并通过文档门禁。
+- R1.6 产品状态为“场景可用”；用户学习和练习仍为非阻塞理解债务。
+- 下一产品任务：按路线进入 R2 多题复习编排。
