@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from app.api.dependencies import get_workspace_service
 from app.db.app_database import connect_app_database
 from app.knowledge.drafts import KnowledgeDraftService
+from app.knowledge.source_registry import KnowledgeSourceService
 from app.knowledge.workspace_layout import initialize_knowledge_artifacts
 from app.knowledge.sources import MAX_SOURCE_BYTES
 from app.main import app
@@ -112,6 +113,31 @@ def test_upload_removes_source_when_draft_creation_fails(
     monkeypatch.setattr(KnowledgeDraftService, "create", fail_create)
 
     with pytest.raises(RuntimeError, match="draft creation failed"):
+        client.post(
+            "/api/knowledge/sources",
+            data={"workspaceId": workspace_id},
+            files={"file": ("notes.md", b"question", "text/markdown")},
+        )
+
+    assert list((workspace / "artifacts/review/sources").iterdir()) == []
+    listed = client.get(
+        "/api/knowledge/sources", params={"workspaceId": workspace_id}
+    )
+    assert listed.status_code == 200
+    assert listed.json() == []
+
+
+def test_upload_removes_source_when_draft_attachment_fails(
+    knowledge_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, workspace, workspace_id = knowledge_client
+
+    async def fail_attach(*_args, **_kwargs):
+        raise RuntimeError("draft attachment failed")
+
+    monkeypatch.setattr(KnowledgeSourceService, "attach_draft", fail_attach)
+
+    with pytest.raises(RuntimeError, match="draft attachment failed"):
         client.post(
             "/api/knowledge/sources",
             data={"workspaceId": workspace_id},

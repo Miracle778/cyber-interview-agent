@@ -77,10 +77,17 @@ describe("KnowledgePage", () => {
     const generatedDraft = {
       id: "d1", workspaceId: "w1", sessionId: null, runId: null,
       agentType: null, domain: "review", documentType: "question",
-      documentId: "q1", title: "缓存穿透", markdown: "# 缓存穿透",
+      documentId: "q1", title: "新草稿", markdown: "# 新草稿",
       contentPath: "artifacts/review/drafts/d1.md", sourceRefs: [],
       relationRefs: [], status: "draft", version: 1, contentHash: "abc",
       createdAt: "now", updatedAt: "now",
+    };
+    const existingDraft = {
+      ...generatedDraft,
+      id: "d-old",
+      documentId: "q-old",
+      title: "旧草稿",
+      markdown: "# 旧草稿",
     };
     const fetchMock = mockRoute({
       "/api/knowledge/sources": (init) => {
@@ -90,7 +97,9 @@ describe("KnowledgePage", () => {
         }
         return uploaded ? [source] : [];
       },
-      "/api/knowledge/drafts?": () => uploaded ? [generatedDraft] : [],
+      "/api/knowledge/drafts?": () => uploaded
+        ? [existingDraft, generatedDraft]
+        : [existingDraft],
     });
 
     render(
@@ -103,6 +112,8 @@ describe("KnowledgePage", () => {
       { wrapper },
     );
 
+    expect(await screen.findByRole("heading", { level: 1, name: "旧草稿" })).toBeInTheDocument();
+
     const file = new File(["缓存穿透是什么？"], "cache.txt", { type: "text/plain" });
     fireEvent.change(screen.getByLabelText("选择资料文件"), { target: { files: [file] } });
     fireEvent.click(screen.getByRole("button", { name: "上传资料" }));
@@ -113,7 +124,7 @@ describe("KnowledgePage", () => {
     )?.[1]?.body as FormData;
     expect(form.get("workspaceId")).toBe("w1");
     expect(form.get("workspacePath")).toBeNull();
-    expect(await screen.findByRole("heading", { level: 1, name: "缓存穿透" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "新草稿" })).toBeInTheDocument();
   });
 
   it("rescans the vault and displays indexed count", async () => {

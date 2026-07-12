@@ -445,7 +445,7 @@ git add task_plan.md findings.md progress.md docs/superpowers/plans/2026-07-12-p
 git commit -m "docs: close pre-r2 experience stabilization"
 ```
 
-- [ ] **Step 7: Final branch review**
+- [x] **Step 7: Final branch review**
 
 Run: `git status --short`, `git diff main...HEAD --stat`, and `git log --oneline main..HEAD`.
 

@@ -72,10 +72,10 @@ async def upload_source(
                 relation_refs=(),
             )
         )
+        source = await sources.attach_draft(source.id, draft_id=draft.id)
     except Exception:
         await sources.delete(source.id)
         raise
-    source = await sources.attach_draft(source.id, draft_id=draft.id)
     return UploadSourceResource(
         source=KnowledgeSourceResource.model_validate(source),
         draft=KnowledgeDraftResource.model_validate(draft),
