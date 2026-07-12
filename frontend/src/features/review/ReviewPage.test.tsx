@@ -51,6 +51,8 @@ describe("ReviewPage persistent runtime flow", () => {
     );
     render(<MemoryRouter><ReviewPage workspace={workspace} draftQuestion={null} /></MemoryRouter>);
 
+    expect(screen.getByRole("region", { name: "复习会话" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "当前练习" })).toBeInTheDocument();
     expect(screen.getByText("请先上传资料生成题库草稿")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "发送回答" })).toBeDisabled();
   });
@@ -113,6 +115,7 @@ describe("ReviewPage persistent runtime flow", () => {
     render(<MemoryRouter><ReviewPage workspace={workspace} draftQuestion={null} /></MemoryRouter>);
 
     expect(await screen.findByText("评分：partial")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "复习结果" })).toBeInTheDocument();
     expect(screen.getByLabelText("历史会话")).toHaveValue("s1");
     expect(screen.getByText("草稿状态：review_pending")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "批准发布" })).toBeInTheDocument();

@@ -25,6 +25,18 @@ describe("MarkdownView", () => {
     expect(document.querySelector("script")).toBeNull();
   });
 
+  it("hides YAML frontmatter from the reading view", () => {
+    render(
+      <MarkdownView
+        markdown={"---\nstatus: draft\ntopics:\n- cache\n---\n\n# 正文标题"}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "正文标题" })).toBeInTheDocument();
+    expect(screen.queryByText(/status: draft/)).toBeNull();
+    expect(screen.queryByText("cache")).toBeNull();
+  });
+
   it("opens external links safely and keeps internal links in the app", () => {
     render(
       <MarkdownView markdown="[外部](https://example.com) [内部](/knowledge)" />,

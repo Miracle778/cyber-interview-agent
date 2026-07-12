@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ActionCenter } from "./ActionCenter";
@@ -258,6 +258,25 @@ describe("ActionCenter", () => {
     expect(screen.getByRole("button", { name: "批准" })).toBeInTheDocument();
   });
 
+  it("renders nothing when a non-diagnostic consumer has no pending action", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json([], { status: 200 }),
+    );
+
+    const { container } = render(
+      <ActionCenter
+        workspaceId="w1"
+        showDiagnostic={false}
+        actionType="knowledge.publish"
+      />,
+      { wrapper },
+    );
+
+    expect(container).toBeEmptyDOMElement();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitFor(() => expect(container).toBeEmptyDOMElement());
+  });
+
   it("filters the list to the requested action type", async () => {
     const publishAction: PendingAction = {
       ...action,
@@ -312,7 +331,53 @@ describe("ActionCenter", () => {
       { wrapper },
     );
 
+    expect(await screen.findByText("正在等待待确认动作…")).toBeInTheDocument();
     expect(await screen.findByText("缓存穿透")).toBeInTheDocument();
     expect(reads).toBeGreaterThanOrEqual(3);
+  });
+
+  it("retries after waiting for a publication action times out", async () => {
+    const publishAction: PendingAction = {
+      ...action,
+      id: "pub-retry",
+      runId: "publish-retry-run",
+      actionType: "knowledge.publish",
+      preview: { title: "重试后出现" },
+      editableFields: [],
+    };
+    let available = false;
+    vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: TimerHandler) => {
+      queueMicrotask(() => {
+        if (typeof callback === "function") callback();
+      });
+      return 0;
+    }) as typeof setTimeout);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).includes("/api/agent/actions?")) {
+        return Response.json(available ? [publishAction] : []);
+      }
+      return Response.json([], { status: 200 });
+    });
+
+    render(
+      <ActionCenter
+        workspaceId="w1"
+        showDiagnostic={false}
+        actionType="knowledge.publish"
+        watchRunId="publish-retry-run"
+      />,
+      { wrapper },
+    );
+
+    await act(async () => {
+      for (let index = 0; index < 60; index += 1) await Promise.resolve();
+    });
+    expect(screen.getByText(/待确认动作尚未出现/)).toBeInTheDocument();
+    available = true;
+    fireEvent.click(screen.getByRole("button", { name: "重新检查" }));
+    await act(async () => {
+      for (let index = 0; index < 20; index += 1) await Promise.resolve();
+    });
+    expect(screen.getByText("重试后出现")).toBeInTheDocument();
   });
 });

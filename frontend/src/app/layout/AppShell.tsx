@@ -99,11 +99,11 @@ export function AppShell() {
                   health={health}
                   workspace={workspace}
                 >
-                  <div className="review-workspace">
-                    <div className="review-workspace__main">
+                  <div className="review-layout">
+                    <div className="review-layout__main">
                       <ReviewPage workspace={workspace} draftQuestion={draftQuestion} />
                     </div>
-                    <aside className="review-workspace__aside">
+                    <aside className="review-layout__aside">
                       <FlowSummary
                         healthStatus={health.status}
                         workspace={workspace}

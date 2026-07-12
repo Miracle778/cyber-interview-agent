@@ -70,6 +70,7 @@ export function ActionCenter({
   const [reason, setReason] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [watchAttempt, setWatchAttempt] = useState(0);
   const operationKeys = useRef(new Map<string, string>());
 
   const actionsQuery = useQuery({
@@ -103,7 +104,10 @@ export function ActionCenter({
   }, [selected?.id]);
 
   useEffect(() => {
-    if (!watchRunId) return;
+    if (!watchRunId) {
+      setLocalError(null);
+      return;
+    }
     let cancelled = false;
     waitForPendingAction(workspaceId, watchRunId)
       .then((pending) => {
@@ -117,7 +121,7 @@ export function ActionCenter({
     return () => {
       cancelled = true;
     };
-  }, [queryClient, queryKey, watchRunId, workspaceId]);
+  }, [queryClient, queryKey, watchAttempt, watchRunId, workspaceId]);
 
   const runMutation = useMutation({
     mutationFn: async () => {
@@ -223,6 +227,13 @@ export function ActionCenter({
   });
 
   const resolving = approveMutation.isPending || rejectMutation.isPending;
+  const waitingForAction = Boolean(watchRunId) && actions.length === 0 && !localError;
+  const hidden = !showDiagnostic
+    && actions.length === 0
+    && !waitingForAction
+    && !localError;
+
+  if (hidden) return null;
 
   return (
     <Card
@@ -244,7 +255,10 @@ export function ActionCenter({
     >
       <div className="action-center" aria-live="polite">
         {actionsQuery.isLoading ? <p className="status-note">正在读取待确认动作…</p> : null}
-        {!actionsQuery.isLoading && actions.length === 0 ? (
+        {!actionsQuery.isLoading && waitingForAction ? (
+          <p className="status-note">正在等待待确认动作…</p>
+        ) : null}
+        {!actionsQuery.isLoading && actions.length === 0 && !waitingForAction ? (
           <p className="status-note">暂无待确认动作</p>
         ) : null}
 
@@ -320,7 +334,21 @@ export function ActionCenter({
 
         {message ? <p className="status-note">{message}</p> : null}
         {localError ? (
-          <p className="status-note status-note--warning" role="alert">{localError}</p>
+          <div className="action-center__error" role="alert">
+            <p className="status-note status-note--warning">{localError}</p>
+            {watchRunId ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setLocalError(null);
+                  setWatchAttempt((current) => current + 1);
+                }}
+              >
+                重新检查
+              </Button>
+            ) : null}
+          </div>
         ) : null}
       </div>
     </Card>

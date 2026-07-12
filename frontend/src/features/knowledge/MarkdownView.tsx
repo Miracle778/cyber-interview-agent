@@ -15,6 +15,18 @@ interface MarkdownErrorBoundaryState {
   hasError: boolean;
 }
 
+function stripYamlFrontmatter(markdown: string): string {
+  const lines = markdown.split(/\r?\n/);
+  if (lines[0]?.trim() !== "---") return markdown;
+
+  const closingIndex = lines.findIndex(
+    (line, index) => index > 0 && line.trim() === "---",
+  );
+  if (closingIndex === -1) return markdown;
+
+  return lines.slice(closingIndex + 1).join("\n").replace(/^\n/, "");
+}
+
 export class MarkdownErrorBoundary extends Component<
   MarkdownErrorBoundaryProps,
   MarkdownErrorBoundaryState
@@ -38,8 +50,10 @@ export class MarkdownErrorBoundary extends Component<
 }
 
 export function MarkdownView({ markdown }: MarkdownViewProps) {
+  const readableMarkdown = stripYamlFrontmatter(markdown);
+
   return (
-    <MarkdownErrorBoundary markdown={markdown}>
+    <MarkdownErrorBoundary markdown={readableMarkdown}>
       <article className="markdown-view">
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
@@ -60,7 +74,7 @@ export function MarkdownView({ markdown }: MarkdownViewProps) {
             },
           }}
         >
-          {markdown}
+          {readableMarkdown}
         </ReactMarkdown>
       </article>
     </MarkdownErrorBoundary>

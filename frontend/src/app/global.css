@@ -396,7 +396,7 @@ pre {
 
 .page-section,
 .settings-stack,
-.review-workspace__main {
+.review-layout__main {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -421,14 +421,36 @@ pre {
   font-size: 0.84rem;
 }
 
-.review-workspace {
+.review-layout {
   display: grid;
   min-width: 0;
   gap: var(--space-5);
 }
 
-.review-workspace__aside {
+.review-layout__aside {
   min-width: 0;
+}
+
+.review-session-bar,
+.review-practice,
+.review-results,
+.review-approval {
+  min-width: 0;
+}
+
+.review-session-bar {
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.review-session-bar .field {
+  display: grid;
+  grid-template-columns: minmax(96px, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
 }
 
 .flow-summary {
@@ -1292,12 +1314,12 @@ select:disabled {
     padding: var(--space-10) var(--space-10) 64px;
   }
 
-  .review-workspace {
+  .review-layout {
     grid-template-columns: minmax(0, 1fr) 300px;
     align-items: start;
   }
 
-  .review-workspace__aside {
+  .review-layout__aside {
     position: sticky;
     top: var(--space-6);
   }
@@ -1324,6 +1346,10 @@ select:disabled {
   .page-section__hint {
     width: 100%;
     margin-left: 30px;
+  }
+
+  .review-session-bar .field {
+    display: flex;
   }
 
   .card__header,

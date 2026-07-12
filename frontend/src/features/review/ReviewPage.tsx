@@ -155,31 +155,37 @@ export function ReviewPage({ workspace, draftQuestion }: ReviewPageProps) {
         {shownQuestion ? <Badge tone="primary">单题 · 持久化会话</Badge> : null}
       </div>
 
-      {sessions.length > 0 ? (
-        <label className="field">
-          <span className="field__label">历史会话</span>
-          <select className="field__input" value={sessionId ?? ""} onChange={(event) => {
-            setSessionId(event.target.value);
-            void refreshSession(event.target.value);
-          }}>
-            {sessions.map((session) => <option key={session.id} value={session.id}>{session.title}</option>)}
-          </select>
-        </label>
-      ) : null}
+      <section className="review-session-bar" aria-label="复习会话">
+        {sessions.length > 0 ? (
+          <label className="field">
+            <span className="field__label">历史会话</span>
+            <select className="field__input" value={sessionId ?? ""} onChange={(event) => {
+              setSessionId(event.target.value);
+              void refreshSession(event.target.value);
+            }}>
+              {sessions.map((session) => <option key={session.id} value={session.id}>{session.title}</option>)}
+            </select>
+          </label>
+        ) : <p className="status-note">完成一次回答后，会话会保存在这里</p>}
+      </section>
 
-      <Card title="复习对话" icon={<MessageSquareText size={18} />}>
-        {!shownQuestion ? <div className="empty-state"><Inbox size={20} /><p>请先上传资料生成题库草稿</p><Link className="text-link" to="/knowledge">前往知识库</Link></div> : null}
-        {shownQuestion ? <article aria-label="当前题目"><h3>{shownQuestion.title}</h3><p>{shownQuestion.questionText}</p></article> : null}
-        {detail?.messages.map((message) => <p key={message.id} className="result-line"><strong>{message.role === "user" ? "你" : "Agent"}：</strong>{message.content}</p>)}
-        <div className="field"><label className="field__label" htmlFor="reviewAnswer">你的回答</label><textarea id="reviewAnswer" className="field__input field__input--area" value={answer} disabled={!draftQuestion || busy} onChange={(event) => setAnswer(event.target.value)} /></div>
-        <Button onClick={handleRunReview} disabled={!draftQuestion || busy} loading={busy}>发送回答</Button>
-        {sessionId ? <p className="muted-text">事件流：{stream.status}</p> : null}
-      </Card>
+      <section className="review-practice" aria-label="当前练习">
+        <Card title="复习对话" icon={<MessageSquareText size={18} />}>
+          {!shownQuestion ? <div className="empty-state"><Inbox size={20} /><p>请先上传资料生成题库草稿</p><Link className="text-link" to="/knowledge">前往知识库</Link></div> : null}
+          {shownQuestion ? <article aria-label="当前题目"><h3>{shownQuestion.title}</h3><p>{shownQuestion.questionText}</p></article> : null}
+          {detail?.messages.map((message) => <p key={message.id} className="result-line"><strong>{message.role === "user" ? "你" : "Agent"}：</strong>{message.content}</p>)}
+          <div className="field"><label className="field__label" htmlFor="reviewAnswer">你的回答</label><textarea id="reviewAnswer" className="field__input field__input--area" value={answer} disabled={!draftQuestion || busy} onChange={(event) => setAnswer(event.target.value)} /></div>
+          <Button onClick={handleRunReview} disabled={!draftQuestion || busy} loading={busy}>发送回答</Button>
+          {sessionId ? <p className="muted-text">事件流：{stream.status}</p> : null}
+        </Card>
+      </section>
 
-      {evaluation || draft ? <Card title="复习报告" icon={<ClipboardCheck size={18} />}>
-        {evaluation ? <><p>评分：{evaluation.score}</p><p>缺失点：{evaluation.missing_key_points.join("、") || "无"}</p><p>证据：{evaluation.evidence}</p></> : null}
-        {draft ? <><pre className="report-preview">{draft.markdown}</pre><p>草稿状态：{draft.status}</p>{draft.publication ? <><p>发布状态：{draft.publication.state}</p><p>目标路径：{draft.publication.targetPath}</p>{draft.publication.state === "index_stale" ? <p role="alert">索引需要重新扫描</p> : null}</> : null}</> : null}
-      </Card> : null}
+      {evaluation || draft ? <section className="review-results" aria-label="复习结果">
+        <Card title="复习报告" icon={<ClipboardCheck size={18} />}>
+          {evaluation ? <><p>评分：{evaluation.score}</p><p>缺失点：{evaluation.missing_key_points.join("、") || "无"}</p><p>证据：{evaluation.evidence}</p></> : null}
+          {draft ? <><pre className="report-preview">{draft.markdown}</pre><p>草稿状态：{draft.status}</p>{draft.publication ? <><p>发布状态：{draft.publication.state}</p><p>目标路径：{draft.publication.targetPath}</p>{draft.publication.state === "index_stale" ? <p role="alert">索引需要重新扫描</p> : null}</> : null}</> : null}
+        </Card>
+      </section> : null}
 
       {action?.status === "pending" ? <Card title="发布审批" icon={<ClipboardCheck size={18} />}>
         <p>报告已保存为草稿，批准后才会写入 Vault。</p>
