@@ -107,7 +107,19 @@ HITL 采用分层方案：保留 `HitlService`、pending action repository、res
 
 以下能力不得仅由 middleware 隐藏实现：知识发布、草稿状态转换、Vault 写入、索引更新、用户必须理解的业务分支、长事务和补偿流程，以及依赖领域 version/hash/operation id 的副作用。它们必须保留在显式 Graph 或应用服务中。
 
-每个 middleware 必须声明适用范围、执行顺序、持久化边界、失败/降级策略、幂等键、事件与指标，以及禁止承载的领域副作用。首批范围限定为 token/context 统计、context budget 与上下文压缩、会话标题总结、待办事项候选、无限循环检测和 HITL adapter。
+每个 middleware 必须声明适用范围、执行顺序、持久化边界、失败/降级策略、幂等键、事件与指标，以及禁止承载的领域副作用。
+
+Middleware 随 Agent 能力分阶段落地：
+
+- **Pre-R2 Middleware 1.0**：建立 pipeline 契约、注册、顺序、开关和 Runtime context；实现 token/context 统计、context budget 与上下文压缩、会话标题总结、无限循环检测和 HITL adapter；只定义 `TodoCandidate` 契约和事件，不调用模型提取、不持久化正式待办。使用已完成的 R1.6 `review.single` 作为第一个真实接入与验收 Agent。
+- **R2 完整复习 Agent**：验证长会话压缩、多题循环保护、标题和用量展示；根据真实运行补充重复工具调用、无进展检测和预算预警。
+- **R3 个人信息 Agent**：定义用户偏好、长期记忆和待办候选的安全输入边界，完善敏感信息脱敏；仍不创建正式 Todo 状态机。
+- **R4 岗位追踪**：实现正式 Todo Service，并启用待办候选提取、用户确认、去重、截止时间和岗位关联。
+- **R5 面试复盘**：扩展行动项、关键结论和经验候选提取，并增加质量与置信度标记。
+- **R6 模拟面试**：为主 Agent/子 Agent 委派链增加更严格的时间、费用、步骤预算、循环检测和 tracing。
+- **R7-R8 产品化与 Channel**：根据真实使用数据增加缓存、跨 Agent 指标、移动端预算和降级策略。
+
+这样安排保证 middleware 始终由真实 Agent 消费：Pre-R2 不建设脱离业务的完整平台，R2 也不需要在多题状态机中重复实现横切能力。
 
 采用 middleware 的收益是一次实现供全部 Agent/Graph 复用、业务节点保持聚焦、安全成本质量规则统一、新 Agent 默认获得治理能力，并支持独立测试、替换、开关和观测。代价是执行顺序、共享状态、额外模型调用和失败传播更复杂，因此禁止形成持有全部 Runtime 状态的“大中间件”。
 
@@ -224,6 +236,7 @@ HITL 采用分层方案：保留 `HitlService`、pending action repository、res
 - 新会话参考当前全局报告和最近三份已确认单会话报告。
 - 更新全局掌握度并给出下一轮建议。
 - 状态区展示当前范围、进度、掌握度、上下文和产物。
+- 复用 Middleware 1.0 展示 token/context、标题和预算状态，并在多题循环中验证压缩与循环保护。
 
 验收：
 
@@ -231,6 +244,7 @@ HITL 采用分层方案：保留 `HitlService`、pending action repository、res
 - 追问和派生会话不会污染主复习轮次。
 - 单会话报告和全局掌握度都有可追溯证据。
 - 下一轮出题会实际参考已确认的掌握度报告。
+- 长会话触发压缩后仍能恢复；重复步骤或无进展达到阈值时能安全停止并给出恢复建议。
 
 ## R3：个人信息 Agent
 
@@ -245,6 +259,7 @@ HITL 采用分层方案：保留 `HitlService`、pending action repository、res
 - 个人信息 Agent 只能访问个人资料目录和允许的工具。
 - 支持围绕简历和个人经历持续对话。
 - 用户通过“推送到知识库”选择哪些个人资料参与后续检索。
+- 为偏好、长期记忆和待办候选提供安全提取边界与脱敏规则，但不在本阶段创建正式待办。
 
 验收：
 
@@ -264,6 +279,7 @@ HITL 采用分层方案：保留 `HitlService`、pending action repository、res
 - 岗位详情聚合相关资料、复习会话、复盘、模拟面试和产出文档。
 - 根据岗位差距推荐复习范围，但允许用户调整。
 - 岗位 Agent 具有独立会话和受限工具。
+- 实现正式 Todo Service，把 middleware 产生的候选经用户确认后关联到岗位，支持去重、截止时间、完成和撤销。
 
 验收：
 
@@ -283,6 +299,7 @@ HITL 采用分层方案：保留 `HitlService`、pending action repository、res
 - 提炼个人项目经验并单独保存草稿。
 - 支持围绕复盘结果继续与 Agent 对话。
 - 用户审核后选择题目、经验或复盘总结推送到知识库。
+- 通过 post-processing middleware 生成行动项、关键结论和经验候选，并展示来源与置信度。
 
 验收：
 
@@ -303,6 +320,7 @@ HITL 采用分层方案：保留 `HitlService`、pending action repository、res
 - 支持暂停、恢复和继续。
 - 结束后由主 Agent 汇总表现、风险和建议。
 - 用户审核后选择总结内容推送到知识库。
+- 主 Agent 与面试子 Agent 统一受时间、费用、步骤、循环检测和 tracing middleware 约束。
 
 验收：
 

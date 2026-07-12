@@ -142,5 +142,6 @@
 - 下一 Pre-R2 切片扩展为 Runtime middleware 基础：token/context 统计、context budget/压缩、会话标题总结和 HITL adapter。
 - 该记录只确定后续设计约束，本轮未修改 Runtime 生产代码。
 - 用户补充待办事项与无限循环检测；正式设计已明确候选提取/领域持久化边界和软硬循环阈值。
-- Middleware pipeline 确认为 Guard → Invocation → Post-processing，并记录候选目录、收益、代价与首批六项范围。
+- Middleware pipeline 确认为 Guard → Invocation → Post-processing，并记录候选目录、收益、代价与首批实现/契约范围。
 - 根据用户复核，将完整 middleware 规则迁移到产品总设计；R1 文档收敛为引用和阶段落地说明。
+- 用户确认 middleware 必须随真实 Agent 演进：Pre-R2 用 R1.6 Agent 验证五项核心能力，Todo 只定义契约；R2-R6 按复习、岗位、复盘和模拟面试场景逐步启用。

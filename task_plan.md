@@ -21,7 +21,7 @@
 3. **运行诊断与响应式可访问性（已完成）**
 4. **浏览器、最终回归与文档收尾（自动回归完成；浏览器待依赖补齐）**
 
-本切片只重构设置页前端信息架构；下一独立 Pre-R2 基础切片为 Runtime middleware：补齐 R1.2 上下文压缩、token/context 用量记录、会话标题总结，并为现有 HITL 增加 middleware adapter。
+本切片只重构设置页前端信息架构；下一独立 Pre-R2 基础切片为 Runtime Middleware 1.0：补齐 pipeline 基础、R1.2 压缩/token-context、标题、循环检测和 HITL adapter，只定义 TodoCandidate 契约，并用 R1.6 Agent 验收。
 
 ## 当前分支
 
