@@ -13,6 +13,29 @@ Historical planning files under `docs/superpowers/history/` are not startup inpu
 
 Repository files and executable state are authoritative. Do not reconstruct project state from chat memory alone.
 
+## Task Complexity Routing
+
+Evaluate task complexity before choosing worktree, skill, planning, and documentation overhead.
+
+Simple tasks may be done on a normal branch in the main repository worktree, without creating a separate worktree or loading planning/superpowers workflows. Simple tasks include:
+
+- answering a narrowly scoped question after reading the relevant files;
+- small bug fixes with one clear root cause and limited touched files;
+- small UI or copy adjustments;
+- targeted tests or diagnostics;
+- minor documentation wording updates that do not change product architecture or stage workflow.
+
+Use an isolated git worktree only when the task is complex, risky, long-running, or likely to overlap with other work. Examples:
+
+- stage or slice implementation plans;
+- cross-layer backend/frontend/API/database changes;
+- critical state machines, security boundaries, data reset or migration behavior;
+- broad refactors, merges, or large documentation rewrites;
+- tasks that may need parallel work, delegation, or comparison against another branch;
+- user learning branches that must remain separate from product delivery.
+
+For simple implementation work, create or switch to a normal `codex/...` branch in the authoritative repository worktree when isolation from `main` is useful. If there are unrelated dirty changes, preserve them and either continue only when the files do not overlap or ask for direction.
+
 ## Non-Negotiable Workflow
 
 - Keep product delivery and user ownership as separate tracks.
@@ -31,7 +54,7 @@ Repository files and executable state are authoritative. Do not reconstruct proj
 - Use targeted tests during tasks. Run full backend/frontend regression at most twice per stage: once after cross-layer integration when needed and once before final acceptance.
 - Run one minimal browser happy path before final documentation, then one complete browser acceptance pass. Re-run only affected scenarios after fixes.
 - Default to one Agent owning a slice end-to-end. Do not hand off mid-task or create subagents unless work is genuinely independent and non-overlapping.
-- Use a skill only when installed and clearly applicable. State its purpose, expected artifact, and exit condition; stop after two unchanged failures and diagnose instead of retrying.
+- Use a skill only when installed and clearly applicable to the task's real risk. Do not invoke superpowers or planning workflows merely because the repository stores docs under `docs/superpowers/`, because a task touches code, or because a small bug needs a targeted fix. State the skill purpose, expected artifact, and exit condition when a skill is used; stop after two unchanged failures and diagnose instead of retrying.
 - Keep tool output focused: locate with `rg`/`git diff --stat`, read only risk files, and default to quiet tests and approximately 4,000 output tokens.
 - Before stage closure, run `python3 scripts/check_stage_docs.py --verification docs/verification/<stage>.md --learning docs/learning/<stage>/ --plan <current-plan>`. Unchecked browser acceptance or inconsistent evidence blocks “ready for manual verification”.
 
