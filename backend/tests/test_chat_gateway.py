@@ -7,6 +7,9 @@ from app.providers.base import ProviderErrorCode
 from app.providers.chat_gateway import (
     ChatModelGateway,
     ProviderInvocationError,
+    ProviderModelResult,
+    ProviderStreamChunk,
+    ProviderUsage,
     ResolvedModelBinding,
 )
 
@@ -18,11 +21,14 @@ class Evaluation(BaseModel):
 
 class FakeChatAdapter:
     def __init__(self) -> None:
-        self.structured_result: object = {
-            "score": "partial",
-            "evidence": "只覆盖了原子性",
-        }
-        self.text_chunks = ["报", "告"]
+        self.structured_result: object = ProviderModelResult(
+            value={"score": "partial", "evidence": "只覆盖了原子性"},
+            usage=ProviderUsage(50, 10),
+        )
+        self.text_chunks = [
+            ProviderStreamChunk("报"),
+            ProviderStreamChunk("告", ProviderUsage(40, 8)),
+        ]
         self.error: ProviderInvocationError | None = None
         self.last_call: dict[str, object] | None = None
 
@@ -64,7 +70,9 @@ async def test_structured_invocation_uses_snapshot_model(binding) -> None:
         messages=[{"role": "user", "content": "answer"}],
     )
 
-    assert result == Evaluation(score="partial", evidence="只覆盖了原子性")
+    assert result.value == Evaluation(score="partial", evidence="只覆盖了原子性")
+    assert result.usage == ProviderUsage(50, 10)
+    assert result.usage.total_tokens == 60
     assert adapter.last_call == {
         "base_url": binding.base_url,
         "model_id": binding.model_id,
@@ -77,7 +85,11 @@ async def test_structured_invocation_uses_snapshot_model(binding) -> None:
 @pytest.mark.asyncio
 async def test_stream_text_emits_only_non_empty_text_chunks(binding) -> None:
     adapter = FakeChatAdapter()
-    adapter.text_chunks = ["报", "", "告"]
+    adapter.text_chunks = [
+        ProviderStreamChunk("报"),
+        ProviderStreamChunk(""),
+        ProviderStreamChunk("告", ProviderUsage(40, 8)),
+    ]
     gateway = ChatModelGateway({"openai-compatible": adapter})
 
     chunks = [
@@ -88,13 +100,16 @@ async def test_stream_text_emits_only_non_empty_text_chunks(binding) -> None:
         )
     ]
 
-    assert chunks == ["报", "告"]
+    assert [chunk.text for chunk in chunks] == ["报", "告"]
+    assert [chunk.usage for chunk in chunks if chunk.usage] == [ProviderUsage(40, 8)]
 
 
 @pytest.mark.asyncio
 async def test_invalid_structured_output_maps_to_stable_protocol_error(binding) -> None:
     adapter = FakeChatAdapter()
-    adapter.structured_result = {"provider_body": "must not escape"}
+    adapter.structured_result = ProviderModelResult(
+        value={"provider_body": "must not escape"}, usage=None
+    )
     gateway = ChatModelGateway({"openai-compatible": adapter})
 
     with pytest.raises(ProviderInvocationError) as caught:

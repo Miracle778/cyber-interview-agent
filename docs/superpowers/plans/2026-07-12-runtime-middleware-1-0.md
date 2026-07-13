@@ -71,7 +71,7 @@ At the start of a task, locate only that task with `rg -n '^### Task'` and read 
 - [x] Add No-op sink and trace context; prove observability failure cannot affect business hooks.
 - [x] Add title compare-and-set and session summary repository methods.
 - [x] Run only runtime database/repository/pipeline tests.
-- [ ] Commit `feat(runtime): add middleware pipeline foundation`.
+- [x] Commit `feat(runtime): add middleware pipeline foundation`.
 
 **Gate:** Existing graphs compile unchanged; duplicate usage counts once; guard state survives reopening; No-op works without Docker; local Langfuse health is reproducible.
 
@@ -90,13 +90,13 @@ At the start of a task, locate only that task with `rg -n '^### Task'` and read 
 
 **Scope:**
 
-- [ ] Add RED native/fallback/stream/compaction tests.
-- [ ] Preserve raw usage metadata through provider envelopes without exposing raw responses.
-- [ ] Record one operation for structured calls and one for a complete stream.
-- [ ] Start `agent.run`/model spans and export safe token/model/latency attributes to local Langfuse.
-- [ ] Add soft compaction and hard `token_budget_exceeded`; protect system/recent/domain references.
-- [ ] Mark summary/title calls with non-business `purpose` to prevent recursive middleware.
-- [ ] Run chat gateway, both adapters, RunManager and new middleware tests.
+- [x] Add RED native/fallback/stream/compaction tests.
+- [x] Preserve raw usage metadata through provider envelopes without exposing raw responses.
+- [x] Record one operation for structured calls and one for a complete stream.
+- [x] Start `agent.run`/model spans and export safe token/model/latency attributes to local Langfuse.
+- [x] Add soft compaction and hard `token_budget_exceeded`; protect system/recent/domain references.
+- [x] Mark summary/title calls with non-business `purpose` to prevent recursive middleware.
+- [x] Run chat gateway, both adapters, RunManager and new middleware tests.
 - [ ] Commit `feat(runtime): meter model usage and context budgets`.
 
 **Gate:** Native/estimated usage is distinguishable; streams are not double-counted; two `review.single` model spans appear locally; stopping Langfuse does not fail the Agent.

@@ -58,6 +58,8 @@
 - 领域状态转换、Vault/索引副作用、长事务及补偿流程不放入通用 middleware；新增能力必须先判定归属并声明顺序、持久化、失败降级和幂等边界。
 - Pipeline 扩展契约增加稳定 middleware ID、单项关闭、层内顺序区间和冲突校验；默认透传基类允许扩展只覆盖需要的 hook。
 - 本机 Langfuse smoke test 发现 Alpine `localhost` 解析到 `::1` 会误判 ClickHouse unhealthy；健康检查固定使用 `127.0.0.1`。
+- LangGraph checkpointer 在节点执行期间持有 SQLite 写事务；usage/summary 必须先缓冲并在退出 checkpointer 后幂等 flush，不能在 model hook 内直接写库。
+- Langfuse OTLP 实测可把 `gen_ai.*` model spans 识别为 GENERATION；metadata-only 时 input/output 为空，测试 Provider usage 明确标记 estimated。
 
 ## R1.5 修正结果
 

@@ -61,6 +61,7 @@ class ModelInvocation:
     provider_model_id: str
     messages: tuple[Any, ...]
     purpose: Literal["business", "context_summary", "session_title"] = "business"
+    is_stream: bool = False
 
 
 @dataclass(frozen=True, slots=True)

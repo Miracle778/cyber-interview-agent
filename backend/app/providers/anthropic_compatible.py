@@ -9,7 +9,12 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage
 
 from app.providers.base import ERROR_MESSAGES, ProviderErrorCode, ProviderTestResult
-from app.providers.chat_gateway import ProviderInvocationError
+from app.providers.chat_gateway import (
+    ProviderInvocationError,
+    ProviderModelResult,
+    ProviderStreamChunk,
+    usage_from_message,
+)
 
 
 class AnthropicCompatibleAdapter:
@@ -52,10 +57,15 @@ class AnthropicCompatibleAdapter:
         api_key: str,
         schema: type,
         messages: Sequence[Any],
-    ) -> object:
+    ) -> ProviderModelResult[object]:
         try:
             chat = self._chat(base_url, model_id, api_key)
-            return await chat.with_structured_output(schema).ainvoke(messages)
+            envelope = await chat.with_structured_output(
+                schema, include_raw=True
+            ).ainvoke(messages)
+            return ProviderModelResult(
+                value=envelope["parsed"], usage=usage_from_message(envelope["raw"])
+            )
         except Exception as error:
             raise self._invocation_error(error) from error
 
@@ -66,13 +76,15 @@ class AnthropicCompatibleAdapter:
         model_id: str,
         api_key: str,
         messages: Sequence[Any],
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[ProviderStreamChunk]:
         try:
             chat = self._chat(base_url, model_id, api_key)
             async for chunk in chat.astream(messages):
                 content = chunk.content
-                if isinstance(content, str) and content:
-                    yield content
+                text = content if isinstance(content, str) else ""
+                usage = usage_from_message(chunk)
+                if text or usage is not None:
+                    yield ProviderStreamChunk(text=text, usage=usage)
         except Exception as error:
             raise self._invocation_error(error) from error
 

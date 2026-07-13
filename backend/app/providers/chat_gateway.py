@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Protocol, TypeVar
+from typing import Any, Generic, Protocol, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
@@ -10,6 +10,39 @@ from app.providers.base import ERROR_MESSAGES, ProviderErrorCode
 
 
 SchemaT = TypeVar("SchemaT", bound=BaseModel)
+ValueT = TypeVar("ValueT")
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderUsage:
+    input_tokens: int
+    output_tokens: int
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderModelResult(Generic[ValueT]):
+    value: ValueT
+    usage: ProviderUsage | None
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderStreamChunk:
+    text: str
+    usage: ProviderUsage | None = None
+
+
+def usage_from_message(message: Any) -> ProviderUsage | None:
+    metadata = getattr(message, "usage_metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+    return ProviderUsage(
+        input_tokens=int(metadata.get("input_tokens", 0)),
+        output_tokens=int(metadata.get("output_tokens", 0)),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +78,7 @@ class ChatProviderAdapter(Protocol):
         api_key: str,
         schema: type[BaseModel],
         messages: Sequence[Any],
-    ) -> object: ...
+    ) -> ProviderModelResult[object]: ...
 
     def stream_text(
         self,
@@ -54,7 +87,7 @@ class ChatProviderAdapter(Protocol):
         model_id: str,
         api_key: str,
         messages: Sequence[Any],
-    ) -> AsyncIterator[str]: ...
+    ) -> AsyncIterator[ProviderStreamChunk]: ...
 
 
 class ChatModelGateway:
@@ -75,7 +108,7 @@ class ChatModelGateway:
         binding: ResolvedModelBinding,
         schema: type[SchemaT],
         messages: Sequence[Any],
-    ) -> SchemaT:
+    ) -> ProviderModelResult[SchemaT]:
         raw = await self._adapter(binding).invoke_structured(
             base_url=binding.base_url,
             model_id=binding.model_id,
@@ -83,8 +116,10 @@ class ChatModelGateway:
             schema=schema,
             messages=messages,
         )
+        envelope = raw if isinstance(raw, ProviderModelResult) else ProviderModelResult(raw, None)
         try:
-            return raw if isinstance(raw, schema) else schema.model_validate(raw)
+            value = envelope.value if isinstance(envelope.value, schema) else schema.model_validate(envelope.value)
+            return ProviderModelResult(value=value, usage=envelope.usage)
         except ValidationError as error:
             raise ProviderInvocationError(
                 ProviderErrorCode.PROTOCOL_ERROR
@@ -95,12 +130,13 @@ class ChatModelGateway:
         *,
         binding: ResolvedModelBinding,
         messages: Sequence[Any],
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[ProviderStreamChunk]:
         async for chunk in self._adapter(binding).stream_text(
             base_url=binding.base_url,
             model_id=binding.model_id,
             api_key=binding.api_key,
             messages=messages,
         ):
-            if isinstance(chunk, str) and chunk:
-                yield chunk
+            envelope = chunk if isinstance(chunk, ProviderStreamChunk) else ProviderStreamChunk(str(chunk))
+            if envelope.text or envelope.usage is not None:
+                yield envelope

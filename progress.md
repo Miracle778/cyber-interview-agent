@@ -157,3 +157,11 @@
 - No-op/Safe ObservabilitySink 覆盖创建、进入、退出、flush 故障，且不吞业务异常。
 - OTel 依赖已锁定；本机 Langfuse Compose 静态配置与真实健康端点通过，普通 down 保留 volumes。
 - Task 1 专项测试 26 passed；未运行全量回归，下一步为 Task 2。
+
+## 2026-07-13：Runtime Middleware 1.0 Task 2
+
+- Gateway 新增结构化/流式 usage envelope，OpenAI/Anthropic adapter 提取原生 usage，旧 adapter 自动降级为 estimated。
+- ModelUsageMiddleware 对结构化与流式调用各记录一次；context budget 支持软压缩、硬限额与摘要持久化。
+- `_BoundModelInvoker` 已路由到 Pipeline；usage/summary 在 checkpointer 退出后 flush，解决真实 SQLite 写锁冲突。
+- OTel exporter 默认关闭；本机 Langfuse 实测收到同一 `agent.run` 下的 `model.invoke`/`model.stream`，内容字段为空。
+- Task 2 相关自动测试 50 passed，真实 Langfuse review smoke 1 passed；下一步 Task 3。

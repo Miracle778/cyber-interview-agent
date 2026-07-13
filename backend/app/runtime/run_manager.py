@@ -17,6 +17,16 @@ from app.runtime.checkpoints import RuntimeCheckpointer
 from app.runtime.event_stream import EventStream
 from app.runtime.graph_build_context import GraphBuildContext
 from app.runtime.graph_registry import GraphRegistry
+from app.runtime.middleware.context_budget import ContextBudgetMiddleware
+from app.runtime.middleware.pipeline import RuntimeMiddlewarePipeline
+from app.runtime.middleware.repository import RuntimeMiddlewareRepository
+from app.runtime.middleware.telemetry import ModelUsageMiddleware
+from app.runtime.middleware.types import MiddlewareContext, ModelInvocation
+from app.runtime.middleware.observability import (
+    NoopObservabilitySink,
+    ObservabilitySink,
+    TraceContext,
+)
 from app.runtime.models import RunRecord
 from app.runtime.repository import InvalidRunTransitionError, RuntimeRepository
 from app.tools.audit import ToolAuditRepository
@@ -36,11 +46,16 @@ class _BoundModelInvoker:
         bindings: dict[str, str],
         resolver: Callable[[str, str], ResolvedModelBinding],
         gateway: ChatModelGateway,
+        pipeline: RuntimeMiddlewarePipeline,
+        middleware_context: MiddlewareContext,
     ) -> None:
         self._bindings = bindings
         self._resolver = resolver
         self._gateway = gateway
+        self._pipeline = pipeline
+        self._middleware_context = middleware_context
         self._resolved: dict[str, ResolvedModelBinding] = {}
+        self._call_sequence = 0
 
     def _binding(self, role: str) -> ResolvedModelBinding:
         try:
@@ -60,17 +75,54 @@ class _BoundModelInvoker:
         schema: type[BaseModel],
         messages: Sequence[Any],
     ) -> BaseModel:
-        return await self._gateway.invoke_structured(
-            binding=self._binding(role), schema=schema, messages=messages
+        binding = self._binding(role)
+        invocation = self._invocation(role, binding, messages)
+
+        async def call_next(value):
+            return await self._gateway.invoke_structured(
+                binding=binding, schema=schema, messages=value.messages
+            )
+
+        result = await self._pipeline.wrap_model(
+            self._middleware_context, invocation, call_next
         )
+        return result.value
 
     async def stream_text(
         self, *, role: str, messages: Sequence[Any]
     ) -> AsyncIterator[str]:
-        async for chunk in self._gateway.stream_text(
-            binding=self._binding(role), messages=messages
-        ):
-            yield chunk
+        stream = await self._stream_enveloped(role, messages, purpose="business")
+        async for chunk in stream:
+            if chunk.text:
+                yield chunk.text
+
+    async def _stream_enveloped(self, role, messages, *, purpose):
+        binding = self._binding(role)
+        invocation = self._invocation(
+            role, binding, messages, purpose=purpose, is_stream=True
+        )
+
+        async def call_next(value):
+            return self._gateway.stream_text(binding=binding, messages=value.messages)
+
+        return await self._pipeline.wrap_model(
+            self._middleware_context, invocation, call_next
+        )
+
+    def _invocation(
+        self, role, binding, messages, *, purpose="business", is_stream=False
+    ):
+        operation_key = f"model:{role}:{self._call_sequence}"
+        self._call_sequence += 1
+        return ModelInvocation(
+            operation_key=operation_key,
+            role=role,
+            provider_id=binding.provider_id,
+            provider_model_id=binding.provider_model_id,
+            messages=tuple(messages),
+            purpose=purpose,
+            is_stream=is_stream,
+        )
 
 
 class RunManager:
@@ -99,6 +151,8 @@ class RunManager:
         ] | None = None,
         mark_draft_review_pending: Callable[..., Awaitable[KnowledgeDraftRecord]]
         | None = None,
+        middleware_repository: RuntimeMiddlewareRepository | None = None,
+        observability: ObservabilitySink | None = None,
     ) -> None:
         self._repository = repository
         self._event_stream = event_stream
@@ -115,6 +169,8 @@ class RunManager:
         self._resolve_model_binding = resolve_model_binding
         self._create_draft = create_draft
         self._mark_draft_review_pending = mark_draft_review_pending
+        self._middleware_repository = middleware_repository
+        self._observability = observability or NoopObservabilitySink()
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._is_shutting_down = False
@@ -321,6 +377,8 @@ class RunManager:
                     event_stream=self._event_stream,
                 )
                 requested_action_ids: set[str] = set()
+                usage_middleware = None
+                pending_summaries: list[str] = []
 
                 if definition.required_model_roles:
                     if (
@@ -328,11 +386,59 @@ class RunManager:
                         or self._resolve_model_binding is None
                     ):
                         raise RuntimeError("Model invocation is not configured")
+                    middleware_context = MiddlewareContext(
+                        workspace_id=session.workspace_id,
+                        session_id=session.id,
+                        run_id=run.id,
+                        graph_id=definition.graph_id,
+                        graph_version=definition.graph_version,
+                    )
+                    middleware_items = []
+                    if self._middleware_repository is not None:
+                        usage_middleware = ModelUsageMiddleware(
+                            self._middleware_repository,
+                            defer_writes=True,
+                            observability=self._observability,
+                        )
+                        middleware_items.append(usage_middleware)
+                    invoker_holder = {}
+
+                    async def summarize_context(messages, existing):
+                        prompt = (
+                            {"role": "system", "content": "压缩为保留事实、任务状态和未解决事项的简洁摘要。"},
+                            {"role": "user", "content": str(tuple(messages))},
+                        )
+                        stream = await invoker_holder["invoker"]._stream_enveloped(
+                            "report_summarization", prompt, purpose="context_summary"
+                        )
+                        return "".join(
+                            [chunk.text async for chunk in stream if chunk.text]
+                        ).strip()
+
+                    middleware_items.append(
+                        ContextBudgetMiddleware(
+                            config=definition.middleware_config,
+                            summarize_context=summarize_context,
+                            existing_summary=lambda context: self._repository.get_session(
+                                context.session_id
+                            ).summary,
+                            save_summary=lambda context, summary: pending_summaries.append(
+                                summary
+                            ),
+                            publish_warning=lambda code: None,
+                        )
+                    )
+                    pipeline = RuntimeMiddlewarePipeline(
+                        middleware_items, definition.middleware_config
+                    )
                     model_invoker = _BoundModelInvoker(
                         bindings=run.model_bindings,
                         resolver=self._resolve_model_binding,
                         gateway=self._chat_gateway,
+                        pipeline=pipeline,
+                        middleware_context=middleware_context,
                     )
+                    invoker_holder["invoker"] = model_invoker
                 else:
                     from app.runtime.graph_build_context import (
                         UnavailableModelInvoker,
@@ -396,20 +502,40 @@ class RunManager:
                     requested_action_ids.add(action.id)
                     return action
 
-                async with self._checkpointer.open() as checkpointer:
-                    graph = definition.factory(
-                        GraphBuildContext(
-                            checkpointer=checkpointer,
-                            invoke_tool=invoker.invoke_tool,
-                            request_action=request_action,
-                            invoke_model=model_invoker,
-                            create_draft=create_draft,
+                trace_context = TraceContext(
+                    session.workspace_id,
+                    session.id,
+                    run.id,
+                    definition.graph_id,
+                    definition.graph_version,
+                )
+                try:
+                    with self._observability.span(
+                        "agent.run",
+                        context=trace_context,
+                        attributes={"cyber.status": "running"},
+                    ):
+                        async with self._checkpointer.open() as checkpointer:
+                            graph = definition.factory(
+                                GraphBuildContext(
+                                    checkpointer=checkpointer,
+                                    invoke_tool=invoker.invoke_tool,
+                                    request_action=request_action,
+                                    invoke_model=model_invoker,
+                                    create_draft=create_draft,
+                                )
+                            )
+                            result = await graph.ainvoke(
+                                graph_input,
+                                {"configurable": {"thread_id": run.session_id}},
+                            )
+                finally:
+                    if usage_middleware is not None:
+                        usage_middleware.flush()
+                    for summary in pending_summaries:
+                        self._repository.update_session_summary(
+                            session.id, summary=summary
                         )
-                    )
-                    result = await graph.ainvoke(
-                        graph_input,
-                        {"configurable": {"thread_id": run.session_id}},
-                    )
 
                 interrupts = result.get("__interrupt__") if isinstance(result, dict) else None
                 if interrupts:

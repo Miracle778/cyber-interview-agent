@@ -16,8 +16,8 @@
 
 ## 当前任务：Runtime Middleware 1.0
 
-1. **Pipeline 契约、持久化与本机观测底座（已完成，待提交）**
-2. **模型 usage、OTLP exporter 与 context budget（待开始）**
+1. **Pipeline 契约、持久化与本机观测底座（已完成）**
+2. **模型 usage、OTLP exporter 与 context budget（已完成，待提交）**
 3. **标题、循环保护、API 与 Review UI（待开始）**
 4. **HITL bridge、真实 Agent 与最终验收（待开始）**
 

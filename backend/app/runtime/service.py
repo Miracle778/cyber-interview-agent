@@ -26,6 +26,11 @@ from app.runtime.checkpoints import RuntimeCheckpointer
 from app.runtime.event_stream import EventStream, encode_sse_event
 from app.runtime.graph_registry import GraphRegistry, GraphVersionNotFoundError
 from app.runtime.models import RunRecord, SessionRecord
+from app.runtime.middleware.repository import RuntimeMiddlewareRepository
+from app.runtime.middleware.observability import (
+    ObservabilitySettings,
+    create_observability_sink,
+)
 from app.runtime.repository import RuntimeRecordNotFoundError, RuntimeRepository
 from app.runtime.run_manager import RunManager
 from app.services.workspace import WorkspaceError
@@ -341,6 +346,10 @@ class AgentRuntime:
             resolve_model_binding=self._resolve_model_binding,
             create_draft=draft_service.create,
             mark_draft_review_pending=draft_service.mark_review_pending,
+            middleware_repository=RuntimeMiddlewareRepository(connection),
+            observability=create_observability_sink(
+                ObservabilitySettings.from_env(), lambda code: None
+            ),
         )
         hitl_service = HitlService(
             repository=hitl_repository,

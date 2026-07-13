@@ -6,6 +6,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
 from app.providers.base import ProviderErrorCode
+from app.providers.chat_gateway import ProviderUsage
 from app.providers.openai_compatible import OpenAICompatibleAdapter
 
 
@@ -139,11 +140,23 @@ async def test_structured_invocation_uses_function_calling_for_compatibility(
     class FakeRunnable:
         async def ainvoke(self, messages):
             capture["messages"] = messages
-            return _StructuredResult(score="partial")
+            return {
+                "parsed": _StructuredResult(score="partial"),
+                "raw": AIMessage(
+                    content="",
+                    usage_metadata={
+                        "input_tokens": 12,
+                        "output_tokens": 3,
+                        "total_tokens": 15,
+                    },
+                ),
+                "parsing_error": None,
+            }
 
     def fake_with_structured_output(self, schema, **kwargs):
         capture["schema"] = schema
         capture["method"] = kwargs.get("method")
+        capture["include_raw"] = kwargs.get("include_raw")
         return FakeRunnable()
 
     monkeypatch.setattr(
@@ -158,6 +171,8 @@ async def test_structured_invocation_uses_function_calling_for_compatibility(
         messages=[{"role": "user", "content": "answer"}],
     )
 
-    assert result == _StructuredResult(score="partial")
+    assert result.value == _StructuredResult(score="partial")
+    assert result.usage == ProviderUsage(12, 3)
     assert capture["schema"] is _StructuredResult
     assert capture["method"] == "function_calling"
+    assert capture["include_raw"] is True
