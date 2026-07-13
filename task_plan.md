@@ -2,14 +2,14 @@
 
 ## 当前任务
 
-Pre-R2 Agent Runtime Framework Convergence 已完成实现与最终回归，正在做文档门禁、静态复核和最终提交。
+Pre-R2 Agent Runtime Framework Convergence 已完成实现、验收与提交。
 
 | 纵向任务 | 状态 |
 |---|---|
 | 官方 Agent/模型与 review Graph | 已完成并提交 |
 | 标准 Tool、官方 HITL、显式 publication | 已完成并提交 |
 | 官方 middleware 与 LangGraph stream 投影 | 已完成并提交 |
-| 新 application/API/frontend、旧 Runtime 删除 | 已完成，待最终提交 |
+| 新 application/API/frontend、旧 Runtime 删除 | 已完成并提交 `4f6aabb` |
 
 ## 工作位置
 
@@ -29,15 +29,14 @@ Pre-R2 Agent Runtime Framework Convergence 已完成实现与最终回归，正�
 - context summary：全新会话第 11 次执行触发；三个 role thread 隔离。
 - observability：真实不可连接 OTLP endpoint 下业务 fail-open。
 
-## 剩余步骤
+## 下一步
 
-1. 运行文档门禁和同档案人工抽查。
-2. 运行最终静态删除扫描与 `git diff --check`。
-3. 提交 Task 4；不在本任务内合并 main。
+1. 等待用户选择是否 fast-forward 合入 `main`。
+2. 合并后显式同步本地 verification 与 learning 七件套。
 
 ## 所有权状态
 
-- 产品：实现稳定，待最终提交。
+- 产品：实现稳定，已提交 `4f6aabb`。
 - 成熟度：场景可用；旧数据/API/checkpoint 不兼容是明确边界。
 - 用户学习：未开始。
 - 用户实践：未开始；不阻塞产品提交或 R2。

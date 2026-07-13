@@ -21,10 +21,10 @@
 - 不可连接 OTLP endpoint 下执行仍到达等待审批，证明 observability fail-open。
 - 最终回归：后端 `195 passed`；前端 `76 passed`；`npm run build`（含 `tsc`）通过。
 - 旧 E2E 契约已更新；静态扫描不再发现旧产品 API 名称。
-- verification 与 `foundation` learning 七件套已生成，待文档门禁与最终提交。
+- verification 与 `foundation` learning 七件套已生成，文档门禁通过。
+- 最终实现提交：`4f6aabb refactor(agent): complete runtime framework convergence`。
 
 ## 当前下一步
 
-1. 文档机器门禁和同档案人工抽查。
-2. 静态删除扫描、diff 检查、敏感信息复核。
-3. Task 4 最终提交；等待用户决定是否合入 main。
+1. 等待用户决定是否合入 main。
+2. 合并后显式同步忽略的 verification 与 learning 七件套。
