@@ -29,7 +29,8 @@ R2 不再建设 Runtime 基础设施。目标是利用现有 Agent Harness 实�
 - 轮次结束生成 session report 和 mastery update 草稿；
 - 用户审核后发布报告，并更新可追溯的掌握度投影；
 - 从某道题派生独立深入讨论 session；
-- 桌面和移动端的轮次进度、用量、context、产物与恢复提示。
+- Web 页面在桌面和窄屏下展示轮次进度、用量、context、产物与恢复提示；这只是
+  响应式 Web 质量，不代表微信、飞书等原生 Channel 已接入。
 
 ### 2.2 不包含
 
@@ -309,7 +310,9 @@ POST /api/review/rounds/{id}/discussions
 
 侧边或折叠区域显示历史轮次与派生讨论。人工确认只在存在 pending action 时出现；普通答题 input 不伪装成审批。刷新后页面完全从 round/session/action resources 恢复，不依赖组件内累计数组。
 
-移动端保持单列，主要回答操作触控区域不小于 44px；375px 无横向溢出。当前题和输入框优先于历史、usage 详情和报告附件。
+窄屏 Web 保持单列，主要回答操作触控区域不小于 44px；375px 无横向溢出。
+当前题和输入框优先于历史、usage 详情和报告附件。微信、飞书原生聊天窗口中的
+Agent 对话属于 R8，不在 R2 用响应式浏览器页面替代。
 
 ## 12. 一致性、失败与恢复
 
@@ -362,11 +365,11 @@ POST /api/review/rounds/{id}/discussions
 - 覆盖必要追问、跳过、刷新、后端重启、重复提交和取消；
 - 轮次报告/mastery draft 的接受、编辑、拒绝和发布；
 - 派生 discussion 后返回主轮次，消息不互相污染；
-- 桌面和 375px 移动端无溢出，人工确认仅在 pending action 时出现；
+- 桌面和 375px 窄屏 Web 无溢出，人工确认仅在 pending action 时出现；该证据不计入 R8 Channel 验收；
 - Vault target path、报告 evidence 和下一轮 selection 实际引用已确认 mastery。
 
 ## 15. 产品成熟度边界
 
-R2 完成后可标记为“完整复习场景可用”，含义是用户能持续完成多题轮次并形成可审核的掌握度证据；不代表已具备间隔重复计划、岗位联动、正式 Todo、模拟面试或移动 Channel。
+R2 完成后可标记为“完整复习场景可用”，含义是用户能持续完成多题轮次并形成可审核的掌握度证据；不代表已具备间隔重复计划、岗位联动、正式 Todo、模拟面试或微信/飞书原生对话 Channel。
 
 用户 ownership 学习与练习继续独立记录，不阻塞产品实施、提交或下一阶段设计。
