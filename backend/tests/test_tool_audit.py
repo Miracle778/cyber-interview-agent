@@ -51,7 +51,7 @@ def test_runtime_migration_creates_tool_audit_table(tmp_path: Path) -> None:
     ).fetchall()
 
     assert "tool_audits" in tables
-    assert [row[0] for row in versions] == [1, 2, 3, 4, 5]
+    assert [row[0] for row in versions] == [1, 2, 3, 4, 5, 6]
     connection.close()
 
 

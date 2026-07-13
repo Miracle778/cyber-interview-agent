@@ -16,6 +16,7 @@ class MiddlewareLayer(StrEnum):
 class MiddlewareConfig:
     enabled_layers: frozenset[MiddlewareLayer] = frozenset(MiddlewareLayer)
     disabled_middleware: frozenset[str] = frozenset()
+    approval_tools: frozenset[str] = frozenset()
     soft_context_tokens: int = 12_000
     hard_context_tokens: int = 16_000
     max_graph_steps: int = 40

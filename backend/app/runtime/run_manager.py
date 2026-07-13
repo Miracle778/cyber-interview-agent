@@ -3,8 +3,9 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from langgraph.types import Command
+from langgraph.types import Command, interrupt
 from langgraph.errors import GraphRecursionError
+from opentelemetry.trace import Link, SpanContext, TraceFlags, TraceState
 from pydantic import BaseModel
 
 from app.hitl.models import CreatePendingAction, PendingActionRecord
@@ -24,6 +25,8 @@ from app.runtime.middleware.repository import RuntimeMiddlewareRepository
 from app.runtime.middleware.telemetry import ModelUsageMiddleware
 from app.runtime.middleware.loop_guard import LoopGuardMiddleware
 from app.runtime.middleware.session_title import SessionTitleMiddleware
+from app.runtime.middleware.hitl_adapter import PersistentHitlMiddleware, ToolApprovalPolicy
+from app.runtime.middleware.types import ToolInvocation
 from app.runtime.middleware.types import (
     MiddlewareContext,
     ModelInvocation,
@@ -318,14 +321,28 @@ class RunManager:
         run = self._repository.resume_run(
             run_id, expected=current.status, target="running"
         )
+        session = self._repository.get_session(run.session_id)
         try:
-            await self._event_stream.publish(
-                run.session_id,
-                run.id,
-                "run.started",
-                {"resumeAttempt": run.resume_count},
-            )
-            self._spawn(run.id, graph_input=Command(resume=decision))
+            with self._observability.span(
+                "hitl.resume",
+                context=TraceContext(
+                    session.workspace_id,
+                    session.id,
+                    run.id,
+                    session.graph_id,
+                    session.graph_version,
+                ),
+                attributes={
+                    "cyber.action.decision": str(decision.get("decision", "unknown"))
+                },
+            ):
+                await self._event_stream.publish(
+                    run.session_id,
+                    run.id,
+                    "run.started",
+                    {"resumeAttempt": run.resume_count},
+                )
+                self._spawn(run.id, graph_input=Command(resume=decision))
         except BaseException:
             self._interrupt_unspawned(run.id)
             raise
@@ -338,6 +355,7 @@ class RunManager:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         await self.recover_interrupted_runs()
+        self._observability.force_flush(2_000)
 
     def _spawn(self, run_id: str, *, graph_input: object | None) -> None:
         task = asyncio.create_task(self._execute(run_id, graph_input=graph_input))
@@ -387,6 +405,8 @@ class RunManager:
                 usage_middleware = None
                 guard_middleware = None
                 pending_summaries: list[str] = []
+                tool_call_sequence = 0
+                tool_pipeline = None
 
                 if definition.required_model_roles:
                     if (
@@ -505,20 +525,43 @@ class RunManager:
                     )
 
                 async def invoke_tool(name: str, raw_input: dict[str, object]):
-                    with self._observability.span(
-                        "tool.invoke",
-                        context=TraceContext(
+                    nonlocal tool_call_sequence
+                    invocation = ToolInvocation(
+                        operation_key=f"tool:{name}:{tool_call_sequence}",
+                        tool_name=name,
+                        arguments=raw_input,
+                    )
+                    tool_call_sequence += 1
+
+                    async def call_next(value):
+                        with self._observability.span(
+                            "tool.invoke",
+                            context=TraceContext(
+                                session.workspace_id,
+                                session.id,
+                                run.id,
+                                definition.graph_id,
+                                definition.graph_version,
+                            ),
+                            attributes={"gen_ai.tool.name": value.tool_name},
+                        ) as span:
+                            result = await invoker.invoke_tool(
+                                value.tool_name, value.arguments
+                            )
+                            span.set_attribute("cyber.status", "completed")
+                            return result
+
+                    return await tool_pipeline.wrap_tool(
+                        MiddlewareContext(
                             session.workspace_id,
                             session.id,
                             run.id,
                             definition.graph_id,
                             definition.graph_version,
                         ),
-                        attributes={"gen_ai.tool.name": name},
-                    ) as span:
-                        result = await invoker.invoke_tool(name, raw_input)
-                        span.set_attribute("cyber.status", "completed")
-                        return result
+                        invocation,
+                        call_next,
+                    )
 
                 async def request_action(
                     *,
@@ -528,8 +571,24 @@ class RunManager:
                     editable_fields: tuple[str, ...],
                     idempotency_key: str,
                 ) -> PendingActionRecord:
-                    action = await self._request_action(
-                        CreatePendingAction(
+                    span_name = (
+                        "knowledge.publish"
+                        if action_type == "knowledge.publish"
+                        else "hitl.interrupt"
+                    )
+                    with self._observability.span(
+                        span_name,
+                        context=TraceContext(
+                            session.workspace_id,
+                            session.id,
+                            run.id,
+                            definition.graph_id,
+                            definition.graph_version,
+                        ),
+                        attributes={"cyber.action.type": action_type},
+                    ):
+                        action = await self._request_action(
+                            CreatePendingAction(
                             workspace_id=session.workspace_id,
                             session_id=session.id,
                             run_id=run.id,
@@ -538,8 +597,8 @@ class RunManager:
                             preview=preview,
                             editable_fields=editable_fields,
                             idempotency_key=f"{run.id}:{idempotency_key}",
+                            )
                         )
-                    )
                     if (
                         action_type == "knowledge.publish"
                         and action.status == "pending"
@@ -553,6 +612,21 @@ class RunManager:
                     requested_action_ids.add(action.id)
                     return action
 
+                tool_middleware = [
+                    PersistentHitlMiddleware(
+                        policy=ToolApprovalPolicy(
+                            definition.middleware_config.approval_tools
+                        ),
+                        request_action=request_action,
+                        interrupt_call=interrupt,
+                    )
+                ]
+                if guard_middleware is not None:
+                    tool_middleware.insert(0, guard_middleware)
+                tool_pipeline = RuntimeMiddlewarePipeline(
+                    tool_middleware, definition.middleware_config
+                )
+
                 trace_context = TraceContext(
                     session.workspace_id,
                     session.id,
@@ -560,12 +634,39 @@ class RunManager:
                     definition.graph_id,
                     definition.graph_version,
                 )
+                trace_segment_sequence = None
+                links = []
+                if self._middleware_repository is not None:
+                    previous_segment = self._middleware_repository.latest_trace_segment(
+                        run.id
+                    )
+                    if previous_segment is not None:
+                        links.append(
+                            Link(
+                                SpanContext(
+                                    trace_id=int(previous_segment.trace_id, 16),
+                                    span_id=int(previous_segment.span_id, 16),
+                                    is_remote=True,
+                                    trace_flags=TraceFlags(TraceFlags.SAMPLED),
+                                    trace_state=TraceState(),
+                                )
+                            )
+                        )
                 try:
                     with self._observability.span(
                         "agent.run",
                         context=trace_context,
                         attributes={"cyber.status": "running"},
-                    ):
+                        links=links,
+                    ) as root_span:
+                        if self._middleware_repository is not None:
+                            trace_id, span_id = root_span.trace_ids()
+                            try:
+                                trace_segment_sequence = self._middleware_repository.start_trace_segment(
+                                    run.id, trace_id, span_id
+                                )
+                            except Exception:
+                                trace_segment_sequence = None
                         async with self._checkpointer.open() as checkpointer:
                             graph = definition.factory(
                                 GraphBuildContext(
@@ -584,6 +685,14 @@ class RunManager:
                                 },
                             )
                 finally:
+                    if (
+                        self._middleware_repository is not None
+                        and trace_segment_sequence is not None
+                    ):
+                        self._middleware_repository.finish_trace_segment(
+                            run.id, trace_segment_sequence
+                        )
+                    self._observability.force_flush(2_000)
                     if guard_middleware is not None:
                         guard_middleware.flush()
                     if usage_middleware is not None:
@@ -640,6 +749,7 @@ class RunManager:
                             guard_middleware.flush()
                         if usage_middleware is not None:
                             usage_middleware.flush()
+                        self._observability.force_flush(2_000)
                 self._repository.transition_run(
                     run.id, expected="running", target="completed"
                 )

@@ -97,7 +97,7 @@ At the start of a task, locate only that task with `rg -n '^### Task'` and read 
 - [x] Add soft compaction and hard `token_budget_exceeded`; protect system/recent/domain references.
 - [x] Mark summary/title calls with non-business `purpose` to prevent recursive middleware.
 - [x] Run chat gateway, both adapters, RunManager and new middleware tests.
-- [ ] Commit `feat(runtime): meter model usage and context budgets`.
+- [x] Commit `feat(runtime): meter model usage and context budgets`.
 
 **Gate:** Native/estimated usage is distinguishable; streams are not double-counted; two `review.single` model spans appear locally; stopping Langfuse does not fail the Agent.
 
@@ -123,7 +123,7 @@ At the start of a task, locate only that task with `rg -n '^### Task'` and read 
 - [x] Add safe spans for post-processing/guard/tool hooks without prompt or argument bodies.
 - [x] Extend API/TypeScript resources and render usage/summary/warning without a new page.
 - [x] Run targeted backend/frontend tests and TypeScript.
-- [ ] Commit `feat(runtime): add title and loop guard middleware`.
+- [x] Commit `feat(runtime): add title and loop guard middleware`.
 
 **Gate:** A restart cannot reset guard budgets; warning payloads contain no fingerprints/arguments; title/summary failure leaves the business run successful.
 
@@ -141,16 +141,16 @@ At the start of a task, locate only that task with `rg -n '^### Task'` and read 
 
 **Scope:**
 
-- [ ] Add RED ordinary-tool approval, official adapter and explicit-publication boundary tests.
-- [ ] Reuse current action/version/receipt/resume semantics with deterministic tool action keys.
-- [ ] Prove `knowledge.publish` still comes from the explicit review Graph.
-- [ ] Prove usage while waiting; approve; then prove generated title, publication, restart persistence and middleware-off behavior.
-- [ ] Prove HITL/resume/publication spans, restart links by stable run ID, metadata-only defaults and exporter fail-open.
-- [ ] Run one cross-layer backend subset.
-- [ ] Run one Playwright pass covering desktop/mobile, refresh/restart, loop error and console cleanliness.
-- [ ] Run final backend/frontend regression and build once.
-- [ ] Finalize verification/learning docs and run `check_stage_docs.py`.
-- [ ] Commit `feat(runtime): validate middleware with review agent`.
+- [x] Add RED ordinary-tool approval, official adapter and explicit-publication boundary tests.
+- [x] Reuse current action/version/receipt/resume semantics with deterministic tool action keys.
+- [x] Prove `knowledge.publish` still comes from the explicit review Graph.
+- [x] Prove usage while waiting; approve; then prove generated title, publication, restart persistence and middleware-off behavior.
+- [x] Prove HITL/resume/publication spans, restart links by stable run ID, metadata-only defaults and exporter fail-open.
+- [x] Run one cross-layer backend subset.
+- [x] Run one browser Playwright pass covering desktop/mobile, refresh and console cleanliness; cover restart and loop failure in backend integration tests.
+- [x] Run final backend/frontend regression and build once.
+- [x] Finalize verification/learning docs and run `check_stage_docs.py`.
+- [x] Commit `feat(runtime): validate middleware with review agent`.
 
 **Gate:** Browser and local Langfuse evidence exists; exact final test counts come from the last commands; Todo extraction/UI and R2 behavior remain absent.
 

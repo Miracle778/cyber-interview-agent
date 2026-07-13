@@ -182,13 +182,18 @@ class RuntimeMiddlewareRepository:
             self._connection.rollback()
             raise
 
-    def finish_trace_segment(self, run_id: str, segment_sequence: int) -> None:
-        self._connection.execute(
-            "UPDATE runtime_trace_segments SET finished_at = CURRENT_TIMESTAMP "
-            "WHERE run_id = ? AND segment_sequence = ?",
-            (run_id, segment_sequence),
-        )
-        self._connection.commit()
+    def finish_trace_segment(self, run_id: str, segment_sequence: int) -> bool:
+        try:
+            self._connection.execute(
+                "UPDATE runtime_trace_segments SET finished_at = CURRENT_TIMESTAMP "
+                "WHERE run_id = ? AND segment_sequence = ?",
+                (run_id, segment_sequence),
+            )
+            self._connection.commit()
+            return True
+        except sqlite3.OperationalError:
+            self._connection.rollback()
+            return False
 
     def latest_trace_segment(self, run_id: str) -> TraceSegment | None:
         row = self._connection.execute(

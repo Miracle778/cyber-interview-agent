@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import os
+import secrets
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -38,6 +39,7 @@ def as_trace_context(context) -> TraceContext:
 class SpanHandle(Protocol):
     def set_attribute(self, key: str, value: AttributeValue) -> None: ...
     def record_error(self, code: str) -> None: ...
+    def trace_ids(self) -> tuple[str, str]: ...
 
 
 class ObservabilitySink(Protocol):
@@ -54,11 +56,17 @@ class ObservabilitySink(Protocol):
 
 
 class NoopSpanHandle:
+    def __init__(self) -> None:
+        self._ids = (secrets.token_hex(16), secrets.token_hex(8))
+
     def set_attribute(self, key: str, value: AttributeValue) -> None:
         return None
 
     def record_error(self, code: str) -> None:
         return None
+
+    def trace_ids(self) -> tuple[str, str]:
+        return self._ids
 
 
 class NoopObservabilitySink:
@@ -80,6 +88,10 @@ class OpenTelemetrySpanHandle:
     def record_error(self, code: str) -> None:
         self._span.set_attribute("error.type", code)
 
+    def trace_ids(self) -> tuple[str, str]:
+        context = self._span.get_span_context()
+        return f"{context.trace_id:032x}", f"{context.span_id:016x}"
+
 
 class OpenTelemetryObservabilitySink:
     def __init__(self, provider: TracerProvider) -> None:
@@ -98,6 +110,7 @@ class OpenTelemetryObservabilitySink:
         safe_attributes = {
             "cyber.workspace.id": context.workspace_id,
             "cyber.session.id": context.session_id,
+            "langfuse.session.id": context.session_id,
             "cyber.run.id": context.run_id,
             "cyber.graph.id": context.graph_id,
             "cyber.graph.version": context.graph_version,

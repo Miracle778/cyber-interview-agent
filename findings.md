@@ -60,6 +60,8 @@
 - 本机 Langfuse smoke test 发现 Alpine `localhost` 解析到 `::1` 会误判 ClickHouse unhealthy；健康检查固定使用 `127.0.0.1`。
 - LangGraph checkpointer 在节点执行期间持有 SQLite 写事务；usage/summary 必须先缓冲并在退出 checkpointer 后幂等 flush，不能在 model hook 内直接写库。
 - Langfuse OTLP 实测可把 `gen_ai.*` model spans 识别为 GENERATION；metadata-only 时 input/output 为空，测试 Provider usage 明确标记 estimated。
+- Playwright 管理的 webServer 可能被强制终止而不触发 shutdown；开发观测启用时每个 run segment 与 post-processing 后执行受限 flush，默认 No-op 无额外成本。
+- Trace segment 是诊断数据，start/finish 遇到 SQLite 锁必须 rollback 并 fail-open，不能把成功业务 run 改成 failed。
 
 ## R1.5 修正结果
 

@@ -174,3 +174,12 @@
 - Review 页面显示 token、估算次数、压缩状态和五类 guard 恢复建议。
 - title/compression/guard/tool spans 仅记录触发原因、计数、工具名和状态，不记录正文/参数。
 - 后端定向 33 passed；前端 8 passed；TypeScript 通过。下一步 Task 4。
+
+## 2026-07-13：Runtime Middleware 1.0 Task 4 与最终验收
+
+- 完成普通工具 PersistentHitlMiddleware、动态 tool approval handler 和 LangChain AgentMiddleware adapter；knowledge.publish 保持显式 Graph 路径。
+- 每次 run/resume 持久化 trace segment，新段 Link 上一段；Langfuse 按 session 展示 model、guard、title、HITL 和 publication。
+- 完整浏览器验收 1 passed，覆盖 usage、审批、自动标题、刷新、1440/375、无控制台 warning/error。
+- Langfuse 关闭后的 review fail-open 1 passed；input/output 默认为空。
+- 首次后端全量发现旧 migration 断言及 trace 收尾锁；修复后受影响 17 passed，最终后端 281 passed。
+- 最终前端 75 passed，TypeScript 和 production build 通过；verification 与 learning 七件套已生成。

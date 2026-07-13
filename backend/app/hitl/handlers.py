@@ -71,6 +71,8 @@ class ActionHandlerRegistry:
         self._handlers[action_type] = handler
 
     def get(self, action_type: str) -> ActionHandler:
+        if action_type.startswith("tool.approval."):
+            return self._handlers["tool.approval"]
         try:
             return self._handlers[action_type]
         except KeyError as error:
@@ -84,6 +86,7 @@ def create_default_action_handler_registry(
 ) -> ActionHandlerRegistry:
     registry = ActionHandlerRegistry()
     registry.register("test.approval", DefaultActionHandler())
+    registry.register("tool.approval", DefaultActionHandler())
     if knowledge_publish_handler is not None:
         registry.register("knowledge.publish", knowledge_publish_handler)
     return registry
