@@ -1,0 +1,190 @@
+from __future__ import annotations
+
+import pytest
+from langchain_anthropic import ChatAnthropic
+from langchain_core.language_models import BaseChatModel
+from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_openai import ChatOpenAI
+
+from app.agents.context import AgentContext
+from app.agents.factory import AgentFactory, AgentSpec
+from app.agents.model_resolver import ChatModelResolver, ModelResolutionError
+from app.db.app_database import connect_app_database
+from app.providers.base import ProviderErrorCode
+from app.repositories.provider_repository import ProviderRepository
+from app.services.secrets import FakeSecretStore
+
+
+@pytest.fixture
+def model_setup(tmp_path):
+    connection = connect_app_database(tmp_path)
+    repository = ProviderRepository(connection)
+    secrets = FakeSecretStore()
+    try:
+        yield repository, secrets
+    finally:
+        connection.close()
+
+
+def _seed_model(repository, secrets, *, api_format: str):
+    provider = repository.create_provider(
+        name="Test provider",
+        api_format=api_format,
+        base_url="https://models.example.test/v1",
+        secret_source="keyring",
+        secret_ref="provider:test",
+    )
+    model = repository.create_model(provider.id, "model-real-id", "Model")
+    secrets.set("provider:test", "test-secret")
+    return model
+
+
+@pytest.mark.parametrize(
+    ("api_format", "expected_type"),
+    [
+        ("openai-compatible", ChatOpenAI),
+        ("anthropic-compatible", ChatAnthropic),
+    ],
+)
+def test_model_resolver_returns_standard_chat_model_without_exposing_secret(
+    model_setup, api_format, expected_type
+):
+    repository, secrets = model_setup
+    model_record = _seed_model(repository, secrets, api_format=api_format)
+    resolver = ChatModelResolver(repository, {"keyring": secrets})
+
+    resolved = resolver.resolve(
+        role="answer_evaluation", provider_model_id=model_record.id
+    )
+
+    assert isinstance(resolved, BaseChatModel)
+    assert isinstance(resolved, expected_type)
+    assert "test-secret" not in repr(resolved)
+
+
+def test_model_resolver_maps_missing_secret_to_stable_error(model_setup):
+    repository, secrets = model_setup
+    model_record = _seed_model(
+        repository, secrets, api_format="openai-compatible"
+    )
+    secrets.delete("provider:test")
+    resolver = ChatModelResolver(repository, {"keyring": secrets})
+
+    with pytest.raises(ModelResolutionError) as raised:
+        resolver.resolve(
+            role="answer_evaluation", provider_model_id=model_record.id
+        )
+
+    assert raised.value.code is ProviderErrorCode.SECRET_MISSING
+
+
+def test_model_resolver_rejects_disabled_model(model_setup):
+    repository, secrets = model_setup
+    model_record = _seed_model(
+        repository, secrets, api_format="openai-compatible"
+    )
+    repository.update_model(
+        model_record.id,
+        real_model_id=model_record.model_id,
+        display_name=model_record.display_name,
+        enabled=False,
+    )
+    resolver = ChatModelResolver(repository, {"keyring": secrets})
+
+    with pytest.raises(ModelResolutionError) as raised:
+        resolver.resolve(
+            role="answer_evaluation", provider_model_id=model_record.id
+        )
+
+    assert raised.value.code is ProviderErrorCode.MODEL_NOT_FOUND
+
+
+def test_agent_context_contains_only_safe_execution_identifiers():
+    context = AgentContext(
+        workspace_id="workspace-1",
+        session_id="session-1",
+        run_id="run-1",
+        allowed_tools=frozenset({"read_source"}),
+        allowed_scopes=frozenset({"review.sources"}),
+    )
+
+    assert context.workspace_id == "workspace-1"
+    assert not hasattr(context, "api_key")
+    assert not hasattr(context, "provider")
+
+
+def test_agent_factory_delegates_to_create_agent_without_invocation_wrapper(
+    monkeypatch,
+):
+    captured = {}
+    compiled = object()
+    model = object()
+
+    class StubResolver:
+        def resolve(self, *, role, provider_model_id):
+            captured["resolve"] = (role, provider_model_id)
+            return model
+
+    def fake_create_agent(**kwargs):
+        captured["create"] = kwargs
+        return compiled
+
+    monkeypatch.setattr("app.agents.factory.create_agent", fake_create_agent)
+    factory = AgentFactory(StubResolver())
+    spec = AgentSpec(
+        role="answer_evaluation",
+        system_prompt="Evaluate the answer",
+        response_format=dict,
+    )
+
+    result = factory.create(
+        spec,
+        model_bindings={"answer_evaluation": "provider-model-1"},
+    )
+
+    assert result is compiled
+    assert captured["resolve"] == (
+        "answer_evaluation",
+        "provider-model-1",
+    )
+    assert captured["create"] == {
+        "model": model,
+        "tools": (),
+        "system_prompt": "Evaluate the answer",
+        "middleware": (),
+        "response_format": dict,
+        "context_schema": AgentContext,
+        "name": "answer_evaluation",
+    }
+
+
+@pytest.mark.asyncio
+async def test_agent_factory_returns_a_real_runnable_agent_graph():
+    model = GenericFakeChatModel(
+        messages=iter([AIMessage(content="Agent response")])
+    )
+
+    class StubResolver:
+        def resolve(self, *, role, provider_model_id):
+            assert (role, provider_model_id) == ("agent_chat", "model-1")
+            return model
+
+    agent = AgentFactory(StubResolver()).create(
+        AgentSpec(role="agent_chat", system_prompt="Be concise"),
+        model_bindings={"agent_chat": "model-1"},
+    )
+    context = AgentContext(
+        workspace_id="w1",
+        session_id="s1",
+        run_id="r1",
+        allowed_tools=frozenset(),
+        allowed_scopes=frozenset(),
+    )
+
+    result = await agent.ainvoke(
+        {"messages": [HumanMessage(content="hello")]},
+        context=context,
+    )
+
+    assert result["messages"][-1].text == "Agent response"

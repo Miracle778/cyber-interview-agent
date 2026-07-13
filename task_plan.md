@@ -16,8 +16,8 @@
 
 ## 当前任务：Pre-R2 Agent Runtime Framework Convergence
 
-1. **归档与架构设计（进行中）**
-2. **官方 Agent/模型/工具骨架（待开始）**
+1. **归档与架构设计（已完成）**
+2. **官方 Agent/模型骨架与 review 模型工作迁移（已完成）**
 3. **review.single、HITL 与横切能力迁移（待开始）**
 4. **Runtime/event 收敛、删除与最终验收（待开始）**
 

@@ -18,6 +18,14 @@
 - 实施计划按 KEEP/REWRITE/DELETE 处置旧测试，并拆成 Agent 核心、Tool/HITL、
   middleware/stream、Runtime/API/前端收敛四个纵向任务。
 - 下一步：计划自审和提交后，按 Task 1 编写 AgentFactory/ModelResolver RED。
+- Task 1 RED/GREEN 完成：`ChatModelResolver` 直接返回 OpenAI/Anthropic
+  `BaseChatModel`，secret 缺失与禁用模型映射为稳定错误；`AgentFactory` 真实调用
+  `create_agent`，没有新增 invocation wrapper。
+- 新 `ReviewAgents` 和显式 review Graph 只在 state 中保存评价与 Markdown，不保存
+  Provider 或 secret；官方 Agent 组合和新旧受影响专项共 56 passed。
+- Task 1 复核未创建 subagent，因为本切片全局约束为单 Agent；已内联检查新代码无
+  Gateway/Invoker/Pipeline 抽象和 whitespace 问题。
+- 下一步：提交 Task 1，进入标准 Tool、官方 HITL 与显式 publication Task 2。
 
 ## 2026-07-13：Learning 掌握包深度治理设计
 

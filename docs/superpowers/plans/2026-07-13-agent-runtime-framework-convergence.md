@@ -72,11 +72,8 @@ Before deleting a mixed test file, copy any still-valid capability assertion int
 - Create: `backend/app/agents/review.py`
 - Create: `backend/app/graphs/__init__.py`
 - Create: `backend/app/graphs/review.py`
-- Create: `backend/tests/fakes/chat_model.py`
 - Create: `backend/tests/test_agent_factory.py`
 - Create: `backend/tests/test_review_agent_graph.py`
-- Modify: `backend/app/agents/review_contracts.py`
-- Modify: `backend/app/main.py`
 - Test disposition: begin rewriting `test_review_definition.py` and `test_review_runtime_integration.py`; do not delete old production code yet.
 
 **Interfaces:**
@@ -87,7 +84,7 @@ Before deleting a mixed test file, copy any still-valid capability assertion int
 - Produces `ReviewAgents.evaluate(...) -> AnswerEvaluation` and `ReviewAgents.report(...) -> str` backed by official agents.
 - Produces `create_review_graph(dependencies) -> CompiledStateGraph` with explicit evaluate/report nodes and no publication side effects yet.
 
-- [ ] **Step 1: Write RED tests for direct model resolution**
+- [x] **Step 1: Write RED tests for direct model resolution**
 
 Create `test_agent_factory.py` with disabled-model, missing-secret, OpenAI-compatible and Anthropic-compatible cases. Assert the resolver returns `BaseChatModel`, preserves configured `base_url`/model, and never returns API keys from `repr()` or serialized Agent context.
 
@@ -101,7 +98,7 @@ Run: `pytest -q tests/test_agent_factory.py`
 
 Expected: FAIL because the new resolver/factory modules do not exist.
 
-- [ ] **Step 2: Implement `AgentContext` and direct `ChatModelResolver`**
+- [x] **Step 2: Implement `AgentContext` and direct `ChatModelResolver`**
 
 Use a frozen dataclass for safe runtime context:
 
@@ -121,7 +118,7 @@ Run: `pytest -q tests/test_agent_factory.py`
 
 Expected: resolver tests PASS; factory tests remain RED.
 
-- [ ] **Step 3: Implement and test `AgentFactory` using real `create_agent`**
+- [x] **Step 3: Implement and test `AgentFactory` using real `create_agent`**
 
 Define:
 
@@ -154,7 +151,7 @@ Run: `pytest -q tests/test_agent_factory.py`
 
 Expected: PASS.
 
-- [ ] **Step 4: Write RED review Agent/Graph behavior tests**
+- [x] **Step 4: Write RED review Agent/Graph behavior tests**
 
 The scripted model must return an `AnswerEvaluation` structured response for the evaluator and Markdown for the reporter. Assert the domain state receives `evaluation` and `report_markdown`, while API keys and Provider records never enter the state.
 
@@ -172,7 +169,7 @@ Run: `pytest -q tests/test_review_agent_graph.py`
 
 Expected: FAIL because review agents/graph do not exist.
 
-- [ ] **Step 5: Implement `ReviewAgents` and explicit review Graph**
+- [x] **Step 5: Implement `ReviewAgents` and explicit review Graph**
 
 Use two `AgentSpec` instances: evaluator with `response_format=AnswerEvaluation`, reporter with Markdown output. Read evaluator output from `structured_response`; read the reporter's final `AIMessage` using LangChain message helpers. Keep draft creation/publication out of this task.
 
@@ -180,7 +177,7 @@ Run: `pytest -q tests/test_agent_factory.py tests/test_review_agent_graph.py`
 
 Expected: PASS.
 
-- [ ] **Step 6: Review Task 1 and commit**
+- [x] **Step 6: Review Task 1 and commit**
 
 Run: `git diff --check` and targeted tests above. Confirm no new `Gateway`, `Invoker`, `Pipeline`, or generic envelope type was added.
 
