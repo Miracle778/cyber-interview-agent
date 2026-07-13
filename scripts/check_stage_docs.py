@@ -4,6 +4,7 @@ import argparse
 import re
 import sys
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Sequence
 
@@ -37,6 +38,28 @@ LEARNING_FILES = (
     "presentation-script.md",
     "exercises.md",
 )
+ARCHITECTURE_HEADINGS = (
+    "## 总体结构",
+    "## 组件职责",
+    "## 状态所有权",
+    "## 信任与一致性边界",
+    "## 关键设计取舍",
+)
+
+
+class LearningProfile(str, Enum):
+    FOUNDATION = "foundation"
+    STATEFUL = "stateful"
+    INTEGRATION = "integration"
+    EXPERIENCE = "experience"
+
+
+PROFILE_MINIMUMS = {
+    LearningProfile.FOUNDATION: (2, 5),
+    LearningProfile.STATEFUL: (2, 5),
+    LearningProfile.INTEGRATION: (2, 5),
+    LearningProfile.EXPERIENCE: (1, 3),
+}
 
 
 @dataclass(frozen=True)
@@ -126,23 +149,91 @@ def check_plan(path: Path, verification_text: str) -> list[CheckIssue]:
     return issues
 
 
-def _check_learning_structure(path: Path, name: str, text: str) -> list[CheckIssue]:
+def parse_learning_profile(
+    path: Path, text: str
+) -> tuple[LearningProfile | None, list[CheckIssue]]:
+    issues: list[CheckIssue] = []
+    profile_match = re.search(r"^- 类型：`([^`]+)`\s*$", text, re.MULTILINE)
+    if profile_match is None:
+        return None, [CheckIssue(path, "缺少固定学习档案类型声明")]
+
+    raw_profile = profile_match.group(1)
+    try:
+        profile = LearningProfile(raw_profile)
+    except ValueError:
+        supported = ", ".join(item.value for item in LearningProfile)
+        return None, [
+            CheckIssue(path, f"未知学习档案类型 `{raw_profile}`；可选值：{supported}")
+        ]
+
+    profile_section = re.search(
+        r"^## 学习档案\s*$([\s\S]*?)(?=^##\s|\Z)", text, re.MULTILINE
+    )
+    risk_drivers = []
+    if profile_section is not None:
+        risk_block = re.search(
+            r"^- 风险驱动：\s*$([\s\S]*?)(?=^- \S|\Z)",
+            profile_section.group(1),
+            re.MULTILINE,
+        )
+        if risk_block is not None:
+            risk_drivers = re.findall(
+                r"^  - \S.+$", risk_block.group(1), re.MULTILINE
+            )
+    if len(risk_drivers) < 2:
+        issues.append(CheckIssue(path, "学习档案至少两个阶段特有风险驱动"))
+    return profile, issues
+
+
+def _check_learning_structure(
+    path: Path,
+    name: str,
+    text: str,
+    profile: LearningProfile | None,
+) -> list[CheckIssue]:
     issues: list[CheckIssue] = []
     for heading in LEARNING_REQUIREMENTS.get(name, ()):
         if heading not in text:
             issues.append(CheckIssue(path, f"缺少必需内容：{heading}"))
 
-    if name == "code-walkthrough.md" and not re.search(
-        r"^## 链路\S*", text, re.MULTILINE
-    ):
-        issues.append(CheckIssue(path, "至少需要一个以 `## 链路` 开头的真实代码链路"))
+    if name == "architecture.md":
+        for heading in ARCHITECTURE_HEADINGS:
+            if not re.search(rf"^{re.escape(heading)}\s*$", text, re.MULTILINE):
+                issues.append(CheckIssue(path, f"缺少必需内容：{heading}"))
+    elif name == "code-walkthrough.md":
+        chain_count = len(re.findall(r"^## 链路\S*", text, re.MULTILINE))
+        minimum = PROFILE_MINIMUMS.get(profile, (1, 1))[0]
+        if chain_count < minimum:
+            issues.append(
+                CheckIssue(path, f"当前学习档案至少需要 {minimum} 条真实代码链路")
+            )
     elif name == "failure-journal.md":
         if not re.search(r"^## (?!简介|使用说明)\S.+$", text, re.MULTILINE):
             issues.append(CheckIssue(path, "至少需要一个真实故障的二级章节"))
-    elif name == "interview-questions.md" and not re.search(
-        r"^### \S.+$", text, re.MULTILINE
-    ):
-        issues.append(CheckIssue(path, "至少需要一个三级标题形式的自测问题"))
+        no_failure = "无真实故障" in text and "verification" in text.lower()
+        evidence_terms = ("现象", "错误假设", "根因", "修正", "验证证据", "提前发现")
+        if not no_failure and not all(term in text for term in evidence_terms):
+            issues.append(
+                CheckIssue(
+                    path,
+                    "故障日志必须包含现象、错误假设、根因、修正、验证证据和提前发现",
+                )
+            )
+    elif name == "interview-questions.md":
+        question_count = len(re.findall(r"^### \S.+$", text, re.MULTILINE))
+        minimum = PROFILE_MINIMUMS.get(profile, (1, 1))[1]
+        if question_count < minimum:
+            issues.append(
+                CheckIssue(path, f"当前学习档案至少需要 {minimum} 道三级标题自测题")
+            )
+    elif name == "exercises.md":
+        capability_count = sum(
+            term in text for term in ("Explain", "Trace", "Review", "Debug", "实现")
+        )
+        if "证据" not in text or capability_count < 2:
+            issues.append(
+                CheckIssue(path, "主练习必须要求所有权证据并覆盖至少两类能力")
+            )
 
     return issues
 
@@ -152,14 +243,27 @@ def check_learning(directory: Path) -> list[CheckIssue]:
         return [CheckIssue(directory, "learning 目录不存在")]
 
     issues: list[CheckIssue] = []
+    texts: dict[str, str] = {}
     for name in LEARNING_FILES:
         path = directory / name
         text, file_issues = _read_text(path)
         issues.extend(file_issues)
         if text is None:
             continue
+        texts[name] = text
         issues.extend(_placeholder_issues(path, text))
-        issues.extend(_check_learning_structure(path, name, text))
+
+    overview_path = directory / "overview.md"
+    overview_text = texts.get("overview.md")
+    profile: LearningProfile | None = None
+    if overview_text is not None:
+        profile, profile_issues = parse_learning_profile(overview_path, overview_text)
+        issues.extend(profile_issues)
+
+    for name, text in texts.items():
+        issues.extend(
+            _check_learning_structure(directory / name, name, text, profile)
+        )
     return issues
 
 

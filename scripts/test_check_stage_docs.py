@@ -39,12 +39,19 @@ python3 -m unittest
 """
 
 
-def valid_learning_files() -> dict[str, str]:
+def valid_learning_files(profile: str = "foundation") -> dict[str, str]:
     return {
         "overview.md": """# 学习入口
 
 ## 学习基线
 先理解 Agent Runtime。
+
+## 学习档案
+
+- 类型：`%s`
+- 风险驱动：
+  - 持久化状态必须跨进程恢复；
+  - 不可信输入不能获得运行权限。
 
 ## 本阶段解决的问题
 限制工具访问范围。
@@ -57,26 +64,58 @@ def valid_learning_files() -> dict[str, str]:
 
 ## 掌握标准
 能够独立解释安全链路。
-""",
+""" % profile,
         "architecture.md": """# 架构
 
 ## 总体结构
 API、Runtime 和工具层逐层约束访问。
+
+## 组件职责
+API 接收命令，Runtime 注入可信上下文，工具层执行受限操作。
+
+## 状态所有权
+Runtime 数据库拥有运行事实，前端缓存只负责展示。
+
+## 信任与一致性边界
+工作区身份和权限由 Runtime 注入，模型输入不可信。
+
+## 关键设计取舍
+采用后端强制策略，而不是依赖前端隐藏危险入口。
 """,
         "code-walkthrough.md": """# 代码走读
 
 ## 链路一：工具调用
-请求从 API 进入 Runtime，再到工具适配器。
+请求从 `backend/app/api.py` 进入 Runtime，再到工具适配器；Registry 拒绝越权分支，最终页面显示稳定错误码。
+
+## 链路二：刷新恢复
+页面从 `frontend/src/api.ts` 读取数据库事实；SSE 只触发刷新，最终展示持久化状态。
 """,
         "failure-journal.md": """# 故障日志
 
 ## 路径校验遗漏
-测试发现符号链接可以越界，修复后补充回归测试。
+现象：测试发现符号链接可以越界。
+错误假设：词法路径检查足够。
+根因：真实路径可能经过符号链接逃逸。
+修正：逐组件拒绝符号链接。
+验证证据：路径安全回归测试通过。
+提前发现：在设计阶段列出路径攻击矩阵。
 """,
         "interview-questions.md": """# 面试自测
 
 ### 为什么要在后端校验路径？
 前端输入不可信，后端才是安全边界。
+
+### 状态由谁拥有？
+数据库拥有运行事实。
+
+### 服务重启后怎样恢复？
+从持久化状态恢复，而不是依赖内存任务。
+
+### 失败时怎样避免泄密？
+只暴露稳定错误码。
+
+### 怎样证明边界生效？
+运行拒绝路径和重启恢复测试。
 """,
         "presentation-script.md": """# 项目表达
 
@@ -89,7 +128,7 @@ API、Runtime 和工具层逐层约束访问。
         "exercises.md": """# 练习
 
 ## 主练习
-为工具增加一种受限操作。
+完成 Trace 和 Review：追踪一次受限操作并审阅权限来源。证据保存为流程图和测试记录。
 
 ## 降级形式
 只画调用链并标出安全边界。
@@ -186,6 +225,97 @@ class StageDocumentationGateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("architecture.md", result.stderr)
         self.assertIn("占位符", result.stderr)
+
+    def test_missing_or_unknown_learning_profile_fails(self) -> None:
+        missing = valid_learning_files()
+        missing["overview.md"] = missing["overview.md"].replace(
+            "- 类型：`foundation`\n", ""
+        )
+        unknown = valid_learning_files("tutorial")
+
+        missing_result = self.run_gate(valid_verification(), missing)
+        unknown_result = self.run_gate(valid_verification(), unknown)
+
+        self.assertEqual(missing_result.returncode, 1)
+        self.assertIn("学习档案类型", missing_result.stderr)
+        self.assertEqual(unknown_result.returncode, 1)
+        self.assertIn("tutorial", unknown_result.stderr)
+
+    def test_foundation_requires_two_risk_drivers(self) -> None:
+        learning = valid_learning_files()
+        learning["overview.md"] = learning["overview.md"].replace(
+            "  - 不可信输入不能获得运行权限。\n", ""
+        )
+
+        result = self.run_gate(valid_verification(), learning)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("至少两个阶段特有风险驱动", result.stderr)
+
+    def test_foundation_requires_five_architecture_sections(self) -> None:
+        learning = valid_learning_files()
+        learning["architecture.md"] = learning["architecture.md"].replace(
+            "## 状态所有权", "## 数据说明"
+        )
+
+        result = self.run_gate(valid_verification(), learning)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("## 状态所有权", result.stderr)
+
+    def test_foundation_requires_two_code_chains(self) -> None:
+        learning = valid_learning_files()
+        learning["code-walkthrough.md"] = learning["code-walkthrough.md"].replace(
+            "## 链路二：刷新恢复", "## 补充说明"
+        )
+
+        result = self.run_gate(valid_verification(), learning)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("至少需要 2 条", result.stderr)
+
+    def test_foundation_requires_five_interview_questions(self) -> None:
+        learning = valid_learning_files()
+        learning["interview-questions.md"] = learning["interview-questions.md"].replace(
+            "### 怎样证明边界生效？", "## 验证说明"
+        )
+
+        result = self.run_gate(valid_verification(), learning)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("至少需要 5 道", result.stderr)
+
+    def test_failure_journal_requires_evidence_shape(self) -> None:
+        learning = valid_learning_files()
+        learning["failure-journal.md"] = """# 故障日志
+
+## 路径校验遗漏
+测试有问题，后来修好了。
+"""
+
+        result = self.run_gate(valid_verification(), learning)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("现象、错误假设、根因、修正、验证证据和提前发现", result.stderr)
+
+    def test_experience_profile_accepts_one_chain_and_three_questions(self) -> None:
+        learning = valid_learning_files("experience")
+        learning["code-walkthrough.md"] = learning["code-walkthrough.md"].split(
+            "## 链路二：刷新恢复"
+        )[0]
+        questions = learning["interview-questions.md"].splitlines()
+        kept_questions = []
+        question_count = 0
+        for line in questions:
+            if line.startswith("### "):
+                question_count += 1
+            if question_count <= 3:
+                kept_questions.append(line)
+        learning["interview-questions.md"] = "\n".join(kept_questions)
+
+        result = self.run_gate(valid_verification(), learning)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_unchecked_browser_plan_blocks_stage_closure(self) -> None:
         result = self.run_gate(
