@@ -248,3 +248,13 @@
 - Langfuse 关闭后的 review fail-open 1 passed；input/output 默认为空。
 - 首次后端全量发现旧 migration 断言及 trace 收尾锁；修复后受影响 17 passed，最终后端 281 passed。
 - 最终前端 75 passed，TypeScript 和 production build 通过；verification 与 learning 七件套已生成。
+
+## 2026-07-13：Agent Runtime 框架收敛 Task 1-3
+
+- Task 1 已用官方 `create_agent`、直接 `BaseChatModel` 解析和显式 review Graph 替换模型调用包装层。
+- Task 2 已改为标准 `BaseTool`/`ToolRuntime`、官方 HITL decision resume 和显式 publication Graph。
+- Task 3 默认栈直接组合五个官方 middleware 与四个窄项目 middleware，不再使用数字 layer 或自建 pipeline。
+- usage 原生/估算、官方长上下文压缩、标题 CAS、无进展保护和投影失败 fail-open 已通过行为测试。
+- LangGraph v2 stream 只投影安全的 UI 可见事件，interrupt 去重，内部模型/工具事件不持久化。
+- Task 3 新测试 10 passed；连同 AgentFactory/ToolPolicy 相关测试共 19 passed。
+- 下一步：Task 4 切换生产入口、前端资源和新数据库契约，删除旧 Runtime 后做最终验收。

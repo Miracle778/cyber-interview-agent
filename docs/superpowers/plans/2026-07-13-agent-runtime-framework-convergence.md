@@ -291,7 +291,7 @@ executor; deleting them earlier would make an otherwise green intermediate commi
 - Produces narrow custom `UsageProjectionMiddleware`, `SessionTitleMiddleware`, `NoProgressMiddleware`, and `ObservabilityMiddleware` directly subclassing `AgentMiddleware`.
 - Produces `AgentEventProjector.project(stream_part) -> tuple[ProductEvent, ...]` for LangGraph v2 stream output.
 
-- [ ] **Step 1: Write RED tests for the middleware composition contract**
+- [x] **Step 1: Write RED tests for the middleware composition contract**
 
 Assert the returned stack contains official middleware classes, stable configured limits, and only the four project middleware types. Assert no `MiddlewareLayer`, numeric order, adapter or project pipeline exists in the composition.
 
@@ -299,13 +299,13 @@ Run: `pytest -q tests/test_agent_middleware_stack.py`
 
 Expected: FAIL.
 
-- [ ] **Step 2: Implement official default stack**
+- [x] **Step 2: Implement official default stack**
 
 Compose summary/context first, project policy/usage/observability around calls, call limits before execution, official HITL before risky tools, and title/no-progress hooks at lifecycle boundaries. Use explicit list order documented in the test; do not recreate numeric layers.
 
 Run: middleware stack tests. Expected: composition tests PASS.
 
-- [ ] **Step 3: Add RED behavior tests for usage, summary, title and no-progress**
+- [x] **Step 3: Add RED behavior tests for usage, summary, title and no-progress**
 
 Use scripted messages with native and missing usage metadata. Assert native usage is projected once, missing usage is marked estimated, long history triggers official summarization, title CAS never overwrites a user title, and repeated normalized tool/model progress raises a stable `no_progress` error. Assert persistence failure emits a warning but leaves a successful Agent result intact.
 
@@ -313,13 +313,13 @@ Run: `pytest -q tests/test_agent_middleware_stack.py`
 
 Expected: new cases FAIL.
 
-- [ ] **Step 4: Implement narrow project middleware**
+- [x] **Step 4: Implement narrow project middleware**
 
 Read standard request/response messages and `usage_metadata`; persist via injected projection ports after model completion. Keep summary state in official Agent messages/checkpoints and only project the current summary indicator to session metadata. Use safe hashes for semantic progress. Instrument official hooks through the existing OTel sink without prompt/tool-argument content.
 
 Run: targeted tests. Expected: PASS.
 
-- [ ] **Step 5: Write RED LangGraph stream projection tests**
+- [x] **Step 5: Write RED LangGraph stream projection tests**
 
 Feed v2 `messages`, `updates`, `custom`, interrupt and error parts. Assert exactly one product event per visible transition, stable cursor order, safe payloads, no duplicate tool/model lifecycle events, and keepalive behavior at the HTTP boundary.
 
@@ -327,7 +327,7 @@ Run: `pytest -q tests/test_event_projector.py`
 
 Expected: FAIL.
 
-- [ ] **Step 6: Implement `AgentEventProjector` and commit**
+- [x] **Step 6: Implement `AgentEventProjector` and commit**
 
 Map only execution, text delta, approval, artifact/publication and recoverable warning events. Persist product events for browser replay; do not persist every internal LangGraph event.
 
