@@ -36,16 +36,63 @@ MinIO，首次启动会下载镜像并占用较多磁盘空间。
 
 ## 三、创建 Langfuse 配置文件
 
-进入 Compose 目录并复制模板：
+推荐直接执行下面这一段。它会自动生成全部随机密钥、项目 key、登录密码和
+OTLP Basic Auth，不需要手工填写十几个配置项：
 
 ```bash
 cd /Users/miracle778/Project/cyber-interview-agent-new/infra/observability/langfuse
-cp .env.example .env
+if [ -e .env ]; then
+  echo "已存在 .env，跳过生成；如需重新生成请先备份后删除它。"
+else
+  umask 077
+  project_public="pk-lf-local-$(openssl rand -hex 12)"
+  project_secret="sk-lf-local-$(openssl rand -hex 24)"
+  login_password="$(openssl rand -hex 16)"
+  nextauth_secret="$(openssl rand -hex 32)"
+  salt="$(openssl rand -hex 32)"
+  encryption_key="$(openssl rand -hex 32)"
+  postgres_password="$(openssl rand -hex 24)"
+  clickhouse_password="$(openssl rand -hex 24)"
+  redis_auth="$(openssl rand -hex 24)"
+  minio_password="$(openssl rand -hex 24)"
+  otlp_auth="$(printf '%s' "${project_public}:${project_secret}" | base64 | tr -d '\n')"
+
+  cat > .env <<EOF
+LANGFUSE_INIT_ORG_ID=local-org
+LANGFUSE_INIT_ORG_NAME="Local Development"
+LANGFUSE_INIT_PROJECT_ID=cyber-interview-agent
+LANGFUSE_INIT_PROJECT_NAME="Cyber Interview Agent"
+LANGFUSE_INIT_PROJECT_PUBLIC_KEY=${project_public}
+LANGFUSE_INIT_PROJECT_SECRET_KEY=${project_secret}
+LANGFUSE_INIT_USER_EMAIL=local@example.invalid
+LANGFUSE_INIT_USER_NAME="Local Developer"
+LANGFUSE_INIT_USER_PASSWORD=${login_password}
+NEXTAUTH_SECRET=${nextauth_secret}
+SALT=${salt}
+ENCRYPTION_KEY=${encryption_key}
+POSTGRES_PASSWORD=${postgres_password}
+CLICKHOUSE_PASSWORD=${clickhouse_password}
+REDIS_AUTH=${redis_auth}
+MINIO_ROOT_PASSWORD=${minio_password}
+LANGFUSE_OTLP_AUTH=${otlp_auth}
+EOF
+
+  printf '\nLangfuse 配置已生成：%s/.env\n' "$PWD"
+  printf '登录邮箱：local@example.invalid\n登录密码：%s\n' "$login_password"
+  printf 'OTLP Auth 已写入 .env，不要提交或公开该文件。\n\n'
+fi
 ```
 
 `.env` 已被 Git 忽略，不要提交它，也不要把真实密钥粘贴到代码、截图或文档中。
 
-### 3.1 生成随机密钥
+如果 `.env` 已存在，脚本不会覆盖已有 Langfuse 数据对应的配置。忘记登录密码或
+需要完全重新初始化时，先备份 `.env`，再执行 `docker compose down -v` 并重新运行
+上面的生成命令。
+
+### 3.1 手工配置（通常不需要）
+
+只有需要固定项目 key、固定登录密码或接入已有 Langfuse 项目时，才需要手工配置。
+否则跳过本节，直接执行“启动和检查 Langfuse”。
 
 建议在终端分别生成以下值：
 
@@ -166,18 +213,18 @@ Base64 字符串：
 export CYBER_OTLP_HEADERS='Authorization=Basic 这里填LANGFUSE_OTLP_AUTH'
 ```
 
-也可以只在当前终端临时导出 Compose 配置，再启动后端（关闭终端后失效）：
+推荐从 `.env` 中只读取 OTLP Auth，再启动后端（关闭终端后失效）。不要直接
+`source .env`，因为 Compose 配置中包含带空格的显示名称：
 
 ```bash
-set -a
-source /Users/miracle778/Project/cyber-interview-agent-new/infra/observability/langfuse/.env
-set +a
+cd /Users/miracle778/Project/cyber-interview-agent-new/infra/observability/langfuse
+LANGFUSE_OTLP_AUTH="$(sed -n 's/^LANGFUSE_OTLP_AUTH=//p' .env)"
 export CYBER_OBSERVABILITY_ENABLED=true
 export CYBER_OTLP_ENDPOINT=http://127.0.0.1:3000/api/public/otel/v1/traces
 export CYBER_OTLP_HEADERS="Authorization=Basic ${LANGFUSE_OTLP_AUTH}"
 ```
 
-不要把 `source .env` 加入公共 shell 配置，也不要在共享终端或录屏中显示这些变量。
+不要把这些变量加入公共 shell 配置，也不要在共享终端或录屏中显示它们。
 
 可选配置：
 
