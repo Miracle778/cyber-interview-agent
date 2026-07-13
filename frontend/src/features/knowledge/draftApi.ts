@@ -7,9 +7,9 @@ export interface UpdateKnowledgeDraftRequest {
   markdown: string;
 }
 
-export interface PublishDraftRunResource {
+export interface PublishDraftExecutionResource {
   sessionId: string;
-  runId: string;
+  executionId: string;
   status: string;
 }
 
@@ -32,8 +32,8 @@ export function updateDraft(
   );
 }
 
-export function requestPublication(draftId: string): Promise<PublishDraftRunResource> {
-  return apiPost<Record<string, never>, PublishDraftRunResource>(
+export function requestPublication(draftId: string): Promise<PublishDraftExecutionResource> {
+  return apiPost<Record<string, never>, PublishDraftExecutionResource>(
     `/api/knowledge/drafts/${draftId}/publish-request`,
     {},
   );

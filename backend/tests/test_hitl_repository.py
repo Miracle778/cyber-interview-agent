@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from app.db.runtime_database import connect_runtime_database
+from app.infrastructure.runtime_database import connect_runtime_database
 from app.hitl.models import CreatePendingAction
 from app.hitl.repository import (
     ActionAlreadyResolvedError,
@@ -10,25 +10,23 @@ from app.hitl.repository import (
     ActionVersionConflictError,
     PendingActionRepository,
 )
-from app.runtime.repository import RuntimeRepository
+from app.application.session_service import ProductRepository
 
 
 def _database(workspace: Path):
     connection = connect_runtime_database(workspace)
-    runtime = RuntimeRepository(connection)
+    runtime = ProductRepository(connection)
     runtime.create_session(
         workspace_id="w1",
-        graph_id="test.approval",
-        graph_version=1,
+        kind="test.approval",
         title="Approval",
         session_id="s1",
     )
-    runtime.create_run(
+    runtime.create_execution(
         "s1",
         input={"summary": "original"},
         model_bindings={},
-        run_id="r1",
-        initial_status="running",
+        execution_id="r1",
     )
     return connection
 
@@ -55,12 +53,12 @@ def test_runtime_migration_creates_hitl_tables(tmp_path: Path) -> None:
             "SELECT name FROM sqlite_master WHERE type = 'table'"
         )
     }
-    versions = connection.execute(
-        "SELECT version FROM runtime_schema_migrations ORDER BY version"
-    ).fetchall()
+    generation = connection.execute(
+        "SELECT generation FROM runtime_schema_metadata"
+    ).fetchone()[0]
 
     assert {"pending_actions", "pending_action_resolutions"} <= tables
-    assert [row[0] for row in versions] == [1, 2, 3, 4, 5, 6]
+    assert generation == 2
     connection.close()
 
 

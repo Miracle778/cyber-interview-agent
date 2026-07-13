@@ -28,7 +28,7 @@ export function FlowSummary({
     }
     let cancelled = false;
     void listAgentSessions(workspace.id).then(async (sessions) => {
-      const session = sessions.find((item) => item.graphId === "review.single");
+      const session = sessions.find((item) => item.kind === "review.single");
       if (!session) return "none" as const;
       const actions = await listActions(workspace.id, { sessionId: session.id });
       const draftId = actions.at(-1)?.preview.draftId;

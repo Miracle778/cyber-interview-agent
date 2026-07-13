@@ -9,7 +9,7 @@ export interface PendingAction {
   id: string;
   workspaceId: string;
   sessionId: string;
-  runId: string;
+  executionId: string;
   actionType: string;
   preview: Record<string, unknown>;
   editableFields: string[];

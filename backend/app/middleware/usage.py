@@ -28,6 +28,8 @@ class MiddlewareProjection(Protocol):
 
     def warning(self, context: AgentContext, code: str) -> None: ...
 
+    def mark_context_compacted(self, context: AgentContext) -> bool: ...
+
 
 class UsageProjectionMiddleware(AgentMiddleware):
     """Project model usage without introducing a second invocation protocol."""
@@ -85,4 +87,3 @@ def _message_operation_key(message: AIMessage) -> str:
 
     body = f"{message.text}|{message.tool_calls}".encode("utf-8")
     return sha256(body).hexdigest()
-

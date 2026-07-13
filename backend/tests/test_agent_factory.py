@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from langchain.agents.structured_output import ToolStrategy
 from pathlib import Path
 from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models import BaseChatModel
@@ -10,6 +11,7 @@ from langchain_openai import ChatOpenAI
 
 from app.agents.context import AgentContext
 from app.agents.factory import AgentFactory, AgentSpec
+from app.agents.review_contracts import AnswerEvaluation
 from app.agents.model_resolver import ChatModelResolver, ModelResolutionError
 from app.db.app_database import connect_app_database
 from app.providers.base import ProviderErrorCode
@@ -137,7 +139,7 @@ def test_agent_factory_delegates_to_create_agent_without_invocation_wrapper(
     spec = AgentSpec(
         role="answer_evaluation",
         system_prompt="Evaluate the answer",
-        response_format=dict,
+        response_format=AnswerEvaluation,
     )
 
     result = factory.create(
@@ -150,14 +152,15 @@ def test_agent_factory_delegates_to_create_agent_without_invocation_wrapper(
         "answer_evaluation",
         "provider-model-1",
     )
+    assert isinstance(captured["create"].pop("response_format"), ToolStrategy)
     assert captured["create"] == {
         "model": model,
         "tools": (),
         "system_prompt": "Evaluate the answer",
         "middleware": (),
-        "response_format": dict,
         "context_schema": AgentContext,
         "name": "answer_evaluation",
+        "checkpointer": None,
     }
 
 

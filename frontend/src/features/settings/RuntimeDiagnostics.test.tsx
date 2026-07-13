@@ -47,32 +47,32 @@ describe("RuntimeDiagnostics", () => {
     let detail: AgentSessionDetail = {
       id: "s1",
       workspaceId: "w1",
-      graphId: "test.echo",
-      graphVersion: 1,
+      kind: "diagnostic.echo",
+
       title: "Agent Runtime 自检",
       status: "active",
       createdAt: "now",
       updatedAt: "now",
-      lastRunId: "r1",
-      summary: null,
-      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, contextTokens: 0, callCount: 0, estimatedCount: 0 },
-      latestGuardWarning: null,
+      latestExecutionId: "r1",
+
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, callCount: 0, estimatedCount: 0 },
+      latestWarning: null,
       messages: [],
-      latestRun: { id: "r1", sessionId: "s1", status: "running", resumeCount: 0, errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: null },
-      pendingAction: null,
+      latestExecution: { id: "r1", sessionId: "s1", status: "running", resumeCount: 0, errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: null },
+      currentAction: null,
     };
     let startCount = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       const method = init?.method ?? "GET";
       if (url.includes("workspaceId=w1")) return Response.json([]);
-      if (url === "/api/agent/sessions" && method === "POST") return Response.json({ ...detail, lastRunId: null }, { status: 201 });
-      if (url === "/api/agent/sessions/s1/runs") {
+      if (url === "/api/agent/sessions" && method === "POST") return Response.json({ ...detail, latestExecutionId: null }, { status: 201 });
+      if (url === "/api/agent/sessions/s1/executions") {
         startCount += 1;
         return Response.json(
           startCount === 1
-            ? detail.latestRun
-            : { ...detail.latestRun, id: "r2", status: "queued" },
+            ? detail.latestExecution
+            : { ...detail.latestExecution, id: "r2", status: "running" },
           { status: 202 },
         );
       }
@@ -87,17 +87,17 @@ describe("RuntimeDiagnostics", () => {
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
     const source = FakeEventSource.instances[0];
     act(() => source.onopen?.(new Event("open")));
-    const completed = { id: 3, type: "run.completed", sessionId: "s1", runId: "r1", timestamp: "now", payload: {} };
+    const completed = { id: 3, type: "execution.completed", sessionId: "s1", executionId: "r1", timestamp: "now", payload: {} };
     act(() => {
-      source.emit({ id: 1, type: "run.started", sessionId: "s1", runId: "r1", timestamp: "now", payload: {} });
-      source.emit({ id: 2, type: "message.completed", sessionId: "s1", runId: "r1", timestamp: "now", payload: { messageId: "m1", content: "Echo: runtime-check" } });
+      source.emit({ id: 1, type: "execution.started", sessionId: "s1", executionId: "r1", timestamp: "now", payload: {} });
+      source.emit({ id: 2, type: "assistant.delta", sessionId: "s1", executionId: "r1", timestamp: "now", payload: { messageId: "m1", content: "Echo: runtime-check" } });
       source.emit(completed);
       source.emit(completed);
     });
     detail = {
       ...detail,
-      latestRun: {
-        ...(detail.latestRun as NonNullable<AgentSessionDetail["latestRun"]>),
+      latestExecution: {
+        ...(detail.latestExecution as NonNullable<AgentSessionDetail["latestExecution"]>),
         status: "completed",
         finishedAt: "now",
       },
@@ -116,12 +116,12 @@ describe("RuntimeDiagnostics", () => {
 
   it("restores the newest diagnostic session and shows recovery advice on failure", async () => {
     vi.stubGlobal("EventSource", FakeEventSource);
-    const session = { id: "s1", workspaceId: "w1", graphId: "test.echo", graphVersion: 1, title: "Agent Runtime 自检", status: "active", createdAt: "now", updatedAt: "now", lastRunId: "r1" };
+    const session = { id: "s1", workspaceId: "w1", kind: "diagnostic.echo", title: "Agent Runtime 自检", status: "active", createdAt: "now", updatedAt: "now", latestExecutionId: "r1" };
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.includes("workspaceId=w1")) return Response.json([session]);
-      if (url === "/api/agent/sessions/s1") return Response.json({ ...session, messages: [], latestRun: { id: "r1", sessionId: "s1", status: "failed", resumeCount: 0, errorCode: "runtime_error", errorMessage: "failed", createdAt: "now", startedAt: "now", finishedAt: "now" }, pendingAction: null });
-      if (url === "/api/agent/sessions/s1/runs") return Response.json({ id: "r2", sessionId: "s1", status: "queued", resumeCount: 0, errorCode: null, errorMessage: null, createdAt: "now", startedAt: null, finishedAt: null }, { status: 202 });
+      if (url === "/api/agent/sessions/s1") return Response.json({ ...session, messages: [], latestExecution: { id: "r1", sessionId: "s1", status: "failed", resumeCount: 0, errorCode: "runtime_error", errorMessage: "failed", createdAt: "now", startedAt: "now", finishedAt: "now" }, currentAction: null });
+      if (url === "/api/agent/sessions/s1/executions") return Response.json({ id: "r2", sessionId: "s1", status: "running", resumeCount: 0, errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: null }, { status: 202 });
       return Response.json({}, { status: 500 });
     });
 
@@ -131,7 +131,7 @@ describe("RuntimeDiagnostics", () => {
     expect(FakeEventSource.instances[0].url).toBe("/api/agent/sessions/s1/events");
 
     act(() => {
-      FakeEventSource.instances[0].emit({ id: 2, type: "run.failed", sessionId: "s1", runId: "r1", timestamp: "now", payload: { code: "runtime_error", message: "failed" } });
+      FakeEventSource.instances[0].emit({ id: 2, type: "execution.failed", sessionId: "s1", executionId: "r1", timestamp: "now", payload: { code: "runtime_error", message: "failed" } });
     });
     fireEvent.click(screen.getByRole("button", { name: "运行自检" }));
     await waitFor(() =>

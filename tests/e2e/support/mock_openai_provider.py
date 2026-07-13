@@ -30,7 +30,36 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.end_headers()
-            for text in ("# 单题复习报告\n\n", "- 评分：partial\n- 下一步：补充隔离性和持久性\n"):
+            tools = request.get("tools") or []
+            if tools:
+                evaluation = {
+                    "score": "partial",
+                    "missing_key_points": ["隔离性", "持久性"],
+                    "evidence": "回答包含原子性",
+                }
+                delta = {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call-evaluation",
+                            "type": "function",
+                            "function": {
+                                "name": tools[0]["function"]["name"],
+                                "arguments": json.dumps(evaluation, ensure_ascii=False),
+                            },
+                        }
+                    ]
+                }
+                chunks = ((delta, "tool_calls"),)
+            else:
+                chunks = tuple(
+                    ({"content": text}, None)
+                    for text in (
+                        "# 单题复习报告\n\n",
+                        "- 评分：partial\n- 下一步：补充隔离性和持久性\n",
+                    )
+                )
+            for delta, finish_reason in chunks:
                 chunk = {
                     "id": "chatcmpl-stream",
                     "object": "chat.completion.chunk",
@@ -39,8 +68,8 @@ class Handler(BaseHTTPRequestHandler):
                     "choices": [
                         {
                             "index": 0,
-                            "delta": {"content": text},
-                            "finish_reason": None,
+                            "delta": delta,
+                            "finish_reason": finish_reason,
                         }
                     ],
                 }

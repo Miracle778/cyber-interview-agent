@@ -9,14 +9,13 @@ import { Field } from "../../shared/ui/Field";
 import {
   createAgentSession,
   listAgentSessions,
-  startAgentRun,
+  startAgentExecution,
 } from "./agentApi";
 import { approveAction, listActions, rejectAction } from "./hitlApi";
 import type { PendingAction } from "./hitlTypes";
 
 
-const GRAPH_ID = "test.approval";
-const GRAPH_VERSION = 1;
+const KIND = "diagnostic.approval";
 const SESSION_TITLE = "人工确认自检";
 
 
@@ -31,10 +30,10 @@ function operationKey(kind: "approve" | "reject", actionId: string) {
 }
 
 
-async function waitForPendingAction(workspaceId: string, runId: string) {
+async function waitForPendingAction(workspaceId: string, executionId: string) {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const actions = await listActions(workspaceId, { status: "pending" });
-    if (actions.some((action) => action.runId === runId)) return actions;
+    if (actions.some((action) => action.executionId === executionId)) return actions;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error("确认测试已启动，但待确认动作尚未出现");
@@ -48,7 +47,7 @@ export interface ActionCenterProps {
   /** Restrict the list to a single action type, e.g. "knowledge.publish". */
   actionType?: string;
   /** Poll until the pending action produced by this run appears. */
-  watchRunId?: string | null;
+  watchExecutionId?: string | null;
   /** Notify the owning page after approve/reject delivery finishes. */
   onResolved?: () => void;
 }
@@ -57,7 +56,7 @@ export function ActionCenter({
   workspaceId,
   showDiagnostic = true,
   actionType,
-  watchRunId,
+  watchExecutionId,
   onResolved,
 }: ActionCenterProps) {
   const queryClient = useQueryClient();
@@ -104,12 +103,12 @@ export function ActionCenter({
   }, [selected?.id]);
 
   useEffect(() => {
-    if (!watchRunId) {
+    if (!watchExecutionId) {
       setLocalError(null);
       return;
     }
     let cancelled = false;
-    waitForPendingAction(workspaceId, watchRunId)
+    waitForPendingAction(workspaceId, watchExecutionId)
       .then((pending) => {
         if (!cancelled) queryClient.setQueryData(queryKey, pending);
       })
@@ -121,23 +120,22 @@ export function ActionCenter({
     return () => {
       cancelled = true;
     };
-  }, [queryClient, queryKey, watchAttempt, watchRunId, workspaceId]);
+  }, [queryClient, queryKey, watchAttempt, watchExecutionId, workspaceId]);
 
   const runMutation = useMutation({
     mutationFn: async () => {
       const sessions = await listAgentSessions(workspaceId);
       let session = sessions.find(
-        (item) => item.graphId === GRAPH_ID && item.graphVersion === GRAPH_VERSION,
+        (item) => item.kind === KIND,
       );
       if (!session) {
         session = await createAgentSession({
           workspaceId,
-          graphId: GRAPH_ID,
-          graphVersion: GRAPH_VERSION,
+          kind: KIND,
           title: SESSION_TITLE,
         });
       }
-      const run = await startAgentRun(session.id, { summary: "请确认这次操作" });
+      const run = await startAgentExecution(session.id, { summary: "请确认这次操作" });
       return waitForPendingAction(workspaceId, run.id);
     },
     onMutate: () => {
@@ -227,7 +225,7 @@ export function ActionCenter({
   });
 
   const resolving = approveMutation.isPending || rejectMutation.isPending;
-  const waitingForAction = Boolean(watchRunId) && actions.length === 0 && !localError;
+  const waitingForAction = Boolean(watchExecutionId) && actions.length === 0 && !localError;
   const hidden = !showDiagnostic
     && actions.length === 0
     && !waitingForAction
@@ -336,7 +334,7 @@ export function ActionCenter({
         {localError ? (
           <div className="action-center__error" role="alert">
             <p className="status-note status-note--warning">{localError}</p>
-            {watchRunId ? (
+            {watchExecutionId ? (
               <Button
                 size="sm"
                 variant="ghost"

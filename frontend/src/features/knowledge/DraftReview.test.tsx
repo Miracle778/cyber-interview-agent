@@ -10,7 +10,7 @@ const draft: KnowledgeDraft = {
   id: "d1",
   workspaceId: "w1",
   sessionId: null,
-  runId: null,
+  executionId: null,
   agentType: null,
   domain: "review",
   documentType: "question",
@@ -163,7 +163,7 @@ describe("DraftReview", () => {
         return draftsCalls <= 1 ? [draft] : [pendingDraft];
       }
       if (url.endsWith("/api/knowledge/drafts/d1/publish-request") && init?.method === "POST") {
-        return { sessionId: "s1", runId: "r1", status: "waiting_for_approval" };
+        return { sessionId: "s1", executionId: "r1", status: "waiting_for_approval" };
       }
       return [];
     });

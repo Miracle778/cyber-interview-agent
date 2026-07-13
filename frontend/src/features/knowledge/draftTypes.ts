@@ -10,7 +10,7 @@ export interface KnowledgeDraft {
   id: string;
   workspaceId: string;
   sessionId: string | null;
-  runId: string | null;
+  executionId: string | null;
   agentType: string | null;
   domain: string;
   documentType: "source" | "question" | "concept" | "session_report" | "mastery_report";

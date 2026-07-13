@@ -258,7 +258,7 @@ Knowledge publication remains its own Graph node/handler using draft version/has
 
 Run: all Task 2 targeted tests. Expected: PASS.
 
-- [ ] **Step 7: Delete registry/executor tests only after replacements pass and commit**
+- [x] **Step 7: Delete registry/executor tests only after replacements pass and commit**
 
 Delete `test_tool_registry.py`, `test_tool_executor.py`, and adapter-only HITL tests. Keep file/path/audit/domain tests. Run `rg` to prove new production code does not import `ToolRegistry`, `BoundToolInvoker`, or `PersistentHitlMiddleware`.
 
@@ -360,7 +360,7 @@ Delete the old project pipeline/adapter tests after new middleware and event tes
 - API resources expose product session, execution, messages, current interrupt/action, usage and visible events without mirroring internal Graph states.
 - Frontend keeps current layout and consumes the new API/query/event contracts.
 
-- [ ] **Step 1: Write RED application/API tests against the new resources**
+- [x] **Step 1: Write RED application/API tests against the new resources**
 
 Cover create/list/get session, start/cancel execution, approval decision, SSE replay cursor, fresh database startup, graceful old-schema rejection, restart recovery and stable safe errors. Do not assert old response fields or event names.
 
@@ -368,13 +368,13 @@ Run: `pytest -q tests/test_agent_routes_v2.py tests/test_agent_restart_v2.py`
 
 Expected: FAIL.
 
-- [ ] **Step 2: Implement fresh Runtime database and application services**
+- [x] **Step 2: Implement fresh Runtime database and application services**
 
 Create only tables needed for product sessions/messages/execution projections, product events, pending actions, domain records, usage/audit, and LangGraph checkpoint storage. Reject an old schema with an explicit development reset message; do not write migration adapters. Execution service invokes Graph `astream`, passes `thread_id=session.id`, projects events, handles interrupt/cancel/error, and closes resources on shutdown.
 
 Run: new API/restart tests. Expected: PASS.
 
-- [ ] **Step 3: Replace FastAPI dependencies/routes and write frontend RED tests**
+- [x] **Step 3: Replace FastAPI dependencies/routes and write frontend RED tests**
 
 Update route schemas around the new services. In frontend tests, assert the existing Review UI still creates a session, starts review, streams text, displays approval only when interrupted, approves/rejects, refreshes draft/publication state and shows actionable errors.
 
@@ -382,7 +382,7 @@ Run: `./node_modules/.bin/vitest run src/features/agent src/features/review`
 
 Expected: FAIL until clients/hooks are updated.
 
-- [ ] **Step 4: Update frontend data integration without visual redesign**
+- [x] **Step 4: Update frontend data integration without visual redesign**
 
 Replace API types, query keys and SSE event handling. Keep AppShell, ReviewPage regions, Knowledge workspace and Settings navigation. Remove old watch/run/action duplication and derive visible status from the session/execution/action resources plus product events.
 
@@ -390,7 +390,7 @@ Run: targeted frontend tests and `./node_modules/.bin/tsc --noEmit`.
 
 Expected: PASS.
 
-- [ ] **Step 5: Delete old Runtime and legacy tests**
+- [x] **Step 5: Delete old Runtime and legacy tests**
 
 Delete `AgentRuntime`, `RunManager`, `GraphBuildContext`, custom graph registry when no longer needed, `ChatModelGateway`, provider invocation envelopes, `ToolRegistry`, `BoundToolInvoker`, `runtime/middleware/`, legacy review files and tests marked DELETE. Preserve provider connection testing, domain repositories, security, audit and publication code still referenced.
 
@@ -402,15 +402,15 @@ rg -n "RuntimeMiddlewarePipeline|LangChainRuntimeMiddlewareAdapter|ChatModelGate
 
 Expected: no production matches.
 
-- [ ] **Step 6: Run one cross-layer integration regression**
+- [x] **Step 6: Run one cross-layer integration regression**
 
 Run the new backend suite, frontend suite, typecheck and build once. Fix only failures caused by the rewrite; rerun affected files until stable. Record actual counts, not the old 281/75 target.
 
-- [ ] **Step 7: Run browser and real Provider acceptance**
+- [x] **Step 7: Run browser and real Provider acceptance**
 
 Run one minimal happy path before documentation, then one full pass covering desktop/375px, refresh, approve, reject, duplicate decision, backend restart, Vault target path, native/estimated usage, summary/title/no-progress, and Langfuse fail-open. Validate one real OpenAI-compatible structured response and one real Anthropic-compatible stream.
 
-- [ ] **Step 8: Final full regression, documents and commit**
+- [x] **Step 8: Final full regression, documents and commit**
 
 Run one final backend full suite, frontend full suite, typecheck/build, static deletion scan and stage documentation gate. Generate the risk-profiled learning pack only after implementation stabilizes. Explicitly synchronize ignored verification/learning files after merge.
 

@@ -134,7 +134,7 @@ class HitlService:
             await self._event_stream.publish(
                 action.session_id,
                 action.run_id,
-                "hitl.resolved",
+                "approval.resolved",
                 {
                     "actionId": action.id,
                     "status": action.status,

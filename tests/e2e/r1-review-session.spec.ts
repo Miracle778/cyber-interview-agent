@@ -98,31 +98,29 @@ test("single review runs through provider runtime HITL and Vault", async ({ page
     {
       data: {
         workspaceId: workspace.id,
-        graphId: "review.single",
-        graphVersion: 1,
+        kind: "review.single",
         title: "单题复习：拒绝路径",
       },
     },
   );
   const secondSession = await secondSessionResponse.json();
-  const secondRunResponse = await request.post(
-    `http://127.0.0.1:8017/api/agent/sessions/${secondSession.id}/runs`,
+  const secondExecutionResponse = await request.post(
+    `http://127.0.0.1:8017/api/agent/sessions/${secondSession.id}/executions`,
     {
       data: {
         input: {
           question: QUESTION,
-          text: "只回答了并发事务",
           user_answer: "只回答了并发事务",
         },
       },
     },
   );
-  expect(secondRunResponse.status()).toBe(202);
+  expect(secondExecutionResponse.status()).toBe(202);
   await expect.poll(async () => {
     const response = await request.get(
       `http://127.0.0.1:8017/api/agent/sessions/${secondSession.id}`,
     );
-    return (await response.json()).latestRun.status;
+    return (await response.json()).latestExecution.status;
   }).toBe("waiting_for_approval");
 
   await page.reload();

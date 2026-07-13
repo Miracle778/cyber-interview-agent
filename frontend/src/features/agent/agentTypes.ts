@@ -1,5 +1,4 @@
-export type AgentRunStatus =
-  | "queued"
+export type AgentExecutionStatus =
   | "running"
   | "waiting_for_approval"
   | "interrupted"
@@ -10,19 +9,18 @@ export type AgentRunStatus =
 export interface AgentSession {
   id: string;
   workspaceId: string;
-  graphId: string;
-  graphVersion: number;
+  kind: string;
   title: string;
   status: string;
   createdAt: string;
   updatedAt: string;
-  lastRunId: string | null;
+  latestExecutionId: string | null;
 }
 
-export interface AgentRun {
+export interface AgentExecution {
   id: string;
   sessionId: string;
-  status: AgentRunStatus;
+  status: AgentExecutionStatus;
   resumeCount: number;
   errorCode: string | null;
   errorMessage: string | null;
@@ -33,26 +31,25 @@ export interface AgentRun {
 
 export interface AgentMessage {
   id: string;
-  runId: string | null;
+  executionId: string | null;
   role: "user" | "assistant" | "system" | "tool";
   content: string;
   createdAt: string;
 }
 
 export interface AgentSessionDetail extends AgentSession {
-  summary: string | null;
   usage: {
     inputTokens: number;
     outputTokens: number;
     totalTokens: number;
-    contextTokens: number;
     callCount: number;
     estimatedCount: number;
   };
-  latestGuardWarning: { code: string; message: string } | null;
+  contextCompacted?: boolean;
+  latestWarning: { code: string; message: string } | null;
   messages: AgentMessage[];
-  latestRun: AgentRun | null;
-  pendingAction: {
+  latestExecution: AgentExecution | null;
+  currentAction: {
     id: string;
     actionType: string;
     preview: Record<string, unknown>;
@@ -65,26 +62,14 @@ interface EventEnvelope<TType extends string, TPayload> {
   id: number;
   type: TType;
   sessionId: string;
-  runId: string | null;
+  executionId: string | null;
   timestamp: string;
   payload: TPayload;
 }
 
-export interface ToolEventPayload {
-  toolName?: string;
-  resourceScope?: string;
-  resourcePath?: string;
-  resourceSha256?: string;
-  byteCount?: number;
-  latencyMs?: number;
-  code?: string;
-}
-
 export type AgentEvent =
-  | EventEnvelope<"message.delta", { text: string }>
-  | EventEnvelope<"message.completed", { messageId: string; content: string }>
-  | EventEnvelope<"tool.started" | "tool.completed" | "tool.failed", ToolEventPayload>
-  | EventEnvelope<"hitl.required", { actionId: string }>
-  | EventEnvelope<"hitl.resolved", { actionId: string; status: string; version: number }>
-  | EventEnvelope<"run.failed", { code: string; message: string }>
+  | EventEnvelope<"assistant.delta", { text: string }>
+  | EventEnvelope<"approval.required" | "approval.resolved", Record<string, unknown>>
+  | EventEnvelope<"artifact.changed" | "publication.changed", Record<string, unknown>>
+  | EventEnvelope<"execution.warning" | "execution.failed", { code: string; message?: string }>
   | EventEnvelope<string, Record<string, unknown>>;

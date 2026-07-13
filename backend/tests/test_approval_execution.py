@@ -6,11 +6,11 @@ from langgraph.types import Command
 
 from app.agents.context import AgentContext
 from app.application.approval_service import ApprovalService
-from app.db.runtime_database import connect_runtime_database
+from app.infrastructure.runtime_database import connect_runtime_database
 from app.graphs.publication import create_publication_graph
 from app.hitl.models import PendingActionRecord
 from app.hitl.repository import PendingActionRepository
-from app.runtime.repository import RuntimeRepository
+from app.application.session_service import ProductRepository
 
 
 def _context(tmp_path):
@@ -26,23 +26,21 @@ def _context(tmp_path):
 
 def _runtime_database(tmp_path):
     connection = connect_runtime_database(tmp_path)
-    runtime = RuntimeRepository(connection)
+    runtime = ProductRepository(connection)
     runtime.create_session(
         workspace_id="w1",
-        graph_id="review.single",
-        graph_version=1,
+        kind="review.single",
         title="Review",
         session_id="s1",
     )
-    runtime.create_run(
+    runtime.create_execution(
         "s1",
         input={},
         model_bindings={},
-        run_id="r1",
-        initial_status="running",
+        execution_id="r1",
     )
-    runtime.transition_run(
-        "r1", expected="running", target="waiting_for_approval"
+    runtime.transition_execution(
+        "r1", expected=("running",), target="waiting_for_approval"
     )
     connection.close()
 

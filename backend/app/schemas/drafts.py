@@ -23,7 +23,7 @@ class KnowledgeDraftResource(DraftModel):
     id: str
     workspace_id: str
     session_id: str | None
-    run_id: str | None
+    execution_id: str | None = Field(validation_alias="run_id")
     agent_type: str | None
     domain: str
     document_type: str
@@ -70,7 +70,7 @@ class UpdateKnowledgeDraftRequest(DraftModel):
     markdown: str
 
 
-class PublishDraftRunResource(DraftModel):
+class PublishDraftExecutionResource(DraftModel):
     session_id: str
-    run_id: str
+    execution_id: str
     status: str

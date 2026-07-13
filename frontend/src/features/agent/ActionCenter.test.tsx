@@ -10,8 +10,8 @@ const action: PendingAction = {
   id: "a1",
   workspaceId: "w1",
   sessionId: "s1",
-  runId: "r1",
-  actionType: "test.approval",
+  executionId: "r1",
+  actionType: "diagnostic.approval",
   preview: { summary: "original" },
   editableFields: ["summary"],
   status: "pending",
@@ -140,18 +140,18 @@ describe("ActionCenter", () => {
           {
             id: "s1",
             workspaceId: "w1",
-            graphId: "test.approval",
-            graphVersion: 1,
+            kind: "diagnostic.approval",
+
             title: "人工确认自检",
             status: "active",
             createdAt: "now",
             updatedAt: "now",
-            lastRunId: null,
+            latestExecutionId: null,
           },
           { status: 201 },
         );
       }
-      if (url === "/api/agent/sessions/s1/runs" && method === "POST") {
+      if (url === "/api/agent/sessions/s1/executions" && method === "POST") {
         hasAction = true;
         return Response.json(
           {
@@ -179,8 +179,8 @@ describe("ActionCenter", () => {
   });
 
   it("waits for the action created by the diagnostic run", async () => {
-    const oldAction = { ...action, id: "old", runId: "old-run", preview: { summary: "old" } };
-    const newAction = { ...action, id: "new", runId: "new-run", preview: { summary: "new" } };
+    const oldAction = { ...action, id: "old", executionId: "old-run", preview: { summary: "old" } };
+    const newAction = { ...action, id: "new", executionId: "new-run", preview: { summary: "new" } };
     let actionReads = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
@@ -192,12 +192,12 @@ describe("ActionCenter", () => {
       if (url.includes("/api/agent/sessions?")) return Response.json([]);
       if (url === "/api/agent/sessions" && method === "POST") {
         return Response.json({
-          id: "s1", workspaceId: "w1", graphId: "test.approval", graphVersion: 1,
+          id: "s1", workspaceId: "w1", kind: "diagnostic.approval",
           title: "人工确认自检", status: "active", createdAt: "now", updatedAt: "now",
-          lastRunId: null,
+          latestExecutionId: null,
         }, { status: 201 });
       }
-      if (url === "/api/agent/sessions/s1/runs" && method === "POST") {
+      if (url === "/api/agent/sessions/s1/executions" && method === "POST") {
         return Response.json({
           id: "new-run", sessionId: "s1", status: "running", resumeCount: 0,
           errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now",
@@ -281,7 +281,7 @@ describe("ActionCenter", () => {
     const publishAction: PendingAction = {
       ...action,
       id: "pub1",
-      runId: "pub-run",
+      executionId: "pub-run",
       actionType: "knowledge.publish",
       preview: { title: "缓存穿透" },
       editableFields: ["title", "markdown"],
@@ -307,7 +307,7 @@ describe("ActionCenter", () => {
     const publishAction: PendingAction = {
       ...action,
       id: "pub1",
-      runId: "publish-run",
+      executionId: "publish-run",
       actionType: "knowledge.publish",
       preview: { title: "缓存穿透" },
       editableFields: ["title", "markdown"],
@@ -326,7 +326,7 @@ describe("ActionCenter", () => {
         workspaceId="w1"
         showDiagnostic={false}
         actionType="knowledge.publish"
-        watchRunId="publish-run"
+        watchExecutionId="publish-run"
       />,
       { wrapper },
     );
@@ -340,7 +340,7 @@ describe("ActionCenter", () => {
     const publishAction: PendingAction = {
       ...action,
       id: "pub-retry",
-      runId: "publish-retry-run",
+      executionId: "publish-retry-run",
       actionType: "knowledge.publish",
       preview: { title: "重试后出现" },
       editableFields: [],
@@ -364,7 +364,7 @@ describe("ActionCenter", () => {
         workspaceId="w1"
         showDiagnostic={false}
         actionType="knowledge.publish"
-        watchRunId="publish-retry-run"
+        watchExecutionId="publish-retry-run"
       />,
       { wrapper },
     );

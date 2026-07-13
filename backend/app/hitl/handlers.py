@@ -85,7 +85,7 @@ def create_default_action_handler_registry(
     *, knowledge_publish_handler: ActionHandler | None = None
 ) -> ActionHandlerRegistry:
     registry = ActionHandlerRegistry()
-    registry.register("test.approval", DefaultActionHandler())
+    registry.register("diagnostic.confirm", DefaultActionHandler())
     registry.register("tool.approval", DefaultActionHandler())
     if knowledge_publish_handler is not None:
         registry.register("knowledge.publish", knowledge_publish_handler)

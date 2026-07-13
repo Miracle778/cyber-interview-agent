@@ -21,7 +21,7 @@ class PendingActionResource(HitlModel):
     id: str
     workspace_id: str
     session_id: str
-    run_id: str
+    execution_id: str = Field(validation_alias="run_id")
     action_type: str
     preview: dict[str, Any]
     editable_fields: tuple[str, ...]

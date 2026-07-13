@@ -71,6 +71,12 @@ async def test_review_graph_uses_agent_results_without_provider_state():
     assert result["report_markdown"].startswith("# 单题复习")
     assert evaluator.calls[0]["context"] is context
     assert reporter.calls[0]["context"] is context
+    assert evaluator.calls[0]["config"]["configurable"] == {
+        "thread_id": "session-1:answer_evaluation",
+    }
+    assert reporter.calls[0]["config"]["configurable"] == {
+        "thread_id": "session-1:report_summarization",
+    }
     assert "api_key" not in result
     assert "provider" not in result
 

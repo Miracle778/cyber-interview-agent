@@ -16,28 +16,26 @@ class AgentModel(BaseModel):
 
 class CreateSessionCommand(AgentModel):
     workspace_id: str
-    graph_id: str
-    graph_version: int
-    title: str
+    kind: str
+    title: str | None = None
 
 
-class StartRunCommand(AgentModel):
+class StartExecutionCommand(AgentModel):
     input: dict[str, Any]
 
 
 class SessionResource(AgentModel):
     id: str
     workspace_id: str
-    graph_id: str
-    graph_version: int
+    kind: str
     title: str
     status: str
     created_at: str
     updated_at: str
-    last_run_id: str | None
+    latest_execution_id: str | None
 
 
-class RunResource(AgentModel):
+class ExecutionResource(AgentModel):
     id: str
     session_id: str
     status: str
@@ -51,7 +49,7 @@ class RunResource(AgentModel):
 
 class MessageResource(AgentModel):
     id: str
-    run_id: str | None
+    execution_id: str | None
     role: str
     content: str
     created_at: str
@@ -69,7 +67,6 @@ class SessionUsageResource(AgentModel):
     input_tokens: int
     output_tokens: int
     total_tokens: int
-    context_tokens: int
     call_count: int
     estimated_count: int
 
@@ -80,9 +77,9 @@ class GuardWarningResource(AgentModel):
 
 
 class SessionDetailResource(SessionResource):
-    summary: str | None = None
     usage: SessionUsageResource
-    latest_guard_warning: GuardWarningResource | None = None
+    context_compacted: bool
+    latest_warning: GuardWarningResource | None = None
     messages: list[MessageResource]
-    latest_run: RunResource | None
-    pending_action: PendingActionSummaryResource | None = None
+    latest_execution: ExecutionResource | None
+    current_action: PendingActionSummaryResource | None = None

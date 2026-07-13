@@ -4,12 +4,12 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.dependencies import get_agent_runtime, get_workspace_service
+from app.api.dependencies import get_agent_application, get_workspace_service
+from app.application.graph_factory import ProductionGraphFactory
+from app.application.workspace_runtime import AgentApplication
 from app.db.app_database import connect_app_database
 from app.knowledge.drafts import CreateDraftCommand, KnowledgeDraftService
 from app.main import app
-from app.runtime.default_graphs import create_default_graph_registry
-from app.runtime.service import AgentRuntime
 from app.services.workspace_service import WorkspaceService
 
 
@@ -18,11 +18,11 @@ def draft_client(tmp_path: Path):
     roots = {"w1": tmp_path / "workspace-one", "w2": tmp_path / "workspace-two"}
     for root in roots.values():
         root.mkdir()
-    runtime = AgentRuntime(
-        graph_registry=create_default_graph_registry(),
+    application = AgentApplication(
         workspace_resolver=lambda workspace_id: roots[workspace_id],
-        model_binding_resolver=lambda _workspace_id: {},
+        model_bindings=lambda _workspace_id: {},
         workspace_ids=lambda: tuple(roots),
+        graph_factory=ProductionGraphFactory(None),
     )
     connection = connect_app_database(tmp_path / "app-data")
     workspaces = WorkspaceService(connection)
@@ -30,14 +30,14 @@ def draft_client(tmp_path: Path):
     second = workspaces.register(str(roots["w2"]))
     roots[first.id] = roots.pop("w1")
     roots[second.id] = roots.pop("w2")
-    app.dependency_overrides[get_agent_runtime] = lambda: runtime
+    app.dependency_overrides[get_agent_application] = lambda: application
     app.dependency_overrides[get_workspace_service] = lambda: workspaces
     try:
         with TestClient(app) as client:
-            yield client, runtime, roots, first.id, second.id
+            yield client, application, roots, first.id, second.id
     finally:
         app.dependency_overrides.clear()
-        asyncio.run(runtime.close())
+        asyncio.run(application.close())
         connection.close()
 
 
@@ -107,7 +107,7 @@ def test_publish_request_returns_run_without_writing_vault(draft_client) -> None
     assert response.status_code == 202
     body = response.json()
     assert body["sessionId"]
-    assert body["runId"]
+    assert body["executionId"]
     assert body["status"] in {"running", "waiting_for_approval"}
     assert not list((roots[workspace_id] / "knowledge-vault").rglob("*.md"))
     assert str(roots[workspace_id]) not in response.text
@@ -120,7 +120,7 @@ def test_publish_request_returns_run_without_writing_vault(draft_client) -> None
     session_id = body["sessionId"]
     for _ in range(100):
         detail = client.get(f"/api/agent/sessions/{session_id}").json()
-        latest_run = detail.get("latestRun")
+        latest_run = detail.get("latestExecution")
         if latest_run and latest_run.get("status") == "waiting_for_approval":
             break
         asyncio.run(asyncio.sleep(0.01))
@@ -144,7 +144,7 @@ def test_approval_exposes_vault_publication_result(draft_client) -> None:
             params={"workspaceId": workspace_id, "status": "pending"},
         ).json()
         action = next(
-            (item for item in actions if item["runId"] == requested["runId"]),
+            (item for item in actions if item["executionId"] == requested["executionId"]),
             None,
         )
         if action is not None:
@@ -183,7 +183,7 @@ def test_rejection_marks_the_bound_draft_rejected(draft_client) -> None:
             params={"workspaceId": workspace_id, "status": "pending"},
         ).json()
         action = next(
-            (item for item in actions if item["runId"] == requested["runId"]),
+            (item for item in actions if item["executionId"] == requested["executionId"]),
             None,
         )
         if action is not None:

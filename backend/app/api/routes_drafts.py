@@ -2,12 +2,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.api.dependencies import get_agent_runtime
+from app.api.dependencies import get_agent_application
+from app.application.workspace_runtime import AgentApplication
 from app.knowledge.drafts import UpdateDraftCommand
-from app.runtime.service import AgentRuntime
 from app.schemas.drafts import (
     KnowledgeDraftResource,
-    PublishDraftRunResource,
+    PublishDraftExecutionResource,
     UpdateKnowledgeDraftRequest,
 )
 
@@ -18,26 +18,26 @@ router = APIRouter(prefix="/api/knowledge/drafts", tags=["knowledge-drafts"])
 @router.get("", response_model=list[KnowledgeDraftResource])
 async def list_drafts(
     workspace_id: Annotated[str, Query(alias="workspaceId")],
-    runtime: AgentRuntime = Depends(get_agent_runtime),
+    application: AgentApplication = Depends(get_agent_application),
 ):
-    return await runtime.list_drafts(workspace_id)
+    return await application.list_drafts(workspace_id)
 
 
 @router.get("/{draft_id}", response_model=KnowledgeDraftResource)
 async def get_draft(
     draft_id: str,
-    runtime: AgentRuntime = Depends(get_agent_runtime),
+    application: AgentApplication = Depends(get_agent_application),
 ):
-    return await runtime.get_draft(draft_id)
+    return await application.get_draft(draft_id)
 
 
 @router.patch("/{draft_id}", response_model=KnowledgeDraftResource)
 async def update_draft(
     draft_id: str,
     request: UpdateKnowledgeDraftRequest,
-    runtime: AgentRuntime = Depends(get_agent_runtime),
+    application: AgentApplication = Depends(get_agent_application),
 ):
-    return await runtime.update_draft(
+    return await application.update_draft(
         draft_id,
         UpdateDraftCommand(
             expected_version=request.version,
@@ -49,16 +49,16 @@ async def update_draft(
 
 @router.post(
     "/{draft_id}/publish-request",
-    response_model=PublishDraftRunResource,
+    response_model=PublishDraftExecutionResource,
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def request_publication(
     draft_id: str,
-    runtime: AgentRuntime = Depends(get_agent_runtime),
-) -> PublishDraftRunResource:
-    run = await runtime.request_draft_publication(draft_id)
-    return PublishDraftRunResource(
+    application: AgentApplication = Depends(get_agent_application),
+) -> PublishDraftExecutionResource:
+    run = await application.request_draft_publication(draft_id)
+    return PublishDraftExecutionResource(
         session_id=run.session_id,
-        run_id=run.id,
+        execution_id=run.id,
         status=run.status,
     )

@@ -13,11 +13,11 @@ from app.services.secrets import (
     SecretStore,
 )
 from app.services.workspace_service import WorkspaceService
-from app.runtime.service import AgentRuntime
+from app.application.workspace_runtime import AgentApplication
 
 
-def get_agent_runtime(request: Request) -> AgentRuntime:
-    return request.app.state.agent_runtime
+def get_agent_application(request: Request) -> AgentApplication:
+    return request.app.state.agent_application
 
 
 def get_app_connection() -> Iterator[sqlite3.Connection]:

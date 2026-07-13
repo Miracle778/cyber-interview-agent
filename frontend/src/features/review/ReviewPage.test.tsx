@@ -32,9 +32,9 @@ const question: ReviewQuestion = {
 };
 
 const session = {
-  id: "s1", workspaceId: "w1", graphId: "review.single", graphVersion: 1,
+  id: "s1", workspaceId: "w1", kind: "review.single",
   title: "单题复习：缓存穿透", status: "active", createdAt: "now",
-  updatedAt: "now", lastRunId: "r1",
+  updatedAt: "now", latestExecutionId: "r1",
 };
 
 describe("ReviewPage persistent runtime flow", () => {
@@ -57,7 +57,7 @@ describe("ReviewPage persistent runtime flow", () => {
     expect(screen.getByRole("button", { name: "发送回答" })).toBeDisabled();
   });
 
-  it("creates a review.single session and starts a run", async () => {
+  it("creates a review.single session and starts an execution", async () => {
     const calls: string[] = [];
     let runBody: string | undefined;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -66,11 +66,11 @@ describe("ReviewPage persistent runtime flow", () => {
       calls.push(`${method} ${url}`);
       if (url.includes("/api/agent/sessions?")) return Response.json([]);
       if (url === "/api/agent/sessions" && method === "POST") return Response.json(session, { status: 201 });
-      if (url === "/api/agent/sessions/s1/runs") {
+      if (url === "/api/agent/sessions/s1/executions") {
         runBody = init?.body as string | undefined;
         return Response.json({ id: "r1", sessionId: "s1", status: "running", resumeCount: 0, errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: null }, { status: 202 });
       }
-      if (url === "/api/agent/sessions/s1") return Response.json({ ...session, messages: [{ id: "m1", runId: "r1", role: "user", content: "缓存空值", createdAt: "now" }], latestRun: { id: "r1", sessionId: "s1", status: "running", resumeCount: 0, errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: null }, pendingAction: null });
+      if (url === "/api/agent/sessions/s1") return Response.json({ ...session, messages: [{ id: "m1", executionId: "r1", role: "user", content: "缓存空值", createdAt: "now" }], latestExecution: { id: "r1", sessionId: "s1", status: "running", resumeCount: 0, errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: null }, currentAction: null });
       if (url.includes("/api/agent/actions?")) return Response.json([]);
       throw new Error(`unexpected ${method} ${url}`);
     });
@@ -80,9 +80,8 @@ describe("ReviewPage persistent runtime flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "发送回答" }));
 
     await waitFor(() => expect(calls).toContain("POST /api/agent/sessions"));
-    expect(calls).toContain("POST /api/agent/sessions/s1/runs");
+    expect(calls).toContain("POST /api/agent/sessions/s1/executions");
     expect(JSON.parse(runBody ?? "{}").input).toMatchObject({
-      text: "缓存空值",
       user_answer: "缓存空值",
     });
     expect(await screen.findByText((_, node) => node?.tagName === "P" && node.textContent === "你：缓存空值")).toBeInTheDocument();
@@ -93,10 +92,10 @@ describe("ReviewPage persistent runtime flow", () => {
       ...session,
       id: "s-old",
       title: "旧复习会话",
-      lastRunId: "r-old",
+      latestExecutionId: "r-old",
     };
     const action = {
-      id: "a1", workspaceId: "w1", sessionId: "s1", runId: "r1",
+      id: "a1", workspaceId: "w1", sessionId: "s1", executionId: "r1",
       actionType: "knowledge.publish", preview: {
         draftId: "d1", question,
         evaluation: { score: "partial", missing_key_points: ["布隆过滤器"], evidence: "提到缓存空值" },
@@ -106,9 +105,9 @@ describe("ReviewPage persistent runtime flow", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.includes("/api/agent/sessions?")) return Response.json([session, olderSession]);
-      if (url === "/api/agent/sessions/s1") return Response.json({ ...session, summary: "缓存穿透的定义与防护", usage: { inputTokens: 120, outputTokens: 40, totalTokens: 160, contextTokens: 120, callCount: 2, estimatedCount: 1 }, latestGuardWarning: { code: "loop_detected", message: "检测到重复执行" }, messages: [], latestRun: { id: "r1", sessionId: "s1", status: "waiting_for_approval", resumeCount: 0, errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: null }, pendingAction: action });
+      if (url === "/api/agent/sessions/s1") return Response.json({ ...session, usage: { inputTokens: 120, outputTokens: 40, totalTokens: 160, callCount: 2, estimatedCount: 1 }, latestWarning: { code: "loop_detected", message: "检测到重复执行" }, messages: [], latestExecution: { id: "r1", sessionId: "s1", status: "waiting_for_approval", resumeCount: 0, errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: null }, currentAction: action });
       if (url.includes("/api/agent/actions?")) return Response.json([action]);
-      if (url === "/api/knowledge/drafts/d1") return Response.json({ id: "d1", workspaceId: "w1", sessionId: "s1", runId: "r1", agentType: "review.single", domain: "review", documentType: "session_report", documentId: "doc1", title: "报告", markdown: "# 报告", contentPath: "draft.md", sourceRefs: ["q1"], relationRefs: [], status: "review_pending", version: 1, contentHash: "h1", createdAt: "now", updatedAt: "now", publication: null });
+      if (url === "/api/knowledge/drafts/d1") return Response.json({ id: "d1", workspaceId: "w1", sessionId: "s1", executionId: "r1", agentType: "review.single", domain: "review", documentType: "session_report", documentId: "doc1", title: "报告", markdown: "# 报告", contentPath: "draft.md", sourceRefs: ["q1"], relationRefs: [], status: "review_pending", version: 1, contentHash: "h1", createdAt: "now", updatedAt: "now", publication: null });
       throw new Error(`unexpected ${url}`);
     });
 
@@ -121,7 +120,6 @@ describe("ReviewPage persistent runtime flow", () => {
     expect(screen.getByRole("button", { name: "批准发布" })).toBeInTheDocument();
     expect(screen.getByLabelText("运行用量")).toHaveTextContent("160 tokens");
     expect(screen.getByLabelText("运行用量")).toHaveTextContent("含 1 次估算");
-    expect(screen.getByLabelText("运行用量")).toHaveTextContent("上下文已压缩");
     expect(screen.getByRole("alert")).toHaveTextContent("检查重复的模型或工具调用");
   });
 });

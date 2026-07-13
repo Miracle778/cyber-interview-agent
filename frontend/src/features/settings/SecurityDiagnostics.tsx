@@ -5,35 +5,30 @@ import {
   createAgentSession,
   getAgentSession,
   listAgentSessions,
-  startAgentRun,
+  startAgentExecution,
 } from "../agent/agentApi";
-import type { AgentEvent, AgentRun, ToolEventPayload } from "../agent/agentTypes";
+import type { AgentEvent, AgentExecution } from "../agent/agentTypes";
 import { useAgentEvents } from "../agent/useAgentEvents";
 import { Badge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
 
-const GRAPH_ID = "test.tool-security";
-const GRAPH_VERSION = 1;
+const KIND = "diagnostic.security";
 const SESSION_TITLE = "工具安全自检";
 const TERMINAL_TYPES = [
-  "run.completed",
-  "run.failed",
-  "run.cancelled",
-  "run.interrupted",
+  "execution.completed",
+  "execution.failed",
+  "execution.cancelled",
+  "execution.interrupted",
 ];
-
-function payloadOf(event: AgentEvent): ToolEventPayload {
-  return event.payload as ToolEventPayload;
-}
 
 function hasTerminalEvent(events: AgentEvent[]) {
   return events.some((event) => TERMINAL_TYPES.includes(event.type));
 }
 
-function statusFor(run: AgentRun | null, events: AgentEvent[], checksPassed: boolean) {
+function statusFor(run: AgentExecution | null, events: AgentEvent[], checksPassed: boolean) {
   const terminal = [...events].reverse().find((event) => TERMINAL_TYPES.includes(event.type));
-  const status = terminal?.type.replace("run.", "") ?? run?.status;
+  const status = terminal?.type.replace("execution.", "") ?? run?.status;
   if (status === "failed") return { label: "工具安全自检失败", tone: "danger" as const };
   if (status === "cancelled" || status === "interrupted") {
     return { label: "工具安全自检未完成", tone: "warning" as const };
@@ -50,7 +45,7 @@ function statusFor(run: AgentRun | null, events: AgentEvent[], checksPassed: boo
 
 export function SecurityDiagnostics({ workspaceId }: { workspaceId: string }) {
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [activeRun, setActiveRun] = useState<AgentRun | null>(null);
+  const [activeExecution, setActiveExecution] = useState<AgentExecution | null>(null);
   const [commandError, setCommandError] = useState<string | null>(null);
   const sessionsQuery = useQuery({
     queryKey: ["agent-sessions", workspaceId],
@@ -59,7 +54,7 @@ export function SecurityDiagnostics({ workspaceId }: { workspaceId: string }) {
   const restoredSession = useMemo(
     () =>
       sessionsQuery.data?.find(
-        (session) => session.graphId === GRAPH_ID && session.graphVersion === GRAPH_VERSION,
+        (session) => session.kind === KIND,
       ) ?? null,
     [sessionsQuery.data],
   );
@@ -74,54 +69,43 @@ export function SecurityDiagnostics({ workspaceId }: { workspaceId: string }) {
     enabled: sessionId !== null,
   });
   const stream = useAgentEvents(sessionId);
-  const latestRun = activeRun ?? detailQuery.data?.latestRun ?? null;
-  const currentRunEvents = useMemo(
+  const latestExecution = activeExecution ?? detailQuery.data?.latestExecution ?? null;
+  const currentExecutionEvents = useMemo(
     () =>
-      latestRun
-        ? stream.events.filter((event) => event.runId === latestRun.id)
+      latestExecution
+        ? stream.events.filter((event) => event.executionId === latestExecution.id)
         : stream.events,
-    [latestRun?.id, stream.events],
+    [latestExecution?.id, stream.events],
   );
 
   useEffect(() => {
-    if (hasTerminalEvent(currentRunEvents)) void detailQuery.refetch();
-  }, [currentRunEvents, detailQuery.refetch]);
+    if (hasTerminalEvent(currentExecutionEvents)) void detailQuery.refetch();
+  }, [currentExecutionEvents, detailQuery.refetch]);
 
-  const toolEvents = currentRunEvents.filter((event) =>
-    ["tool.completed", "tool.failed"].includes(event.type),
-  );
+  const diagnosticResult = detailQuery.data?.messages
+    .filter((message) => message.role === "assistant")
+    .at(-1)?.content ?? "";
   const checks = [
     {
       label: "授权读取通过",
-      passed: toolEvents.some(
-        (event) =>
-          event.type === "tool.completed" &&
-          payloadOf(event).toolName === "diagnostic_read" &&
-          payloadOf(event).resourcePath === "probe.txt",
-      ),
+      passed: diagnosticResult.includes("授权读取通过"),
     },
     {
       label: "未注册工具已拒绝",
-      passed: toolEvents.some(
-        (event) => event.type === "tool.failed" && payloadOf(event).code === "tool_not_allowed",
-      ),
+      passed: diagnosticResult.includes("未注册工具已拒绝"),
     },
     {
       label: "未授权 Scope 已拒绝",
-      passed: toolEvents.some(
-        (event) => event.type === "tool.failed" && payloadOf(event).code === "tool_scope_denied",
-      ),
+      passed: diagnosticResult.includes("未授权 Scope 已拒绝"),
     },
     {
       label: "路径越界已拒绝",
-      passed: toolEvents.some(
-        (event) => event.type === "tool.failed" && payloadOf(event).code === "workspace_path_denied",
-      ),
+      passed: diagnosticResult.includes("路径越界已拒绝"),
     },
   ];
   const checksPassed = checks.every((check) => check.passed);
-  const state = statusFor(latestRun, currentRunEvents, checksPassed);
-  const terminal = hasTerminalEvent(currentRunEvents);
+  const state = statusFor(latestExecution, currentExecutionEvents, checksPassed);
+  const terminal = hasTerminalEvent(currentExecutionEvents);
   const failed = state.tone === "danger";
 
   const runMutation = useMutation({
@@ -130,17 +114,16 @@ export function SecurityDiagnostics({ workspaceId }: { workspaceId: string }) {
       if (!targetSessionId) {
         const session = await createAgentSession({
           workspaceId,
-          graphId: GRAPH_ID,
-          graphVersion: GRAPH_VERSION,
+          kind: KIND,
           title: SESSION_TITLE,
         });
         targetSessionId = session.id;
         setSessionId(session.id);
       }
-      return startAgentRun(targetSessionId, {});
+      return startAgentExecution(targetSessionId, {});
     },
     onMutate: () => setCommandError(null),
-    onSuccess: (run) => setActiveRun(run),
+    onSuccess: (execution) => setActiveExecution(execution),
     onError: (error) =>
       setCommandError(error instanceof Error ? error.message : "无法启动工具安全自检"),
   });
@@ -164,7 +147,7 @@ export function SecurityDiagnostics({ workspaceId }: { workspaceId: string }) {
           onClick={() => runMutation.mutate()}
           loading={runMutation.isPending}
           disabled={
-            !terminal && (latestRun?.status === "queued" || latestRun?.status === "running")
+            !terminal && latestExecution?.status === "running"
           }
         >
           <Play size={15} aria-hidden="true" />
@@ -195,21 +178,6 @@ export function SecurityDiagnostics({ workspaceId }: { workspaceId: string }) {
           ))}
         </ul>
 
-        {toolEvents.length > 0 ? (
-          <ol className="runtime-timeline" aria-label="工具安全事件">
-            {toolEvents.map((event) => {
-              const payload = payloadOf(event);
-              const detail = payload.code ?? "completed";
-              const resource = payload.resourcePath ? ` · ${payload.resourcePath}` : "";
-              return (
-                <li key={event.id} className="runtime-timeline__item">
-                  <span>{payload.toolName ?? "tool"} · {detail}{resource}</span>
-                  <time>{event.timestamp}</time>
-                </li>
-              );
-            })}
-          </ol>
-        ) : null}
       </div>
     </Card>
   );

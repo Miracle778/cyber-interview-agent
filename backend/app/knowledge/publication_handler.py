@@ -86,21 +86,16 @@ class KnowledgePublishActionHandler:
         await self._event_stream.publish(
             action.session_id,
             action.run_id,
-            "publication.started",
+            "publication.changed",
             {"actionId": action.id, "draftId": action.payload["draftId"]},
         )
         publication = await self._publications.publish_approved_action(
             effective_action
         )
-        event_type = (
-            "publication.index_stale"
-            if publication.state == "index_stale"
-            else "publication.completed"
-        )
         await self._event_stream.publish(
             action.session_id,
             action.run_id,
-            event_type,
+            "publication.changed",
             {
                 "actionId": action.id,
                 "draftId": publication.draft_id,

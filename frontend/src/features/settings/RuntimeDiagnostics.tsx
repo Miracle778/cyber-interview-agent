@@ -5,32 +5,32 @@ import {
   createAgentSession,
   getAgentSession,
   listAgentSessions,
-  startAgentRun,
+  startAgentExecution,
 } from "../agent/agentApi";
-import type { AgentEvent, AgentRun } from "../agent/agentTypes";
+import type { AgentEvent, AgentExecution } from "../agent/agentTypes";
 import { useAgentEvents } from "../agent/useAgentEvents";
 import { Badge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
 
-const DIAGNOSTIC_GRAPH_ID = "test.echo";
+const DIAGNOSTIC_KIND = "diagnostic.echo";
 const DIAGNOSTIC_TITLE = "Agent Runtime 自检";
 
 const EVENT_LABELS: Record<string, string> = {
   "session.created": "自检会话已创建",
-  "run.started": "运行已启动",
-  "message.completed": "Echo 响应已保存",
-  "run.completed": "运行完成",
-  "run.failed": "运行失败",
-  "run.cancelled": "运行已取消",
-  "run.interrupted": "运行被中断",
+  "execution.started": "运行已启动",
+  "assistant.delta": "Echo 响应已保存",
+  "execution.completed": "运行完成",
+  "execution.failed": "运行失败",
+  "execution.cancelled": "运行已取消",
+  "execution.interrupted": "运行被中断",
 };
 
-function runState(run: AgentRun | null, events: AgentEvent[]) {
+function runState(run: AgentExecution | null, events: AgentEvent[]) {
   const terminalEvent = [...events]
     .reverse()
-    .find((event) => ["run.completed", "run.failed", "run.cancelled", "run.interrupted"].includes(event.type));
-  const status = terminalEvent?.type.replace("run.", "") ?? run?.status;
+    .find((event) => ["execution.completed", "execution.failed", "execution.cancelled", "execution.interrupted"].includes(event.type));
+  const status = terminalEvent?.type.replace("execution.", "") ?? run?.status;
   if (status === "completed") return { label: "自检完成", tone: "success" as const };
   if (status === "failed") return { label: "自检失败", tone: "danger" as const };
   if (status === "interrupted") return { label: "自检中断", tone: "warning" as const };
@@ -41,7 +41,7 @@ function runState(run: AgentRun | null, events: AgentEvent[]) {
 
 export function RuntimeDiagnostics({ workspaceId }: { workspaceId: string }) {
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [activeRun, setActiveRun] = useState<AgentRun | null>(null);
+  const [activeExecution, setActiveExecution] = useState<AgentExecution | null>(null);
   const [commandError, setCommandError] = useState<string | null>(null);
   const sessionsQuery = useQuery({
     queryKey: ["agent-sessions", workspaceId],
@@ -52,7 +52,7 @@ export function RuntimeDiagnostics({ workspaceId }: { workspaceId: string }) {
     () =>
       sessionsQuery.data?.find(
         (session) =>
-          session.graphId === DIAGNOSTIC_GRAPH_ID && session.graphVersion === 1,
+          session.kind === DIAGNOSTIC_KIND,
       ) ?? null,
     [sessionsQuery.data],
   );
@@ -67,21 +67,21 @@ export function RuntimeDiagnostics({ workspaceId }: { workspaceId: string }) {
     enabled: sessionId !== null,
   });
   const stream = useAgentEvents(sessionId);
-  const latestRun = activeRun ?? detailQuery.data?.latestRun ?? null;
-  const currentRunEvents = useMemo(
+  const latestExecution = activeExecution ?? detailQuery.data?.latestExecution ?? null;
+  const currentExecutionEvents = useMemo(
     () =>
-      latestRun
-        ? stream.events.filter((event) => event.runId === latestRun.id)
+      latestExecution
+        ? stream.events.filter((event) => event.executionId === latestExecution.id)
         : stream.events,
-    [latestRun?.id, stream.events],
+    [latestExecution?.id, stream.events],
   );
 
   useEffect(() => {
-    const hasTerminalEvent = currentRunEvents.some((event) =>
-      ["run.completed", "run.failed", "run.cancelled", "run.interrupted"].includes(event.type),
+    const hasTerminalEvent = currentExecutionEvents.some((event) =>
+      ["execution.completed", "execution.failed", "execution.cancelled", "execution.interrupted"].includes(event.type),
     );
     if (hasTerminalEvent) void detailQuery.refetch();
-  }, [currentRunEvents, detailQuery.refetch]);
+  }, [currentExecutionEvents, detailQuery.refetch]);
 
   const runMutation = useMutation({
     mutationFn: async () => {
@@ -89,32 +89,31 @@ export function RuntimeDiagnostics({ workspaceId }: { workspaceId: string }) {
       if (!targetSessionId) {
         const session = await createAgentSession({
           workspaceId,
-          graphId: DIAGNOSTIC_GRAPH_ID,
-          graphVersion: 1,
+          kind: DIAGNOSTIC_KIND,
           title: DIAGNOSTIC_TITLE,
         });
         targetSessionId = session.id;
         setSessionId(session.id);
       }
-      return startAgentRun(targetSessionId, { text: "runtime-check" });
+      return startAgentExecution(targetSessionId, { text: "runtime-check" });
     },
     onMutate: () => setCommandError(null),
-    onSuccess: (run) => setActiveRun(run),
+    onSuccess: (execution) => setActiveExecution(execution),
     onError: (error) =>
       setCommandError(error instanceof Error ? error.message : "无法启动 Runtime 自检"),
   });
 
-  const state = runState(latestRun, currentRunEvents);
+  const state = runState(latestExecution, currentExecutionEvents);
   const failed = state.label === "自检失败";
-  const hasTerminalEvent = currentRunEvents.some((event) =>
-    ["run.completed", "run.failed", "run.cancelled", "run.interrupted"].includes(
+  const hasTerminalEvent = currentExecutionEvents.some((event) =>
+    ["execution.completed", "execution.failed", "execution.cancelled", "execution.interrupted"].includes(
       event.type,
     ),
   );
   const visibleEvents = stream.events.filter(
     (event) =>
       EVENT_LABELS[event.type] &&
-      (event.type === "session.created" || event.runId === latestRun?.id),
+      (event.type === "session.created" || event.executionId === latestExecution?.id),
   );
   const connectionLabel =
     stream.status === "connected"
@@ -136,7 +135,7 @@ export function RuntimeDiagnostics({ workspaceId }: { workspaceId: string }) {
           loading={runMutation.isPending}
           disabled={
             !hasTerminalEvent &&
-            (latestRun?.status === "queued" || latestRun?.status === "running")
+            latestExecution?.status === "running"
           }
         >
           <Play size={15} aria-hidden="true" />

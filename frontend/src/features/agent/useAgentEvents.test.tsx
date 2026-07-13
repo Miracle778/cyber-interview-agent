@@ -44,17 +44,17 @@ describe("useAgentEvents", () => {
     act(() => {
       first.emit({
         id: 4,
-        type: "message.completed",
+        type: "assistant.delta",
         sessionId: "s1",
-        runId: "r1",
+        executionId: "r1",
         timestamp: "now",
         payload: { messageId: "m1", content: "hello" },
       });
       first.emit({
         id: 4,
-        type: "message.completed",
+        type: "assistant.delta",
         sessionId: "s1",
-        runId: "r1",
+        executionId: "r1",
         timestamp: "now",
         payload: { messageId: "m1", content: "hello" },
       });
@@ -78,7 +78,7 @@ describe("useAgentEvents", () => {
     expect(second.close).not.toHaveBeenCalled();
   });
 
-  it("keeps prior events when a run fails", () => {
+  it("keeps prior events when an execution fails", () => {
     const { result } = renderHook(() =>
       useAgentEvents("s1", {
         createEventSource: (url) => new FakeEventSource(url),
@@ -87,17 +87,34 @@ describe("useAgentEvents", () => {
     const source = FakeEventSource.instances[0];
 
     act(() => {
-      source.emit({ id: 1, type: "run.started", sessionId: "s1", runId: "r1", timestamp: "now", payload: {} });
-      source.emit({ id: 2, type: "run.failed", sessionId: "s1", runId: "r1", timestamp: "now", payload: { code: "runtime_error", message: "failed" } });
+      source.emit({ id: 1, type: "execution.started", sessionId: "s1", executionId: "r1", timestamp: "now", payload: {} });
+      source.emit({ id: 2, type: "execution.failed", sessionId: "s1", executionId: "r1", timestamp: "now", payload: { code: "runtime_error", message: "failed" } });
     });
 
     expect(result.current.events.map((event) => event.type)).toEqual([
-      "run.started",
-      "run.failed",
+      "execution.started",
+      "execution.failed",
     ]);
-    expect(result.current.runError).toEqual({
+    expect(result.current.executionError).toEqual({
       code: "runtime_error",
       message: "failed",
     });
+  });
+
+  it("clears a replayed failure when a newer execution starts", () => {
+    const { result } = renderHook(() =>
+      useAgentEvents("s1", {
+        createEventSource: (url) => new FakeEventSource(url),
+      }),
+    );
+    const source = FakeEventSource.instances[0];
+
+    act(() => {
+      source.emit({ id: 1, type: "execution.failed", sessionId: "s1", executionId: "r1", timestamp: "now", payload: { code: "runtime_error" } });
+      source.emit({ id: 2, type: "execution.started", sessionId: "s1", executionId: "r2", timestamp: "now", payload: {} });
+      source.emit({ id: 3, type: "execution.interrupted", sessionId: "s1", executionId: "r2", timestamp: "now", payload: {} });
+    });
+
+    expect(result.current.executionError).toBeNull();
   });
 });

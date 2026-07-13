@@ -1,260 +1,30 @@
-# Cyber Interview Agent 当前进度
+# Agent Runtime 框架收敛进度
 
-## 2026-07-13：Agent Runtime 框架收敛启动
+## 2026-07-13：设计与前三个纵向任务
 
-- 用户确认当前数据均为测试数据，选择不兼容重构。
-- `main@8e1b500` 已创建归档 tag
-  `archive/pre-agent-runtime-refactor-2026-07-13`。
-- 创建分支 `codex/agent-runtime-framework-convergence`，隔离 worktree 为
-  `/private/tmp/cyber-interview-agent-runtime-convergence`；主仓库保持 `main` 干净。
-- 首次基线命令误用缺少 OpenTelemetry 的主仓库 venv，前端 `pnpm` 也尝试重建
-  软链接依赖；根因定位后改用 Middleware worktree 锁定 venv 和直接 vitest 入口。
-- 正确环境基线：后端 281 passed，前端 75 passed。
-- 正式设计开始把 `create_agent`、官方 `AgentMiddleware`、标准工具、LangGraph
-  checkpoint/stream/interrupt 定义为唯一执行协议。
-- 设计自审已完成：无占位符、兼容边界与删除清单一致；三份启动入口合计 395 行，
-  保持在 400 行预算内。
-- 用户确认正式设计并要求开始执行；测试基线明确为归档证据，不是兼容门禁。
-- 实施计划按 KEEP/REWRITE/DELETE 处置旧测试，并拆成 Agent 核心、Tool/HITL、
-  middleware/stream、Runtime/API/前端收敛四个纵向任务。
-- 下一步：计划自审和提交后，按 Task 1 编写 AgentFactory/ModelResolver RED。
-- Task 1 RED/GREEN 完成：`ChatModelResolver` 直接返回 OpenAI/Anthropic
-  `BaseChatModel`，secret 缺失与禁用模型映射为稳定错误；`AgentFactory` 真实调用
-  `create_agent`，没有新增 invocation wrapper。
-- 新 `ReviewAgents` 和显式 review Graph 只在 state 中保存评价与 Markdown，不保存
-  Provider 或 secret；官方 Agent 组合和新旧受影响专项共 56 passed。
-- Task 1 复核未创建 subagent，因为本切片全局约束为单 Agent；已内联检查新代码无
-  Gateway/Invoker/Pipeline 抽象和 whitespace 问题。
-- 下一步：提交 Task 1，进入标准 Tool、官方 HITL 与显式 publication Task 2。
-- Task 1 已提交为 `adfea9f`。
-- Task 2 Tool RED/GREEN 完成：四个文件能力已暴露为标准 `BaseTool`，注入的
-  `ToolRuntime[AgentContext]` 不进入业务参数 schema，Workspace handler 内仍执行
-  最终路径校验；新旧工具/路径/审计专项 31 passed。
-- 下一步：实现直接 `AgentMiddleware` 的 scope/audit policy，并与官方
-  `HumanInTheLoopMiddleware` 组合。
-- Task 2 主链完成：`ToolPolicyMiddleware` 通过官方 `awrap_tool_call` 执行
-  allowlist/scope/metadata-only audit；真实 `create_agent` 测试证明官方 HITL 在工具
-  副作用前 interrupt，批准后只执行一次。
-- `ApprovalService` 将官方 interrupt 安全投影为 action，并用标准 decisions
-  `Command(resume=...)`；review 草稿/发布和独立 publication Graph 保持显式节点。
-- Task 2 新链与现有 HITL/publication 受影响专项共 65 passed。旧 Registry/Executor
-  删除顺延到 Task 4 production cutover，避免中间提交破坏当前应用入口。
-- 下一步：Task 3 用官方 summary/context/call-limit middleware 替换自研 pipeline，
-  并建立 LangGraph stream 到产品事件的单向投影。
+- 用户确认测试数据可丢弃并选择不兼容重写；归档 tag 指向 `main@8e1b500`。
+- Task 1 提交 `adfea9f`：官方 Agent 核心、直接模型解析、review Agent/Graph。
+- Task 2 提交 `7a6f8cc`、`76c979a`：标准工具、ToolPolicy、官方 HITL、显式 publication。
+- Task 3 提交 `92857a7`：官方 middleware、usage/title/summary/no-progress/observability 与原生 stream 投影。
 
-## 2026-07-13：Learning 掌握包深度治理设计
+## 2026-07-13：Task 4 实现
 
-- 审阅 7 个现有 learning 目录，确认后续阶段的文档深度与实际复杂度不匹配。
-- 用户确认采用风险分级和结构化证据，不使用统一字数下限。
-- 从 `main@7915bf9` 创建 `codex/learning-documentation-quality` 隔离 worktree。
-- 现有文档门禁基线 8 passed。
-- 正式设计提交为 `9dc5e65`；实施计划拆为门禁、规范、历史补强和最终同步四项。
-- 当前未修改产品代码；下一步按 TDD 扩展文档门禁。
-- 门禁 RED 新增 6 类预期失败；实现后 15 项脚本测试全部通过并提交为 `f53708c`。
-- 模板与双轨工作流开始切换为风险档案、稳定后一次生成、一次机器门禁和一次人工抽查。
-- R1.4、R1.6、Runtime Middleware 已重写为状态/集成/基础高风险掌握包；Pre-R2 选择性补强。
-- R1.2、R1.3、R1.5 保留原主体并补档案、状态所有权和边界章节；设置页七件套已从旧 worktree 真实材料重建。
-- 占位符误报经 RED/GREEN 修复，16 项脚本测试通过。
-- 8 个 learning 目录均通过新结构检查；6 个真实 stage gate 直接通过，R1.2/R1.4 因旧计划格式使用注明用途的 learning-only 夹具通过。
-- 最终证据刷新：`scripts/test_check_stage_docs.py` 16 passed；8 个掌握包的完整文档门禁全部通过。
-- 人工抽查确认四类档案均包含匹配风险的状态所有权、真实链路、故障与边界；显式代码路径在当前仓库存在。
-- 设置页继续明确“前端 70 passed/build 通过、浏览器因依赖缺失未通过”，未倒填验收。
-- 正式文件准备提交；忽略的 8 个 learning 目录和设置页 verification 等待分支合并后同步到 main。
-- `codex/learning-documentation-quality` 已 fast-forward 合入 `main@6d26b77`。
-- 8 个 learning 目录逐目录同步到主仓库，源/目标 Markdown 文件列表和 SHA-256 全部一致。
-- 设置页 verification 已补同步，SHA-256 为 `b8900782b659f46a49c5d3422431196e97966de94451f766e0414f3b3347d71b`。
-- main 最终复验：文档门禁单测 16 passed；8 个阶段 gate 全部通过。本切片不修改产品运行代码，未重复后端/前端回归。
+- 新建 application services、fresh runtime schema、Workspace checkpointer 与 observability infrastructure。
+- FastAPI 和前端切到 session/execution/action/event 新资源；删除旧 Runtime、gateway、registry/executor、pipeline 与对应实现型测试。
+- 修复 draft pending 状态、SSE 旧错误清理、同连接事件写入、restart/cancel 和 ToolStrategy 兼容。
+- 角色 Agent 改用独立派生 thread；官方 summary 在第 11 次真实 execution 触发。
 
-## 2026-07-12：R1.5 接管审阅
+## 2026-07-13：验收
 
-- 定位真实分支：`codex/r1-5-knowledge-publication`，worktree 为 `/private/tmp/cyber-interview-agent-r1-5`。
-- 重新验证：后端 236 passed；前端 58 passed；TypeScript、Vite build 和旧文档门禁通过。
-- 审阅确认前端查询刷新、草稿状态、发布结果展示和文档证据存在缺口，R1.5 暂不合并。
-- 记录已知 RunManager SQLite 写锁风险；专项测试连续 8 次通过，但不能证明竞争已消失。
+- 最小和完整浏览器验收完成：approve/reject、刷新、重复决定、重启恢复、桌面/375px、Vault path。
+- 真实 Provider 验收完成：OpenAI-compatible 结构化评价与 Anthropic-compatible 流式报告。
+- 不可连接 OTLP endpoint 下执行仍到达等待审批，证明 observability fail-open。
+- 最终回归：后端 `195 passed`；前端 `76 passed`；`npm run build`（含 `tsc`）通过。
+- 旧 E2E 契约已更新；静态扫描不再发现旧产品 API 名称。
+- verification 与 `foundation` learning 七件套已生成，待文档门禁与最终提交。
 
-## 2026-07-12：平衡提速计划启动
+## 当前下一步
 
-- 用户批准实施 Token/执行速度优化，并要求同步应用到 R1.5 收口。
-- 使用 `planning-with-files-zh` 维护短规划入口；不使用 subagent。
-- 已把原三份累计历史移至 `docs/superpowers/history/2026-07-12-pre-context-optimization/`。
-- 已创建精简的 `task_plan.md`、`findings.md`、`progress.md`。
-- 已更新 AGENTS/CLAUDE/双轨工作流：先定位 worktree、定向测试、限制全量回归、单 Agent、skill 退出条件与输出预算。
-- 启动入口从 1,279 行压缩到 182 行；历史原样归档。
-- 已清除 13 份正式计划中的未安装 `superpowers:*` 强制模板声明。
-- 文档门禁新增 `--plan`，未勾选浏览器验收或证据冲突时失败；脚本回归 8 passed。
-
-## 当前阶段
-
-- 协作流程优化：完成。
-- R1.5 产品修正：进行中。
-- 下一步：先用定向 TDD 修复后端状态/publication resource，再接前端 query 刷新。
-
-## 错误记录
-
-| 错误 | 次数 | 处理 |
-|---|---:|---|
-| 审阅时从仓库根运行 backend pytest 导致 import 失败 | 1 | 已确认是 cwd 错误；后续命令固定正确 workdir |
-| 删除无效 skill 模板的首个正则未匹配中文全角标点 | 1 | 改为按包含 skill 名的整行精确删除，未重复原命令 |
-
-## 2026-07-12：R1.5 产品修正
-
-- 后端 RED：draft route 新增 pending/rejected/publication 三项断言，初始 3 failed。
-- 后端实现真实状态转换和 publication summary；相关 route/graph 测试 11 passed。
-- 前端实现 runId action watch、决定后 query 刷新、真实 Vault path 和 index-stale 建议。
-- 前端相关 20 passed，TypeScript `--noEmit` 通过。
-- 自审修正 ActionCenter watch effect 的不稳定 query key，避免重复轮询。
-- 未运行全量回归，按预算留到浏览器验收前一次执行。
-- 最小浏览器 happy path 已跑通上传、请求发布、同页 action、批准和真实 Vault path；发现并修正批准后旧等待提示残留。
-
-## 2026-07-12：R1.5 最终验收
-
-- 浏览器完整验收通过：批准、拒绝、重复请求、重启恢复、rescan、外部冲突。
-- 响应式：1440×1000 与 375×812 无横向溢出；控制台无 warning/error。
-- 唯一一次最终全量回归：后端 236 passed；前端 58 passed；TypeScript 与 production build 通过。
-- `index_stale` 故障注入由自动测试覆盖，浏览器验证用户 rescan 入口；未虚构浏览器故障注入证据。
-- 下一步：运行新文档门禁和静态最终复核，提交并合入 main。
-
-## 2026-07-12：R1.5 合并收尾
-
-- `codex/r1-5-knowledge-publication` 已 fast-forward 合入 `main`。
-- 主仓库保持 `main`；verification 与 learning 七件套已显式同步并准备逐文件 hash 核对。
-- R1.5 产品成熟度为“可人工验证”；用户所有权仍为待学习、待实践，不阻塞 R1.6。
-- 下一产品任务：按新执行预算重整并启动 R1.6。
-
-## 2026-07-12：R1.6 启动
-
-- 从干净 `main@66c26c3` 创建 `codex/r1-6-review-runtime-integration`。
-- 产品 worktree：`/private/tmp/cyber-interview-agent-r1-6`；主仓库保持 main。
-- 读取 R1.6 正式计划和 R1 spec 相关章节，初步确认 Provider 网关、Graph 注册、绕过 API 和持久化 UI 四条边界。
-- 使用一次 `planning-with-files-zh` 更新三份短状态；分支、基线、四任务骨架已落盘，达到退出条件。
-- 下一步：完成接口审计、把正式六任务计划压缩为四任务，并编写任务 1 RED。
-
-## 2026-07-12：R1.6 Task 1-3 主链
-
-- Task 1 完成：snapshot gateway、resolver、`review.single` Graph；10 项专项测试通过。
-- Task 2 主链完成：Runtime/draft/HITL 集成，旧 review bypass 返回 404；26 项相关测试通过。
-- Task 3 代码完成：持久化 session/SSE/draft/publication UI；build 与 5 项前端测试通过。
-- 修复恢复缺陷：终态 action 不再把 draft 回写为 review_pending。
-- 待办：Provider error/restart 专项、最小浏览器、最终验收与文档。
-- Provider error 脱敏与等待审批重启恢复专项共 12 项通过。
-- 最小浏览器（mock API）通过恢复、批准、published/completed/target path；控制台 0 warning/error。
-- Task 4 仍须真实后端/Provider、完整浏览器、最终全量回归与文档门禁。
-
-## 2026-07-12：R1.6 技术验收收尾
-
-- 隔离真实前后端 E2E 1 passed：adapter、SSE、刷新、批准/拒绝、重复批准、Vault、375px。
-- E2E 发现并修复用户消息未持久化、同秒 session 恢复顺序和 FlowSummary 状态真相。
-- 最终后端 250 passed；前端 57 passed；TypeScript/Vite production build 通过。
-- verification 与 learning 七件套已生成；外部真实 OpenAI/Anthropic 证据仍缺失。
-
-## 2026-07-12：R1.6 真实 Provider 验收
-
-- OpenAI-compatible GLM 首次暴露 `json_schema` 不支持；改为 function calling，17 项专项测试通过。
-- 真实 GLM 结构化评价有效；真实 Anthropic-compatible Claude Haiku 流式报告返回 5 个 chunk。
-- 受影响隔离 E2E 1 passed；第二次后端全量 251 passed，前端最终证据保持 57 passed/build 通过。
-- R1.6 已满足“场景可用”，进入提交、main 合并和本地文档同步。
-
-## 2026-07-12：R1.6 合并收尾
-
-- `codex/r1-6-review-runtime-integration` 已 fast-forward 合入 `main@eaf5edf`。
-- verification 与 learning 七件套已同步到主仓库并通过文档门禁。
-- R1.6 产品状态为“场景可用”；用户学习和练习仍为非阻塞理解债务。
-- 下一产品任务：按路线进入 R2 多题复习编排。
-
-## 2026-07-12：Pre-R2 体验稳定化规划
-
-- 用户确认原始资料与生成草稿分组的知识工作区方案。
-- `ui-ux-pro-max` 收敛为内容优先、渐进披露、响应式与可访问性约束。
-- 正式设计已提交；四任务实施计划已完成自检。
-- R1.2 context compression/token usage 确认为独立 Pre-R2 遗漏，不与 UI 改造混做。
-- 下一步：按单 Agent、针对性 TDD 执行 Task 1。
-
-## 2026-07-12：Pre-R2 体验稳定化收尾
-
-- source metadata/list、分组知识工作区、Markdown 阅读/编辑和按需确认已完成。
-- 最终静态复核修正 attach 失败补偿；后端 254 passed，前端 65 passed，TypeScript/Vite build 通过。
-- Playwright 真实闭环 1 passed，覆盖 UI 上传、1440/375、键盘、刷新和发布。
-- 应用内浏览器完成批准、刷新、后端重启恢复；1280px 无溢出且控制台 0 error/warning。
-- learning 七件套与 verification 已按最终证据生成，文档门禁和分支复核通过。
-- 下一产品任务：R1.2 context compression and token/context usage foundation。
-
-## 2026-07-12：Pre-R2 合入 main
-
-- `codex/pre-r2-experience-stabilization` 已 fast-forward 合入 `main@b27f648`。
-- verification 与 learning 七件套已显式同步到主仓库并通过文档门禁。
-- 合并后后端 254 passed；前端 65 passed；build 通过。
-
-## 2026-07-12：设置页体验重构规划
-
-- 用户确认默认进入配置概览，并采用左侧分组导航与单内容面板。
-- `ui-ux-pro-max` 约束为渐进披露、单主操作、44px、键盘语义和 375px 无溢出。
-- 正式设计已提交；实施计划拆为概览、模型服务、诊断、验收四个纵向任务。
-- 设置相关基线 21 passed；隔离 worktree 为 `/private/tmp/cyber-interview-agent-settings-ux`。
-- 下一步：按计划执行 Task 1；R1.2 context/token 基础仍保持待办。
-
-## 2026-07-12：设置页体验重构实现
-
-- Task 1 概览、分组导航、响应式设置外壳完成，18 项针对性测试通过。
-- Task 2 Provider 创建渐进披露、脏表单确认、模型绑定刷新完成，8 项针对性测试通过。
-- Task 3 Runtime/安全/人工确认折叠完成，4 项针对性测试通过。
-- 最终前端回归 70 passed；TypeScript 与 Vite build 通过。
-- Playwright 脚本已添加；真实后端启动因环境缺少 `langchain_anthropic` 依赖而阻塞，未宣称浏览器通过。
-
-## 2026-07-12：Runtime Middleware 后续约束
-
-- 确认现有 HITL 是原生 interrupt + 自建持久化状态机，不是 middleware 形式。
-- 正式基础设计新增 middleware 归属规则、适用/禁用场景和 HITL 分层迁移原则。
-- 下一 Pre-R2 切片扩展为 Runtime middleware 基础：token/context 统计、context budget/压缩、会话标题总结和 HITL adapter。
-- 该记录只确定后续设计约束，本轮未修改 Runtime 生产代码。
-- 用户补充待办事项与无限循环检测；正式设计已明确候选提取/领域持久化边界和软硬循环阈值。
-- Middleware pipeline 确认为 Guard → Invocation → Post-processing，并记录候选目录、收益、代价与首批实现/契约范围。
-- 根据用户复核，将完整 middleware 规则迁移到产品总设计；R1 文档收敛为引用和阶段落地说明。
-- 用户确认 middleware 必须随真实 Agent 演进：Pre-R2 用 R1.6 Agent 验证五项核心能力，Todo 只定义契约；R2-R6 按复习、岗位、复盘和模拟面试场景逐步启用。
-- Runtime Middleware 1.0 独立技术设计已完成：明确官方 AgentMiddleware/手写 StateGraph 边界、pipeline 接口、持久化、错误语义、真实 Agent 验收和非目标；等待用户审阅后再写实施计划。
-- Runtime Middleware 1.0 实施计划完成，压缩为四个纵向任务；启动只读短索引，详细 TDD 手册按当前 Task 局部读取，避免每次恢复重复加载约千行计划。
-- 用户确认本机可观测方案：OpenTelemetry 抽象 + Langfuse v3 Docker Compose；已纳入 Middleware 1.0 原四任务，不新增产品阶段。
-
-## 2026-07-13：Runtime Middleware 1.0 Task 1
-
-- 从 `main@f4c25bb` 创建 `codex/runtime-middleware-1-0` 隔离 worktree。
-- TDD 完成稳定 ID、单项开关、分层顺序/冲突校验、洋葱 model/tool pipeline 与默认透传基类。
-- migration 006、usage 幂等聚合、guard/trace 重启序列、标题 CAS 和摘要 repository 完成。
-- No-op/Safe ObservabilitySink 覆盖创建、进入、退出、flush 故障，且不吞业务异常。
-- OTel 依赖已锁定；本机 Langfuse Compose 静态配置与真实健康端点通过，普通 down 保留 volumes。
-- Task 1 专项测试 26 passed；未运行全量回归，下一步为 Task 2。
-
-## 2026-07-13：Runtime Middleware 1.0 Task 2
-
-- Gateway 新增结构化/流式 usage envelope，OpenAI/Anthropic adapter 提取原生 usage，旧 adapter 自动降级为 estimated。
-- ModelUsageMiddleware 对结构化与流式调用各记录一次；context budget 支持软压缩、硬限额与摘要持久化。
-- `_BoundModelInvoker` 已路由到 Pipeline；usage/summary 在 checkpointer 退出后 flush，解决真实 SQLite 写锁冲突。
-- OTel exporter 默认关闭；本机 Langfuse 实测收到同一 `agent.run` 下的 `model.invoke`/`model.stream`，内容字段为空。
-- Task 2 相关自动测试 50 passed，真实 Langfuse review smoke 1 passed；下一步 Task 3。
-
-## 2026-07-13：Runtime Middleware 1.0 Task 3
-
-- SessionTitleMiddleware 只在占位标题和完整 user/assistant 交换后运行，CAS 防止覆盖用户标题。
-- LoopGuardMiddleware 使用安全 hash、软警告/硬失败和持久化恢复；Graph recursion 映射为稳定步骤超限错误。
-- Session detail 暴露 summary、usage 和安全 latestGuardWarning，不返回 fingerprint。
-- Review 页面显示 token、估算次数、压缩状态和五类 guard 恢复建议。
-- title/compression/guard/tool spans 仅记录触发原因、计数、工具名和状态，不记录正文/参数。
-- 后端定向 33 passed；前端 8 passed；TypeScript 通过。下一步 Task 4。
-
-## 2026-07-13：Runtime Middleware 1.0 Task 4 与最终验收
-
-- 完成普通工具 PersistentHitlMiddleware、动态 tool approval handler 和 LangChain AgentMiddleware adapter；knowledge.publish 保持显式 Graph 路径。
-- 每次 run/resume 持久化 trace segment，新段 Link 上一段；Langfuse 按 session 展示 model、guard、title、HITL 和 publication。
-- 完整浏览器验收 1 passed，覆盖 usage、审批、自动标题、刷新、1440/375、无控制台 warning/error。
-- Langfuse 关闭后的 review fail-open 1 passed；input/output 默认为空。
-- 首次后端全量发现旧 migration 断言及 trace 收尾锁；修复后受影响 17 passed，最终后端 281 passed。
-- 最终前端 75 passed，TypeScript 和 production build 通过；verification 与 learning 七件套已生成。
-
-## 2026-07-13：Agent Runtime 框架收敛 Task 1-3
-
-- Task 1 已用官方 `create_agent`、直接 `BaseChatModel` 解析和显式 review Graph 替换模型调用包装层。
-- Task 2 已改为标准 `BaseTool`/`ToolRuntime`、官方 HITL decision resume 和显式 publication Graph。
-- Task 3 默认栈直接组合五个官方 middleware 与四个窄项目 middleware，不再使用数字 layer 或自建 pipeline。
-- usage 原生/估算、官方长上下文压缩、标题 CAS、无进展保护和投影失败 fail-open 已通过行为测试。
-- LangGraph v2 stream 只投影安全的 UI 可见事件，interrupt 去重，内部模型/工具事件不持久化。
-- Task 3 新测试 10 passed；连同 AgentFactory/ToolPolicy 相关测试共 19 passed。
-- 下一步：Task 4 切换生产入口、前端资源和新数据库契约，删除旧 Runtime 后做最终验收。
+1. 文档机器门禁和同档案人工抽查。
+2. 静态删除扫描、diff 检查、敏感信息复核。
+3. Task 4 最终提交；等待用户决定是否合入 main。

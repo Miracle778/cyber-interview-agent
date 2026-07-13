@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from app.db.runtime_database import connect_runtime_database
-from app.runtime.repository import RuntimeRepository
+from app.infrastructure.runtime_database import connect_runtime_database
+from app.application.session_service import ProductRepository
 from app.tools.audit import ToolAuditRepository
 from app.tools.context import ToolExecutionContext
 
@@ -23,16 +23,15 @@ def _context(workspace: Path) -> ToolExecutionContext:
 
 def _database(tmp_path: Path):
     connection = connect_runtime_database(tmp_path)
-    runtime = RuntimeRepository(connection)
+    runtime = ProductRepository(connection)
     runtime.create_session(
         workspace_id="w1",
-        graph_id="test.files",
-        graph_version=1,
+        kind="test.files",
         title="Files",
         session_id="s1",
     )
-    runtime.create_run(
-        "s1", input={}, model_bindings={}, run_id="r1", initial_status="running"
+    runtime.create_execution(
+        "s1", input={}, model_bindings={}, execution_id="r1"
     )
     return connection
 
@@ -46,12 +45,12 @@ def test_runtime_migration_creates_tool_audit_table(tmp_path: Path) -> None:
             "SELECT name FROM sqlite_master WHERE type = 'table'"
         )
     }
-    versions = connection.execute(
-        "SELECT version FROM runtime_schema_migrations ORDER BY version"
-    ).fetchall()
+    generation = connection.execute(
+        "SELECT generation FROM runtime_schema_metadata"
+    ).fetchone()[0]
 
     assert "tool_audits" in tables
-    assert [row[0] for row in versions] == [1, 2, 3, 4, 5, 6]
+    assert generation == 2
     connection.close()
 
 

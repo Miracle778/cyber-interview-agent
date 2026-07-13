@@ -10,7 +10,7 @@ from uuid import uuid4
 import aiosqlite
 
 from app.db.connection import connect_index
-from app.db.runtime_database import runtime_database_path
+from app.infrastructure.runtime_database import runtime_database_path
 from app.hitl.models import PendingActionRecord
 from app.knowledge.atomic_writer import ExternalDocumentChangedError, atomic_write_text, hash_file
 from app.knowledge.document_types import create_document_type_registry

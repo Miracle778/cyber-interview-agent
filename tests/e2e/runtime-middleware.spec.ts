@@ -35,15 +35,15 @@ test("runtime middleware exposes usage title and persistent review state", async
   });
 
   const sessionResponse = await request.post("http://127.0.0.1:8017/api/agent/sessions", {
-    data: { workspaceId: workspace.id, graphId: "review.single", graphVersion: 1, title: "新会话" },
+    data: { workspaceId: workspace.id, kind: "review.single", title: "新会话" },
   });
   const session = await sessionResponse.json();
-  await request.post(`http://127.0.0.1:8017/api/agent/sessions/${session.id}/runs`, {
-    data: { input: { question: QUESTION, text: "缓存空值", user_answer: "缓存空值" } },
+  await request.post(`http://127.0.0.1:8017/api/agent/sessions/${session.id}/executions`, {
+    data: { input: { question: QUESTION, user_answer: "缓存空值" } },
   });
   await expect.poll(async () => {
     const detail = await (await request.get(`http://127.0.0.1:8017/api/agent/sessions/${session.id}`)).json();
-    return detail.latestRun.status;
+    return detail.latestExecution.status;
   }).toBe("waiting_for_approval");
 
   await page.setViewportSize({ width: 1440, height: 1000 });

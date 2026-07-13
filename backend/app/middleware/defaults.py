@@ -6,7 +6,6 @@ from langchain.agents.middleware import (
     ContextEditingMiddleware,
     HumanInTheLoopMiddleware,
     ModelCallLimitMiddleware,
-    SummarizationMiddleware,
     ToolCallLimitMiddleware,
 )
 from langchain_core.language_models import BaseChatModel
@@ -14,6 +13,7 @@ from langchain_core.language_models import BaseChatModel
 from app.middleware.no_progress import NoProgressMiddleware
 from app.middleware.observability import ObservabilityMiddleware, ObservabilitySink
 from app.middleware.session_title import SessionTitleMiddleware
+from app.middleware.summarization import ProjectingSummarizationMiddleware
 from app.middleware.usage import MiddlewareProjection, UsageProjectionMiddleware
 
 
@@ -28,10 +28,11 @@ def build_default_middleware(
     """Build the one explicit default stack using official middleware hooks."""
 
     return (
-        SummarizationMiddleware(
+        ProjectingSummarizationMiddleware(
             model=summary_model,
             trigger=("messages", 30),
             keep=("messages", 12),
+            projection=projection,
         ),
         ContextEditingMiddleware(),
         ModelCallLimitMiddleware(

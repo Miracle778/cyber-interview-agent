@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from app.db.runtime_database import connect_runtime_database
+from app.infrastructure.runtime_database import connect_runtime_database
 from app.knowledge.drafts import (
     CreateDraftCommand,
     DraftContentChangedError,

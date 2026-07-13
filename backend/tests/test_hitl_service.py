@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from app.db.runtime_database import connect_runtime_database
+from app.infrastructure.runtime_database import connect_runtime_database
 from app.hitl.handlers import (
     ActionHandlerRegistry,
     ActionPayloadValidationError,
@@ -15,7 +15,7 @@ from app.hitl.handlers import (
 from app.hitl.models import CreatePendingAction, ResolveActionCommand
 from app.hitl.repository import PendingActionRepository
 from app.hitl.service import HitlService
-from app.runtime.repository import RuntimeRepository
+from app.application.session_service import ProductRepository
 
 
 class RecordingHandler(DefaultActionHandler):
@@ -67,20 +67,18 @@ class BlockingResume(RecordingResume):
 
 def _database(workspace: Path):
     connection = connect_runtime_database(workspace)
-    runtime = RuntimeRepository(connection)
+    runtime = ProductRepository(connection)
     runtime.create_session(
         workspace_id="w1",
-        graph_id="test.approval",
-        graph_version=1,
+        kind="test.approval",
         title="Approval",
         session_id="s1",
     )
-    runtime.create_run(
+    runtime.create_execution(
         "s1",
         input={"summary": "original"},
         model_bindings={},
-        run_id="r1",
-        initial_status="running",
+        execution_id="r1",
     )
     return connection
 
@@ -165,7 +163,7 @@ async def test_edited_approval_persists_and_resumes_once(tmp_path: Path) -> None
         )
     ]
     assert handler.receipts == [receipt.id]
-    assert [item[2] for item in events.items] == ["hitl.resolved"]
+    assert [item[2] for item in events.items] == ["approval.resolved"]
     connection.close()
 
 
@@ -250,8 +248,8 @@ async def test_failed_delivery_is_retried_with_same_receipt(tmp_path: Path) -> N
     assert len(resume.calls) == 2
     assert handler.receipts == [failed.id, failed.id]
     assert [item[2] for item in events.items] == [
-        "hitl.resolved",
-        "hitl.resolved",
+        "approval.resolved",
+        "approval.resolved",
     ]
     connection.close()
 
@@ -285,7 +283,7 @@ async def test_concurrent_duplicate_resolution_claims_delivery_once(
     assert receipt.delivery_status == "delivered"
     assert receipt.delivery_attempts == 1
     assert handler.receipts == [receipt.id]
-    assert [item[2] for item in events.items] == ["hitl.resolved"]
+    assert [item[2] for item in events.items] == ["approval.resolved"]
     connection.close()
 
 
@@ -303,8 +301,8 @@ async def test_reconcile_settles_terminal_run_without_replaying_side_effects(
         resolution_key="approve-1",
         decision={"decision": "approved"},
     )
-    runtime = RuntimeRepository(connection)
-    runtime.transition_run("r1", expected="running", target="completed")
+    runtime = ProductRepository(connection)
+    runtime.transition_execution("r1", expected=("running",), target="completed")
 
     await service.reconcile()
 

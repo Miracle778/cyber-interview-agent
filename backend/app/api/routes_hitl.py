@@ -2,9 +2,9 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
 
-from app.api.dependencies import get_agent_runtime
+from app.api.dependencies import get_agent_application
+from app.application.workspace_runtime import AgentApplication
 from app.hitl.models import ResolveActionCommand
-from app.runtime.service import AgentRuntime
 from app.schemas.hitl import PendingActionResource, ResolveActionRequest
 
 
@@ -23,9 +23,9 @@ async def list_actions(
     ]
     | None = None,
     session_id: Annotated[str | None, Query(alias="sessionId")] = None,
-    runtime: AgentRuntime = Depends(get_agent_runtime),
+    application: AgentApplication = Depends(get_agent_application),
 ):
-    return await runtime.list_actions(
+    return await application.list_actions(
         workspace_id, status=status, session_id=session_id
     )
 
@@ -33,18 +33,18 @@ async def list_actions(
 @router.get("/{action_id}", response_model=PendingActionResource)
 async def get_action(
     action_id: str,
-    runtime: AgentRuntime = Depends(get_agent_runtime),
+    application: AgentApplication = Depends(get_agent_application),
 ):
-    return await runtime.get_action(action_id)
+    return await application.get_action(action_id)
 
 
 @router.post("/{action_id}/approve", response_model=PendingActionResource)
 async def approve_action(
     action_id: str,
     request: ResolveActionRequest,
-    runtime: AgentRuntime = Depends(get_agent_runtime),
+    application: AgentApplication = Depends(get_agent_application),
 ):
-    return await runtime.approve_action(
+    return await application.approve_action(
         action_id,
         ResolveActionCommand.model_validate(request.model_dump()),
     )
@@ -54,9 +54,9 @@ async def approve_action(
 async def reject_action(
     action_id: str,
     request: ResolveActionRequest,
-    runtime: AgentRuntime = Depends(get_agent_runtime),
+    application: AgentApplication = Depends(get_agent_application),
 ):
-    return await runtime.reject_action(
+    return await application.reject_action(
         action_id,
         ResolveActionCommand.model_validate(request.model_dump()),
     )

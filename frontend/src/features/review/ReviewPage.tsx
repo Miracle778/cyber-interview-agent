@@ -18,7 +18,7 @@ import {
   listActions,
   listAgentSessions,
   rejectAction,
-  startAgentRun,
+  startAgentExecution,
 } from "./reviewSessionApi";
 import type { ReviewQuestion } from "./reviewTypes";
 
@@ -66,7 +66,7 @@ export function ReviewPage({ workspace, draftQuestion }: ReviewPageProps) {
     let cancelled = false;
     void listAgentSessions(workspace.id).then((items) => {
       if (cancelled) return;
-      const reviewSessions = items.filter((item) => item.graphId === "review.single");
+      const reviewSessions = items.filter((item) => item.kind === "review.single");
       setSessions(reviewSessions);
       const latest = reviewSessions[0] ?? null;
       setSessionId(latest?.id ?? null);
@@ -100,20 +100,18 @@ export function ReviewPage({ workspace, draftQuestion }: ReviewPageProps) {
     setBusy(true);
     try {
       let targetId = sessionId;
-      if (!targetId || detail?.latestRun?.status === "completed" || detail?.latestRun?.status === "failed") {
+      if (!targetId || detail?.latestExecution?.status === "completed" || detail?.latestExecution?.status === "failed") {
         const created = await createAgentSession({
           workspaceId: workspace.id,
-          graphId: "review.single",
-          graphVersion: 1,
+          kind: "review.single",
           title: `单题复习：${draftQuestion.title}`,
         });
         targetId = created.id;
         setSessions((current) => [...current, created]);
         setSessionId(targetId);
       }
-      await startAgentRun(targetId, {
+      await startAgentExecution(targetId, {
         question: draftQuestion,
-        text: answer.trim(),
         user_answer: answer.trim(),
       });
       await refreshSession(targetId);
@@ -170,11 +168,11 @@ export function ReviewPage({ workspace, draftQuestion }: ReviewPageProps) {
         {detail?.usage ? <div className="review-runtime-meta" aria-label="运行用量">
           <span>{detail.usage.totalTokens} tokens</span>
           {detail.usage.estimatedCount > 0 ? <span>含 {detail.usage.estimatedCount} 次估算</span> : null}
-          {detail.summary ? <span>上下文已压缩</span> : null}
+          {detail.contextCompacted ? <span>上下文已压缩</span> : null}
         </div> : null}
-        {detail?.latestGuardWarning ? <div className="status-note" role="alert">
-          <span>{detail.latestGuardWarning.message}</span>
-          <span>{toActionableError(new Error(detail.latestGuardWarning.code), "运行保护已触发").advice}</span>
+        {detail?.latestWarning ? <div className="status-note" role="alert">
+          <span>{detail.latestWarning.message}</span>
+          <span>{toActionableError(new Error(detail.latestWarning.code), "运行保护已触发").advice}</span>
         </div> : null}
       </section>
 
@@ -202,7 +200,7 @@ export function ReviewPage({ workspace, draftQuestion }: ReviewPageProps) {
         <div className="btn-row"><Button onClick={() => void resolve("approve")} disabled={busy}>批准发布</Button><Button onClick={() => void resolve("reject")} disabled={busy}>拒绝</Button></div>
       </Card> : null}
 
-      {(error || stream.runError) ? <div className="error-banner" role="alert"><AlertCircle size={16} /><span>错误：{error?.message ?? stream.runError?.message}</span><span>{error?.advice ?? "下一步：检查模型绑定和 Provider 连接后重试"}</span></div> : null}
+      {(error || stream.executionError) ? <div className="error-banner" role="alert"><AlertCircle size={16} /><span>错误：{error?.message ?? stream.executionError?.message}</span><span>{error?.advice ?? "下一步：检查模型绑定和 Provider 连接后重试"}</span></div> : null}
     </section>
   );
 }

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from langchain.agents import create_agent
+from langchain.agents.structured_output import ToolStrategy
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel
@@ -32,6 +33,7 @@ class AgentFactory:
         spec: AgentSpec,
         *,
         model_bindings: Mapping[str, str],
+        checkpointer=None,
     ):
         try:
             provider_model_id = model_bindings[spec.role]
@@ -48,7 +50,21 @@ class AgentFactory:
             tools=spec.tools,
             system_prompt=spec.system_prompt,
             middleware=spec.middleware,
-            response_format=spec.response_format,
+            response_format=(
+                None
+                if spec.response_format is None
+                else ToolStrategy(spec.response_format)
+            ),
             context_schema=AgentContext,
             name=spec.role,
+            checkpointer=checkpointer,
         )
+
+    def resolve_model(
+        self, role: str, *, model_bindings: Mapping[str, str]
+    ):
+        try:
+            provider_model_id = model_bindings[role]
+        except KeyError as error:
+            raise ModelResolutionError(ProviderErrorCode.MODEL_NOT_FOUND) from error
+        return self._models.resolve(role=role, provider_model_id=provider_model_id)

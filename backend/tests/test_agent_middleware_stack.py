@@ -21,6 +21,7 @@ from app.middleware.defaults import build_default_middleware
 from app.middleware.no_progress import NoProgressError, NoProgressMiddleware
 from app.middleware.observability import ObservabilityMiddleware
 from app.middleware.session_title import SessionTitleMiddleware
+from app.middleware.summarization import ProjectingSummarizationMiddleware
 from app.middleware.usage import UsageProjectionMiddleware
 
 
@@ -31,6 +32,7 @@ class FakeProjection:
         self.titles = []
         self.warnings = []
         self.progress: dict[tuple[str, str], int] = {}
+        self.compacted = []
 
     def record_usage(self, context, usage) -> bool:
         if self.fail:
@@ -51,6 +53,10 @@ class FakeProjection:
 
     def warning(self, context, code: str) -> None:
         self.warnings.append((context, code))
+
+    def mark_context_compacted(self, context) -> bool:
+        self.compacted.append(context)
+        return True
 
 
 class StubPolicyMiddleware(AgentMiddleware):
@@ -92,7 +98,7 @@ def test_default_stack_is_official_and_contains_only_four_project_middlewares():
     )
 
     assert [type(item) for item in stack] == [
-        SummarizationMiddleware,
+        ProjectingSummarizationMiddleware,
         ContextEditingMiddleware,
         ModelCallLimitMiddleware,
         ToolCallLimitMiddleware,
@@ -138,6 +144,7 @@ async def test_long_history_is_compacted_by_official_summarization_middleware():
     assert update is not None
     assert len(update["messages"]) < len(messages)
     assert "compact summary" in update["messages"][1].text
+    assert projection.compacted == [_context()]
 
 
 @pytest.mark.asyncio

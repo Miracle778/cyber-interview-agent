@@ -4,27 +4,27 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.dependencies import get_agent_runtime
+from app.api.dependencies import get_agent_application
+from app.application.graph_factory import ProductionGraphFactory
+from app.application.workspace_runtime import AgentApplication
 from app.main import app
-from app.runtime.default_graphs import create_default_graph_registry
-from app.runtime.service import AgentRuntime
 
 
 @pytest.fixture
 def hitl_client(tmp_path: Path):
-    runtime = AgentRuntime(
-        graph_registry=create_default_graph_registry(),
+    application = AgentApplication(
         workspace_resolver=lambda _workspace_id: tmp_path,
-        model_binding_resolver=lambda _workspace_id: {},
+        model_bindings=lambda _workspace_id: {},
         workspace_ids=lambda: ("w1",),
+        graph_factory=ProductionGraphFactory(None),
     )
-    app.dependency_overrides[get_agent_runtime] = lambda: runtime
+    app.dependency_overrides[get_agent_application] = lambda: application
     try:
         with TestClient(app) as client:
-            yield client, runtime
+            yield client, application
     finally:
         app.dependency_overrides.clear()
-        asyncio.run(runtime.close())
+        asyncio.run(application.close())
 
 
 def _create_pending(client: TestClient, *, summary: str = "original"):
@@ -32,13 +32,12 @@ def _create_pending(client: TestClient, *, summary: str = "original"):
         "/api/agent/sessions",
         json={
             "workspaceId": "w1",
-            "graphId": "test.approval",
-            "graphVersion": 1,
+            "kind": "diagnostic.approval",
             "title": "确认自检",
         },
     ).json()
     run = client.post(
-        f"/api/agent/sessions/{session['id']}/runs",
+        f"/api/agent/sessions/{session['id']}/executions",
         json={"input": {"summary": summary, "secret": "do-not-return"}},
     ).json()
     for _ in range(50):
@@ -69,12 +68,12 @@ def test_list_detail_and_session_summary_are_redacted(hitl_client) -> None:
 
     assert listed.status_code == 200
     assert detail.status_code == 200
-    assert detail.json()["runId"] == run["id"]
+    assert detail.json()["executionId"] == run["id"]
     assert detail.json()["preview"] == {"summary": "original"}
     assert detail.json()["editableFields"] == ["summary"]
     assert "payload" not in detail.json()
     assert "secret" not in detail.text
-    assert session_detail.json()["pendingAction"]["id"] == action["id"]
+    assert session_detail.json()["currentAction"]["id"] == action["id"]
 
 
 def test_edit_approve_and_duplicate_key_return_same_result(hitl_client) -> None:
@@ -96,11 +95,11 @@ def test_edit_approve_and_duplicate_key_return_same_result(hitl_client) -> None:
     assert first.json()["preview"] == {"summary": "edited"}
     for _ in range(50):
         session = client.get(f"/api/agent/sessions/{first.json()['sessionId']}").json()
-        if session["latestRun"]["status"] == "completed":
+        if session["latestExecution"]["status"] == "completed":
             break
         asyncio.run(asyncio.sleep(0.01))
-    assert session["latestRun"]["id"] == run["id"]
-    assert session["latestRun"]["resumeCount"] == 1
+    assert session["latestExecution"]["id"] == run["id"]
+    assert session["latestExecution"]["resumeCount"] == 1
 
 
 def test_reject_requires_reason_and_resolves_action(hitl_client) -> None:

@@ -30,7 +30,7 @@ interface DraftReviewProps {
   onSelectedIdChange?: (id: string) => void;
   onDirtyChange?: (dirty: boolean) => void;
   showList?: boolean;
-  onPublicationRequested?: (runId: string) => void;
+  onPublicationRequested?: (executionId: string) => void;
 }
 
 export function DraftReview({
@@ -139,7 +139,7 @@ export function DraftReview({
     onSuccess: (run) => {
       setMessage("已请求发布，等待人工确认");
       queryClient.invalidateQueries({ queryKey });
-      onPublicationRequested?.(run.runId);
+      onPublicationRequested?.(run.executionId);
     },
     onError: (caught) => {
       if (caught instanceof ApiError && caught.code === "external_document_changed") {

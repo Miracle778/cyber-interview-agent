@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict
 
 from app.security.workspace_paths import WorkspacePathPolicy
 from app.tools.context import ToolExecutionContext
-from app.tools.registry import ToolError
+from app.tools.errors import ToolError
 
 
 MAX_TEXT_BYTES = 256 * 1024

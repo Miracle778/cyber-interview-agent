@@ -24,24 +24,17 @@ interface UseAgentEventsOptions {
 
 const EVENT_TYPES = [
   "session.created",
-  "run.started",
-  "graph.node.started",
-  "graph.node.completed",
-  "message.delta",
-  "message.completed",
-  "tool.started",
-  "tool.completed",
-  "tool.failed",
-  "hitl.required",
-  "hitl.resolved",
-  "draft.created",
-  "publication.started",
-  "publication.completed",
-  "publication.index_stale",
-  "run.interrupted",
-  "run.completed",
-  "run.failed",
-  "run.cancelled",
+  "execution.started",
+  "assistant.delta",
+  "approval.required",
+  "approval.resolved",
+  "artifact.changed",
+  "publication.changed",
+  "execution.warning",
+  "execution.interrupted",
+  "execution.completed",
+  "execution.failed",
+  "execution.cancelled",
 ] as const;
 
 const createBrowserEventSource = (url: string): EventSourceLike =>
@@ -53,7 +46,7 @@ export function useAgentEvents(
 ) {
   const [status, setStatus] = useState<AgentEventConnectionStatus>("disconnected");
   const [events, setEvents] = useState<AgentEvent[]>([]);
-  const [runError, setRunError] = useState<{ code: string; message: string } | null>(null);
+  const [executionError, setExecutionError] = useState<{ code: string; message: string } | null>(null);
   const cursorRef = useRef(0);
   const eventIdsRef = useRef(new Set<number>());
   const createEventSourceRef = useRef(
@@ -65,7 +58,7 @@ export function useAgentEvents(
     cursorRef.current = 0;
     eventIdsRef.current = new Set();
     setEvents([]);
-    setRunError(null);
+    setExecutionError(null);
     if (!sessionId) {
       setStatus("disconnected");
       return;
@@ -97,9 +90,11 @@ export function useAgentEvents(
         eventIdsRef.current.add(event.id);
         cursorRef.current = Math.max(cursorRef.current, event.id);
         setEvents((current) => [...current, event]);
-        if (event.type === "run.failed") {
+        if (event.type === "execution.started") {
+          setExecutionError(null);
+        } else if (event.type === "execution.failed") {
           const payload = event.payload as { code?: string; message?: string };
-          setRunError({
+          setExecutionError({
             code: payload.code ?? "runtime_error",
             message: payload.message ?? "Agent 运行失败",
           });
@@ -125,5 +120,5 @@ export function useAgentEvents(
     };
   }, [sessionId]);
 
-  return { status, events, runError };
+  return { status, events, executionError };
 }

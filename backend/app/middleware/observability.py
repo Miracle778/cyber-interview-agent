@@ -10,7 +10,7 @@ from langchain.agents.middleware import AgentMiddleware
 class TraceContext:
     workspace_id: str
     session_id: str
-    run_id: str
+    execution_id: str
     graph_id: str
     graph_version: int
 
@@ -30,7 +30,7 @@ class ObservabilityMiddleware(AgentMiddleware):
         trace_context = TraceContext(
             workspace_id=context.workspace_id,
             session_id=context.session_id,
-            run_id=context.run_id,
+            execution_id=context.run_id,
             graph_id="agent",
             graph_version=1,
         )

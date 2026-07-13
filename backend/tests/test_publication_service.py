@@ -2,14 +2,14 @@ from pathlib import Path
 
 import pytest
 
-from app.db.runtime_database import connect_runtime_database
+from app.infrastructure.runtime_database import connect_runtime_database
 from app.db.connection import connect_index
 from app.hitl.models import CreatePendingAction
 from app.hitl.repository import PendingActionRepository
 from app.knowledge.atomic_writer import ExternalDocumentChangedError
 from app.knowledge.drafts import CreateDraftCommand, DraftVersionChangedError, KnowledgeDraftService, UpdateDraftCommand
 from app.knowledge.publication import PublicationService
-from app.runtime.repository import RuntimeRepository
+from app.application.session_service import ProductRepository
 from app.services.search_index import rescan_active_documents
 from app.services.vault import initialize_vault
 
@@ -31,9 +31,9 @@ async def _resolved_action(workspace: Path, draft):
 
 async def _draft(workspace: Path):
     connection = connect_runtime_database(workspace)
-    runtime = RuntimeRepository(connection)
-    runtime.create_session(workspace_id="w1", graph_id="knowledge.publish", graph_version=1, title="Publish", session_id="s1")
-    runtime.create_run("s1", input={}, model_bindings={}, run_id="r1", initial_status="running")
+    runtime = ProductRepository(connection)
+    runtime.create_session(workspace_id="w1", kind="knowledge.publish", title="Publish", session_id="s1")
+    runtime.create_execution("s1", input={}, model_bindings={}, execution_id="r1")
     connection.close()
     service = KnowledgeDraftService(workspace, workspace_id="w1")
     return await service.create(CreateDraftCommand(

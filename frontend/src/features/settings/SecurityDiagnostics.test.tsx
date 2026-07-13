@@ -36,7 +36,7 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 function event(id: number, type: string, payload: Record<string, unknown>) {
-  return { id, type, sessionId: "s1", runId: "r1", timestamp: "now", payload };
+  return { id, type, sessionId: "s1", executionId: "r1", timestamp: "now", payload };
 }
 
 describe("SecurityDiagnostics", () => {
@@ -51,29 +51,29 @@ describe("SecurityDiagnostics", () => {
     let detail: AgentSessionDetail = {
       id: "s1",
       workspaceId: "w1",
-      graphId: "test.tool-security",
-      graphVersion: 1,
+      kind: "diagnostic.security",
+
       title: "工具安全自检",
       status: "active",
       createdAt: "now",
       updatedAt: "now",
-      lastRunId: "r1",
-      summary: null,
-      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, contextTokens: 0, callCount: 0, estimatedCount: 0 },
-      latestGuardWarning: null,
+      latestExecutionId: "r1",
+
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, callCount: 0, estimatedCount: 0 },
+      latestWarning: null,
       messages: [],
-      latestRun: { id: "r1", sessionId: "s1", status: "running", resumeCount: 0, errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: null },
-      pendingAction: null,
+      latestExecution: { id: "r1", sessionId: "s1", status: "running", resumeCount: 0, errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: null },
+      currentAction: null,
     };
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       const method = init?.method ?? "GET";
       if (url.includes("workspaceId=w1")) return Response.json([]);
       if (url === "/api/agent/sessions" && method === "POST") {
-        return Response.json({ ...detail, lastRunId: null }, { status: 201 });
+        return Response.json({ ...detail, latestExecutionId: null }, { status: 201 });
       }
-      if (url === "/api/agent/sessions/s1/runs") {
-        return Response.json(detail.latestRun, { status: 202 });
+      if (url === "/api/agent/sessions/s1/executions") {
+        return Response.json(detail.latestExecution, { status: 202 });
       }
       if (url === "/api/agent/sessions/s1") return Response.json(detail);
       return Response.json({ code: "unexpected", message: url }, { status: 500 });
@@ -86,18 +86,16 @@ describe("SecurityDiagnostics", () => {
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
     const source = FakeEventSource.instances[0];
     act(() => source.onopen?.(new Event("open")));
-    act(() => {
-      source.emit(event(1, "tool.completed", { toolName: "diagnostic_read", resourcePath: "probe.txt" }));
-      source.emit(event(2, "tool.failed", { toolName: "shell", code: "tool_not_allowed" }));
-      source.emit(event(3, "tool.failed", { toolName: "read_active_knowledge", code: "tool_scope_denied" }));
-      source.emit(event(4, "tool.failed", { toolName: "diagnostic_read", code: "workspace_path_denied" }));
-      source.emit(event(4, "tool.failed", { toolName: "diagnostic_read", code: "workspace_path_denied", content: "must-not-render" }));
-      source.emit(event(5, "run.completed", {}));
-    });
     detail = {
       ...detail,
-      latestRun: { ...detail.latestRun!, status: "completed", finishedAt: "now" },
+      messages: [{
+        id: "m1", executionId: "r1", role: "assistant",
+        content: "授权读取通过；未注册工具已拒绝；未授权 Scope 已拒绝；路径越界已拒绝",
+        createdAt: "now",
+      }],
+      latestExecution: { ...detail.latestExecution!, status: "completed", finishedAt: "now" },
     };
+    act(() => source.emit(event(5, "execution.completed", {})));
 
     expect(await screen.findByText("工具安全自检通过")).toBeInTheDocument();
     expect(screen.getByText("授权读取通过")).toBeInTheDocument();
@@ -111,11 +109,11 @@ describe("SecurityDiagnostics", () => {
 
   it("restores a failed diagnostic and presents actionable advice", async () => {
     vi.stubGlobal("EventSource", FakeEventSource);
-    const session = { id: "s1", workspaceId: "w1", graphId: "test.tool-security", graphVersion: 1, title: "工具安全自检", status: "active", createdAt: "now", updatedAt: "now", lastRunId: "r1" };
+    const session = { id: "s1", workspaceId: "w1", kind: "diagnostic.security", title: "工具安全自检", status: "active", createdAt: "now", updatedAt: "now", latestExecutionId: "r1" };
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.includes("workspaceId=w1")) return Response.json([session]);
-      if (url === "/api/agent/sessions/s1") return Response.json({ ...session, messages: [], latestRun: { id: "r1", sessionId: "s1", status: "failed", resumeCount: 0, errorCode: "runtime_error", errorMessage: "failed", createdAt: "now", startedAt: "now", finishedAt: "now" }, pendingAction: null });
+      if (url === "/api/agent/sessions/s1") return Response.json({ ...session, messages: [], latestExecution: { id: "r1", sessionId: "s1", status: "failed", resumeCount: 0, errorCode: "runtime_error", errorMessage: "failed", createdAt: "now", startedAt: "now", finishedAt: "now" }, currentAction: null });
       return Response.json({}, { status: 500 });
     });
 

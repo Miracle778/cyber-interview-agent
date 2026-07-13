@@ -1,61 +1,51 @@
 # Cyber Interview Agent 当前任务规划
 
-## 产品目标
+## 当前任务
 
-建设由复习、个人信息、岗位追踪、面试复盘和模拟面试等场景 Agent 组成的个人面试准备工作台。产品交付与用户学习保持双轨，学习不阻塞实现。
+Pre-R2 Agent Runtime Framework Convergence 已完成实现与最终回归，正在做文档门禁、静态复核和最终提交。
 
-## 当前产品状态
+| 纵向任务 | 状态 |
+|---|---|
+| 官方 Agent/模型与 review Graph | 已完成并提交 |
+| 标准 Tool、官方 HITL、显式 publication | 已完成并提交 |
+| 官方 middleware 与 LangGraph stream 投影 | 已完成并提交 |
+| 新 application/API/frontend、旧 Runtime 删除 | 已完成，待最终提交 |
 
-| 阶段 | 状态 | 成熟度边界 |
-|---|---|---|
-| R0 | 可人工验证 | 单题单轮技术切片 |
-| R1.1-R1.4 | 可人工验证并已合入 main | Provider、Runtime、工具安全、持久化 HITL |
-| R1.5 | 可人工验证并已合入 main | 草稿分层、持久化审核发布、publication journal、active scope 与浏览器闭环 |
-| R1.6 | 场景可用并已合入 main | 单题复习迁移到共享 Runtime、真实 Provider 与持久化发布闭环 |
-| R2-R8 | 待开始 | 见正式产品路线 |
-
-## 当前任务：Pre-R2 Agent Runtime Framework Convergence
-
-1. **归档与架构设计（已完成）**
-2. **官方 Agent/模型骨架与 review 模型工作迁移（已完成）**
-3. **review.single、HITL 与横切能力迁移（待开始）**
-4. **Runtime/event 收敛、删除与最终验收（待开始）**
-
-本切片在 R2 前删除项目与 LangChain/LangGraph 重叠的 Runtime、middleware、
-provider invocation 和 tool registry。用户确认不兼容旧测试数据、API、checkpoint
-与内部协议；核心产品能力必须重新验收。
-
-## 当前分支
+## 工作位置
 
 - 分支：`codex/agent-runtime-framework-convergence`
 - worktree：`/private/tmp/cyber-interview-agent-runtime-convergence`
 - 基线：`main@8e1b500`
 - 归档：`archive/pre-agent-runtime-refactor-2026-07-13`
-- 当前设计：`docs/superpowers/specs/2026-07-13-agent-runtime-framework-convergence-design.md`
-- 当前实施：`docs/superpowers/plans/2026-07-13-agent-runtime-framework-convergence.md`
-- 下一产品阶段：完成本切片后进入 R2 完整复习 Agent
+- 设计：`docs/superpowers/specs/2026-07-13-agent-runtime-framework-convergence-design.md`
+- 计划：`docs/superpowers/plans/2026-07-13-agent-runtime-framework-convergence.md`
 
-## 执行预算
+## 已验证
 
-- 启动必读入口合计不超过 400 行。
-- 单次工具输出默认不超过 4,000 tokens。
-- 针对性 TDD；跨层接通后可做一次集成回归，最终验收再做一次全量回归。
-- 完整浏览器验收一次；失败只重跑受影响场景。
-- 中途 Agent 交接为 0；不创建 subagent。
-- 相同失败最多重复一次，第二次相同失败转根因诊断。
-- 每个纵向任务 handoff 摘要不超过 10 行。
+- 后端最终全量：`195 passed`。
+- 前端最终全量：`76 passed`；`npm run build`（含 `tsc`）通过。
+- 浏览器：批准、拒绝、刷新、重启、重复决定、桌面/375px、Vault target path。
+- Provider：真实 OpenAI-compatible 结构化响应与 Anthropic-compatible 流式响应通过。
+- context summary：全新会话第 11 次执行触发；三个 role thread 隔离。
+- observability：真实不可连接 OTLP endpoint 下业务 fail-open。
+
+## 剩余步骤
+
+1. 运行文档门禁和同档案人工抽查。
+2. 运行最终静态删除扫描与 `git diff --check`。
+3. 提交 Task 4；不在本任务内合并 main。
 
 ## 所有权状态
 
-- 已掌握：尚未由用户验收。
-- 待掌握：R1.1-R1.5 架构和代码链路。
-- 待实践：发布请求到 Vault 写入追踪、SQLite 并发诊断。
-- 学习练习不阻塞当前 Pre-R2 产品切片。
+- 产品：实现稳定，待最终提交。
+- 成熟度：场景可用；旧数据/API/checkpoint 不兼容是明确边界。
+- 用户学习：未开始。
+- 用户实践：未开始；不阻塞产品提交或 R2。
+- 下一产品任务：R2 多题复习 Agent 编排。
 
-## 权威资料
+## 执行预算
 
-- 工作流：`docs/superpowers/specs/2026-07-11-dual-track-development-workflow-design.md`
-- 产品路线：`docs/superpowers/specs/2026-07-10-product-development-roadmap-design.md`
-- 当前设计：`docs/superpowers/specs/2026-07-12-pre-r2-experience-stabilization-design.md`
-- 当前实施：`docs/superpowers/plans/2026-07-12-pre-r2-experience-stabilization.md`
-- 历史归档：`docs/superpowers/history/2026-07-12-pre-context-optimization/`
+- 启动三入口合计不超过 400 行。
+- 单次工具输出约 4,000 tokens；相同失败两次后转根因诊断。
+- 最终全量回归已执行，不再重复；仅运行静态和文档门禁。
+- 单 Agent 负责到底，无中途交接或 subagent。

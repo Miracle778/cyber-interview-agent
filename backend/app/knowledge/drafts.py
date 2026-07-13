@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import aiosqlite
 
-from app.db.runtime_database import connect_runtime_database, runtime_database_path
+from app.infrastructure.runtime_database import connect_runtime_database, runtime_database_path
 from app.knowledge.workspace_layout import initialize_knowledge_artifacts
 from app.security.workspace_paths import WorkspacePathPolicy
 

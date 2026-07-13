@@ -51,7 +51,7 @@ export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanne
   const [error, setError] = useState<ActionableError | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isRescanning, setIsRescanning] = useState(false);
-  const [publicationRunId, setPublicationRunId] = useState<string | null>(null);
+  const [publicationExecutionId, setPublicationExecutionId] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const workspaceId = workspace?.id ?? "";
   const hasWorkspace = workspace !== null;
@@ -147,7 +147,7 @@ export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanne
     if (!workspace) return;
     queryClient.invalidateQueries({ queryKey: ["knowledge-drafts", workspace.id] });
     queryClient.invalidateQueries({ queryKey: ["pending-actions", workspace.id] });
-    setPublicationRunId(null);
+    setPublicationExecutionId(null);
   }
 
   return (
@@ -254,7 +254,7 @@ export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanne
                 onSelectedIdChange={(id) => setSelection({ kind: "draft", id })}
                 onDirtyChange={setDraftDirty}
                 showList={false}
-                onPublicationRequested={setPublicationRunId}
+                onPublicationRequested={setPublicationExecutionId}
               />
             ) : null}
             {selectedSource ? (
@@ -289,7 +289,7 @@ export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanne
           workspaceId={workspace.id}
           showDiagnostic={false}
           actionType="knowledge.publish"
-          watchRunId={publicationRunId}
+          watchExecutionId={publicationExecutionId}
           onResolved={handlePublicationResolved}
         />
       ) : null}

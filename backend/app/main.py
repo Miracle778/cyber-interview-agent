@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -9,6 +10,15 @@ from app.api.routes_drafts import router as drafts_router
 from app.api.routes_hitl import router as hitl_router
 from app.api.routes_knowledge import router as knowledge_router
 from app.api.routes_settings import router as settings_router
+from app.agents.factory import AgentFactory
+from app.agents.model_resolver import ChatModelResolver, ModelResolutionError
+from app.application.graph_factory import ProductionGraphFactory
+from app.application.session_service import ProductRecordNotFoundError, SessionBusyError
+from app.application.workspace_runtime import AgentApplication
+from app.infrastructure.observability import (
+    ObservabilitySettings,
+    create_observability_sink,
+)
 from app.core.errors import (
     ErrorResponse,
     ProviderModelInUseError,
@@ -18,12 +28,7 @@ from app.core.errors import (
     WorkspaceNotFoundError,
 )
 from app.db.app_database import connect_app_database
-from app.providers.anthropic_compatible import AnthropicCompatibleAdapter
-from app.providers.chat_gateway import ChatModelGateway
-from app.providers.openai_compatible import OpenAICompatibleAdapter
 from app.repositories.provider_repository import ProviderRepository
-from app.runtime.default_graphs import create_default_graph_registry
-from app.runtime.graph_registry import GraphVersionNotFoundError
 from app.hitl.handlers import ActionPayloadValidationError, UnknownActionTypeError
 from app.hitl.repository import (
     ActionAlreadyResolvedError,
@@ -39,10 +44,6 @@ from app.knowledge.drafts import (
     DraftNotFoundError,
     DraftVersionChangedError,
 )
-from app.runtime.repository import RuntimeRecordNotFoundError, SessionBusyError
-from app.runtime.run_manager import MissingModelBindingError
-from app.runtime.service import AgentRuntime
-from app.runtime.model_resolver import ModelBindingResolver
 from app.security.workspace_paths import PathPolicyError
 from app.services.secrets import (
     EnvironmentSecretStore,
@@ -51,20 +52,15 @@ from app.services.secrets import (
 )
 from app.services.workspace import WorkspaceError
 from app.services.workspace_service import WorkspaceService
-from app.tools.registry import ToolError
 
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     connection = connect_app_database()
-    runtime: AgentRuntime | None = None
+    agent_application: AgentApplication | None = None
     try:
         workspaces = WorkspaceService(connection)
-        provider_adapters = {
-            "openai-compatible": OpenAICompatibleAdapter(),
-            "anthropic-compatible": AnthropicCompatibleAdapter(),
-        }
-        resolved_models = ModelBindingResolver(
+        resolved_models = ChatModelResolver(
             ProviderRepository(connection),
             {
                 "keyring": KeyringSecretStore(),
@@ -78,12 +74,16 @@ async def lifespan(application: FastAPI):
                 raise WorkspaceNotFoundError(workspace_id)
             return record
 
-        runtime = AgentRuntime(
-            graph_registry=create_default_graph_registry(),
+        observability_settings = ObservabilitySettings.from_env()
+        observability = create_observability_sink(
+            observability_settings,
+            lambda code: logging.getLogger(__name__).warning("runtime warning: %s", code),
+        )
+        agent_application = AgentApplication(
             workspace_resolver=lambda workspace_id: Path(
                 workspace_record(workspace_id).root_path
             ),
-            model_binding_resolver=lambda workspace_id: {
+            model_bindings=lambda workspace_id: {
                 binding.role: binding.provider_model_id
                 for binding in workspaces.workspaces.get_model_bindings(workspace_id)
             },
@@ -92,19 +92,16 @@ async def lifespan(application: FastAPI):
                 for item in workspaces.workspaces.list_workspaces()
                 if item.available and Path(item.root_path).is_dir()
             ),
-            chat_gateway=ChatModelGateway(provider_adapters),
-            resolve_model_binding=lambda role, provider_model_id: (
-                resolved_models.resolve(
-                    role=role, provider_model_id=provider_model_id
-                )
-            ),
+            graph_factory=ProductionGraphFactory(AgentFactory(resolved_models)),
+            observability=observability,
+            observability_flush_timeout_ms=observability_settings.flush_timeout_ms,
         )
-        application.state.agent_runtime = runtime
-        await runtime.recover_interrupted_runs()
+        application.state.agent_application = agent_application
+        await agent_application.recover()
         yield
     finally:
-        if runtime is not None:
-            await runtime.close()
+        if agent_application is not None:
+            await agent_application.close()
         connection.close()
 
 
@@ -121,11 +118,11 @@ def _error(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content=content)
 
 
-@app.exception_handler(MissingModelBindingError)
-async def missing_model_binding(
-    _request: Request, error: MissingModelBindingError
+@app.exception_handler(ModelResolutionError)
+async def model_resolution_error(
+    _request: Request, error: ModelResolutionError
 ) -> JSONResponse:
-    return _error(409, "model_binding_missing", str(error))
+    return _error(409, str(error.code.value), str(error))
 
 
 @app.exception_handler(ProviderNotFoundError)
@@ -177,11 +174,11 @@ async def secret_store_unavailable(
     return _error(503, "secret_store_unavailable", "系统密钥存储暂不可用")
 
 
-@app.exception_handler(RuntimeRecordNotFoundError)
-async def runtime_record_not_found(
-    _request: Request, _error_value: RuntimeRecordNotFoundError
+@app.exception_handler(ProductRecordNotFoundError)
+async def product_record_not_found(
+    _request: Request, _error_value: ProductRecordNotFoundError
 ) -> JSONResponse:
-    return _error(404, "runtime_record_not_found", "Agent 运行记录不存在")
+    return _error(404, "agent_resource_not_found", str(_error_value))
 
 
 @app.exception_handler(PendingActionNotFoundError)
@@ -275,25 +272,12 @@ async def session_busy(
     return _error(409, "session_busy", "当前 Session 已有运行中的任务")
 
 
-@app.exception_handler(GraphVersionNotFoundError)
-async def graph_migration_required(
-    _request: Request, _error_value: GraphVersionNotFoundError
-) -> JSONResponse:
-    return _error(409, "graph_migration_required", "当前 Agent 版本需要迁移")
-
-
 @app.exception_handler(PathPolicyError)
 async def workspace_path_denied(
     _request: Request, _error_value: PathPolicyError
 ) -> JSONResponse:
     return _error(400, "workspace_path_denied", "Workspace 路径不在授权范围内")
 
-
-@app.exception_handler(ToolError)
-async def tool_request_rejected(
-    _request: Request, error_value: ToolError
-) -> JSONResponse:
-    return _error(400, error_value.code, "工具调用被安全策略拒绝")
 
 @app.get("/api/health")
 def health() -> dict[str, str]:

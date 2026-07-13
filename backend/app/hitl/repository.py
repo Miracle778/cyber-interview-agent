@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import aiosqlite
 
-from app.db.runtime_database import runtime_database_path
+from app.infrastructure.runtime_database import runtime_database_path
 from app.hitl.models import (
     CreatePendingAction,
     PendingActionRecord,

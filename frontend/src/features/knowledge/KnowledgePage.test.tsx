@@ -75,7 +75,7 @@ describe("KnowledgePage", () => {
       sizeBytes: 15, createdAt: "2026-07-12T10:00:00Z", draftId: "d1",
     };
     const generatedDraft = {
-      id: "d1", workspaceId: "w1", sessionId: null, runId: null,
+      id: "d1", workspaceId: "w1", sessionId: null, executionId: null,
       agentType: null, domain: "review", documentType: "question",
       documentId: "q1", title: "新草稿", markdown: "# 新草稿",
       contentPath: "artifacts/review/drafts/d1.md", sourceRefs: [],
@@ -203,7 +203,7 @@ describe("KnowledgePage", () => {
       ],
       "/api/knowledge/drafts?": () => [
         {
-          id: "d1", workspaceId: "w1", sessionId: null, runId: null,
+          id: "d1", workspaceId: "w1", sessionId: null, executionId: null,
           agentType: null, domain: "review", documentType: "question",
           documentId: "q1", title: "缓存穿透", markdown: "# 缓存穿透",
           contentPath: "artifacts/review/drafts/d1.md", sourceRefs: [],

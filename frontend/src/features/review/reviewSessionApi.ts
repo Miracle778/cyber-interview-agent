@@ -2,7 +2,7 @@ import {
   createAgentSession,
   getAgentSession,
   listAgentSessions,
-  startAgentRun,
+  startAgentExecution,
 } from "../agent/agentApi";
 import { approveAction, listActions, rejectAction } from "../agent/hitlApi";
 import { getDraft } from "../knowledge/draftApi";
@@ -15,5 +15,5 @@ export {
   listActions,
   listAgentSessions,
   rejectAction,
-  startAgentRun,
+  startAgentExecution,
 };
