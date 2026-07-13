@@ -28,6 +28,9 @@
 - 后续采用 foundation/stateful/integration/experience 风险档案；机器校验结构化证据，人工只做一次同档案深度复核，不设置总字数门槛。
 - 设置页正式计划要求 `settings-experience-redesign` 七件套，但主仓库本地 learning 目录尚未同步该掌握包。
 - 门禁 TDD 从 8 项扩展到 15 项；固定档案声明、两个风险驱动、五个架构章节、档案化链路/问题数量和故障证据均有失败用例。
+- `TodoCandidate` 与 “Todo Service” 暴露旧占位符检查的大小写子串误报；改为只匹配独立、大小写精确的 `TODO`/`TBD`，回归现为 16 项。
+- 设置页七件套和 verification 存在于旧 feature worktree，但合并后未同步到 main；材料明确记录当时浏览器因缺少 `langchain_anthropic` 未通过。
+- R1.2 与 R1.4 的历史正式计划没有浏览器 checkbox；本次只用标注清楚的临时夹具验证 learning 结构，不改写历史产品证据。
 
 ## 约束
 
