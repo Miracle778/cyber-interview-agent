@@ -1,51 +1,48 @@
 # Cyber Interview Agent 当前任务规划
 
-## 当前任务
+## 当前任务：Agent Harness 后续路线对齐
 
-Pre-R2 Agent Runtime Framework Convergence 已完成实现、验收并 fast-forward 合入 `main`。
+目标是在 R2 开始前，让所有仍然指导未来开发的文档与已落地的官方 Agent Harness 保持一致。
 
-| 纵向任务 | 状态 |
-|---|---|
-| 官方 Agent/模型与 review Graph | 已完成并提交 |
-| 标准 Tool、官方 HITL、显式 publication | 已完成并提交 |
-| 官方 middleware 与 LangGraph stream 投影 | 已完成并提交 |
-| 新 application/API/frontend、旧 Runtime 删除 | 已完成并提交 `4f6aabb` |
+| 阶段 | 状态 | 产出 |
+|---|---|---|
+| 1. 总路线权威修正 | 已完成 | 清理旧 pipeline/R0 当前状态，更新 R2–R8 架构表达 |
+| 2. 历史文档失效标记 | 已完成 | 旧 R1/Middleware spec/plan 统一声明禁止作为未来模板 |
+| 3. Harness 跨阶段模板 | 已完成 | 总设计中的必答清单、任务骨架和禁止项 |
+| 4. R2 正式设计 | 已完成 | 完整复习 Agent spec，不生成 implementation plan |
 
 ## 工作位置
 
-- 当前分支：`main`
-- 主仓库：`/Users/miracle778/Project/cyber-interview-agent-new`
-- 实现 worktree：`/private/tmp/cyber-interview-agent-runtime-convergence`（保留作来源核对）
-- 基线：`main@8e1b500`
-- 归档：`archive/pre-agent-runtime-refactor-2026-07-13`
-- 设计：`docs/superpowers/specs/2026-07-13-agent-runtime-framework-convergence-design.md`
-- 计划：`docs/superpowers/plans/2026-07-13-agent-runtime-framework-convergence.md`
+- 分支：`codex/agent-harness-roadmap-alignment`
+- worktree：`/private/tmp/cyber-interview-agent-harness-roadmap`
+- 基线：`main@3435128`
+- 权威总路线：`docs/superpowers/specs/2026-07-10-product-development-roadmap-design.md`
+- Harness 基线：`docs/superpowers/specs/2026-07-13-agent-runtime-framework-convergence-design.md`
+- 计划新增：`docs/superpowers/specs/2026-07-13-r2-complete-review-agent-design.md`
 
-## 已验证
+## 范围与约束
 
-- 后端最终全量：`195 passed`。
-- 前端最终全量：`76 passed`；`npm run build`（含 `tsc`）通过。
-- 浏览器：批准、拒绝、刷新、重启、重复决定、桌面/375px、Vault target path。
-- Provider：真实 OpenAI-compatible 结构化响应与 Anthropic-compatible 流式响应通过。
-- context summary：全新会话第 11 次执行触发；三个 role thread 隔离。
-- observability：真实不可连接 OTLP endpoint 下业务 fail-open。
+- 只修改正式设计、历史标记和三份短状态入口，不修改产品代码。
+- 不重写已完成阶段的历史事实；只明确其不再是后续实现模板。
+- R2 spec 定义目标、状态、Agent/Graph、工具、middleware、HITL、数据和验收。
+- 本轮不拆 R2 Task，不创建 R2 implementation plan，不开始实现。
+- 不修改 `docs/my_idea.md`。
+- 单 Agent 负责到底，不创建 subagent。
 
-## 下一产品任务
+## 验证
 
-1. 进入 R2 多题复习 Agent 编排设计与实现。
-2. 用户可并行完成本阶段 ownership 练习，不阻塞 R2。
+- 正式文档无 `TODO`/`TBD`/占位内容。
+- 权威未来文档不再要求自研 Runtime、Gateway、Registry、Executor 或 middleware pipeline。
+- 历史旧架构文档均有统一醒目标记。
+- R2 spec 与总路线、现有代码能力和不兼容边界一致。
+- `scripts/test_check_stage_docs.py` 及静态引用扫描通过。
+
+## 下一步
+
+等待用户审阅 R2 spec；用户确认后才进入 R2 implementation plan。
 
 ## 所有权状态
 
-- 产品：实现稳定，`9116dff` 及之前提交已合入 `main`。
-- 成熟度：场景可用；旧数据/API/checkpoint 不兼容是明确边界。
-- 用户学习：未开始。
-- 用户实践：未开始；不阻塞产品提交或 R2。
-- 下一产品任务：R2 多题复习 Agent 编排。
-
-## 执行预算
-
-- 启动三入口合计不超过 400 行。
-- 单次工具输出约 4,000 tokens；相同失败两次后转根因诊断。
-- 最终全量回归已执行，不再重复；仅运行静态和文档门禁。
-- 单 Agent 负责到底，无中途交接或 subagent。
+- 产品代码：Agent Runtime 收敛已完成，场景可用。
+- 本切片：架构文档治理，不改变产品成熟度。
+- 用户学习/实践：待完成，不阻塞文档对齐。

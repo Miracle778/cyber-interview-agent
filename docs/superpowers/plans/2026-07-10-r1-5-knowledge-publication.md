@@ -1,5 +1,12 @@
 # R1.5 知识草稿与发布实施计划
 
+> **历史实现记录，禁止作为后续模板：** 本文保留 R1/Pre-R2 当时的设计、实施和验收事实。
+> 其中涉及的自研 `AgentRuntime`、`RunManager`、Gateway、Registry/Executor、middleware
+> pipeline 或旧 session/run API 已由
+> `docs/superpowers/specs/2026-07-13-agent-runtime-framework-convergence-design.md` 取代。
+> R2-R8 必须以产品总路线、框架收敛设计和各阶段新 spec 为准；本文中的领域安全、
+> HITL、发布和恢复不变量仍可作为历史证据，但代码路径和协议名称可能已不存在。
+
 
 **目标：** 把上传资料和领域草稿保留在 Vault 外，通过真实 `knowledge.publish` Graph 与持久化 HITL 审核，再将批准版本幂等发布为 Obsidian-compatible Markdown，并保证 active index 可恢复。
 

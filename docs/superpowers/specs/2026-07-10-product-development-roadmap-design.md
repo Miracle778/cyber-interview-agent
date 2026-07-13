@@ -103,7 +103,7 @@ Runtime 使用 LangChain 官方 `AgentMiddleware` 承载跨 Graph、跨 Agent、
 
 待办事项采用“候选提取 + 领域服务确认”：post-processing middleware 只输出带来源、置信度、建议标题、截止时间和关联对象的候选；Todo Service 负责去重、持久化、状态转换、撤销和用户确认。Middleware 不得静默创建不可撤销的正式待办。
 
-HITL 采用分层方案：保留 `HitlService`、pending action repository、resolution receipt、handler 和 `interrupt()/Command(resume=...)` 的持久化语义；在其上增加 middleware/adapter，统一普通工具审批和 action 创建模板。知识发布等复杂领域审批继续使用显式 Graph 节点与 handler。
+HITL 采用分层方案：普通工具审批由官方 `HumanInTheLoopMiddleware` 产生 interrupt，应用层把 interrupt 投影为 pending action，并用 `Command(resume=...)` 恢复同一 thread；知识发布等包含 version/hash、receipt、Vault 和补偿语义的复杂审批继续使用显式 Graph 节点与领域 handler。不得再为 HITL 建立项目级 middleware adapter 协议。
 
 以下能力不得仅由 middleware 隐藏实现：知识发布、草稿状态转换、Vault 写入、索引更新、用户必须理解的业务分支、长事务和补偿流程，以及依赖领域 version/hash/operation id 的副作用。它们必须保留在显式 Graph 或应用服务中。
 
@@ -111,9 +111,9 @@ HITL 采用分层方案：保留 `HitlService`、pending action repository、res
 
 Middleware 随 Agent 能力分阶段落地：
 
-- **Pre-R2 Middleware 1.0**：建立 pipeline 契约、注册、顺序、开关和 Runtime context；实现 token/context 统计、context budget 与上下文压缩、会话标题总结、无限循环检测和 HITL adapter；只定义 `TodoCandidate` 契约和事件，不调用模型提取、不持久化正式待办。使用已完成的 R1.6 `review.single` 作为第一个真实接入与验收 Agent。
-- **Pre-R2 Agent Runtime Framework Convergence**：归档 Middleware 1.0 的行为证据，删除平行 RuntimeMiddleware pipeline，把 `review.single` 迁到 `create_agent` 子图、官方 middleware、标准工具、标准模型和 LangGraph stream；不兼容旧测试数据、API 和 checkpoint，完成后再进入 R2。
-- **R2 完整复习 Agent**：验证长会话压缩、多题循环保护、标题和用量展示；根据真实运行补充重复工具调用、无进展检测和预算预警。
+- **Pre-R2 Middleware 1.0（历史阶段，已被收敛）**：曾用自研 pipeline 验证 token/context、压缩、标题、循环保护、HITL 和 observability 行为；其行为证据保留，但实现协议不再作为后续模板。
+- **Pre-R2 Agent Runtime Framework Convergence（已完成）**：已删除平行 RuntimeMiddleware pipeline，把 `review.single` 迁到 `create_agent` 子图、官方 middleware、标准工具、标准模型和 LangGraph stream；旧测试数据、API 和 checkpoint 不兼容。
+- **R2 完整复习 Agent**：直接复用收敛后的 Agent Harness，验证长会话压缩、多题循环保护、标题和用量展示；根据真实运行校准重复工具调用、无进展检测和预算预警。
 - **R3 个人信息 Agent**：定义用户偏好、长期记忆和待办候选的安全输入边界，完善敏感信息脱敏；仍不创建正式 Todo 状态机。
 - **R4 岗位追踪**：实现正式 Todo Service，并启用待办候选提取、用户确认、去重、截止时间和岗位关联。
 - **R5 面试复盘**：扩展行动项、关键结论和经验候选提取，并增加质量与置信度标记。
@@ -126,6 +126,43 @@ Middleware 随 Agent 能力分阶段落地：
 
 Agent 可观测性统一采用 OpenTelemetry 抽象，业务代码只依赖项目 `ObservabilitySink`；首个后端为本机自托管 Langfuse，通过 OTLP/HTTP 接收 spans。默认只记录安全 ID、模型/工具名、token、耗时、状态和稳定错误码，不记录 Prompt、回复、个人资料、Vault 正文或工具参数。可观测后端不可用时必须 fail-open，不影响 Agent、HITL 和知识发布。
 
+#### 3.4.1 后续阶段 Agent Harness 设计模板
+
+R2-R8 的独立 spec 必须逐项回答以下问题；某阶段不需要 Agent 时必须明确写“不适用”，不得为了套模板强行 Agent 化：
+
+1. **领域目标与状态所有权**：用户可见流程是什么；哪些事实属于 LangGraph state/checkpoint、产品数据库、领域 repository、Vault、前端缓存和外部系统；
+2. **Agent roles**：每个 role 的职责、模型用途绑定、system prompt 边界、结构化 `response_format`、输入输出和禁止访问的数据；
+3. **领域 Graph**：哪些节点是确定性业务节点，哪些节点调用 `create_agent`；暂停、恢复、分支、取消和失败如何表达；
+4. **工具与权限**：使用哪些标准 `BaseTool`/`StructuredTool`，`ToolRuntime` 注入哪些可信身份，allowlist、scope、路径和审计如何配置；
+5. **Middleware 组合**：复用哪些官方 middleware，保留哪些直接继承 `AgentMiddleware` 的窄项目扩展，其顺序、幂等、硬/软失败和 fail-open 边界是什么；
+6. **Thread 与 checkpoint**：产品 session、外层 Graph thread、role Agent thread、派生讨论或子 Agent thread 如何稳定映射和隔离；
+7. **HITL 与领域副作用**：普通工具 interrupt 如何投影为 action；哪些 draft/version/hash/Vault/index/Todo 副作用必须保留在显式 Graph 或领域 service；
+8. **产品投影与 API**：前端只消费哪些 session、execution、message、action、usage、artifact 和 product event，不暴露内部 checkpoint 或 Graph state；
+9. **安全与可观测性**：secret、正文、个人信息和工具参数的信任边界；OTel/Langfuse 记录什么、禁止记录什么、不可用时如何降级；
+10. **验收**：至少包含 targeted TDD、重启恢复、真实 Provider、浏览器闭环、响应式、失败路径和与阶段风险匹配的文档证据。
+
+#### 3.4.2 后续阶段任务骨架
+
+每个 Agent 产品阶段默认压缩为 3-4 个纵向任务，而不是按基础设施类型横向拆散：
+
+1. **领域契约与状态**：输入输出、领域记录、状态所有权和确定性选择/合并逻辑；
+2. **Agent 能力与 Graph 编排**：role Agent、标准工具、middleware 组合、thread/checkpoint 和 HITL；
+3. **应用/API/前端闭环**：产品投影、session/execution/action/event 资源和用户交互；
+4. **验收收尾**：真实 Provider、浏览器/重启、全量回归、verification 和 learning。
+
+非 Agent 阶段可以删去第二项，但不得建立替代 Runtime。一个纵向任务由同一 Agent 负责到底；只有文件不重叠且状态独立时才并行。
+
+#### 3.4.3 Agent Harness 禁止项
+
+- 禁止新增项目级 Agent loop、RunManager、Graph registry、通用 Runtime 状态机或 middleware pipeline；
+- 禁止新增模型调用 Gateway、invocation envelope 或重新包装 `ainvoke`/`astream` 的通用协议；
+- 禁止新增 ToolRegistry、BoundToolInvoker 或与标准 `BaseTool` 平行的 schema/executor；
+- 禁止用 adapter 把旧协议包起来冒充官方 `AgentMiddleware`；项目扩展必须直接实现官方 hook；
+- 禁止在产品数据库镜像完整 Graph 节点、消息或 checkpoint 内部状态；只保存用户可见产品投影；
+- 禁止把知识发布、草稿状态、Vault、索引、Todo、长事务或补偿副作用隐藏进通用 middleware；
+- 禁止由模型、前端或 Channel 自报 workspace/session/scope 身份，可信 context 必须由服务端注入；
+- 禁止 R8 等外部 Channel 绕过同一 application service、HITL、工具权限和发布规则。
+
 ### 3.5 数据与知识库
 
 - Markdown + YAML frontmatter 是用户可读、可迁移的长期可信数据。
@@ -137,7 +174,7 @@ Agent 可观测性统一采用 OpenTelemetry 抽象，业务代码只依赖项�
 ### 3.6 Provider
 
 - 支持保存多个 Provider，并在 Provider 下保存多个模型。
-- 第一版同时定义 OpenAI-compatible 和 Anthropic-compatible adapter。
+- 第一版同时定义 OpenAI-compatible 和 Anthropic-compatible 的 Provider 配置与连通性 adapter；Agent 模型调用由服务端解析为标准 `BaseChatModel`，不得引入模型 Gateway。
 - 支持自定义 `base_url`，兼容火山、GLM 等提供兼容协议的服务。
 - 支持连通性测试、Provider 切换和按用途选择模型。
 - 模型用途至少包括题库生成、回答评估、报告总结和普通 Agent 对话。
@@ -200,7 +237,7 @@ Agent 可观测性统一采用 OpenTelemetry 抽象，业务代码只依赖项�
 需求：
 
 - 多 Provider、多模型保存和切换。
-- OpenAI-compatible 与 Anthropic-compatible adapter。
+- OpenAI-compatible 与 Anthropic-compatible 的 Provider 配置与连通性 adapter；Agent 执行只消费标准 `BaseChatModel`。
 - 真实连通性测试和可理解的错误分类。
 - 按用途选择模型。
 - 后端安全读取 API key。
@@ -239,7 +276,7 @@ Agent 可观测性统一采用 OpenTelemetry 抽象，业务代码只依赖项�
 - 新会话参考当前全局报告和最近三份已确认单会话报告。
 - 更新全局掌握度并给出下一轮建议。
 - 状态区展示当前范围、进度、掌握度、上下文和产物。
-- 复用 Middleware 1.0 展示 token/context、标题和预算状态，并在多题循环中验证压缩与循环保护。
+- 复用收敛后的官方 Agent middleware stack 展示 token/context、标题和预算状态，并在多题循环中验证压缩、调用上限与无进展保护。
 
 验收：
 
@@ -393,4 +430,4 @@ Agent 可观测性统一采用 OpenTelemetry 抽象，业务代码只依赖项�
 
 ## 8. 当前下一步
 
-当前代码处于 R0 技术切片基线。下一步是为 R1“共享 Agent 与知识库底座”编写独立设计文档，先确定 Provider 配置模型、LangGraph 状态模型、checkpoint、HITL 和知识库发布接口，再拆实施任务。
+当前已完成 R1、Pre-R2 Middleware 行为验证和 Agent Runtime Framework Convergence。下一步是审阅 R2“完整复习 Agent”独立设计；设计确认后再按 3-4 个纵向任务编写 implementation plan，不重新建设 Agent Runtime 基础设施。

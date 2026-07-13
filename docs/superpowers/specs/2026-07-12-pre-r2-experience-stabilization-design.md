@@ -1,5 +1,11 @@
 # Pre-R2 页面与知识库体验稳定化设计
 
+> **历史实现记录，禁止作为后续模板：** 本文保留 Pre-R2 当时的体验决策与验收事实。
+> 其中对 Runtime Middleware 1.0、自研 pipeline 或旧 Agent API 的后续安排已由
+> `docs/superpowers/specs/2026-07-13-agent-runtime-framework-convergence-design.md` 取代。
+> R2-R8 必须以产品总路线、框架收敛设计和各阶段新 spec 为准；本文的 UI、知识草稿、
+> Markdown 和按需人工确认原则仍可作为历史证据。
+
 ## 1. 背景与决策
 
 R1 已打通工作区、Provider、Agent Runtime、知识草稿发布和单题复习，但页面仍以功能卡片纵向平铺。知识库没有持久化展示原始上传资料，Markdown 在非编辑状态下仍以原文显示，人工确认区域在没有待确认动作时也占据页面空间。

@@ -1,5 +1,12 @@
 # R1.6 单题复习 Runtime 集成计划
 
+> **历史实现记录，禁止作为后续模板：** 本文保留 R1/Pre-R2 当时的设计、实施和验收事实。
+> 其中涉及的自研 `AgentRuntime`、`RunManager`、Gateway、Registry/Executor、middleware
+> pipeline 或旧 session/run API 已由
+> `docs/superpowers/specs/2026-07-13-agent-runtime-framework-convergence-design.md` 取代。
+> R2-R8 必须以产品总路线、框架收敛设计和各阶段新 spec 为准；本文中的领域安全、
+> HITL、发布和恢复不变量仍可作为历史证据，但代码路径和协议名称可能已不存在。
+
 **目标：** 将现有单题复习迁移到真实 Provider、持久化 Agent Runtime/SSE、受限工具和批准后 Vault 发布；不实现 R2 多题轮次。
 
 **架构：** 注册 `review.single`/`1`。Run 创建时保存 Workspace 模型用途绑定快照；执行时由 resolver 将稳定模型 ID 解析为临时调用凭据，再通过窄 `ChatModelGateway` 注入 Graph。报告先保存为 knowledge draft，再通过 `knowledge.publish` HITL action 发布。

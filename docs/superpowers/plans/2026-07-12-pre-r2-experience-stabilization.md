@@ -1,5 +1,11 @@
 # Pre-R2 Experience Stabilization Implementation Plan
 
+> **历史实现记录，禁止作为后续模板：** 本文保留 Pre-R2 当时的实施与验收事实。
+> 其中对 Runtime Middleware 1.0、自研 pipeline 或旧 Agent API 的后续安排已由
+> `docs/superpowers/specs/2026-07-13-agent-runtime-framework-convergence-design.md` 取代。
+> R2-R8 必须以产品总路线、框架收敛设计和各阶段新 spec 为准；本文中的体验验收
+> 与知识草稿边界仍可作为历史证据。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a persistent, content-first knowledge workspace, disclose human approval only when needed, and improve the review page hierarchy without adding R2 behavior.

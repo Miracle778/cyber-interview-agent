@@ -1,6 +1,6 @@
 # Runtime Middleware 1.0 设计
 
-> **已被取代：** 本设计记录当时已实现的 Middleware 1.0 决策，但其中“自研
+> **历史实现记录，已被取代，禁止作为后续模板：** 本设计记录当时已实现的 Middleware 1.0 决策，但其中“自研
 > RuntimeMiddleware pipeline 作为稳定产品边界”的方案已由
 > `2026-07-13-agent-runtime-framework-convergence-design.md` 取代。后续不再扩展该
 > pipeline，改用 `create_agent`、官方 `AgentMiddleware` 和 LangGraph 原生运行能力。
