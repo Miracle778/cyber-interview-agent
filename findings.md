@@ -20,6 +20,14 @@
 - 计划中的 `superpowers:*` 是未安装模板残留，没有仓库执行实现；应删除强制声明。
 - 当前未发现 skill 死循环；主要浪费来自宽范围读取、重复回归、环境故障和中途交接。
 
+## Learning 深度审阅
+
+- R1.2 为 1794 词、R1.3 为 1603 词；R1.4 仅 728 词、R1.6 仅 623 词、Runtime Middleware 仅 415 词。
+- R1.5 虽只有 240 行但有 1513 词，说明行数不能代表掌握深度。
+- 当前门禁只校验七个文件和少量标题，7 行 architecture 仍能通过；模板中的“不得比上一阶段退化”没有机器约束。
+- 后续采用 foundation/stateful/integration/experience 风险档案；机器校验结构化证据，人工只做一次同档案深度复核，不设置总字数门槛。
+- 设置页正式计划要求 `settings-experience-redesign` 七件套，但主仓库本地 learning 目录尚未同步该掌握包。
+
 ## 约束
 
 - R1.6 已合入 `main@eaf5edf`；后续产品阶段继续使用独立分支/worktree。

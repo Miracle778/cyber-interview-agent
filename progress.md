@@ -1,5 +1,14 @@
 # Cyber Interview Agent 当前进度
 
+## 2026-07-13：Learning 掌握包深度治理设计
+
+- 审阅 7 个现有 learning 目录，确认后续阶段的文档深度与实际复杂度不匹配。
+- 用户确认采用风险分级和结构化证据，不使用统一字数下限。
+- 从 `main@7915bf9` 创建 `codex/learning-documentation-quality` 隔离 worktree。
+- 现有文档门禁基线 8 passed。
+- 正式设计提交为 `9dc5e65`；实施计划拆为门禁、规范、历史补强和最终同步四项。
+- 当前未修改产品代码；下一步按 TDD 扩展文档门禁。
+
 ## 2026-07-12：R1.5 接管审阅
 
 - 定位真实分支：`codex/r1-5-knowledge-publication`，worktree 为 `/private/tmp/cyber-interview-agent-r1-5`。

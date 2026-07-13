@@ -14,26 +14,23 @@
 | R1.6 | 场景可用并已合入 main | 单题复习迁移到共享 Runtime、真实 Provider 与持久化发布闭环 |
 | R2-R8 | 待开始 | 见正式产品路线 |
 
-## 当前任务：Runtime Middleware 1.0
+## 当前任务：Learning 掌握包深度治理
 
-1. **Pipeline 契约、持久化与本机观测底座（已完成）**
-2. **模型 usage、OTLP exporter 与 context budget（已完成）**
-3. **标题、循环保护、API 与 Review UI（已完成）**
-4. **HITL bridge、真实 Agent 与最终验收（已完成）**
+1. **风险档案与机器门禁 TDD（待开始）**
+2. **模板和阶段关闭规范（待开始）**
+3. **历史 learning 掌握包补强（待开始）**
+4. **全量文档验收与本地同步（待开始）**
 
-本切片只重构设置页前端信息架构；下一独立 Pre-R2 基础切片为 Runtime Middleware 1.0：补齐 pipeline、R1.2 压缩/token-context、标题、循环检测、HITL adapter 与 OpenTelemetry + 本机 Langfuse，只定义 TodoCandidate 契约，并用 R1.6 Agent 验收。
-
-Runtime Middleware 1.0 四个任务均已实现并通过最终回归、浏览器、Langfuse 与文档验收，等待提交和合入 main。
+本切片不修改产品运行行为。目标是补齐 R1.4、R1.6、Runtime Middleware、Pre-R2 和设置页掌握材料，并防止以后以标题存在性代替学习深度。
 
 ## 当前分支
 
-- 分支：`codex/runtime-middleware-1-0`
-- worktree：`/private/tmp/cyber-interview-agent-runtime-middleware`
-- 基线：`main@f4c25bb`
-- 当前设计：`docs/superpowers/specs/2026-07-12-settings-experience-redesign-design.md`
-- 当前实施：`docs/superpowers/plans/2026-07-12-settings-experience-redesign.md`
-- 下一阶段设计：`docs/superpowers/specs/2026-07-12-runtime-middleware-1-0-design.md`
-- 下一阶段实施：`docs/superpowers/plans/2026-07-12-runtime-middleware-1-0.md`
+- 分支：`codex/learning-documentation-quality`
+- worktree：`/private/tmp/cyber-interview-agent-learning-quality`
+- 基线：`main@7915bf9`
+- 当前设计：`docs/superpowers/specs/2026-07-13-learning-documentation-depth-design.md`
+- 当前实施：`docs/superpowers/plans/2026-07-13-learning-documentation-depth.md`
+- 下一产品阶段：R2 完整复习 Agent
 
 ## 执行预算
 
