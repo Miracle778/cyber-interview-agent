@@ -179,7 +179,7 @@ docs/learning/<stage>/
 
 掌握包必须基于最终代码和真实开发记录，不使用与实现不符的通用教程填充。
 
-七件套的必需章节、内容职责和非阻塞练习规则由 `docs/superpowers/templates/stage-learning-pack-template.md` 定义。单个 `README.md` 不能代替七件套；`failure-journal.md` 只记录真实发生的故障，不能为了填充结构虚构问题。
+七件套的风险档案、必需章节、内容证据和非阻塞练习规则由 `docs/superpowers/templates/stage-learning-pack-template.md` 定义。阶段开始只确定 `foundation`、`stateful`、`integration` 或 `experience` 档案及其风险驱动；实现稳定后生成一次七件套，最终验收后只刷新代码与证据。单个 `README.md` 不能代替七件套；`failure-journal.md` 只记录真实故障，不能为了填充结构虚构问题。
 
 ### 8.1 阶段文档质量门禁
 
@@ -192,17 +192,17 @@ python3 scripts/check_stage_docs.py \
   --plan docs/superpowers/plans/<current-stage>.md
 ```
 
-脚本负责确认 verification 的最终结构、可执行命令和人工步骤，learning 七件套的文件与专属章节，以及正式计划的浏览器验收勾选状态。计划未完成浏览器验收或文档证据互相矛盾时，不能将阶段标记为“可人工验证”或“交付完成”。
+脚本负责确认 verification 的最终结构、可执行命令和人工步骤，learning 七件套的风险档案、结构化深度证据，以及正式计划的浏览器验收勾选状态。计划未完成浏览器验收、learning 档案不匹配门禁或文档证据互相矛盾时，不能将阶段标记为“可人工验证”或“交付完成”。门禁不使用总行数或字数阈值。
 
 脚本通过后，负责交付的 Codex 还必须人工确认：
 
-- 对照上一阶段同类型文档，结构和内容深度没有明显退化；
+- 对照上一同档案阶段，状态所有权、真实链路、失败边界和练习证据没有明显退化；
 - 代码地图、测试数字和操作步骤来自最终代码与最新输出；
 - failure journal 只写真实故障；
 - learning 足以支持 Explain、Trace、Review、Debug 或实现练习；
 - 产品成熟度与用户掌握度仍分开陈述。
 
-机器门禁负责“不能缺”，人工门禁负责“不能空”。门禁结果必须写入 `progress.md` 和最终交付汇报。用户是否完成 learning 练习不属于门禁条件。
+机器门禁负责拦截结构和证据明显缺失，人工门禁负责确认语义真实且没有堆字。每阶段只在最终代码稳定后运行一次完整机器门禁和一次人工抽查；修正时只重跑受影响检查。结果必须写入 verification、`progress.md` 和最终交付汇报。用户是否完成 learning 练习不属于门禁条件。
 
 ## 9. 用户所有权练习
 

@@ -27,6 +27,7 @@
 - 当前门禁只校验七个文件和少量标题，7 行 architecture 仍能通过；模板中的“不得比上一阶段退化”没有机器约束。
 - 后续采用 foundation/stateful/integration/experience 风险档案；机器校验结构化证据，人工只做一次同档案深度复核，不设置总字数门槛。
 - 设置页正式计划要求 `settings-experience-redesign` 七件套，但主仓库本地 learning 目录尚未同步该掌握包。
+- 门禁 TDD 从 8 项扩展到 15 项；固定档案声明、两个风险驱动、五个架构章节、档案化链路/问题数量和故障证据均有失败用例。
 
 ## 约束
 
