@@ -362,7 +362,7 @@ Delete the old project pipeline/adapter tests after new middleware and event tes
 
 - [x] **Step 1: Write RED application/API tests against the new resources**
 
-Cover create/list/get session, start/cancel execution, approval decision, SSE replay cursor, fresh database startup, graceful old-schema rejection, restart recovery and stable safe errors. Do not assert old response fields or event names.
+Cover create/list/get session, start/cancel execution, approval decision, SSE replay cursor, fresh database startup, recognized development-schema rebuild, unrecognized-schema preservation, restart recovery and stable safe errors. Do not assert superseded response fields or event names.
 
 Run: `pytest -q tests/test_agent_routes_v2.py tests/test_agent_restart_v2.py`
 
@@ -370,7 +370,7 @@ Expected: FAIL.
 
 - [x] **Step 2: Implement fresh Runtime database and application services**
 
-Create only tables needed for product sessions/messages/execution projections, product events, pending actions, domain records, usage/audit, and LangGraph checkpoint storage. Reject an old schema with an explicit development reset message; do not write migration adapters. Execution service invokes Graph `astream`, passes `thread_id=session.id`, projects events, handles interrupt/cancel/error, and closes resources on shutdown.
+Create only tables needed for product sessions/messages/execution projections, product events, pending actions, domain records, usage/audit, and LangGraph checkpoint storage. For this pre-release rewrite, back up and rebuild the known development schema without a compatibility adapter; preserve and reject unrecognized databases rather than deleting them. Execution service invokes Graph `astream`, passes `thread_id=session.id`, projects events, handles interrupt/cancel/error, and closes resources on shutdown.
 
 Run: new API/restart tests. Expected: PASS.
 

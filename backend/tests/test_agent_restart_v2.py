@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.infrastructure.runtime_database import (
-    IncompatibleRuntimeDatabaseError,
+    RuntimeDatabaseSchemaError,
     connect_runtime_database,
     runtime_database_path,
 )
@@ -33,18 +33,58 @@ def test_fresh_runtime_database_has_current_generation(tmp_path: Path):
     assert {"agent_sessions", "agent_runs", "agent_events", "pending_actions"} <= tables
 
 
-def test_old_runtime_schema_is_rejected_with_development_reset_guidance(tmp_path: Path):
+def test_replaceable_development_schema_is_backed_up_and_rebuilt(tmp_path: Path):
     path = runtime_database_path(tmp_path)
     path.parent.mkdir(parents=True)
     connection = sqlite3.connect(path)
     connection.execute("CREATE TABLE runtime_schema_migrations(version INTEGER PRIMARY KEY)")
+    connection.execute("INSERT INTO runtime_schema_migrations(version) VALUES (1)")
     connection.commit()
     connection.close()
 
-    with pytest.raises(IncompatibleRuntimeDatabaseError) as raised:
+    connection = connect_runtime_database(tmp_path)
+    try:
+        generation = connection.execute(
+            "SELECT generation FROM runtime_schema_metadata"
+        ).fetchone()[0]
+    finally:
+        connection.close()
+
+    backup = path.with_name("runtime.development-backup.sqlite")
+    backup_connection = sqlite3.connect(backup)
+    try:
+        backed_up_version = backup_connection.execute(
+            "SELECT version FROM runtime_schema_migrations"
+        ).fetchone()[0]
+    finally:
+        backup_connection.close()
+
+    assert generation == 2
+    assert backed_up_version == 1
+
+
+def test_unrecognized_development_schema_is_preserved_with_neutral_error(tmp_path: Path):
+    path = runtime_database_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    connection = sqlite3.connect(path)
+    connection.execute("CREATE TABLE important_test_data(value TEXT)")
+    connection.execute("INSERT INTO important_test_data(value) VALUES ('keep-me')")
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(RuntimeDatabaseSchemaError) as raised:
         connect_runtime_database(tmp_path)
 
-    assert "删除 .cyber-interview-agent/runtime.sqlite" in str(raised.value)
+    assert "无法识别的开发期数据库结构" in str(raised.value)
+    assert "旧版" not in str(raised.value)
+    preserved_connection = sqlite3.connect(path)
+    try:
+        preserved = preserved_connection.execute(
+            "SELECT value FROM important_test_data"
+        ).fetchone()[0]
+    finally:
+        preserved_connection.close()
+    assert preserved == "keep-me"
 
 
 @pytest.mark.asyncio

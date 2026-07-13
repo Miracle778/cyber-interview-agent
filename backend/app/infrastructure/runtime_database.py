@@ -4,13 +4,13 @@ import sqlite3
 from pathlib import Path
 
 
-CURRENT_GENERATION = 2
+CURRENT_SCHEMA_GENERATION = 2
 _SCHEMA_FILE = (
     Path(__file__).parents[1] / "db" / "migrations" / "runtime" / "001_current.sql"
 )
 
 
-class IncompatibleRuntimeDatabaseError(RuntimeError):
+class RuntimeDatabaseSchemaError(RuntimeError):
     pass
 
 
@@ -21,20 +21,42 @@ def runtime_database_path(workspace_root: Path) -> Path:
 def connect_runtime_database(workspace_root: Path) -> sqlite3.Connection:
     path = runtime_database_path(workspace_root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(path, check_same_thread=False)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    connection.execute("PRAGMA busy_timeout = 5000")
-    connection.execute("PRAGMA journal_mode = WAL")
+    connection = _open_connection(path)
     try:
-        _ensure_current_schema(connection)
+        schema_state = _schema_state(connection)
+        if schema_state == "replaceable_development":
+            connection.close()
+            _backup_development_database(path)
+            connection = _open_connection(path)
+            schema_state = "fresh"
+        elif schema_state in {"generation_mismatch", "unrecognized"}:
+            detail = (
+                "开发期数据库 generation 与当前代码不一致"
+                if schema_state == "generation_mismatch"
+                else "检测到无法识别的开发期数据库结构"
+            )
+            raise RuntimeDatabaseSchemaError(
+                f"{detail}；为避免误删，数据库已原样保留：{path}"
+            )
+
+        connection.execute("PRAGMA journal_mode = WAL")
+        if schema_state == "fresh":
+            connection.executescript(_SCHEMA_FILE.read_text(encoding="utf-8"))
     except Exception:
         connection.close()
         raise
     return connection
 
 
-def _ensure_current_schema(connection: sqlite3.Connection) -> None:
+def _open_connection(path: Path) -> sqlite3.Connection:
+    connection = sqlite3.connect(path, check_same_thread=False)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA busy_timeout = 5000")
+    return connection
+
+
+def _schema_state(connection: sqlite3.Connection) -> str:
     tables = {
         row[0]
         for row in connection.execute(
@@ -43,19 +65,45 @@ def _ensure_current_schema(connection: sqlite3.Connection) -> None:
         )
     }
     if not tables:
-        connection.executescript(_SCHEMA_FILE.read_text(encoding="utf-8"))
-        return
-    if "runtime_schema_metadata" not in tables:
-        raise _incompatible()
-    row = connection.execute(
-        "SELECT generation FROM runtime_schema_metadata LIMIT 1"
-    ).fetchone()
-    if row is None or row[0] != CURRENT_GENERATION:
-        raise _incompatible()
+        return "fresh"
+    if "runtime_schema_metadata" in tables:
+        row = connection.execute(
+            "SELECT generation FROM runtime_schema_metadata LIMIT 1"
+        ).fetchone()
+        return (
+            "current"
+            if row is not None and row[0] == CURRENT_SCHEMA_GENERATION
+            else "generation_mismatch"
+        )
+    if "runtime_schema_migrations" in tables:
+        return "replaceable_development"
+    return "unrecognized"
 
 
-def _incompatible() -> IncompatibleRuntimeDatabaseError:
-    return IncompatibleRuntimeDatabaseError(
-        "旧版 Agent Runtime 数据库与当前不兼容；开发环境请删除 "
-        ".cyber-interview-agent/runtime.sqlite 后重新启动。"
-    )
+def _backup_development_database(path: Path) -> Path:
+    backup = _available_backup_path(path)
+    for source, suffix in (
+        (path, ""),
+        (Path(f"{path}-wal"), "-wal"),
+        (Path(f"{path}-shm"), "-shm"),
+    ):
+        if source.exists():
+            source.replace(Path(f"{backup}{suffix}"))
+    return backup
+
+
+def _available_backup_path(path: Path) -> Path:
+    base = path.with_name("runtime.development-backup.sqlite")
+    candidate = base
+    sequence = 2
+    while any(
+        candidate_path.exists()
+        for candidate_path in (
+            candidate,
+            Path(f"{candidate}-wal"),
+            Path(f"{candidate}-shm"),
+        )
+    ):
+        candidate = path.with_name(f"runtime.development-backup-{sequence}.sqlite")
+        sequence += 1
+    return candidate

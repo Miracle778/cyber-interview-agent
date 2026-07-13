@@ -1,5 +1,13 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-07-13：开发期 Runtime 数据库启动修复
+
+- 复现 `IncompatibleRuntimeDatabaseError`，确认两个已注册 demo workspace 命中重构前开发 schema。
+- RED：已知 schema 备份重建与未知 schema 中性错误两项用例按预期失败。
+- GREEN：实现已知开发 schema 备份/重建，异常改为 `RuntimeDatabaseSchemaError`；针对性用例 4 passed。
+- 相关仓储、HITL、草稿、知识和审计测试 33 passed。
+- 最终后端回归 196 passed，文档门禁 16 passed，diff check 与旧错误文案扫描通过。
+
 ## 2026-07-13：Agent Harness 后续路线对齐启动
 
 - 用户确认执行总路线修正、历史文档标记、跨阶段 Harness 模板和 R2 正式设计四项工作。

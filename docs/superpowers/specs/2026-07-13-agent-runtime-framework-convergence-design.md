@@ -325,7 +325,7 @@ backend/app/
 - 工具必须在 handler 内再次验证 Workspace path，middleware allowlist 不是唯一防线；
 - 发布继续使用 draft version、content hash 和 operation key；
 - summary、title、usage、trace 投影失败采用 fail-open 并产生可诊断 warning；
-- schema/Graph 变化导致旧数据库不可用时明确提示重建，不自动静默解释旧数据。
+- 开发期 schema/Graph 变化时，已知且可识别的测试数据库先备份再自动重建；无法识别的数据库原样保留并停止启动，不静默解释或删除数据。
 
 ## 8. 测试与验收
 
