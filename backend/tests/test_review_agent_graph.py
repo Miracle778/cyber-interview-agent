@@ -2,14 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from langchain_core.messages import AIMessage
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
 
 from app.agents.context import AgentContext
 from app.agents.review import ReviewAgents
 from app.agents.review_contracts import AnswerEvaluation
 from app.graphs.review import create_review_graph
+from app.hitl.models import PendingActionRecord
 
 
 QUESTION = {
@@ -97,3 +101,73 @@ async def test_review_agents_reject_empty_report():
             context=context,
             config={"configurable": {"thread_id": "s1"}},
         )
+
+
+@pytest.mark.asyncio
+async def test_review_graph_keeps_draft_and_publication_as_explicit_nodes():
+    evaluation = AnswerEvaluation(
+        score="partial", missing_key_points=["隔离性"], evidence="提到原子性"
+    )
+    agents = ReviewAgents(
+        evaluator=RecordingAgent({"structured_response": evaluation}),
+        reporter=RecordingAgent(
+            {"messages": [AIMessage(content="# 单题复习\n\n需要补充隔离性")]}
+        ),
+    )
+    draft_calls = []
+    action_calls = []
+
+    async def create_draft(**kwargs):
+        draft_calls.append(kwargs)
+        return SimpleNamespace(id="draft-1", version=1, content_hash="hash-1")
+
+    async def request_action(**kwargs):
+        action_calls.append(kwargs)
+        return PendingActionRecord(
+            id="action-1",
+            workspace_id="w1",
+            session_id="s1",
+            run_id="r1",
+            action_type="knowledge.publish",
+            payload={},
+            preview={},
+            editable_fields=(),
+            status="pending",
+            version=1,
+            idempotency_key="publish-1",
+            created_at="2026-07-13T00:00:00Z",
+            resolved_at=None,
+        )
+
+    graph = create_review_graph(
+        agents,
+        create_draft=create_draft,
+        request_action=request_action,
+        checkpointer=InMemorySaver(),
+    )
+    context = AgentContext(
+        workspace_id="w1",
+        workspace_root=Path("/workspace"),
+        session_id="s1",
+        run_id="r1",
+        allowed_tools=frozenset(),
+        allowed_scopes=frozenset(),
+    )
+    config = {"configurable": {"thread_id": "s1"}}
+
+    interrupted = await graph.ainvoke(
+        {"question": QUESTION, "user_answer": "原子性和一致性"},
+        config,
+        context=context,
+    )
+    resumed = await graph.ainvoke(
+        Command(resume={"decision": "rejected", "reason": "revise"}),
+        config,
+        context=context,
+    )
+
+    assert interrupted["report_draft_id"] == "draft-1"
+    assert interrupted["__interrupt__"][0].value == {"actionId": "action-1"}
+    assert draft_calls[0]["source_refs"] == ("q1",)
+    assert action_calls[0]["idempotency_key"] == "knowledge.publish:draft-1:1:hash-1"
+    assert resumed["response"] == "单题复习报告未发布：revise"

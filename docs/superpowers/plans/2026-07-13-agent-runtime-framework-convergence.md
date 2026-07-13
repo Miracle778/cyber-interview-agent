@@ -222,7 +222,7 @@ Adapt existing file handlers behind `@tool(args_schema=...)`; obtain workspace/r
 
 Run: same command. Expected: PASS.
 
-- [ ] **Step 3: Write RED middleware tests for scope, audit, sanitization and official HITL**
+- [x] **Step 3: Write RED middleware tests for scope, audit, sanitization and official HITL**
 
 Build a real `create_agent` with `ToolPolicyMiddleware` followed by
 `HumanInTheLoopMiddleware(interrupt_on={"write_review_draft": True})`. Assert denied scope returns a stable tool error without handler execution; allowed calls produce one audit record; risky calls interrupt before side effects.
@@ -231,13 +231,13 @@ Run: `pytest -q tests/test_tool_policy_middleware.py`
 
 Expected: FAIL.
 
-- [ ] **Step 4: Implement `ToolPolicyMiddleware` and HITL composition**
+- [x] **Step 4: Implement `ToolPolicyMiddleware` and HITL composition**
 
 Implement only official hooks. The middleware validates `request.tool_call`, reads `request.runtime.context`, starts/finishes metadata-only audit, sanitizes events, and calls the handler exactly once. Do not call `interrupt()` manually inside the middleware; official HITL owns the interrupt.
 
 Run: targeted tool/middleware tests. Expected: PASS.
 
-- [ ] **Step 5: Write RED approval and publication tests**
+- [x] **Step 5: Write RED approval and publication tests**
 
 Cover pending action projection from a real interrupt, approve/reject decision translation, duplicate idempotency key, restart using a SQLite checkpointer, draft version/hash conflict, edited approval, Vault publish, publication journal and index-stale.
 
@@ -245,7 +245,7 @@ Run: `pytest -q tests/test_approval_execution.py tests/test_publication_service.
 
 Expected: new execution tests FAIL while domain tests remain PASS.
 
-- [ ] **Step 6: Implement ApprovalService and explicit publication Graph**
+- [x] **Step 6: Implement ApprovalService and explicit publication Graph**
 
 Project the official interrupt payload into the product action repository. Store only safe preview and the thread/run identity. Resume with official decisions:
 
@@ -263,6 +263,10 @@ Run: all Task 2 targeted tests. Expected: PASS.
 Delete `test_tool_registry.py`, `test_tool_executor.py`, and adapter-only HITL tests. Keep file/path/audit/domain tests. Run `rg` to prove new production code does not import `ToolRegistry`, `BoundToolInvoker`, or `PersistentHitlMiddleware`.
 
 Commit: `refactor(agent): adopt standard tools and official hitl`
+
+Deletion is intentionally executed with Task 4's production cutover. Until the new
+application service owns the routes, the old entry point still imports the registry and
+executor; deleting them earlier would make an otherwise green intermediate commit unusable.
 
 ### Task 3: Replace cross-cutting pipeline with official middleware and native stream projection
 

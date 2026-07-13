@@ -32,6 +32,15 @@
   最终路径校验；新旧工具/路径/审计专项 31 passed。
 - 下一步：实现直接 `AgentMiddleware` 的 scope/audit policy，并与官方
   `HumanInTheLoopMiddleware` 组合。
+- Task 2 主链完成：`ToolPolicyMiddleware` 通过官方 `awrap_tool_call` 执行
+  allowlist/scope/metadata-only audit；真实 `create_agent` 测试证明官方 HITL 在工具
+  副作用前 interrupt，批准后只执行一次。
+- `ApprovalService` 将官方 interrupt 安全投影为 action，并用标准 decisions
+  `Command(resume=...)`；review 草稿/发布和独立 publication Graph 保持显式节点。
+- Task 2 新链与现有 HITL/publication 受影响专项共 65 passed。旧 Registry/Executor
+  删除顺延到 Task 4 production cutover，避免中间提交破坏当前应用入口。
+- 下一步：Task 3 用官方 summary/context/call-limit middleware 替换自研 pipeline，
+  并建立 LangGraph stream 到产品事件的单向投影。
 
 ## 2026-07-13：Learning 掌握包深度治理设计
 
