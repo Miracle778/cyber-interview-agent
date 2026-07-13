@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.runtime.graph_build_context import GraphBuildContext
+from app.runtime.middleware.types import MiddlewareConfig
 
 
 class GraphRegistryError(RuntimeError):
@@ -25,6 +26,7 @@ class GraphDefinition:
     required_model_roles: frozenset[str]
     allowed_tools: frozenset[str]
     allowed_scopes: frozenset[str]
+    middleware_config: MiddlewareConfig = MiddlewareConfig()
 
     def __post_init__(self) -> None:
         if not self.graph_id.strip():

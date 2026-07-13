@@ -225,6 +225,7 @@ class MiddlewareLayer(StrEnum):
 @dataclass(frozen=True, slots=True)
 class MiddlewareConfig:
     enabled_layers: frozenset[MiddlewareLayer] = frozenset(MiddlewareLayer)
+    disabled_middleware: frozenset[str] = frozenset()
     soft_context_tokens: int = 12_000
     hard_context_tokens: int = 16_000
     max_graph_steps: int = 40
@@ -262,12 +263,26 @@ class ToolInvocation:
 
 
 class RuntimeMiddleware(Protocol):
+    middleware_id: str
     layer: MiddlewareLayer
     order: int
 
     async def wrap_model(self, context, invocation, call_next): ...
     async def wrap_tool(self, context, invocation, call_next): ...
     async def after_message(self, context, message): ...
+
+
+class BaseRuntimeMiddleware:
+    """Pass-through defaults; subclasses override only the hooks they consume."""
+
+    async def wrap_model(self, context, invocation, call_next):
+        return await call_next(invocation)
+
+    async def wrap_tool(self, context, invocation, call_next):
+        return await call_next(invocation)
+
+    async def after_message(self, context, message):
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -296,7 +311,7 @@ class RuntimeGuardError(RuntimeError):
         super().__init__(message)
 ```
 
-Validate positive budgets in `MiddlewareConfig.__post_init__`; allow only the five stable guard codes.
+Validate positive budgets in `MiddlewareConfig.__post_init__`; allow only the five stable guard codes. Reserve order ranges `100..199` for Guard, `200..299` for Invocation and `300..399` for Post-processing.
 
 - [ ] **Step 5: Implement repositories and pipeline ordering**
 
@@ -305,6 +320,7 @@ Validate positive budgets in `MiddlewareConfig.__post_init__`; allow only the fi
 ```python
 class RuntimeMiddlewarePipeline:
     def __init__(self, middleware: Sequence[RuntimeMiddleware], config: MiddlewareConfig):
+        validate_unique_ids_orders_and_layer_ranges(middleware)
         self._middleware = tuple(sorted(middleware, key=lambda item: item.order))
         self._config = config
 
@@ -323,6 +339,7 @@ class RuntimeMiddlewarePipeline:
 ```
 
 Use explicit local async functions instead of late-bound lambdas in production. Repository methods use `INSERT ... ON CONFLICT(run_id, operation_key) DO NOTHING` and aggregate with `SUM`/`COUNT`.
+`_enabled()` must skip IDs in `config.disabled_middleware` while leaving the rest of the layer active. Tests must prove duplicate IDs, duplicate orders within one layer and out-of-range orders fail during construction with stable `ValueError` messages.
 
 - [ ] **Step 6: Add session CAS/summary repository methods and Graph defaults**
 

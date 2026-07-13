@@ -26,6 +26,8 @@ At the start of a task, locate only that task with `rg -n '^### Task'` and read 
 - Hard guard codes are limited to `loop_detected`, `no_progress`, `step_budget_exceeded`, `token_budget_exceeded`, `run_timeout`.
 - `knowledge.publish` remains an explicit Graph node/handler; HITL middleware handles ordinary tools only.
 - Middleware order is Guard → Invocation → Post-processing and each layer is independently switchable.
+- Every middleware has a stable unique ID and layer-local order; configuration can disable one middleware without disabling its layer.
+- Pipeline construction rejects duplicate IDs/orders and layer-range violations; a pass-through base class lets extensions override only relevant hooks.
 - Business code depends only on `ObservabilitySink`; local Langfuse/OTLP failures are fail-open.
 - Trace content is metadata-only by default; prompts, responses, files and tool arguments require explicit local redacted-content opt-in.
 - One Agent owns the slice. Use targeted tests in Tasks 1–3, one cross-layer integration run, one final regression/build, and one complete browser pass.
@@ -61,13 +63,14 @@ At the start of a task, locate only that task with `rg -n '^### Task'` and read 
 
 **Scope:**
 
-- [ ] Add RED migration/repository/pipeline tests.
-- [ ] Add migration 006 with unique `(run_id, operation_key)` usage writes and persistent guard sequences.
-- [ ] Add ordered, switchable pipeline and stable dataclasses/protocols.
-- [ ] Add local-only pinned Langfuse Compose, `.env.example`, health/start/stop documentation.
-- [ ] Add No-op sink and trace context; prove observability failure cannot affect business hooks.
-- [ ] Add title compare-and-set and session summary repository methods.
-- [ ] Run only runtime database/repository/pipeline tests.
+- [x] Add RED migration/repository/pipeline tests.
+- [x] Add migration 006 with unique `(run_id, operation_key)` usage writes and persistent guard sequences.
+- [x] Add ordered, switchable pipeline and stable dataclasses/protocols.
+- [x] Add stable IDs, per-middleware disablement, conflict validation and default pass-through hooks.
+- [x] Add local-only pinned Langfuse Compose, `.env.example`, health/start/stop documentation.
+- [x] Add No-op sink and trace context; prove observability failure cannot affect business hooks.
+- [x] Add title compare-and-set and session summary repository methods.
+- [x] Run only runtime database/repository/pipeline tests.
 - [ ] Commit `feat(runtime): add middleware pipeline foundation`.
 
 **Gate:** Existing graphs compile unchanged; duplicate usage counts once; guard state survives reopening; No-op works without Docker; local Langfuse health is reproducible.

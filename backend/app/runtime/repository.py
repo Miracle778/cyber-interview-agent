@@ -107,6 +107,34 @@ class RuntimeRepository:
 
         return self._transaction(update)
 
+    def compare_and_set_session_title(
+        self, session_id: str, *, expected: str, title: str
+    ) -> bool:
+        def update() -> bool:
+            self._require_session(session_id)
+            cursor = self._connection.execute(
+                "UPDATE agent_sessions SET title = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND title = ?",
+                (title, session_id, expected),
+            )
+            return cursor.rowcount == 1
+
+        return self._transaction(update)
+
+    def update_session_summary(
+        self, session_id: str, *, summary: str
+    ) -> SessionRecord:
+        def update() -> SessionRecord:
+            self._require_session(session_id)
+            self._connection.execute(
+                "UPDATE agent_sessions SET summary = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ?",
+                (summary, session_id),
+            )
+            return self._require_session(session_id)
+
+        return self._transaction(update)
+
     def create_run(
         self,
         session_id: str,

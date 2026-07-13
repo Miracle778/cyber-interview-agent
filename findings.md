@@ -56,6 +56,8 @@
 - 官方 `AgentMiddleware` 由 `create_agent` 组合，而当前业务使用手写 StateGraph；Middleware 1.0 采用统一 policy/repository 下的 RuntimeMiddleware pipeline + LangChain adapter，避免假设官方 hook 会自动作用于现有 Graph。
 - 可观测性采用 OpenTelemetry `ObservabilitySink` + 本机 Langfuse v3：Task 1 建抽象/Compose，Task 2 在真实模型调试前接 OTLP，Task 3/4 补 middleware、工具、HITL、发布和重启关联；默认 metadata-only、后端故障 fail-open。
 - 领域状态转换、Vault/索引副作用、长事务及补偿流程不放入通用 middleware；新增能力必须先判定归属并声明顺序、持久化、失败降级和幂等边界。
+- Pipeline 扩展契约增加稳定 middleware ID、单项关闭、层内顺序区间和冲突校验；默认透传基类允许扩展只覆盖需要的 hook。
+- 本机 Langfuse smoke test 发现 Alpine `localhost` 解析到 `::1` 会误判 ClickHouse unhealthy；健康检查固定使用 `127.0.0.1`。
 
 ## R1.5 修正结果
 

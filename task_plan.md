@@ -14,22 +14,22 @@
 | R1.6 | 场景可用并已合入 main | 单题复习迁移到共享 Runtime、真实 Provider 与持久化发布闭环 |
 | R2-R8 | 待开始 | 见正式产品路线 |
 
-## 当前任务：设置页体验重构
+## 当前任务：Runtime Middleware 1.0
 
-1. **设置外壳、分组导航与配置概览（已完成）**
-2. **模型服务渐进披露（已完成）**
-3. **运行诊断与响应式可访问性（已完成）**
-4. **浏览器、最终回归与文档收尾（自动回归完成；浏览器待依赖补齐）**
+1. **Pipeline 契约、持久化与本机观测底座（已完成，待提交）**
+2. **模型 usage、OTLP exporter 与 context budget（待开始）**
+3. **标题、循环保护、API 与 Review UI（待开始）**
+4. **HITL bridge、真实 Agent 与最终验收（待开始）**
 
 本切片只重构设置页前端信息架构；下一独立 Pre-R2 基础切片为 Runtime Middleware 1.0：补齐 pipeline、R1.2 压缩/token-context、标题、循环检测、HITL adapter 与 OpenTelemetry + 本机 Langfuse，只定义 TodoCandidate 契约，并用 R1.6 Agent 验收。
 
-Runtime Middleware 1.0 独立设计与四任务实施计划已形成；当前未进入生产代码。
+Runtime Middleware 1.0 已进入生产实现；Task 1 专项验证通过，未进入 Task 2。
 
 ## 当前分支
 
-- 分支：`codex/settings-experience`
-- worktree：`/private/tmp/cyber-interview-agent-settings-ux`
-- 基线：`main@eb4bcc5`
+- 分支：`codex/runtime-middleware-1-0`
+- worktree：`/private/tmp/cyber-interview-agent-runtime-middleware`
+- 基线：`main@f4c25bb`
 - 当前设计：`docs/superpowers/specs/2026-07-12-settings-experience-redesign-design.md`
 - 当前实施：`docs/superpowers/plans/2026-07-12-settings-experience-redesign.md`
 - 下一阶段设计：`docs/superpowers/specs/2026-07-12-runtime-middleware-1-0-design.md`

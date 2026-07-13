@@ -148,3 +148,12 @@
 - Runtime Middleware 1.0 独立技术设计已完成：明确官方 AgentMiddleware/手写 StateGraph 边界、pipeline 接口、持久化、错误语义、真实 Agent 验收和非目标；等待用户审阅后再写实施计划。
 - Runtime Middleware 1.0 实施计划完成，压缩为四个纵向任务；启动只读短索引，详细 TDD 手册按当前 Task 局部读取，避免每次恢复重复加载约千行计划。
 - 用户确认本机可观测方案：OpenTelemetry 抽象 + Langfuse v3 Docker Compose；已纳入 Middleware 1.0 原四任务，不新增产品阶段。
+
+## 2026-07-13：Runtime Middleware 1.0 Task 1
+
+- 从 `main@f4c25bb` 创建 `codex/runtime-middleware-1-0` 隔离 worktree。
+- TDD 完成稳定 ID、单项开关、分层顺序/冲突校验、洋葱 model/tool pipeline 与默认透传基类。
+- migration 006、usage 幂等聚合、guard/trace 重启序列、标题 CAS 和摘要 repository 完成。
+- No-op/Safe ObservabilitySink 覆盖创建、进入、退出、flush 故障，且不吞业务异常。
+- OTel 依赖已锁定；本机 Langfuse Compose 静态配置与真实健康端点通过，普通 down 保留 volumes。
+- Task 1 专项测试 26 passed；未运行全量回归，下一步为 Task 2。

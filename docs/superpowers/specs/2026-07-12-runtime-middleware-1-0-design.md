@@ -116,6 +116,11 @@ class TodoCandidate:
     confidence: float
 ```
 
+每个 middleware 还必须声明稳定的 `middleware_id`、所属 `layer` 和层内
+`order`。Pipeline 同时支持整层开关和按 ID 单项关闭，并在启动时拒绝重复
+ID、同层重复顺序或跨越层顺序区间。默认透传基类让新增 middleware 只覆盖
+自己需要的 hook，无需实现空的 model/tool/message 方法。
+
 Pipeline hook 不直接接收数据库 connection、API key 或 Workspace path；需要持久化时调用注入的窄 repository/service。
 
 ### 4.1 OpenTelemetry 与本机 Langfuse
