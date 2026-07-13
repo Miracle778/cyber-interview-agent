@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from pathlib import Path
 from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models import BaseChatModel
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
@@ -103,6 +104,7 @@ def test_model_resolver_rejects_disabled_model(model_setup):
 def test_agent_context_contains_only_safe_execution_identifiers():
     context = AgentContext(
         workspace_id="workspace-1",
+        workspace_root=Path("/workspace"),
         session_id="session-1",
         run_id="run-1",
         allowed_tools=frozenset({"read_source"}),
@@ -176,6 +178,7 @@ async def test_agent_factory_returns_a_real_runnable_agent_graph():
     )
     context = AgentContext(
         workspace_id="w1",
+        workspace_root=Path("/workspace"),
         session_id="s1",
         run_id="r1",
         allowed_tools=frozenset(),

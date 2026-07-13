@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -49,6 +50,7 @@ async def test_review_graph_uses_agent_results_without_provider_state():
     graph = create_review_graph(agents)
     context = AgentContext(
         workspace_id="workspace-1",
+        workspace_root=Path("/workspace"),
         session_id="session-1",
         run_id="run-1",
         allowed_tools=frozenset(),
@@ -80,6 +82,7 @@ async def test_review_agents_reject_empty_report():
     )
     context = AgentContext(
         workspace_id="w1",
+        workspace_root=Path("/workspace"),
         session_id="s1",
         run_id="r1",
         allowed_tools=frozenset(),

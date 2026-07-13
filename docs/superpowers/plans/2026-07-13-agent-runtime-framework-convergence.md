@@ -208,7 +208,7 @@ Commit: `refactor(agent): establish official agent execution core`
 - Produces `ApprovalService.project_interrupt(...)`, `approve(...)`, and `reject(...)` using official HITL decision payloads and `Command(resume=...)`.
 - Produces explicit publication Graph inputs containing `draft_id`, `draft_version`, `content_hash`, title and Markdown.
 
-- [ ] **Step 1: Write RED tests for standard tool schemas and injected context**
+- [x] **Step 1: Write RED tests for standard tool schemas and injected context**
 
 Assert each tool is a `BaseTool`, exposes only business arguments, receives `ToolRuntime[AgentContext]` as injected context, blocks Workspace traversal, and returns JSON-safe Pydantic output.
 
@@ -216,7 +216,7 @@ Run: `pytest -q tests/test_runtime_tools.py tests/test_workspace_paths.py`
 
 Expected: new tool test FAIL; existing path tests PASS.
 
-- [ ] **Step 2: Implement standard tools without a registry**
+- [x] **Step 2: Implement standard tools without a registry**
 
 Adapt existing file handlers behind `@tool(args_schema=...)`; obtain workspace/run identity from `ToolRuntime.context`. Keep the final `WorkspacePathPolicy` check inside the handler. Build tool tuples explicitly per Agent spec rather than globally registering by name.
 

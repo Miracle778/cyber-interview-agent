@@ -26,6 +26,12 @@
 - Task 1 复核未创建 subagent，因为本切片全局约束为单 Agent；已内联检查新代码无
   Gateway/Invoker/Pipeline 抽象和 whitespace 问题。
 - 下一步：提交 Task 1，进入标准 Tool、官方 HITL 与显式 publication Task 2。
+- Task 1 已提交为 `adfea9f`。
+- Task 2 Tool RED/GREEN 完成：四个文件能力已暴露为标准 `BaseTool`，注入的
+  `ToolRuntime[AgentContext]` 不进入业务参数 schema，Workspace handler 内仍执行
+  最终路径校验；新旧工具/路径/审计专项 31 passed。
+- 下一步：实现直接 `AgentMiddleware` 的 scope/audit policy，并与官方
+  `HumanInTheLoopMiddleware` 组合。
 
 ## 2026-07-13：Learning 掌握包深度治理设计
 
