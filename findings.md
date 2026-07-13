@@ -1,5 +1,20 @@
 # Cyber Interview Agent 当前发现
 
+## Agent Runtime 框架收敛发现
+
+- 当前依赖已锁到 LangChain 1.3.12、LangGraph 1.2.8，但生产代码只窄用
+  `StateGraph`、interrupt/checkpointer 和 ChatModel，未系统复用 `create_agent`、
+  官方 middleware、标准工具与 stream。
+- `RunManager`、`AgentRuntime`、`ChatModelGateway`、`ToolRegistry`、
+  `RuntimeMiddlewarePipeline` 和 `EventStream` 组成了平行 Agent Runtime。
+- `LangChainRuntimeMiddlewareAdapter` 只有单元测试引用，没有进入生产执行链。
+- context compression、通用调用限制和普通工具 HITL 与官方内置 middleware 重叠；
+  语义无进展、Workspace 安全、产品 projection 和领域幂等仍需项目实现。
+- `review_graph.py`、`review_state.py` 和 `agents/tools.py` 是只被旧测试引用的遗留链。
+- 用户确认仓库没有真实用户数据，选择不兼容旧数据、API、checkpoint 和内部协议；
+  当前实现已用 tag 归档，不建设双 Runtime 兼容桥。
+- 正确依赖环境下重构前基线为后端 281 passed、前端 75 passed。
+
 ## R1.5 审阅结论
 
 - 后端 234 项、前端 56 项测试以及 TypeScript/build 当前通过。

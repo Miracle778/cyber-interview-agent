@@ -14,25 +14,26 @@
 | R1.6 | 场景可用并已合入 main | 单题复习迁移到共享 Runtime、真实 Provider 与持久化发布闭环 |
 | R2-R8 | 待开始 | 见正式产品路线 |
 
-## 当前任务：Learning 掌握包深度治理
+## 当前任务：Pre-R2 Agent Runtime Framework Convergence
 
-1. **风险档案与机器门禁 TDD（已完成）**
-2. **模板和阶段关闭规范（已完成）**
-3. **历史 learning 掌握包补强（已完成）**
-4. **全量文档验收与 main 本地同步（已完成）**
+1. **归档与架构设计（进行中）**
+2. **官方 Agent/模型/工具骨架（待开始）**
+3. **review.single、HITL 与横切能力迁移（待开始）**
+4. **Runtime/event 收敛、删除与最终验收（待开始）**
 
-本切片不修改产品运行行为。目标是补齐 R1.4、R1.6、Runtime Middleware、Pre-R2 和设置页掌握材料，并防止以后以标题存在性代替学习深度。
-
-本切片的正式规范和门禁已合入 main；8 个忽略的 learning 目录与设置页 verification 已显式同步、逐文件 hash 核对并在 main 复验。
+本切片在 R2 前删除项目与 LangChain/LangGraph 重叠的 Runtime、middleware、
+provider invocation 和 tool registry。用户确认不兼容旧测试数据、API、checkpoint
+与内部协议；核心产品能力必须重新验收。
 
 ## 当前分支
 
-- 分支：`main`
-- worktree：`/Users/miracle778/Project/cyber-interview-agent-new`
-- 完成合并：`main@6d26b77`，另有本次同步收尾提交
-- 当前设计：`docs/superpowers/specs/2026-07-13-learning-documentation-depth-design.md`
-- 当前实施：`docs/superpowers/plans/2026-07-13-learning-documentation-depth.md`
-- 下一产品阶段：R2 完整复习 Agent
+- 分支：`codex/agent-runtime-framework-convergence`
+- worktree：`/private/tmp/cyber-interview-agent-runtime-convergence`
+- 基线：`main@8e1b500`
+- 归档：`archive/pre-agent-runtime-refactor-2026-07-13`
+- 当前设计：`docs/superpowers/specs/2026-07-13-agent-runtime-framework-convergence-design.md`
+- 当前实施：设计确认后生成
+- 下一产品阶段：完成本切片后进入 R2 完整复习 Agent
 
 ## 执行预算
 

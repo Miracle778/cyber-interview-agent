@@ -1,5 +1,21 @@
 # Cyber Interview Agent 当前进度
 
+## 2026-07-13：Agent Runtime 框架收敛启动
+
+- 用户确认当前数据均为测试数据，选择不兼容重构。
+- `main@8e1b500` 已创建归档 tag
+  `archive/pre-agent-runtime-refactor-2026-07-13`。
+- 创建分支 `codex/agent-runtime-framework-convergence`，隔离 worktree 为
+  `/private/tmp/cyber-interview-agent-runtime-convergence`；主仓库保持 `main` 干净。
+- 首次基线命令误用缺少 OpenTelemetry 的主仓库 venv，前端 `pnpm` 也尝试重建
+  软链接依赖；根因定位后改用 Middleware worktree 锁定 venv 和直接 vitest 入口。
+- 正确环境基线：后端 281 passed，前端 75 passed。
+- 正式设计开始把 `create_agent`、官方 `AgentMiddleware`、标准工具、LangGraph
+  checkpoint/stream/interrupt 定义为唯一执行协议。
+- 设计自审已完成：无占位符、兼容边界与删除清单一致；三份启动入口合计 395 行，
+  保持在 400 行预算内。
+- 下一步：提交并请用户审阅正式设计；确认后生成文件级实施计划。
+
 ## 2026-07-13：Learning 掌握包深度治理设计
 
 - 审阅 7 个现有 learning 目录，确认后续阶段的文档深度与实际复杂度不匹配。

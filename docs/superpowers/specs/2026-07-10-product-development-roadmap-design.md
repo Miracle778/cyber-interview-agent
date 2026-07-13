@@ -82,9 +82,9 @@ Provider、模型选择、LangGraph Runtime、会话恢复、HITL 和知识库�
 
 ### 3.4 Middleware 架构规则
 
-Runtime 使用统一 middleware pipeline 承载跨 Graph、跨 Agent、与具体业务节点无关的横切能力。满足以下多数条件的能力优先实现为 middleware：多个 Agent 使用相同触发时机和规则；关注模型、消息、工具或 run 生命周期而非领域状态转换；可通过 hook 或调用包装完成；可统一降级；具有稳定、可组合、可测试的窄契约。
+Runtime 使用 LangChain 官方 `AgentMiddleware` 承载跨 Graph、跨 Agent、与具体业务节点无关的横切能力。Agent 通过 `create_agent` 构建，并可作为节点或子图嵌入显式业务 `StateGraph`；不得因为业务 Graph 是手写拓扑而建立平行的 middleware 调度器。满足以下多数条件的能力优先实现为 middleware：多个 Agent 使用相同触发时机和规则；关注模型、消息、工具或 run 生命周期而非领域状态转换；可通过官方 hook 或调用包装完成；可统一降级；具有稳定、可组合、可测试的窄契约。
 
-Pipeline 固定为三层并按顺序执行：
+概念上按以下三类能力组织，但执行协议、hook 与顺序以官方 `AgentMiddleware` 为唯一实现：
 
 1. **Guard middleware**：权限和 scope、HITL 拦截、最大节点步数、工具调用数、运行时间、token/费用预算、无限循环和无进展检测；
 2. **Invocation middleware**：模型/工具调用包装、token/费用/耗时统计、超时、限流、重试、fallback、schema 校验、tracing、错误归一化和脱敏；
@@ -112,6 +112,7 @@ HITL 采用分层方案：保留 `HitlService`、pending action repository、res
 Middleware 随 Agent 能力分阶段落地：
 
 - **Pre-R2 Middleware 1.0**：建立 pipeline 契约、注册、顺序、开关和 Runtime context；实现 token/context 统计、context budget 与上下文压缩、会话标题总结、无限循环检测和 HITL adapter；只定义 `TodoCandidate` 契约和事件，不调用模型提取、不持久化正式待办。使用已完成的 R1.6 `review.single` 作为第一个真实接入与验收 Agent。
+- **Pre-R2 Agent Runtime Framework Convergence**：归档 Middleware 1.0 的行为证据，删除平行 RuntimeMiddleware pipeline，把 `review.single` 迁到 `create_agent` 子图、官方 middleware、标准工具、标准模型和 LangGraph stream；不兼容旧测试数据、API 和 checkpoint，完成后再进入 R2。
 - **R2 完整复习 Agent**：验证长会话压缩、多题循环保护、标题和用量展示；根据真实运行补充重复工具调用、无进展检测和预算预警。
 - **R3 个人信息 Agent**：定义用户偏好、长期记忆和待办候选的安全输入边界，完善敏感信息脱敏；仍不创建正式 Todo 状态机。
 - **R4 岗位追踪**：实现正式 Todo Service，并启用待办候选提取、用户确认、去重、截止时间和岗位关联。
