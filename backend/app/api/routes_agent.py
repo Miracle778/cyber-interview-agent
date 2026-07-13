@@ -1,10 +1,14 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, Query, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from app.api.dependencies import get_agent_application
-from app.application.session_service import ExecutionRecord, SessionRecord
+from app.application.session_service import (
+    ExecutionRecord,
+    ProductRecordNotFoundError,
+    SessionRecord,
+)
 from app.application.workspace_runtime import AgentApplication
 from app.schemas.agent import (
     CreateSessionCommand,
@@ -77,8 +81,11 @@ async def stream_events(
     after: int | None = None,
     last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
     application: AgentApplication = Depends(get_agent_application),
-) -> StreamingResponse:
-    await application.session_detail(session_id)
+) -> Response:
+    try:
+        await application.session_detail(session_id)
+    except ProductRecordNotFoundError:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
     cursor = after
     if cursor is None and last_event_id is not None:
         try:

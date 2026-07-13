@@ -66,7 +66,13 @@ export function RuntimeDiagnostics({ workspaceId }: { workspaceId: string }) {
     queryFn: () => getAgentSession(sessionId as string),
     enabled: sessionId !== null,
   });
-  const stream = useAgentEvents(sessionId);
+  const stream = useAgentEvents(sessionId, {
+    onMissingSession: (missingSessionId) => {
+      setSessionId((current) => (current === missingSessionId ? null : current));
+      setActiveExecution(null);
+      void sessionsQuery.refetch();
+    },
+  });
   const latestExecution = activeExecution ?? detailQuery.data?.latestExecution ?? null;
   const currentExecutionEvents = useMemo(
     () =>

@@ -119,6 +119,15 @@ async def test_cancel_and_replay_cursor_are_product_level(api, application):
 
 
 @pytest.mark.asyncio
+async def test_missing_session_event_stream_stops_browser_reconnects(api):
+    async with AsyncClient(transport=ASGITransport(app=api), base_url="http://test") as client:
+        response = await client.get("/api/agent/sessions/missing-session/events?after=54")
+
+    assert response.status_code == 204
+    assert response.content == b""
+
+
+@pytest.mark.asyncio
 async def test_review_draft_is_pending_as_soon_as_execution_requests_approval(application):
     session = await application.create_session(
         workspace_id="w1", kind="diagnostic.draft", title="Draft"

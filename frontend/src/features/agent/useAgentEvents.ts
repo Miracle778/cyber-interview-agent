@@ -20,6 +20,8 @@ export interface EventSourceLike {
 interface UseAgentEventsOptions {
   createEventSource?: (url: string) => EventSourceLike;
   reconnectDelayMs?: number;
+  sessionExists?: (sessionId: string) => Promise<boolean>;
+  onMissingSession?: (sessionId: string) => void;
 }
 
 const EVENT_TYPES = [
@@ -40,6 +42,18 @@ const EVENT_TYPES = [
 const createBrowserEventSource = (url: string): EventSourceLike =>
   new EventSource(url);
 
+async function defaultSessionExists(sessionId: string): Promise<boolean> {
+  try {
+    const response = await fetch(
+      `/api/agent/sessions/${encodeURIComponent(sessionId)}`,
+      { headers: { Accept: "application/json" } },
+    );
+    return ![204, 404, 410].includes(response.status);
+  } catch {
+    return true;
+  }
+}
+
 export function useAgentEvents(
   sessionId: string | null,
   options: UseAgentEventsOptions = {},
@@ -53,6 +67,12 @@ export function useAgentEvents(
     options.createEventSource ?? createBrowserEventSource,
   );
   const reconnectDelayRef = useRef(options.reconnectDelayMs ?? 1000);
+  const sessionExistsRef = useRef(
+    options.sessionExists ??
+      (options.createEventSource ? undefined : defaultSessionExists),
+  );
+  const onMissingSessionRef = useRef(options.onMissingSession);
+  onMissingSessionRef.current = options.onMissingSession;
 
   useEffect(() => {
     cursorRef.current = 0;
@@ -68,9 +88,18 @@ export function useAgentEvents(
     let timer: ReturnType<typeof setTimeout> | null = null;
     let stopped = false;
 
-    const connect = () => {
+    const connect = async () => {
       const suffix = cursorRef.current > 0 ? `?after=${cursorRef.current}` : "";
       setStatus(cursorRef.current > 0 ? "reconnecting" : "connecting");
+      if (sessionExistsRef.current) {
+        const exists = await sessionExistsRef.current(sessionId);
+        if (stopped) return;
+        if (!exists) {
+          setStatus("disconnected");
+          onMissingSessionRef.current?.(sessionId);
+          return;
+        }
+      }
       const nextSource = createEventSourceRef.current(
         `/api/agent/sessions/${sessionId}/events${suffix}`,
       );
@@ -107,12 +136,12 @@ export function useAgentEvents(
         setStatus("reconnecting");
         timer = setTimeout(() => {
           timer = null;
-          connect();
+          void connect();
         }, reconnectDelayRef.current);
       };
     };
 
-    connect();
+    void connect();
     return () => {
       stopped = true;
       if (timer) clearTimeout(timer);

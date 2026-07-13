@@ -43,7 +43,17 @@ export function ReviewPage({ workspace, draftQuestion }: ReviewPageProps) {
   const [rejectReason, setRejectReason] = useState("");
   const [error, setError] = useState<ActionableError | null>(null);
   const [busy, setBusy] = useState(false);
-  const stream = useAgentEvents(sessionId);
+  const stream = useAgentEvents(sessionId, {
+    onMissingSession: (missingSessionId) => {
+      setSessions((current) =>
+        current.filter((session) => session.id !== missingSessionId),
+      );
+      setSessionId((current) => (current === missingSessionId ? null : current));
+      setDetail((current) => (current?.id === missingSessionId ? null : current));
+      setAction(null);
+      setDraft(null);
+    },
+  });
 
   const refreshSession = useCallback(async (targetId: string) => {
     const nextDetail = await getAgentSession(targetId);

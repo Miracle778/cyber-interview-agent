@@ -117,4 +117,24 @@ describe("useAgentEvents", () => {
 
     expect(result.current.executionError).toBeNull();
   });
+
+  it("does not open or retry an event stream for a missing session", async () => {
+    vi.useFakeTimers();
+    const onMissingSession = vi.fn();
+    const { result } = renderHook(() =>
+      useAgentEvents("missing-session", {
+        createEventSource: (url) => new FakeEventSource(url),
+        reconnectDelayMs: 10,
+        sessionExists: async () => false,
+        onMissingSession,
+      }),
+    );
+
+    await act(async () => {});
+    act(() => vi.advanceTimersByTime(100));
+
+    expect(FakeEventSource.instances).toHaveLength(0);
+    expect(onMissingSession).toHaveBeenCalledWith("missing-session");
+    expect(result.current.status).toBe("disconnected");
+  });
 });
