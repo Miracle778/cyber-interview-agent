@@ -226,6 +226,16 @@ class StageDocumentationGateTests(unittest.TestCase):
         self.assertIn("architecture.md", result.stderr)
         self.assertIn("占位符", result.stderr)
 
+    def test_todo_candidate_is_not_a_placeholder(self) -> None:
+        learning = valid_learning_files()
+        learning["architecture.md"] += (
+            "\nTodoCandidate 是稳定契约，正式 Todo Service 属于后续阶段。\n"
+        )
+
+        result = self.run_gate(valid_verification(), learning)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_missing_or_unknown_learning_profile_fails(self) -> None:
         missing = valid_learning_files()
         missing["overview.md"] = missing["overview.md"].replace(

@@ -81,12 +81,18 @@ def _read_text(path: Path) -> tuple[str | None, list[CheckIssue]]:
 
 
 def _placeholder_issues(path: Path, text: str) -> list[CheckIssue]:
-    upper_text = text.upper()
-    return [
-        CheckIssue(path, f"包含未完成占位符：{placeholder}")
-        for placeholder in PLACEHOLDERS
-        if placeholder.upper() in upper_text
-    ]
+    issues: list[CheckIssue] = []
+    for placeholder in PLACEHOLDERS:
+        if placeholder.isascii():
+            found = re.search(
+                rf"(?<![A-Za-z0-9_]){re.escape(placeholder)}(?![A-Za-z0-9_])",
+                text,
+            )
+        else:
+            found = placeholder in text
+        if found:
+            issues.append(CheckIssue(path, f"包含未完成占位符：{placeholder}"))
+    return issues
 
 
 def check_verification(path: Path) -> list[CheckIssue]:
