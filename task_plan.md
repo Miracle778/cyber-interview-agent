@@ -32,7 +32,7 @@ provider invocation 和 tool registry。用户确认不兼容旧测试数据、A
 - 基线：`main@8e1b500`
 - 归档：`archive/pre-agent-runtime-refactor-2026-07-13`
 - 当前设计：`docs/superpowers/specs/2026-07-13-agent-runtime-framework-convergence-design.md`
-- 当前实施：设计确认后生成
+- 当前实施：`docs/superpowers/plans/2026-07-13-agent-runtime-framework-convergence.md`
 - 下一产品阶段：完成本切片后进入 R2 完整复习 Agent
 
 ## 执行预算

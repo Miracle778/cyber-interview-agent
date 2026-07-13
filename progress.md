@@ -14,7 +14,10 @@
   checkpoint/stream/interrupt 定义为唯一执行协议。
 - 设计自审已完成：无占位符、兼容边界与删除清单一致；三份启动入口合计 395 行，
   保持在 400 行预算内。
-- 下一步：提交并请用户审阅正式设计；确认后生成文件级实施计划。
+- 用户确认正式设计并要求开始执行；测试基线明确为归档证据，不是兼容门禁。
+- 实施计划按 KEEP/REWRITE/DELETE 处置旧测试，并拆成 Agent 核心、Tool/HITL、
+  middleware/stream、Runtime/API/前端收敛四个纵向任务。
+- 下一步：计划自审和提交后，按 Task 1 编写 AgentFactory/ModelResolver RED。
 
 ## 2026-07-13：Learning 掌握包深度治理设计
 
