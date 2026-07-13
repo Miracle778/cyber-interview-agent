@@ -18,6 +18,10 @@
 - 人工抽查确认四类档案均包含匹配风险的状态所有权、真实链路、故障与边界；显式代码路径在当前仓库存在。
 - 设置页继续明确“前端 70 passed/build 通过、浏览器因依赖缺失未通过”，未倒填验收。
 - 正式文件准备提交；忽略的 8 个 learning 目录和设置页 verification 等待分支合并后同步到 main。
+- `codex/learning-documentation-quality` 已 fast-forward 合入 `main@6d26b77`。
+- 8 个 learning 目录逐目录同步到主仓库，源/目标 Markdown 文件列表和 SHA-256 全部一致。
+- 设置页 verification 已补同步，SHA-256 为 `b8900782b659f46a49c5d3422431196e97966de94451f766e0414f3b3347d71b`。
+- main 最终复验：文档门禁单测 16 passed；8 个阶段 gate 全部通过。本切片不修改产品运行代码，未重复后端/前端回归。
 
 ## 2026-07-12：R1.5 接管审阅
 

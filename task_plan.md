@@ -19,17 +19,17 @@
 1. **风险档案与机器门禁 TDD（已完成）**
 2. **模板和阶段关闭规范（已完成）**
 3. **历史 learning 掌握包补强（已完成）**
-4. **全量文档验收完成，等待合并后同步到 main**
+4. **全量文档验收与 main 本地同步（已完成）**
 
 本切片不修改产品运行行为。目标是补齐 R1.4、R1.6、Runtime Middleware、Pre-R2 和设置页掌握材料，并防止以后以标题存在性代替学习深度。
 
-当前分支实现与本地文档已验收；剩余动作仅为选择集成方式，并在合并后把忽略的 learning/设置页 verification 显式同步到主仓库。
+本切片的正式规范和门禁已合入 main；8 个忽略的 learning 目录与设置页 verification 已显式同步、逐文件 hash 核对并在 main 复验。
 
 ## 当前分支
 
-- 分支：`codex/learning-documentation-quality`
-- worktree：`/private/tmp/cyber-interview-agent-learning-quality`
-- 基线：`main@7915bf9`
+- 分支：`main`
+- worktree：`/Users/miracle778/Project/cyber-interview-agent-new`
+- 完成合并：`main@6d26b77`，另有本次同步收尾提交
 - 当前设计：`docs/superpowers/specs/2026-07-13-learning-documentation-depth-design.md`
 - 当前实施：`docs/superpowers/plans/2026-07-13-learning-documentation-depth.md`
 - 下一产品阶段：R2 完整复习 Agent

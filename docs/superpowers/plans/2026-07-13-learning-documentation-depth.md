@@ -256,7 +256,7 @@ git add task_plan.md findings.md progress.md
 git commit -m "docs(learning): record ownership pack remediation"
 ```
 
-- [ ] **Step 5: Integration handoff**
+- [x] **Step 5: Integration handoff**
 
 Before merging, list tracked commits and local learning directories. After a fast-forward merge, explicitly copy the final ignored `docs/learning/` directories to the main checkout and compare file lists plus hashes. The task is not closed until the main checkout passes the script regression and all learning gates.
 
