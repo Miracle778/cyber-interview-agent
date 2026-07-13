@@ -26,5 +26,12 @@
 
 ## 当前下一步
 
-1. 等待用户决定是否合入 main。
-2. 合并后显式同步忽略的 verification 与 learning 七件套。
+1. 进入 R2 多题复习 Agent 编排。
+2. 用户并行完成本阶段 ownership 练习。
+
+## 2026-07-13：合入 main
+
+- `codex/agent-runtime-framework-convergence` 已 fast-forward 合入 `main@9116dff`。
+- verification 与 learning 七件套已显式同步；目录 diff 和 verification SHA-256 一致。
+- main 合并后复验：后端 `195 passed`，前端 `76 passed`，`npm run build` 通过。
+- 文档门禁通过，旧 Runtime 抽象扫描零匹配；产品切片关闭。

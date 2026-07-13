@@ -2,7 +2,7 @@
 
 ## 当前任务
 
-Pre-R2 Agent Runtime Framework Convergence 已完成实现、验收与提交。
+Pre-R2 Agent Runtime Framework Convergence 已完成实现、验收并 fast-forward 合入 `main`。
 
 | 纵向任务 | 状态 |
 |---|---|
@@ -13,8 +13,9 @@ Pre-R2 Agent Runtime Framework Convergence 已完成实现、验收与提交。
 
 ## 工作位置
 
-- 分支：`codex/agent-runtime-framework-convergence`
-- worktree：`/private/tmp/cyber-interview-agent-runtime-convergence`
+- 当前分支：`main`
+- 主仓库：`/Users/miracle778/Project/cyber-interview-agent-new`
+- 实现 worktree：`/private/tmp/cyber-interview-agent-runtime-convergence`（保留作来源核对）
 - 基线：`main@8e1b500`
 - 归档：`archive/pre-agent-runtime-refactor-2026-07-13`
 - 设计：`docs/superpowers/specs/2026-07-13-agent-runtime-framework-convergence-design.md`
@@ -29,14 +30,14 @@ Pre-R2 Agent Runtime Framework Convergence 已完成实现、验收与提交。
 - context summary：全新会话第 11 次执行触发；三个 role thread 隔离。
 - observability：真实不可连接 OTLP endpoint 下业务 fail-open。
 
-## 下一步
+## 下一产品任务
 
-1. 等待用户选择是否 fast-forward 合入 `main`。
-2. 合并后显式同步本地 verification 与 learning 七件套。
+1. 进入 R2 多题复习 Agent 编排设计与实现。
+2. 用户可并行完成本阶段 ownership 练习，不阻塞 R2。
 
 ## 所有权状态
 
-- 产品：实现稳定，已提交 `4f6aabb`。
+- 产品：实现稳定，`9116dff` 及之前提交已合入 `main`。
 - 成熟度：场景可用；旧数据/API/checkpoint 不兼容是明确边界。
 - 用户学习：未开始。
 - 用户实践：未开始；不阻塞产品提交或 R2。
