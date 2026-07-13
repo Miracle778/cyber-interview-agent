@@ -123,6 +123,8 @@ Middleware 随 Agent 能力分阶段落地：
 
 采用 middleware 的收益是一次实现供全部 Agent/Graph 复用、业务节点保持聚焦、安全成本质量规则统一、新 Agent 默认获得治理能力，并支持独立测试、替换、开关和观测。代价是执行顺序、共享状态、额外模型调用和失败传播更复杂，因此禁止形成持有全部 Runtime 状态的“大中间件”。
 
+Agent 可观测性统一采用 OpenTelemetry 抽象，业务代码只依赖项目 `ObservabilitySink`；首个后端为本机自托管 Langfuse，通过 OTLP/HTTP 接收 spans。默认只记录安全 ID、模型/工具名、token、耗时、状态和稳定错误码，不记录 Prompt、回复、个人资料、Vault 正文或工具参数。可观测后端不可用时必须 fail-open，不影响 Agent、HITL 和知识发布。
+
 ### 3.5 数据与知识库
 
 - Markdown + YAML frontmatter 是用户可读、可迁移的长期可信数据。

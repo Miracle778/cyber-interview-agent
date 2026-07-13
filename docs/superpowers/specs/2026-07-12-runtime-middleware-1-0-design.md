@@ -12,6 +12,7 @@ Middleware 1.0 使用已经完成的 `review.single` 作为第一个真实接入
 - 首轮有效对话后的会话标题总结；
 - 无限循环、重复调用和无进展保护；
 - 普通工具审批到现有持久化 HITL 的 adapter；
+- OpenTelemetry 抽象与本机 Langfuse v3 调试后端；
 - `TodoCandidate` 类型与事件契约，不实现提取或正式 Todo Service。
 
 ## 2. 官方 Middleware 与当前 Runtime 的边界
@@ -83,6 +84,7 @@ Post-processing 在成功生成持久化 assistant message 后执行：
 - `loop_guard.py`：指纹、软/硬阈值和终止错误；
 - `hitl_adapter.py`：普通工具审批策略到 `request_action`/`interrupt` 的适配；
 - `langchain_adapter.py`：未来 `create_agent` 使用的 `AgentMiddleware` adapter。
+- `observability.py`：`TraceContext`、`ObservabilitySink`、No-op 与 OpenTelemetry 实现。
 
 稳定协议：
 
@@ -116,6 +118,40 @@ class TodoCandidate:
 
 Pipeline hook 不直接接收数据库 connection、API key 或 Workspace path；需要持久化时调用注入的窄 repository/service。
 
+### 4.1 OpenTelemetry 与本机 Langfuse
+
+业务代码只依赖项目协议 `ObservabilitySink`，不直接导入 Langfuse SDK。默认使用 `NoopObservabilitySink`；开发环境显式配置 OTLP/HTTP 后，使用 OpenTelemetry SDK 的批处理 exporter 把 spans 发送到本机 Langfuse v3：
+
+```text
+Cyber Interview Agent
+  -> OpenTelemetry spans
+  -> OTLP/HTTP
+  -> http://127.0.0.1:3000/api/public/otel
+  -> Langfuse UI http://127.0.0.1:3000
+```
+
+仓库维护 `infra/observability/langfuse/compose.yaml`、`.env.example` 和 `README.md`。Compose 固定经过验证的 v3 镜像版本，包含 Langfuse Web/Worker、PostgreSQL、ClickHouse、Redis/Valkey 和 MinIO，服务只绑定本机地址，数据使用 named volumes。普通 `down` 不删除 volumes；清理必须使用单独、显式标注会删除数据的命令。
+
+Trace 结构：
+
+```text
+agent.run
+├── graph.execute
+├── model.invoke / model.stream
+├── middleware.context_compression
+├── middleware.session_title
+├── middleware.loop_guard
+├── tool.invoke
+├── hitl.interrupt / hitl.resume
+└── knowledge.publish
+```
+
+每个 span 允许记录 Workspace/session/run/graph 的安全 ID、Provider/model 非敏感 ID、token/context、耗时、工具名、scope、action ID、publication state 和稳定错误码。默认禁止记录 API key、完整 Prompt/回复、简历、JD、Vault 内容、工具参数正文和 Provider 原始异常。内容采样只能通过本地开发配置按 Workspace 显式开启，并在 export 前脱敏。
+
+Langfuse/OTLP 不可用、队列满或 flush 超时时采用 fail-open：本地 Runtime SQLite usage、事件和业务 run 继续工作，只发布本地 warning。Exporter 使用有限队列和批处理；关闭应用时只允许短时间 flush。
+
+进程重启后不伪造跨进程未结束 span。恢复创建新的 trace segment，复用相同 `session.id`/`run.id` 属性，并通过持久化的最后 span context 建立 OpenTelemetry Link。Langfuse 中按 session/run ID 聚合完整链路。
+
 ## 5. 持久化模型
 
 新增 Runtime migration：
@@ -133,6 +169,13 @@ Pipeline hook 不直接接收数据库 connection、API key 或 Workspace path�
 - `run_id`, `sequence`, `kind`, `fingerprint`, `state_hash`, `error_code`, `created_at`；
 - 只保存规范化 hash 和稳定元数据，不保存工具密钥或完整 prompt；
 - run 结束后可保留用于诊断，后续由 R7 决定清理策略。
+
+### 5.3 `runtime_trace_segments`
+
+- `run_id`, `segment_sequence`, `trace_id`, `span_id`, `created_at`, `finished_at`；
+- 每次 start/resume 创建新 segment，记录非敏感 OTel context；
+- 新 segment 使用上一 segment 的 span context 建立 Link，不跨进程伪造未结束 span；
+- Langfuse 不可用时 segment 记录仍允许本地诊断，但不影响 run 状态。
 
 现有 `agent_sessions.summary` 保存压缩摘要。`agent_sessions.title` 继续保存标题，不增加第二个标题字段。Repository 增加 expected-current-value 更新，避免用户已改标题后被后台总结覆盖。
 
@@ -193,6 +236,7 @@ Review 页面状态区展示紧凑用量和压缩状态，不新增独立设置�
 ### 11.1 单元与 repository
 
 - pipeline 顺序、开关、异常传播和单一职责；
+- No-op/OTLP sink、span 层级、脱敏、队列故障和短 flush；
 - Provider 原生 usage 与 estimated fallback；
 - 流式 usage 只计一次；
 - usage operation key 幂等；
@@ -209,11 +253,13 @@ Review 页面状态区展示紧凑用量和压缩状态，不新增独立设置�
 - 关闭 middleware 后原业务输出和发布闭环不变；
 - 普通工具审批通过 adapter，知识发布仍通过显式 action；
 - 人为制造重复调用时 run 以稳定错误终止。
+- 本机 Langfuse 可看到模型、middleware、HITL 和发布 spans；关闭 Langfuse 后业务仍完成。
 
 ### 11.3 最终验收
 
 - 最终后端全量回归最多两次，前端全量/build 最多两次；
 - 一次浏览器验收覆盖用量、标题、压缩提示、循环错误、刷新和后端重启；
+- 一次本机可观测验收覆盖 Langfuse 健康检查、两个真实模型 spans、内容默认关闭、HITL/restart 关联和 exporter fail-open；
 - 不要求 Todo 提取或 Todo UI；
 - verification 不得把估算 token 描述为 Provider 原生 usage。
 
@@ -223,7 +269,7 @@ Review 页面状态区展示紧凑用量和压缩状态，不新增独立设置�
 - 不实现 R2 多题复习行为；
 - 不重写 `review.single` 领域 Graph；
 - 不把知识发布迁入 middleware；
-- 不引入 LangSmith、外部队列或远程 telemetry 服务；
+- 不引入 LangSmith、远程 telemetry SaaS 或生产级 Langfuse 高可用部署；本阶段只支持本机 Docker Compose；
 - 不实现费用换算表，1.0 只保存 token 和可选 Provider 原始费用字段；
 - 不顺带实现全部候选 middleware。
 

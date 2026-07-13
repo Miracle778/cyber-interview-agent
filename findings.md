@@ -54,6 +54,7 @@
 - Pipeline 固定为 Guard → Invocation → Post-processing；首批实现 token/context、压缩、标题、循环检测和 HITL adapter，待办候选只定义契约。
 - 阶段调整为 Pre-R2 实现五项核心能力并只定义 TodoCandidate；R2 用多题复习验证，R4 才实现 Todo Service 和真实候选提取，R5/R6 分别扩展行动项与多 Agent 治理。
 - 官方 `AgentMiddleware` 由 `create_agent` 组合，而当前业务使用手写 StateGraph；Middleware 1.0 采用统一 policy/repository 下的 RuntimeMiddleware pipeline + LangChain adapter，避免假设官方 hook 会自动作用于现有 Graph。
+- 可观测性采用 OpenTelemetry `ObservabilitySink` + 本机 Langfuse v3：Task 1 建抽象/Compose，Task 2 在真实模型调试前接 OTLP，Task 3/4 补 middleware、工具、HITL、发布和重启关联；默认 metadata-only、后端故障 fail-open。
 - 领域状态转换、Vault/索引副作用、长事务及补偿流程不放入通用 middleware；新增能力必须先判定归属并声明顺序、持久化、失败降级和幂等边界。
 
 ## R1.5 修正结果

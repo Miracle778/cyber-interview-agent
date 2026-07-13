@@ -136,7 +136,7 @@ R1 已打通工作区、Provider、Agent Runtime、知识草稿发布和单题�
 ## 11. 阶段顺序与完成边界
 
 1. 完成本设计对应的 UI/知识库体验稳定化。
-2. 独立设计并补齐 Runtime Middleware 1.0：pipeline 契约/注册/顺序/开关、R1.2 上下文压缩与 context budget、token/context 用量、会话标题、无限循环检测和 HITL adapter；只定义 `TodoCandidate` 契约，不实现提取与正式 Todo Service。使用 R1.6 `review.single` 完成真实 Agent 验收。
+2. 独立设计并补齐 Runtime Middleware 1.0：pipeline 契约/注册/顺序/开关、R1.2 上下文压缩与 context budget、token/context 用量、会话标题、无限循环检测、HITL adapter，以及 OpenTelemetry 抽象 + 本机 Langfuse 调试链路；只定义 `TodoCandidate` 契约，不实现提取与正式 Todo Service。使用 R1.6 `review.single` 完成真实 Agent 验收。
 3. 两个 Pre-R2 切片验收后开始 R2。
 
 本切片完成不代表 R1.2 Runtime 债务已经清偿，也不代表 R2 已开始。

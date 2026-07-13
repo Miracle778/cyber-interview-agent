@@ -4,9 +4,9 @@
 
 **Goal:** Add a real middleware pipeline consumed by the existing `review.single` Agent, providing persisted model usage, context compression, automatic titles, loop protection, and a persistent-HITL adapter while defining—but not implementing—Todo candidates.
 
-**Architecture:** Keep handwritten `StateGraph` workflows and wrap the existing `GraphBuildContext` model/tool/action ports with a three-layer RuntimeMiddleware pipeline. Store telemetry and guard observations in Workspace Runtime SQLite, expose session aggregates through the existing Agent API, and provide a thin LangChain `AgentMiddleware` adapter that reuses the same policy/services for future `create_agent` workflows.
+**Architecture:** Keep handwritten `StateGraph` workflows and wrap the existing `GraphBuildContext` model/tool/action ports with a three-layer RuntimeMiddleware pipeline. Business code emits safe spans through `ObservabilitySink`; an OpenTelemetry OTLP/HTTP implementation exports to local Langfuse while No-op/fail-open behavior preserves Agent execution when observability is unavailable.
 
-**Tech Stack:** Python 3.13, FastAPI, Pydantic, SQLite/WAL, LangGraph, LangChain `AgentMiddleware`, React 19, TypeScript, Vitest, pytest, Playwright.
+**Tech Stack:** Python 3.13, FastAPI, Pydantic, SQLite/WAL, LangGraph, LangChain `AgentMiddleware`, OpenTelemetry SDK/OTLP HTTP, Langfuse v3.176.0 Docker Compose, React 19, TypeScript, Vitest, pytest, Playwright.
 
 ## Global Constraints
 
@@ -21,6 +21,8 @@
 - Middleware order is Guard → Invocation → Post-processing and every layer is independently switchable.
 - Use one Agent end-to-end. Targeted tests during Tasks 1–3; one cross-layer integration run and one final full regression maximum.
 - Do not modify or commit `docs/my_idea.md`.
+- Business code depends only on `ObservabilitySink`; Langfuse/OTLP failures are fail-open.
+- Trace payload is metadata-only by default; prompt/response/file/tool bodies require explicit local redacted-content opt-in.
 
 ---
 
@@ -39,6 +41,10 @@
 - `backend/app/runtime/middleware/loop_guard.py`: persistent budgets, fingerprints, soft warning, hard stop.
 - `backend/app/runtime/middleware/hitl_adapter.py`: ordinary-tool approval policy adapter.
 - `backend/app/runtime/middleware/langchain_adapter.py`: official `AgentMiddleware` bridge using shared policies.
+- `backend/app/runtime/middleware/observability.py`: trace context, No-op sink, OTel sink and bounded shutdown flush.
+- `infra/observability/langfuse/compose.yaml`: pinned local Langfuse stack bound to 127.0.0.1.
+- `infra/observability/langfuse/.env.example`: non-secret variables and generated-secret instructions.
+- `infra/observability/langfuse/README.md`: start, health, project key, stop and destructive cleanup guidance.
 
 ### Modified backend files
 
@@ -69,6 +75,7 @@
 - `backend/tests/test_loop_guard_middleware.py`
 - `backend/tests/test_hitl_middleware_adapter.py`
 - `backend/tests/test_review_runtime_middleware.py`
+- `backend/tests/test_observability.py`
 - `tests/e2e/runtime-middleware.spec.ts`
 - `docs/verification/runtime-middleware-1-0.md`
 - `docs/learning/runtime-middleware-1-0/` seven-file ownership pack after stabilization.
@@ -82,7 +89,11 @@
 - Create: `backend/app/runtime/middleware/types.py`
 - Create: `backend/app/runtime/middleware/repository.py`
 - Create: `backend/app/runtime/middleware/pipeline.py`
+- Create: `backend/app/runtime/middleware/observability.py`
 - Create: `backend/app/runtime/middleware/__init__.py`
+- Create: `infra/observability/langfuse/compose.yaml`
+- Create: `infra/observability/langfuse/.env.example`
+- Create: `infra/observability/langfuse/README.md`
 - Modify: `backend/app/runtime/models.py`
 - Modify: `backend/app/runtime/repository.py`
 - Modify: `backend/app/runtime/graph_registry.py`
@@ -90,16 +101,18 @@
 - Test: `backend/tests/test_runtime_repository.py`
 - Create test: `backend/tests/test_runtime_middleware_repository.py`
 - Create test: `backend/tests/test_runtime_middleware_pipeline.py`
+- Create test: `backend/tests/test_observability.py`
 
 **Interfaces:**
 - Produces: `MiddlewareContext`, `MiddlewareLayer`, `MiddlewareConfig`, `ModelInvocation`, `ModelUsage`, `ToolInvocation`, `TodoCandidate`, `RuntimeGuardError`.
-- Produces: `RuntimeMiddlewareRepository.record_usage()`, `aggregate_session_usage()`, `record_guard_observation()`, `guard_state()`.
+- Produces: `RuntimeMiddlewareRepository.record_usage()`, `aggregate_session_usage()`, `record_guard_observation()`, `guard_state()`, `start_trace_segment()`, `finish_trace_segment()`.
 - Produces: `RuntimeMiddlewarePipeline.wrap_model()`, `wrap_tool()`, `after_message()`.
+- Produces: `TraceContext`, `ObservabilitySink`, `NoopObservabilitySink`, `SafeObservabilitySink`.
 - Produces: `GraphDefinition.middleware_config: MiddlewareConfig` with safe defaults.
 
 - [ ] **Step 1: Add RED migration and repository tests**
 
-Create tests that open a fresh Runtime database and assert migration 006 exists, usage operation keys are idempotent, guard sequence survives reopening, and title compare-and-set cannot overwrite a user title:
+Create tests that open a fresh Runtime database and assert migration 006 exists, usage operation keys are idempotent, guard and trace segment sequences survive reopening, and title compare-and-set cannot overwrite a user title:
 
 ```python
 def test_usage_operation_key_is_idempotent(tmp_path):
@@ -139,7 +152,8 @@ python3 -m pytest \
   tests/test_runtime_database.py \
   tests/test_runtime_repository.py \
   tests/test_runtime_middleware_repository.py \
-  tests/test_runtime_middleware_pipeline.py -q --tb=short
+  tests/test_runtime_middleware_pipeline.py \
+  tests/test_observability.py -q --tb=short
 ```
 
 Expected: FAIL because migration 006 and middleware modules do not exist.
@@ -183,6 +197,17 @@ CREATE TABLE runtime_guard_observations (
     error_code TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(run_id, sequence)
+);
+
+CREATE TABLE runtime_trace_segments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+    segment_sequence INTEGER NOT NULL CHECK (segment_sequence > 0),
+    trace_id TEXT NOT NULL,
+    span_id TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    finished_at TEXT,
+    UNIQUE(run_id, segment_sequence)
 );
 ```
 
@@ -316,7 +341,76 @@ middleware_config: MiddlewareConfig = MiddlewareConfig()
 
 Existing graph definitions require no changes and receive safe defaults.
 
-- [ ] **Step 7: Run Task 1 GREEN tests and commit**
+- [ ] **Step 7: Add fail-open observability contracts and local Langfuse**
+
+Define the framework-neutral boundary:
+
+```python
+@dataclass(frozen=True, slots=True)
+class TraceContext:
+    workspace_id: str
+    session_id: str
+    run_id: str
+    graph_id: str
+    graph_version: int
+
+
+class ObservabilitySink(Protocol):
+    @contextmanager
+    def span(
+        self,
+        name: str,
+        *,
+        context: TraceContext,
+        attributes: Mapping[str, str | int | float | bool],
+        links: Sequence[object] = (),
+    ) -> Iterator[SpanHandle]: ...
+
+    def force_flush(self, timeout_millis: int) -> bool: ...
+
+
+class NoopObservabilitySink:
+    @contextmanager
+    def span(self, *_args, **_kwargs):
+        yield NoopSpanHandle()
+
+    def force_flush(self, timeout_millis: int) -> bool:
+        return True
+```
+
+`SafeObservabilitySink` catches exporter/sink exceptions, calls an injected local warning publisher, and returns a No-op handle. Tests use a deliberately failing inner sink and assert the wrapped business function still returns its value.
+
+Add OpenTelemetry dependencies without Langfuse SDK coupling:
+
+```bash
+cd backend
+uv add 'opentelemetry-api>=1.30,<2' \
+  'opentelemetry-sdk>=1.30,<2' \
+  'opentelemetry-exporter-otlp-proto-http>=1.30,<2'
+```
+
+Create local Compose from the official Langfuse `v3.176.0` Docker Compose, pin `langfuse/langfuse:3.176.0` and `langfuse/langfuse-worker:3.176.0`, retain PostgreSQL/ClickHouse/Redis/MinIO named volumes, and change host mappings to `127.0.0.1`. `.env.example` lists generated secret variables but contains no usable production secret. README commands:
+
+```bash
+cd infra/observability/langfuse
+cp .env.example .env
+# Edit .env with local-only headless-init IDs, user credentials, and project keys.
+docker compose config
+docker compose up -d
+curl --fail http://127.0.0.1:3000/api/public/health
+docker compose down
+```
+
+Generate the OTLP Basic Auth value from the same local project keys and store the
+result only in the uncommitted `.env` as `LANGFUSE_OTLP_AUTH`:
+
+```bash
+printf '%s' "${LANGFUSE_INIT_PROJECT_PUBLIC_KEY}:${LANGFUSE_INIT_PROJECT_SECRET_KEY}" | base64
+```
+
+Document destructive cleanup separately as `docker compose down -v` and label it data-deleting. Do not run `down -v` during tests.
+
+- [ ] **Step 8: Run Task 1 GREEN tests and commit**
 
 Run the Step 2 command. Expected: all selected tests pass.
 
@@ -326,9 +420,10 @@ Commit:
 git add backend/app/db/migrations/runtime/006_runtime_middleware.sql \
   backend/app/runtime/middleware backend/app/runtime/models.py \
   backend/app/runtime/repository.py backend/app/runtime/graph_registry.py \
+  backend/pyproject.toml backend/uv.lock infra/observability/langfuse \
   backend/tests/test_runtime_database.py backend/tests/test_runtime_repository.py \
   backend/tests/test_runtime_middleware_repository.py \
-  backend/tests/test_runtime_middleware_pipeline.py
+  backend/tests/test_runtime_middleware_pipeline.py backend/tests/test_observability.py
 git commit -m "feat(runtime): add middleware pipeline foundation"
 ```
 
@@ -344,14 +439,17 @@ git commit -m "feat(runtime): add middleware pipeline foundation"
 - Modify: `backend/app/providers/anthropic_compatible.py`
 - Modify: `backend/app/runtime/run_manager.py`
 - Modify: `backend/app/runtime/service.py`
+- Modify: `backend/app/runtime/middleware/observability.py`
 - Test: `backend/tests/test_chat_gateway.py`
 - Create test: `backend/tests/test_model_usage_middleware.py`
 - Create test: `backend/tests/test_context_title_middleware.py`
+- Modify test: `backend/tests/test_observability.py`
 
 **Interfaces:**
 - Consumes: Task 1 `RuntimeMiddlewarePipeline`, `ModelInvocation`, `ModelUsage`, repository.
 - Produces: `ProviderModelResult[T]`, `ProviderStreamChunk`, `estimate_message_tokens()`, `ContextBudgetMiddleware`.
 - Produces: model calls routed through pipeline from `_BoundModelInvoker`.
+- Produces: `OpenTelemetryObservabilitySink`, `ObservabilitySettings`, root/model spans exported over OTLP/HTTP.
 
 - [ ] **Step 1: Add RED tests for native usage, fallback estimates, stream finalization, and compaction**
 
@@ -403,7 +501,8 @@ cd backend
 python3 -m pytest \
   tests/test_chat_gateway.py \
   tests/test_model_usage_middleware.py \
-  tests/test_context_title_middleware.py -q --tb=short
+  tests/test_context_title_middleware.py \
+  tests/test_observability.py -q --tb=short
 ```
 
 Expected: FAIL because usage envelopes and budget middleware do not exist.
@@ -468,7 +567,41 @@ def estimate_message_tokens(messages: Sequence[Any]) -> int:
 
 The fallback is explicitly approximate; it must set `estimated=True`. Persist failed calls with zero output tokens and a stable provider error code.
 
-- [ ] **Step 6: Implement context budget middleware**
+- [ ] **Step 6: Implement OTLP/HTTP tracing before real model debugging**
+
+Add environment-backed settings with disabled defaults:
+
+```python
+@dataclass(frozen=True, slots=True)
+class ObservabilitySettings:
+    enabled: bool = False
+    service_name: str = "cyber-interview-agent"
+    otlp_endpoint: str = "http://127.0.0.1:3000/api/public/otel/v1/traces"
+    otlp_headers: str = ""
+    capture_content: bool = False
+    flush_timeout_ms: int = 2_000
+
+
+def create_observability_sink(
+    settings: ObservabilitySettings,
+    publish_warning: Callable[[str], None],
+) -> ObservabilitySink:
+    if not settings.enabled:
+        return NoopObservabilitySink()
+    exporter = OTLPSpanExporter(
+        endpoint=settings.otlp_endpoint,
+        headers=parse_otlp_headers(settings.otlp_headers),
+    )
+    provider = TracerProvider(resource=Resource.create({"service.name": settings.service_name}))
+    provider.add_span_processor(BatchSpanProcessor(exporter, max_queue_size=512))
+    return SafeObservabilitySink(OpenTelemetryObservabilitySink(provider), publish_warning)
+```
+
+Tests use OpenTelemetry `InMemorySpanExporter` and assert the hierarchy `agent.run` → `model.invoke`/`model.stream`, safe IDs, model/role, latency, token counts, status and `usage.estimated`. Assert no attribute contains prompt text, response text, API keys or raw provider errors when `capture_content=False`. A failing exporter must not change the returned model result.
+
+Start `agent.run` in RunManager and make model spans children through the active OTel context. Do not persist OTel objects in Graph state.
+
+- [ ] **Step 7: Implement context budget middleware**
 
 Before `call_next`, compare estimated context to graph config. On soft threshold, use injected `summarize_context(messages, existing_summary)` once and replace older messages with:
 
@@ -484,7 +617,7 @@ If the compacted request still exceeds `hard_context_tokens`, raise `RuntimeGuar
 
 Only `purpose="business"` invocations may trigger compaction. Summary/title calls still pass through telemetry but use `purpose="context_summary"` or `purpose="session_title"`, preventing recursive post-processing.
 
-- [ ] **Step 7: Route `_BoundModelInvoker` through the pipeline**
+- [ ] **Step 8: Route `_BoundModelInvoker` through the pipeline**
 
 Construct a monotonic operation key per run and role:
 
@@ -502,7 +635,9 @@ invocation = ModelInvocation(
 
 Both structured and stream calls must use `pipeline.wrap_model`. For streams, finalize telemetry in `finally` only after the stream terminates; cancellation records `failed` once.
 
-- [ ] **Step 8: Run Task 2 GREEN tests and integration subset**
+Model spans use `gen_ai.operation.name`, `gen_ai.request.model`, safe provider/model IDs, token counts and `cyber.usage.estimated`. Do not attach message bodies unless `capture_content=True`, and then only after the repository redaction helper runs.
+
+- [ ] **Step 9: Run Task 2 GREEN tests and integration subset**
 
 Run Step 2 plus:
 
@@ -513,14 +648,16 @@ python3 -m pytest tests/test_run_manager.py \
 
 Expected: all selected tests pass; existing provider error sanitization remains green.
 
-- [ ] **Step 9: Commit Task 2**
+- [ ] **Step 10: Commit Task 2**
 
 ```bash
 git add backend/app/providers backend/app/runtime/middleware/telemetry.py \
-  backend/app/runtime/middleware/context_budget.py backend/app/runtime/run_manager.py \
+  backend/app/runtime/middleware/context_budget.py \
+  backend/app/runtime/middleware/observability.py backend/app/runtime/run_manager.py \
   backend/app/runtime/service.py backend/tests/test_chat_gateway.py \
   backend/tests/test_model_usage_middleware.py \
-  backend/tests/test_context_title_middleware.py backend/tests/test_run_manager.py
+  backend/tests/test_context_title_middleware.py backend/tests/test_observability.py \
+  backend/tests/test_run_manager.py
 git commit -m "feat(runtime): meter model usage and context budgets"
 ```
 
@@ -546,6 +683,7 @@ git commit -m "feat(runtime): meter model usage and context budgets"
 - Consumes: Task 1 repository/pipeline; Task 2 model invocation and usage aggregates.
 - Produces: `SessionTitleMiddleware`, `LoopGuardMiddleware`, `SessionUsageResource`, `GuardWarningResource`.
 - Produces: visible Review usage/summary/guard status.
+- Produces: `middleware.session_title`, `middleware.context_compression`, `middleware.loop_guard`, and `tool.invoke` child spans.
 
 - [ ] **Step 1: Add RED backend tests for title, guard thresholds, restart, and safe errors**
 
@@ -570,6 +708,8 @@ async def test_repeat_guard_warns_then_fails_after_restart(runtime_factory):
 ```
 
 Route test asserts `summary`, camelCase usage fields, and a redacted latest warning.
+
+Observability assertions use the in-memory exporter and verify title/compression/guard/tool spans contain trigger reason and stable status but no generated title text, summary body, fingerprints or tool arguments.
 
 - [ ] **Step 2: Add RED frontend rendering and advice tests**
 
@@ -634,6 +774,8 @@ fingerprint = sha256(
 ```
 
 Persist every observation before checking counts. At `repeat_soft_limit`, publish `runtime.guard.warning` once and return a correction instruction. At `repeat_hard_limit`, raise `RuntimeGuardError("loop_detected", ...)`. Check elapsed time, model/tool counts, and token aggregates before each invocation. Restore counts exclusively from repository on resume.
+
+Each middleware/tool span records only operation name, budget/threshold numbers, safe tool name/scope and stable result code. Guard fingerprints remain local SQLite hashes and never become span attributes.
 
 Pass `recursion_limit=definition.middleware_config.max_graph_steps` to `graph.ainvoke`. This covers Graphs that loop without making model/tool calls; catch LangGraph `GraphRecursionError` and map it to `step_budget_exceeded`.
 
@@ -762,6 +904,7 @@ git commit -m "feat(runtime): add title and loop guard middleware"
 **Interfaces:**
 - Consumes: complete pipeline, existing `HitlService`, `request_action`, `Command(resume=...)`, `review.single`.
 - Produces: `ToolApprovalPolicy`, `PersistentHitlMiddleware`, `LangChainRuntimeMiddlewareAdapter`.
+- Produces: `hitl.interrupt`, `hitl.resume`, `knowledge.publish` spans and linked restart trace segments.
 - Preserves: explicit `knowledge.publish` node/handler and current publication idempotency.
 
 - [ ] **Step 1: Add RED HITL boundary tests**
@@ -803,7 +946,7 @@ assert completed["title"] != "新会话"
 assert completed["pendingAction"] is None
 ```
 
-Restart Runtime from the same Workspace path, assert usage/title/summary remain, approve publication, and verify one Vault document. Disable all middleware layers in a second graph definition and assert the original evaluation/report/publication output still succeeds with zero usage records.
+Restart Runtime from the same Workspace path, assert usage/title/summary remain, approve publication, and verify one Vault document. Assert the resumed `agent.run` segment contains an OTel Link to the previous persisted trace/span context and all segments share the safe Langfuse session attribute. Disable all middleware layers in a second graph definition and assert the original evaluation/report/publication output still succeeds with zero usage records.
 
 - [ ] **Step 3: Run Task 4 RED tests**
 
@@ -832,6 +975,8 @@ class ToolApprovalPolicy:
 ```
 
 The adapter creates a safe preview from allowlisted fields, calls existing `request_action` with `action_type=f"tool.approval.{tool_name}"`, and invokes LangGraph `interrupt({"actionId": action.id})`. It executes `call_next` only after an approved resume decision. Reject returns a stable tool rejection result. Never route `knowledge.publish` through this adapter.
+
+Create `hitl.interrupt` before returning the interrupt result, `hitl.resume` when delivery resumes the run, and `knowledge.publish` around the explicit publication handler. Attributes are limited to action/run/session IDs, action type, decision/status and target state; edited content and Vault body are excluded.
 
 - [ ] **Step 5: Implement the official LangChain adapter**
 
@@ -880,6 +1025,25 @@ Expected: all selected tests pass; restart and publication behavior remain uncha
 6. run a test graph configured to repeat and assert actionable loop error;
 7. restart backend, reload, and assert persisted state;
 8. verify 1440×1000 and 375×812 have no horizontal overflow and console has no warnings/errors.
+
+Before the app spec, start local Langfuse and use headless initialization values from the uncommitted `.env`. Set:
+
+```bash
+export CYBER_OBSERVABILITY_ENABLED=true
+export CYBER_OTLP_ENDPOINT=http://127.0.0.1:3000/api/public/otel/v1/traces
+export CYBER_OTLP_HEADERS="Authorization=Basic ${LANGFUSE_OTLP_AUTH},x-langfuse-ingestion-version=4"
+export CYBER_OBSERVABILITY_CAPTURE_CONTENT=false
+```
+
+After the run, flush the exporter and query the self-hosted public API with project Basic Auth:
+
+```bash
+curl --fail \
+  -u "${LANGFUSE_INIT_PROJECT_PUBLIC_KEY}:${LANGFUSE_INIT_PROJECT_SECRET_KEY}" \
+  "http://127.0.0.1:3000/api/public/sessions/${SESSION_ID}"
+```
+
+Assert the response contains `agent.run`, two model observations, HITL and publication observations grouped by `${SESSION_ID}`. Search the serialized response for the test API key, answer, prompt sentinel and Vault markdown sentinel; all must be absent. Then stop Langfuse (without `-v`), run one targeted review again, and assert the business run/publication still complete with a local observability warning.
 
 Run once:
 
