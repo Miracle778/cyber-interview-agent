@@ -7,6 +7,8 @@
 - GREEN：实现已知开发 schema 备份/重建，异常改为 `RuntimeDatabaseSchemaError`；针对性用例 4 passed。
 - 相关仓储、HITL、草稿、知识和审计测试 33 passed。
 - 最终后端回归 196 passed，文档门禁 16 passed，diff check 与旧错误文案扫描通过。
+- 修复提交 `396f607` 已 fast-forward 合入 main；真实 FastAPI 生命周期到达 `Application startup complete`，随后仅因测试沙箱禁止绑定 8011 端口而正常关闭。
+- demo 与 demo1 的当前数据库均为 generation 2，原测试 schema 分别保存在 `runtime.development-backup.sqlite`；demo2 未创建过 Runtime 数据库。
 
 ## 2026-07-13：Agent Harness 后续路线对齐启动
 
