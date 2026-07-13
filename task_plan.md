@@ -17,8 +17,8 @@
 ## 当前任务：Runtime Middleware 1.0
 
 1. **Pipeline 契约、持久化与本机观测底座（已完成）**
-2. **模型 usage、OTLP exporter 与 context budget（已完成，待提交）**
-3. **标题、循环保护、API 与 Review UI（待开始）**
+2. **模型 usage、OTLP exporter 与 context budget（已完成）**
+3. **标题、循环保护、API 与 Review UI（已完成，待提交）**
 4. **HITL bridge、真实 Agent 与最终验收（待开始）**
 
 本切片只重构设置页前端信息架构；下一独立 Pre-R2 基础切片为 Runtime Middleware 1.0：补齐 pipeline、R1.2 压缩/token-context、标题、循环检测、HITL adapter 与 OpenTelemetry + 本机 Langfuse，只定义 TodoCandidate 契约，并用 R1.6 Agent 验收。

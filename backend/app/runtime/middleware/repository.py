@@ -137,6 +137,32 @@ class RuntimeMiddlewareRepository:
             last_state_hash=None if row is None else row["state_hash"],
         )
 
+    def fingerprint_count(self, run_id: str, fingerprint: str) -> int:
+        return self._connection.execute(
+            "SELECT COUNT(*) FROM runtime_guard_observations "
+            "WHERE run_id = ? AND fingerprint = ?",
+            (run_id, fingerprint),
+        ).fetchone()[0]
+
+    def latest_guard_warning(self, run_id: str) -> tuple[str, str] | None:
+        row = self._connection.execute(
+            "SELECT error_code FROM runtime_guard_observations "
+            "WHERE run_id = ? AND error_code IS NOT NULL "
+            "ORDER BY sequence DESC LIMIT 1",
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        messages = {
+            "loop_detected": "检测到重复执行",
+            "no_progress": "Agent 多步执行没有产生进展",
+            "step_budget_exceeded": "Agent 已达到步骤上限",
+            "token_budget_exceeded": "上下文已超过运行预算",
+            "run_timeout": "Agent 运行超时",
+        }
+        code = row["error_code"]
+        return code, messages.get(code, "Agent 运行保护已触发")
+
     def start_trace_segment(self, run_id: str, trace_id: str, span_id: str) -> int:
         self._connection.execute("BEGIN IMMEDIATE")
         try:

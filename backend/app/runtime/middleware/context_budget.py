@@ -5,6 +5,7 @@ from dataclasses import replace
 from typing import Any
 
 from app.runtime.middleware.telemetry import estimate_message_tokens
+from app.runtime.middleware.observability import NoopObservabilitySink, as_trace_context
 from app.runtime.middleware.types import (
     BaseRuntimeMiddleware,
     MiddlewareConfig,
@@ -46,6 +47,7 @@ class ContextBudgetMiddleware(BaseRuntimeMiddleware):
         save_summary: Callable[[Any, str], None] = lambda context, summary: None,
         publish_warning: Callable[[str], None],
         keep_recent: int = 4,
+        observability=None,
     ) -> None:
         self._config = config
         self._summarize_context = summarize_context
@@ -53,6 +55,7 @@ class ContextBudgetMiddleware(BaseRuntimeMiddleware):
         self._save_summary = save_summary
         self._publish_warning = publish_warning
         self._keep_recent = keep_recent
+        self._observability = observability or NoopObservabilitySink()
 
     async def wrap_model(self, context, invocation, call_next):
         if invocation.purpose != "business":
@@ -61,15 +64,21 @@ class ContextBudgetMiddleware(BaseRuntimeMiddleware):
         if original_tokens < self._config.soft_context_tokens:
             return await call_next(invocation)
         try:
-            summary = await self._summarize_context(
-                invocation.messages, self._existing_summary(context)
-            )
-            messages = compact_messages(
-                messages=invocation.messages,
-                summary=summary,
-                keep_recent=self._keep_recent,
-            )
-            self._save_summary(context, summary)
+            with self._observability.span(
+                "middleware.context_compression",
+                context=as_trace_context(context),
+                attributes={"cyber.trigger": "soft_context_budget"},
+            ) as span:
+                summary = await self._summarize_context(
+                    invocation.messages, self._existing_summary(context)
+                )
+                messages = compact_messages(
+                    messages=invocation.messages,
+                    summary=summary,
+                    keep_recent=self._keep_recent,
+                )
+                self._save_summary(context, summary)
+                span.set_attribute("cyber.status", "completed")
         except Exception:
             self._publish_warning("context_compression_failed")
             if original_tokens >= self._config.hard_context_tokens:

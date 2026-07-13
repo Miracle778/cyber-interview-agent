@@ -167,6 +167,15 @@ export function ReviewPage({ workspace, draftQuestion }: ReviewPageProps) {
             </select>
           </label>
         ) : <p className="status-note">完成一次回答后，会话会保存在这里</p>}
+        {detail?.usage ? <div className="review-runtime-meta" aria-label="运行用量">
+          <span>{detail.usage.totalTokens} tokens</span>
+          {detail.usage.estimatedCount > 0 ? <span>含 {detail.usage.estimatedCount} 次估算</span> : null}
+          {detail.summary ? <span>上下文已压缩</span> : null}
+        </div> : null}
+        {detail?.latestGuardWarning ? <div className="status-note" role="alert">
+          <span>{detail.latestGuardWarning.message}</span>
+          <span>{toActionableError(new Error(detail.latestGuardWarning.code), "运行保护已触发").advice}</span>
+        </div> : null}
       </section>
 
       <section className="review-practice" aria-label="当前练习">

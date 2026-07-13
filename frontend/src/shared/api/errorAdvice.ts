@@ -27,6 +27,21 @@ export function toActionableError(caught: unknown, fallback: string): Actionable
   if (message.includes("确认报告")) {
     return { message, advice: "下一步：先发送回答生成报告" };
   }
+  if (message.includes("loop_detected")) {
+    return { message, advice: "下一步：检查重复的模型或工具调用，调整输入后重新运行" };
+  }
+  if (message.includes("no_progress")) {
+    return { message, advice: "下一步：补充更明确的目标或减少连续无状态变化的步骤" };
+  }
+  if (message.includes("step_budget_exceeded")) {
+    return { message, advice: "下一步：缩小任务范围或检查 Graph 中的循环边" };
+  }
+  if (message.includes("token_budget_exceeded")) {
+    return { message, advice: "下一步：新建会话或精简输入资料后重试" };
+  }
+  if (message.includes("run_timeout")) {
+    return { message, advice: "下一步：检查 Provider 和工具响应时间后重试" };
+  }
 
   return { message, advice: "下一步：检查当前步骤输入后重试" };
 }

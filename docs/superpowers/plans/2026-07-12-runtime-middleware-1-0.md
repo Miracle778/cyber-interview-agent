@@ -116,13 +116,13 @@ At the start of a task, locate only that task with `rg -n '^### Task'` and read 
 
 **Scope:**
 
-- [ ] Add RED title, guard/restart, API and frontend tests.
-- [ ] Generate title only after a persisted user/assistant pair and never overwrite user edits.
-- [ ] Persist safe hashes/counters, warn once at soft threshold, fail at hard threshold.
-- [ ] Restore counters on resume and enforce maximum graph steps/time/token/model/tool calls.
-- [ ] Add safe spans for post-processing/guard/tool hooks without prompt or argument bodies.
-- [ ] Extend API/TypeScript resources and render usage/summary/warning without a new page.
-- [ ] Run targeted backend/frontend tests and TypeScript.
+- [x] Add RED title, guard/restart, API and frontend tests.
+- [x] Generate title only after a persisted user/assistant pair and never overwrite user edits.
+- [x] Persist safe hashes/counters, warn once at soft threshold, fail at hard threshold.
+- [x] Restore counters on resume and enforce maximum graph steps/time/token/model/tool calls.
+- [x] Add safe spans for post-processing/guard/tool hooks without prompt or argument bodies.
+- [x] Extend API/TypeScript resources and render usage/summary/warning without a new page.
+- [x] Run targeted backend/frontend tests and TypeScript.
 - [ ] Commit `feat(runtime): add title and loop guard middleware`.
 
 **Gate:** A restart cannot reset guard budgets; warning payloads contain no fingerprints/arguments; title/summary failure leaves the business run successful.

@@ -65,7 +65,24 @@ class PendingActionSummaryResource(AgentModel):
     version: int
 
 
+class SessionUsageResource(AgentModel):
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    context_tokens: int
+    call_count: int
+    estimated_count: int
+
+
+class GuardWarningResource(AgentModel):
+    code: str
+    message: str
+
+
 class SessionDetailResource(SessionResource):
+    summary: str | None = None
+    usage: SessionUsageResource
+    latest_guard_warning: GuardWarningResource | None = None
     messages: list[MessageResource]
     latest_run: RunResource | None
     pending_action: PendingActionSummaryResource | None = None

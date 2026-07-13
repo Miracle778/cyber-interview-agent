@@ -25,6 +25,16 @@ class TraceContext:
     graph_version: int
 
 
+def as_trace_context(context) -> TraceContext:
+    return TraceContext(
+        context.workspace_id,
+        context.session_id,
+        context.run_id,
+        context.graph_id,
+        context.graph_version,
+    )
+
+
 class SpanHandle(Protocol):
     def set_attribute(self, key: str, value: AttributeValue) -> None: ...
     def record_error(self, code: str) -> None: ...

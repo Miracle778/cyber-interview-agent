@@ -165,3 +165,12 @@
 - `_BoundModelInvoker` 已路由到 Pipeline；usage/summary 在 checkpointer 退出后 flush，解决真实 SQLite 写锁冲突。
 - OTel exporter 默认关闭；本机 Langfuse 实测收到同一 `agent.run` 下的 `model.invoke`/`model.stream`，内容字段为空。
 - Task 2 相关自动测试 50 passed，真实 Langfuse review smoke 1 passed；下一步 Task 3。
+
+## 2026-07-13：Runtime Middleware 1.0 Task 3
+
+- SessionTitleMiddleware 只在占位标题和完整 user/assistant 交换后运行，CAS 防止覆盖用户标题。
+- LoopGuardMiddleware 使用安全 hash、软警告/硬失败和持久化恢复；Graph recursion 映射为稳定步骤超限错误。
+- Session detail 暴露 summary、usage 和安全 latestGuardWarning，不返回 fingerprint。
+- Review 页面显示 token、估算次数、压缩状态和五类 guard 恢复建议。
+- title/compression/guard/tool spans 仅记录触发原因、计数、工具名和状态，不记录正文/参数。
+- 后端定向 33 passed；前端 8 passed；TypeScript 通过。下一步 Task 4。

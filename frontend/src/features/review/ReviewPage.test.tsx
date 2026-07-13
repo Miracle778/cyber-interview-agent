@@ -106,7 +106,7 @@ describe("ReviewPage persistent runtime flow", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.includes("/api/agent/sessions?")) return Response.json([session, olderSession]);
-      if (url === "/api/agent/sessions/s1") return Response.json({ ...session, messages: [], latestRun: { id: "r1", sessionId: "s1", status: "waiting_for_approval", resumeCount: 0, errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: null }, pendingAction: action });
+      if (url === "/api/agent/sessions/s1") return Response.json({ ...session, summary: "缓存穿透的定义与防护", usage: { inputTokens: 120, outputTokens: 40, totalTokens: 160, contextTokens: 120, callCount: 2, estimatedCount: 1 }, latestGuardWarning: { code: "loop_detected", message: "检测到重复执行" }, messages: [], latestRun: { id: "r1", sessionId: "s1", status: "waiting_for_approval", resumeCount: 0, errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: null }, pendingAction: action });
       if (url.includes("/api/agent/actions?")) return Response.json([action]);
       if (url === "/api/knowledge/drafts/d1") return Response.json({ id: "d1", workspaceId: "w1", sessionId: "s1", runId: "r1", agentType: "review.single", domain: "review", documentType: "session_report", documentId: "doc1", title: "报告", markdown: "# 报告", contentPath: "draft.md", sourceRefs: ["q1"], relationRefs: [], status: "review_pending", version: 1, contentHash: "h1", createdAt: "now", updatedAt: "now", publication: null });
       throw new Error(`unexpected ${url}`);
@@ -119,5 +119,9 @@ describe("ReviewPage persistent runtime flow", () => {
     expect(screen.getByLabelText("历史会话")).toHaveValue("s1");
     expect(screen.getByText("草稿状态：review_pending")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "批准发布" })).toBeInTheDocument();
+    expect(screen.getByLabelText("运行用量")).toHaveTextContent("160 tokens");
+    expect(screen.getByLabelText("运行用量")).toHaveTextContent("含 1 次估算");
+    expect(screen.getByLabelText("运行用量")).toHaveTextContent("上下文已压缩");
+    expect(screen.getByRole("alert")).toHaveTextContent("检查重复的模型或工具调用");
   });
 });

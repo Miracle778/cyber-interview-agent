@@ -40,6 +40,16 @@ export interface AgentMessage {
 }
 
 export interface AgentSessionDetail extends AgentSession {
+  summary: string | null;
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    contextTokens: number;
+    callCount: number;
+    estimatedCount: number;
+  };
+  latestGuardWarning: { code: string; message: string } | null;
   messages: AgentMessage[];
   latestRun: AgentRun | null;
   pendingAction: {

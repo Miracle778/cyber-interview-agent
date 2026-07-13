@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from langgraph.types import Command
+from langgraph.errors import GraphRecursionError
 from pydantic import BaseModel
 
 from app.hitl.models import CreatePendingAction, PendingActionRecord
@@ -21,7 +22,13 @@ from app.runtime.middleware.context_budget import ContextBudgetMiddleware
 from app.runtime.middleware.pipeline import RuntimeMiddlewarePipeline
 from app.runtime.middleware.repository import RuntimeMiddlewareRepository
 from app.runtime.middleware.telemetry import ModelUsageMiddleware
-from app.runtime.middleware.types import MiddlewareContext, ModelInvocation
+from app.runtime.middleware.loop_guard import LoopGuardMiddleware
+from app.runtime.middleware.session_title import SessionTitleMiddleware
+from app.runtime.middleware.types import (
+    MiddlewareContext,
+    ModelInvocation,
+    RuntimeGuardError,
+)
 from app.runtime.middleware.observability import (
     NoopObservabilitySink,
     ObservabilitySink,
@@ -378,6 +385,7 @@ class RunManager:
                 )
                 requested_action_ids: set[str] = set()
                 usage_middleware = None
+                guard_middleware = None
                 pending_summaries: list[str] = []
 
                 if definition.required_model_roles:
@@ -395,6 +403,13 @@ class RunManager:
                     )
                     middleware_items = []
                     if self._middleware_repository is not None:
+                        guard_middleware = LoopGuardMiddleware(
+                            self._middleware_repository,
+                            definition.middleware_config,
+                            defer_writes=True,
+                            observability=self._observability,
+                        )
+                        middleware_items.append(guard_middleware)
                         usage_middleware = ModelUsageMiddleware(
                             self._middleware_repository,
                             defer_writes=True,
@@ -415,6 +430,18 @@ class RunManager:
                             [chunk.text async for chunk in stream if chunk.text]
                         ).strip()
 
+                    async def generate_title(messages):
+                        prompt = (
+                            {"role": "system", "content": "根据对话生成不超过 20 个字的中文会话标题，只输出标题。"},
+                            {"role": "user", "content": str(tuple(item.content for item in messages))},
+                        )
+                        stream = await invoker_holder["invoker"]._stream_enveloped(
+                            "report_summarization", prompt, purpose="session_title"
+                        )
+                        return "".join(
+                            [chunk.text async for chunk in stream if chunk.text]
+                        ).strip()
+
                     middleware_items.append(
                         ContextBudgetMiddleware(
                             config=definition.middleware_config,
@@ -426,6 +453,14 @@ class RunManager:
                                 summary
                             ),
                             publish_warning=lambda code: None,
+                            observability=self._observability,
+                        )
+                    )
+                    middleware_items.append(
+                        SessionTitleMiddleware(
+                            self._repository,
+                            generate_title,
+                            observability=self._observability,
                         )
                     )
                     pipeline = RuntimeMiddlewarePipeline(
@@ -468,6 +503,22 @@ class RunManager:
                             agent_type=definition.graph_id,
                         )
                     )
+
+                async def invoke_tool(name: str, raw_input: dict[str, object]):
+                    with self._observability.span(
+                        "tool.invoke",
+                        context=TraceContext(
+                            session.workspace_id,
+                            session.id,
+                            run.id,
+                            definition.graph_id,
+                            definition.graph_version,
+                        ),
+                        attributes={"gen_ai.tool.name": name},
+                    ) as span:
+                        result = await invoker.invoke_tool(name, raw_input)
+                        span.set_attribute("cyber.status", "completed")
+                        return result
 
                 async def request_action(
                     *,
@@ -519,7 +570,7 @@ class RunManager:
                             graph = definition.factory(
                                 GraphBuildContext(
                                     checkpointer=checkpointer,
-                                    invoke_tool=invoker.invoke_tool,
+                                    invoke_tool=invoke_tool,
                                     request_action=request_action,
                                     invoke_model=model_invoker,
                                     create_draft=create_draft,
@@ -527,9 +578,14 @@ class RunManager:
                             )
                             result = await graph.ainvoke(
                                 graph_input,
-                                {"configurable": {"thread_id": run.session_id}},
+                                {
+                                    "configurable": {"thread_id": run.session_id},
+                                    "recursion_limit": definition.middleware_config.max_graph_steps,
+                                },
                             )
                 finally:
+                    if guard_middleware is not None:
+                        guard_middleware.flush()
                     if usage_middleware is not None:
                         usage_middleware.flush()
                     for summary in pending_summaries:
@@ -578,6 +634,12 @@ class RunManager:
                         "message.completed",
                         {"messageId": message.id, "content": response},
                     )
+                    if definition.required_model_roles:
+                        await pipeline.after_message(middleware_context, message)
+                        if guard_middleware is not None:
+                            guard_middleware.flush()
+                        if usage_middleware is not None:
+                            usage_middleware.flush()
                 self._repository.transition_run(
                     run.id, expected="running", target="completed"
                 )
@@ -591,7 +653,13 @@ class RunManager:
         except Exception as error:
             current = self._repository.get_run(run_id)
             if current.status in {"queued", "running"}:
-                if isinstance(error, ProviderInvocationError):
+                if isinstance(error, RuntimeGuardError):
+                    error_code = error.code
+                    error_message = str(error)
+                elif isinstance(error, GraphRecursionError):
+                    error_code = "step_budget_exceeded"
+                    error_message = "Agent 已达到步骤上限"
+                elif isinstance(error, ProviderInvocationError):
                     error_code = error.code.value
                     error_message = str(error)
                 elif isinstance(error, MissingModelBindingError):

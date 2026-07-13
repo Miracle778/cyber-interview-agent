@@ -98,6 +98,16 @@ def test_session_create_list_detail_and_run(agent_client):
     body = detail.json()
     assert body["latestRun"]["id"] == run_id
     assert body["messages"][-1]["content"] == "Echo: hello"
+    assert body["summary"] is None
+    assert body["usage"] == {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "totalTokens": 0,
+        "contextTokens": 0,
+        "callCount": 0,
+        "estimatedCount": 0,
+    }
+    assert body["latestGuardWarning"] is None
     assert "checkpoint" not in body
 
     repository = _runtime._context("w1").repository

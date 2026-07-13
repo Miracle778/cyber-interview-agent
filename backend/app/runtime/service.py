@@ -49,6 +49,7 @@ class _WorkspaceRuntime:
     hitl_service: HitlService
     draft_service: KnowledgeDraftService
     publication_service: PublicationService
+    middleware_repository: RuntimeMiddlewareRepository
 
 
 class AgentRuntime:
@@ -104,8 +105,27 @@ class AgentRuntime:
             session.workspace_id, session_id=session.id
         )
         pending_action = pending[0] if pending else None
+        usage = context.middleware_repository.aggregate_session_usage(session.id)
+        latest_run = context.repository.latest_run(session.id)
+        warning = (
+            None
+            if latest_run is None
+            else context.middleware_repository.latest_guard_warning(latest_run.id)
+        )
         return {
             **self._session_resource(session),
+            "summary": session.summary,
+            "usage": {
+                "inputTokens": usage.input_tokens,
+                "outputTokens": usage.output_tokens,
+                "totalTokens": usage.total_tokens,
+                "contextTokens": usage.context_tokens,
+                "callCount": usage.call_count,
+                "estimatedCount": usage.estimated_count,
+            },
+            "latestGuardWarning": (
+                None if warning is None else {"code": warning[0], "message": warning[1]}
+            ),
             "messages": [
                 {
                     "id": item.id,
@@ -116,9 +136,7 @@ class AgentRuntime:
                 }
                 for item in context.repository.list_messages(session.id)
             ],
-            "latestRun": self._run_resource(
-                context.repository.latest_run(session.id)
-            ),
+            "latestRun": self._run_resource(latest_run),
             "pendingAction": (
                 None
                 if pending_action is None
@@ -332,6 +350,7 @@ class AgentRuntime:
         ) -> PendingActionRecord:
             return await service_holder["service"].create_action(request)
 
+        middleware_repository = RuntimeMiddlewareRepository(connection)
         manager = RunManager(
             repository=repository,
             event_stream=event_stream,
@@ -346,7 +365,7 @@ class AgentRuntime:
             resolve_model_binding=self._resolve_model_binding,
             create_draft=draft_service.create,
             mark_draft_review_pending=draft_service.mark_review_pending,
-            middleware_repository=RuntimeMiddlewareRepository(connection),
+            middleware_repository=middleware_repository,
             observability=create_observability_sink(
                 ObservabilitySettings.from_env(), lambda code: None
             ),
@@ -366,6 +385,7 @@ class AgentRuntime:
             hitl_service=hitl_service,
             draft_service=draft_service,
             publication_service=publication_service,
+            middleware_repository=middleware_repository,
         )
         service_holder["service"] = hitl_service
         self._workspaces[workspace_id] = context
