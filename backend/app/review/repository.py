@@ -122,6 +122,23 @@ class ReviewRepository:
                 raise ReviewConflictError("question batch already has a run")
         return self.get_batch(batch_id)
 
+    def reconcile_abandoned_work(self) -> tuple[int, int]:
+        """Close domain work whose owning execution cannot continue after restart."""
+        with self._transaction():
+            batches = self._connection.execute(
+                "UPDATE review_question_batches SET status = 'failed', "
+                "updated_at = CURRENT_TIMESTAMP WHERE status = 'generating' "
+                "AND run_id IN (SELECT id FROM agent_runs WHERE status IN "
+                "('interrupted', 'failed', 'cancelled'))"
+            ).rowcount
+            rounds = self._connection.execute(
+                "UPDATE review_rounds SET status = 'failed', "
+                "updated_at = CURRENT_TIMESTAMP WHERE status = 'running' "
+                "AND execution_id IN (SELECT id FROM agent_runs WHERE status IN "
+                "('interrupted', 'failed', 'cancelled'))"
+            ).rowcount
+        return batches, rounds
+
     def save_candidate(
         self,
         *,

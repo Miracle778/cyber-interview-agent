@@ -1,5 +1,13 @@
 # Agent Runtime 框架收敛关键发现
 
+## R2 Task 4 验收发现
+
+- “Provider 连通性 ok”不等于完整 Agent 合约通过：真实 GLM-5.2 能返回合法结构化 candidates，但对明确 12 题的来源先后只返回 3、6 题，完整覆盖率仍不合格。
+- 题库提示必须明确逐项覆盖、禁止抽样/合并；该修正提高了产量，但不能用提示文本替代真实数量验收。
+- 长模型调用不能让 batch 永久 `generating`：启动恢复必须把 interrupted/failed/cancelled execution 对应的生成批次和 running round 收敛到 `failed`。
+- 最终回归发现的两个前端失败均是顶层测试仍断言已删除的 FlowSummary/旧引导链接；更新到 R2 setup/空态契约后 84/84 通过。
+- 当前阻塞与 Langfuse 无关；本轮按约定没有配置或启动 Langfuse。
+
 ## R2 Task 3 实施发现
 
 - question batch、candidate、active catalog 必须分别建模：上传只登记 source，Agent 输出落 candidate/draft，只有发布 receipt 才进入 active catalog。

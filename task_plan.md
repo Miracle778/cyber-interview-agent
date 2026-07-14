@@ -9,7 +9,7 @@
 | 1. 题库与持久轮次领域事实 | 已完成 | additive migration、catalog/round/input/mastery repository、selector、publication projection |
 | 2. Agent 与长生命周期 Graph | 已完成 | 题目整理、评价/追问、报告、discussion、input resume |
 | 3. API 与完整 Web 体验 | 代码完成，最小浏览器交互受工具阻塞 | R2 resources、SSE 刷新、题库与复习工作台、服务可达证据 |
-| 4. 真实验收与收尾 | 待开始 | Provider、浏览器/重启、全量回归、verification/learning |
+| 4. 真实验收与收尾 | 进行中，受 Provider 覆盖率与浏览器工具阻塞 | 全量回归通过；真实十题/浏览器/verification/learning 未关闭 |
 
 ## 工作位置
 
@@ -40,7 +40,7 @@
 
 ## 下一步
 
-提交 Task 3 代码边界；随后执行 Task 4 真实 Provider、重启/失败、最终回归和文档收尾。浏览器交互必须在浏览器插件初始化冲突修复后补跑，不以服务可达替代浏览器通过。
+补齐 Task 4 两项门禁：题库 Agent 对 12 题来源单批稳定生成至少 10 个候选，并完成真实十题轮次；修复浏览器插件初始化后执行最小与完整浏览器验收。两项完成后再生成 learning 七件套、运行文档门禁并关闭 R2。
 
 ## 所有权状态
 

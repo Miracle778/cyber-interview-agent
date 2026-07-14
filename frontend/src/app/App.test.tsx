@@ -65,31 +65,23 @@ describe("App", () => {
     expect(trigger).toHaveFocus();
   });
 
-  it("guides a ready workspace from review to knowledge", async () => {
+  it("shows the R2 review setup for a ready workspace", async () => {
     window.history.replaceState({}, "", "/review");
-    vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ status: "ok" }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            id: "w1",
-            workspacePath: "/tmp/cyber-demo",
-            vaultPath: "/tmp/cyber-demo/knowledge-vault",
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        ),
-      );
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/health")) return Response.json({ status: "ok" });
+      if (url.endsWith("/api/settings/workspace")) return Response.json({ id: "w1", workspacePath: "/tmp/cyber-demo", vaultPath: "/tmp/cyber-demo/knowledge-vault" });
+      if (url.includes("/api/review/rounds?") || url.includes("/api/review/questions?") || url.endsWith("/api/settings/providers")) return Response.json([]);
+      if (url.includes("/model-bindings")) return Response.json({ workspaceId: "w1", bindings: {} });
+      throw new Error(`unexpected ${url}`);
+    });
 
     render(<App />);
 
     expect(await screen.findByText("围绕题库持续练习，形成可追踪的掌握度。")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "前往知识库" })).toHaveAttribute("href", "/knowledge");
-    expect(await screen.findByText("下一步：上传资料生成题库草稿")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "创建复习轮次" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /题库整理/ })).toBeInTheDocument();
+    expect(screen.getByText("当前筛选题量不足，请减少题量或先去“题库整理”确认更多题目。")).toBeInTheDocument();
   });
 
   it("guides knowledge users without a workspace to settings", async () => {
@@ -139,7 +131,7 @@ describe("App", () => {
     expect(await screen.findByText("后端未连接，请确认 FastAPI 服务已启动")).toBeInTheDocument();
   });
 
-  it("shows initial workflow status panel after backend connects", async () => {
+  it("shows the workspace initialization empty state after backend connects", async () => {
     vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ status: "ok" }), {
@@ -156,12 +148,9 @@ describe("App", () => {
 
     render(<App />);
 
-    const summary = await screen.findByLabelText("流程状态");
-    expect(summary).toHaveTextContent("后端连接：已连接");
-    expect(summary).toHaveTextContent("Workspace：待初始化");
-    expect(summary).toHaveTextContent("题库草稿：待生成");
-    expect(summary).toHaveTextContent("复习报告：待生成");
-    expect(summary).toHaveTextContent("Vault 索引：待扫描");
-    expect(summary).toHaveTextContent("下一步：初始化工作区");
+    expect(await screen.findByText("后端已连接")).toBeInTheDocument();
+    expect(screen.getByText("Workspace：待初始化")).toBeInTheDocument();
+    expect(screen.getByText("请先初始化工作区")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "前往设置" })).toHaveAttribute("href", "/settings");
   });
 });

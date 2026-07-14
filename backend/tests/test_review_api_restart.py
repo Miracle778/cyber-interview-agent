@@ -92,3 +92,41 @@ async def test_waiting_input_round_resumes_after_application_restart(
         assert resumed["execution_status"] == "waiting_for_approval"
     finally:
         await second.close()
+
+
+@pytest.mark.asyncio
+async def test_restart_reconciles_abandoned_generating_batch(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    def build() -> AgentApplication:
+        return AgentApplication(
+            workspace_resolver=lambda _workspace_id: workspace,
+            workspace_ids=lambda: ("w1",),
+            model_bindings=lambda _workspace_id: {},
+            graph_factory=_graph_factory,
+        )
+
+    first = build()
+    review = first.review("w1")
+    session = await review.sessions.create(
+        workspace_id="w1", kind="question.curate", title="Interrupted batch"
+    )
+    execution = await review.executions.prepare(session, input={})
+    batch = review.repository.create_batch(
+        workspace_id="w1",
+        session_id=session.id,
+        run_id=execution.id,
+        source_refs=("source-1",),
+    )
+    await first.close()
+
+    second = build()
+    try:
+        await second.recover()
+        restored = second.review("w1").repository.get_batch(batch.id)
+        assert restored.status == "failed"
+    finally:
+        await second.close()
