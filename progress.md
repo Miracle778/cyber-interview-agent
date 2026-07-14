@@ -1,5 +1,13 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-07-14：R2 Task 1 题库与持久轮次领域事实
+
+- 从 `e3d64b3` 在现有隔离 worktree 创建 `codex/r2-complete-review-agent`，未创建 subagent。
+- RED/GREEN 完成 generation-2 additive migration、`waiting_for_input`、领域 records、四种 selector、repository 幂等/CAS、report proposal 和 publication callback。
+- 题库发布后从结构化 candidate 投影 active catalog；mastery 发布从结构化 proposal 做 expected-version 更新。
+- 针对性验证：Task 1 与受影响 Runtime/Knowledge/HITL 测试 `48 passed`；compileall 与 `git diff --check` 通过。
+- 未运行全量回归、浏览器或 Langfuse；按阶段预算留到跨层接通和最终验收。
+
 ## 2026-07-14：R2 UI 设计契约补充
 
 - 按用户确认调整验收边界：R2 默认无 Langfuse，不测试正常导出、可视化或服务不可达；后续 observability 专项再覆盖。

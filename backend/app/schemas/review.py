@@ -20,7 +20,14 @@ class ReviewQuestion(BaseModel):
 
 class ReviewRoundSettings(BaseModel):
     selected_topics: list[str] = Field(alias="selectedTopics")
+    difficulties: list[Literal["easy", "medium", "hard"]]
     question_count: int = Field(alias="questionCount", ge=1, le=50)
     mode: ReviewMode
+    allow_follow_up: bool = Field(alias="allowFollowUp", default=True)
+    seed: int
+    answer_model_id: str = Field(alias="answerModelId", min_length=1)
+    reasoning_effort: Literal["none", "low", "medium", "high"] = Field(
+        alias="reasoningEffort", default="none"
+    )
 
     model_config = {"populate_by_name": True}

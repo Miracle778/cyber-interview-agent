@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 from hashlib import sha256
-from typing import Any, Protocol
+from inspect import isawaitable
+from typing import Any, Awaitable, Callable, Protocol
 
 from app.hitl.handlers import ActionPayloadValidationError
 from app.hitl.models import PendingActionRecord, ResolutionReceipt
@@ -12,7 +13,12 @@ from app.knowledge.drafts import (
     KnowledgeDraftService,
     UpdateDraftCommand,
 )
-from app.knowledge.publication import PublicationService
+from app.knowledge.publication import PublicationRecord, PublicationService
+
+
+AfterPublication = Callable[
+    [KnowledgeDraftRecord, PublicationRecord], Awaitable[None] | None
+]
 
 
 class EventPublisher(Protocol):
@@ -32,10 +38,12 @@ class KnowledgePublishActionHandler:
         drafts: KnowledgeDraftService,
         publications: PublicationService,
         event_stream: EventPublisher,
+        after_publication: AfterPublication | None = None,
     ) -> None:
         self._drafts = drafts
         self._publications = publications
         self._event_stream = event_stream
+        self._after_publication = after_publication
 
     def apply_edit(
         self,
@@ -92,6 +100,11 @@ class KnowledgePublishActionHandler:
         publication = await self._publications.publish_approved_action(
             effective_action
         )
+        if self._after_publication is not None:
+            final_draft = await self._drafts.get(publication.draft_id)
+            callback_result = self._after_publication(final_draft, publication)
+            if isawaitable(callback_result):
+                await callback_result
         await self._event_stream.publish(
             action.session_id,
             action.run_id,

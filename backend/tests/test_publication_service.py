@@ -9,9 +9,15 @@ from app.hitl.repository import PendingActionRepository
 from app.knowledge.atomic_writer import ExternalDocumentChangedError
 from app.knowledge.drafts import CreateDraftCommand, DraftVersionChangedError, KnowledgeDraftService, UpdateDraftCommand
 from app.knowledge.publication import PublicationService
+from app.knowledge.publication_handler import KnowledgePublishActionHandler
 from app.application.session_service import ProductRepository
 from app.services.search_index import rescan_active_documents
 from app.services.vault import initialize_vault
+
+
+class RecordingEvents:
+    async def publish(self, *_args, **_kwargs):
+        return None
 
 
 async def _resolved_action(workspace: Path, draft):
@@ -106,3 +112,30 @@ async def test_index_failure_keeps_markdown_and_marks_index_stale(tmp_path: Path
         tmp_path, workspace_id="w1"
     ).repair_index_stale_after_rescan()
     assert repaired == 1
+
+
+@pytest.mark.asyncio
+async def test_publish_handler_projects_the_final_published_draft(
+    tmp_path: Path,
+) -> None:
+    draft = await _draft(tmp_path)
+    action = await _resolved_action(tmp_path, draft)
+    projected = []
+
+    async def after_publication(final_draft, publication):
+        projected.append((final_draft, publication))
+
+    handler = KnowledgePublishActionHandler(
+        drafts=KnowledgeDraftService(tmp_path, workspace_id="w1"),
+        publications=PublicationService(tmp_path, workspace_id="w1"),
+        event_stream=RecordingEvents(),
+        after_publication=after_publication,
+    )
+
+    await handler.after_resolution(action, None)  # type: ignore[arg-type]
+
+    assert len(projected) == 1
+    final_draft, publication = projected[0]
+    assert final_draft.status == "published"
+    assert final_draft.id == draft.id
+    assert publication.state == "completed"

@@ -1,21 +1,21 @@
 # Cyber Interview Agent 当前任务规划
 
-## 当前任务：R2 UI 设计契约补充
+## 当前任务：R2 完整复习 Agent 实施
 
-目标是把已确认的复习轮次与题库整理效果图转化为可实施、可测试的 R2 UI 契约，避免实现阶段只参考图片猜测交互和状态。
+目标是按已确认设计交付题库整理、可恢复多题轮次、必要追问、报告、掌握度和派生讨论的完整 Web 闭环。
 
 | 阶段 | 状态 | 产出 |
 |---|---|---|
-| 1. 视觉参考固化 | 已完成 | 两张桌面效果图进入 `docs/superpowers/assets/r2/` |
-| 2. Spec UI 契约 | 已完成 | 一级导航、两类三栏布局、状态显隐、Markdown 和响应式规则 |
-| 3. Implementation plan 对齐 | 已完成 | 组件、API、模型参数、测试和浏览器验收同步更新 |
-| 4. 一致性复核 | 已完成 | 文档门禁 16 passed，图片、引用和 diff 检查通过 |
+| 1. 题库与持久轮次领域事实 | 已完成 | additive migration、catalog/round/input/mastery repository、selector、publication projection |
+| 2. Agent 与长生命周期 Graph | 进行中 | 题目整理、评价/追问、报告、discussion、input resume |
+| 3. API 与完整 Web 体验 | 待开始 | R2 resources、SSE 刷新、题库与复习工作台 |
+| 4. 真实验收与收尾 | 待开始 | Provider、浏览器/重启、全量回归、verification/learning |
 
 ## 工作位置
 
-- 分支：`codex/r2-ui-design-guidance`
+- 分支：`codex/r2-complete-review-agent`
 - worktree：`/private/tmp/cyber-interview-agent-r2-ui-design`
-- 基线：`codex/r2-plan-r8-channel-alignment@1eb08fc`
+- 基线：`codex/r2-ui-design-guidance@e3d64b3`
 - R2 设计：`docs/superpowers/specs/2026-07-13-r2-complete-review-agent-design.md`
 - 总路线：`docs/superpowers/specs/2026-07-10-product-development-roadmap-design.md`
 
@@ -40,7 +40,7 @@
 
 ## 下一步
 
-按 `docs/superpowers/plans/2026-07-14-r2-complete-review-agent.md` 执行 Task 1。
+按 `docs/superpowers/plans/2026-07-14-r2-complete-review-agent.md` 执行 Task 2。
 
 ## 所有权状态
 

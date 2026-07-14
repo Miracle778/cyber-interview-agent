@@ -5,9 +5,9 @@ from pathlib import Path
 
 
 CURRENT_SCHEMA_GENERATION = 2
-_SCHEMA_FILE = (
-    Path(__file__).parents[1] / "db" / "migrations" / "runtime" / "001_current.sql"
-)
+_MIGRATIONS_DIR = Path(__file__).parents[1] / "db" / "migrations" / "runtime"
+_SCHEMA_FILE = _MIGRATIONS_DIR / "001_current.sql"
+_BASELINE_MIGRATION_VERSION = 1
 
 
 class RuntimeDatabaseSchemaError(RuntimeError):
@@ -42,10 +42,55 @@ def connect_runtime_database(workspace_root: Path) -> sqlite3.Connection:
         connection.execute("PRAGMA journal_mode = WAL")
         if schema_state == "fresh":
             connection.executescript(_SCHEMA_FILE.read_text(encoding="utf-8"))
+        _apply_runtime_migrations(connection)
     except Exception:
         connection.close()
         raise
     return connection
+
+
+def _apply_runtime_migrations(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS runtime_schema_migrations ("
+        "version INTEGER PRIMARY KEY CHECK (version > 0), "
+        "name TEXT NOT NULL, "
+        "applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+    )
+    connection.execute(
+        "INSERT OR IGNORE INTO runtime_schema_migrations(version, name) "
+        "VALUES (?, ?)",
+        (_BASELINE_MIGRATION_VERSION, _SCHEMA_FILE.name),
+    )
+    connection.commit()
+
+    applied = {
+        int(row[0])
+        for row in connection.execute(
+            "SELECT version FROM runtime_schema_migrations"
+        )
+    }
+    for migration in sorted(_MIGRATIONS_DIR.glob("[0-9][0-9][0-9]_*.sql")):
+        version = int(migration.name.split("_", 1)[0])
+        if version <= _BASELINE_MIGRATION_VERSION or version in applied:
+            continue
+        connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            script = migration.read_text(encoding="utf-8")
+            connection.executescript(
+                "BEGIN IMMEDIATE;\n"
+                f"{script}\n"
+                "INSERT INTO runtime_schema_migrations(version, name) "
+                f"VALUES ({version}, '{migration.name}');\n"
+                "COMMIT;"
+            )
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
+
+    violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise RuntimeDatabaseSchemaError(
+            "runtime migration left foreign-key violations"
+        )
 
 
 def _open_connection(path: Path) -> sqlite3.Connection:
