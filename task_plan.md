@@ -8,8 +8,8 @@
 |---|---|---|
 | 1. 题库与持久轮次领域事实 | 已完成 | additive migration、catalog/round/input/mastery repository、selector、publication projection |
 | 2. Agent 与长生命周期 Graph | 已完成 | 题目整理、评价/追问、报告、discussion、input resume |
-| 3. API 与完整 Web 体验 | 代码完成，最小浏览器交互受工具阻塞 | R2 resources、SSE 刷新、题库与复习工作台、服务可达证据 |
-| 4. 真实验收与收尾 | 进行中，仅受浏览器工具阻塞 | 真实 Provider 十题与重启通过；全量回归、verification、learning 已完成，浏览器门禁未关闭 |
+| 3. API 与完整 Web 体验 | 人工浏览器验收未通过，交互模型需修订 | 现有 API/页面可运行，但题库过程不可见、复习回答阻塞、历史与创建入口混杂 |
+| 4. 会话化交互修订与重新验收 | 设计已确认，实施计划待写 | 整理会话/题目库双视图、历史优先复习、异步回答、阶段 SSE、来源关联 |
 
 ## 工作位置
 
@@ -34,15 +34,15 @@
 
 - R8 路线中的目标、范围、身份、消息映射、HITL、安全和验收无“移动浏览器即 Channel”的歧义。
 - R2 plan 覆盖 R2 spec 各章节及 `docs/my_idea.md` 的辅助复习要求。
-- 两张图片链接有效，题库候选 API 与 UI 筛选/详情能力对齐。
+- 三张图片链接有效，最新 Agent 会话概念图作为交互修订的权威结构参考。
 - 计划没有 `TBD`、`TODO` 或未定义接口；文件路径与当前仓库一致。
 - `git diff --check`、计划占位符扫描和文档测试通过。
 
 ## 下一步
 
-修复 browser client 的 `Cannot redefine property: process` 初始化冲突后，执行最小与完整浏览器验收；随后刷新浏览器证据、通过文档门禁并关闭 R2。真实 Provider、重启、回归、verification 与 learning 已完成，不重复运行无变化的 Provider 场景。
+用户复核已确认的 R2 spec 修订；通过后编写补充实施计划，在当前分支/worktree 完成会话化题库与异步复习改造，再重新执行浏览器验收。既有真实 Provider/重启证据保留，只有受交互与异步协议影响的场景重验。
 
 ## 所有权状态
 
-- 产品：R1/Agent Harness 已完成；R2 Task 1–3 与 Task 4 非浏览器部分完成，尚未达到“可人工验证”。
-- 用户学习/实践：learning 七件套已生成，用户练习待完成，不阻塞 R2 产品收尾。
+- 产品：R1/Agent Harness 已完成；R2 后端核心能力可运行，但人工浏览器验收暴露关键交互缺陷，必须完成修订后才能关闭。
+- 用户学习/实践：现有 learning 七件套需在新交互稳定后刷新，用户练习待完成且不阻塞产品修订。
