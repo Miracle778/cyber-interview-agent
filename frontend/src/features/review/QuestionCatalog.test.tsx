@@ -24,7 +24,7 @@ describe("QuestionCatalog", () => {
     expect(screen.getByRole("complementary", { name: "整理会话列表" })).toBeInTheDocument();
     expect(screen.getByRole("log", { name: "整理对话" })).toHaveTextContent("整理完成，请确认推荐题");
     expect(screen.getByRole("complementary", { name: "整理运行状态" })).toHaveTextContent("等待确认");
-    expect(screen.getByLabelText("回复整理 Agent")).toBeEnabled();
+    expect(screen.getByLabelText("回复题匠")).toBeEnabled();
   });
 
   it("selects sources in a dialog and warns without blocking repeated curation", async () => {
@@ -83,7 +83,7 @@ describe("QuestionCatalog", () => {
       throw new Error(`unexpected ${url}`);
     });
     render(<QuestionCatalog workspace={workspace} />, { wrapper });
-    const composer = await screen.findByLabelText("回复整理 Agent");
+    const composer = await screen.findByLabelText("回复题匠");
     fireEvent.change(composer, { target: { value: "确认全部推荐题" } });
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
     expect(screen.getByText("发送中…")).toBeInTheDocument();

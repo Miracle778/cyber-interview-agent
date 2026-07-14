@@ -15,13 +15,14 @@ export function CurationRuntimePanel({ session }: { session: CurationSession | n
         <div className="curation-stage"><span className={`curation-stage__icon curation-stage__icon--${session.stage}`}>{session.stage === "failed" ? <TriangleAlert size={18} /> : session.stage === "completed" ? <CircleCheck size={18} /> : <Clock3 size={18} />}</span><div><small>当前阶段</small><strong>{stageLabels[session.stage] ?? session.stage}</strong></div></div>
         <div className="review-progress" aria-label={`整理进度 ${percentage}%`}><span style={{ width: `${percentage}%` }} /></div>
         <p className="curation-progress-copy">{session.progress.completed} / {session.progress.total} 个处理单元</p>
-        <dl className="runtime-facts">
-          <div><dt>候选题</dt><dd>{session.candidateCount}</dd></div>
-          <div><dt>待确认 / 已发布</dt><dd>{session.pendingCount} / {session.publishedCount}</dd></div>
-          <div><dt>本次调用</dt><dd>{session.usage.callCount} 次 · {session.usage.totalTokens} tokens</dd></div>
-          <div><dt>执行状态</dt><dd>{session.executionStatus ?? "尚未启动"}</dd></div>
-        </dl>
-        {session.warnings.length > 0 ? <div className="curation-runtime-warning"><TriangleAlert size={16} /><span>包含重复或正在整理的资料，Agent 会保留来源并合并相似题。</span></div> : null}
+        <div className="curation-stats">
+          <div className="curation-stat"><span className="curation-stat__value">{session.candidateCount}</span><span className="curation-stat__label">候选题</span></div>
+          <div className="curation-stat"><span className="curation-stat__value">{session.pendingCount}</span><span className="curation-stat__label">待确认</span></div>
+          <div className="curation-stat"><span className="curation-stat__value">{session.publishedCount}</span><span className="curation-stat__label">已发布</span></div>
+          <div className="curation-stat"><span className="curation-stat__value">{session.usage.callCount}</span><span className="curation-stat__label">调用次数</span></div>
+        </div>
+        <div className="curation-usage">{session.usage.totalTokens.toLocaleString()} tokens · 执行 {session.executionStatus ?? "尚未启动"}</div>
+        {session.warnings.length > 0 ? <div className="curation-runtime-warning"><TriangleAlert size={16} /><span>包含重复或正在整理的资料，题匠会保留来源并合并相似题。</span></div> : null}
       </>}
     </aside>
   );

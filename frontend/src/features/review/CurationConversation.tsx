@@ -1,4 +1,4 @@
-import { CornerDownLeft, ListChecks } from "lucide-react";
+import { CornerDownLeft, FileText, ListChecks } from "lucide-react";
 import { FormEvent, useState } from "react";
 import { Button } from "../../shared/ui/Button";
 import { SessionMessage } from "./SessionMessage";
@@ -24,8 +24,15 @@ export function CurationConversation({ session, optimisticMessage, busy, onSubmi
   return (
     <main className="curation-conversation">
       <header className="curation-conversation__header">
-        <div><span>题库整理 Agent</span><h3>{session.title}</h3></div>
-        <small>{session.sources.map((source) => source.filename).join("、")}</small>
+        <div><span>题匠</span><h3>{session.title}</h3></div>
+        <div className="curation-source-chips">
+          {session.sources.map((source) => (
+            <span key={source.id} className="curation-source-chip" title={source.filename}>
+              <FileText size={13} />
+              {source.filename}
+            </span>
+          ))}
+        </div>
       </header>
       <div className="curation-conversation__messages" role="log" aria-label="整理对话" aria-live="polite">
         {session.messages.map((message) => <SessionMessage key={message.id} message={message} />)}
@@ -38,7 +45,7 @@ export function CurationConversation({ session, optimisticMessage, busy, onSubmi
         {optimisticMessage ? <SessionMessage message={optimisticMessage} pending /> : null}
       </div>
       <form className="curation-composer" onSubmit={submit}>
-        <label htmlFor="curation-command">回复整理 Agent</label>
+        <label htmlFor="curation-command">回复题匠</label>
         <textarea id="curation-command" value={text} disabled={!canCommand || busy} onChange={(event) => setText(event.target.value)} placeholder={canCommand ? "例如：确认全部推荐题；拒绝第 2 题；重写第 4 题：补充边界条件" : "Agent 整理完成后可在这里确认或调整"} />
         <div><small>支持明确的题号指令，含糊命令会先向你澄清。</small><Button type="submit" disabled={!text.trim() || !canCommand || busy} loading={busy}><CornerDownLeft size={16} />发送</Button></div>
       </form>
