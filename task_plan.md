@@ -9,7 +9,7 @@
 | 1. 题库与持久轮次领域事实 | 已完成 | additive migration、catalog/round/input/mastery repository、selector、publication projection |
 | 2. Agent 与长生命周期 Graph | 已完成 | 题目整理、评价/追问、报告、discussion、input resume |
 | 3. API 与完整 Web 体验 | 人工浏览器验收未通过，交互模型需修订 | 现有 API/页面可运行，但题库过程不可见、复习回答阻塞、历史与创建入口混杂 |
-| 4. 会话化交互修订与重新验收 | 设计已确认，实施计划待写 | 整理会话/题目库双视图、历史优先复习、异步回答、阶段 SSE、来源关联 |
+| 4. 会话化交互修订与重新验收 | 设计与实施计划已确认，待执行 | 整理会话/题目库双视图、历史优先复习、异步回答、阶段 SSE、来源关联 |
 
 ## 工作位置
 
@@ -17,6 +17,7 @@
 - worktree：`/private/tmp/cyber-interview-agent-r2-ui-design`
 - 基线：`codex/r2-ui-design-guidance@e3d64b3`
 - R2 设计：`docs/superpowers/specs/2026-07-13-r2-complete-review-agent-design.md`
+- 补充实施计划：`docs/superpowers/plans/2026-07-14-r2-agent-session-interaction-redesign.md`
 - 总路线：`docs/superpowers/specs/2026-07-10-product-development-roadmap-design.md`
 
 ## 范围与约束
@@ -41,7 +42,7 @@
 
 ## 下一步
 
-用户复核已确认的 R2 spec 修订；通过后编写补充实施计划，在当前分支/worktree 完成会话化题库与异步复习改造，再重新执行浏览器验收。既有真实 Provider/重启证据保留，只有受交互与异步协议影响的场景重验。
+按已确认的补充实施计划，在当前分支/worktree 依次完成 durable session facts、题库整理会话、异步复习会话和最终 UI/UX/浏览器验收。既有真实 Provider 证据保留；重启恢复、交互与异步协议相关场景重新验收。
 
 ## 所有权状态
 
