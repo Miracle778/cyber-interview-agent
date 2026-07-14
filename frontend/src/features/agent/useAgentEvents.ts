@@ -37,6 +37,14 @@ const EVENT_TYPES = [
   "execution.completed",
   "execution.failed",
   "execution.cancelled",
+  "review.round.started",
+  "review.input.required",
+  "review.input.resolved",
+  "review.attempt.completed",
+  "review.progress.changed",
+  "review.report.draft_created",
+  "review.round.completed",
+  "review.round.cancelled",
 ] as const;
 
 const createBrowserEventSource = (url: string): EventSourceLike =>

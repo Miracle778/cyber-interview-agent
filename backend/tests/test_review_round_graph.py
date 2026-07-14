@@ -334,3 +334,76 @@ async def test_review_round_graph_reuses_one_execution_across_interrupts(
     assert len(draft_calls) == 1
     assert action_calls == ["session-draft", "mastery-draft"]
     connection.close()
+
+
+@pytest.mark.asyncio
+async def test_review_round_skip_persists_without_model_evaluation(
+    tmp_path: Path,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+    product = ProductRepository(connection)
+    product.create_session(
+        workspace_id="w1", kind="review.round", title="Round", session_id="s1"
+    )
+    product.create_execution("s1", input={}, model_bindings={}, execution_id="r1")
+    repository = ReviewRepository(connection)
+    repository.create_round(
+        workspace_id="w1",
+        session_id="s1",
+        execution_id="r1",
+        settings=ReviewRoundSettings(
+            topics=(), difficulties=("medium",), mode="random-mixed",
+            question_count=1, allow_follow_up=True, seed=1,
+            answer_model_id="model-1", reasoning_effort="none",
+        ),
+        question_snapshots=(_round_question("q1"),),
+        mastery_before=MasteryProjection("w1", 0, (), ()),
+        round_id="round-1",
+    )
+    agents = SequencedRoundAgents()
+
+    async def drafts(**_values):
+        return (
+            DraftRef("session", 1, "c" * 64, "session_report"),
+            DraftRef("mastery", 1, "d" * 64, "mastery_report"),
+        )
+
+    async def action(draft):
+        return SimpleNamespace(id=f"action-{draft.id}")
+
+    graph = create_review_round_graph(
+        agents,
+        repository=repository,
+        create_report_drafts=drafts,
+        request_publication_action=action,
+        checkpointer=InMemorySaver(),
+    )
+    config = {"configurable": {"thread_id": "s1"}}
+    interrupted = await graph.ainvoke(
+        {"round_id": "round-1"}, config, context=_context()
+    )
+    request = interrupted["__interrupt__"][0].value
+    repository.resolve_input(
+        request["inputRequestId"],
+        idempotency_key="skip-q1",
+        value="__skip__",
+        receipt={"accepted": True},
+    )
+    await graph.ainvoke(
+        Command(
+            resume={
+                "inputRequestId": request["inputRequestId"],
+                "operation": "skip",
+                "value": "",
+                "receiptId": "skip-q1",
+            }
+        ),
+        config,
+        context=_context(),
+    )
+
+    attempts = repository.list_attempts("round-1")
+    assert attempts[0].skipped is True
+    assert attempts[0].evaluation is None
+    assert agents.evaluations == []
+    connection.close()

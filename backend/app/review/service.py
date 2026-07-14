@@ -130,9 +130,7 @@ class ReviewDomainService:
         if draft.document_type == "question":
             candidate = self._repository.get_candidate_by_draft(draft.id)
             if candidate is None:
-                raise PublicationProjectionError(
-                    "published question has no structured candidate"
-                )
+                return None
             if (
                 candidate.question.document_id != draft.document_id
                 or candidate.question.content_hash != draft.content_hash

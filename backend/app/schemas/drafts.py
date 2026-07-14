@@ -2,9 +2,6 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.schemas.review import ReviewQuestion
-
-
 def _to_camel(value: str) -> str:
     head, *tail = value.split("_")
     return head + "".join(part.capitalize() for part in tail)
@@ -60,8 +57,6 @@ class KnowledgeSourceResource(DraftModel):
 
 class UploadSourceResource(DraftModel):
     source: KnowledgeSourceResource
-    draft: KnowledgeDraftResource
-    question: ReviewQuestion
 
 
 class UpdateKnowledgeDraftRequest(DraftModel):

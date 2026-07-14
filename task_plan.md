@@ -8,7 +8,7 @@
 |---|---|---|
 | 1. 题库与持久轮次领域事实 | 已完成 | additive migration、catalog/round/input/mastery repository、selector、publication projection |
 | 2. Agent 与长生命周期 Graph | 已完成 | 题目整理、评价/追问、报告、discussion、input resume |
-| 3. API 与完整 Web 体验 | 待开始 | R2 resources、SSE 刷新、题库与复习工作台 |
+| 3. API 与完整 Web 体验 | 代码完成，最小浏览器交互受工具阻塞 | R2 resources、SSE 刷新、题库与复习工作台、服务可达证据 |
 | 4. 真实验收与收尾 | 待开始 | Provider、浏览器/重启、全量回归、verification/learning |
 
 ## 工作位置
@@ -40,9 +40,9 @@
 
 ## 下一步
 
-按 `docs/superpowers/plans/2026-07-14-r2-complete-review-agent.md` 执行 Task 3 API 与完整 Web 体验。
+提交 Task 3 代码边界；随后执行 Task 4 真实 Provider、重启/失败、最终回归和文档收尾。浏览器交互必须在浏览器插件初始化冲突修复后补跑，不以服务可达替代浏览器通过。
 
 ## 所有权状态
 
-- 产品：R1/Agent Harness 已完成；R2 待实施。
+- 产品：R1/Agent Harness 已完成；R2 Task 1–3 代码完成，Task 4 验收待执行。
 - 用户学习/实践：待完成，不阻塞 R2。

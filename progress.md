@@ -1,5 +1,15 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-07-14：R2 Task 3 API 与 Web 闭环
+
+- 完成 question batch/candidate/active catalog 与 review round/answer/skip/cancel/discussion API；资源从 Runtime SQLite 恢复，不依赖 SSE 重建。
+- 完成题库整理与复习双一级入口、候选搜索/Topic/难度/来源/状态筛选、来源证据、重复题内容对比、Markdown 阅读/原文/编辑边界。
+- 完成可恢复多题答题工作台、模型与思考强度服务端快照、usage/掌握度/报告/发布路径展示；普通 input 不展示 HITL，真实 pending approval 才显示确认区。
+- Knowledge 上传收敛为只登记 source；题目候选只在题库整理工作台生成和确认。
+- 受影响后端 `43 passed`；前端 7 文件 `20 passed`；`tsc --noEmit` 与一次生产 build 通过。
+- 本机临时后端 `/api/health` 与前端 `/review` 均返回 200；浏览器插件在加载自身 runtime 时因 `Cannot redefine property: process` 失败，因此没有执行交互式浏览器 happy path，也没有声明浏览器通过。
+- 未配置或启动 Langfuse；下一步提交 Task 3 并执行 Task 4。
+
 ## 2026-07-14：R2 Task 2 Agent 与长生命周期 Graph
 
 - 完成严格结构化题目/评价/报告契约、四个隔离 role thread 和回答模型/思考强度 override。

@@ -82,12 +82,54 @@ class ReviewRepository:
             raise LookupError(batch_id)
         return self._batch_record(row)
 
+    def list_batches(
+        self, workspace_id: str, *, status: str | None = None
+    ) -> tuple[QuestionBatchRecord, ...]:
+        clauses = ["workspace_id = ?"]
+        values: list[object] = [workspace_id]
+        if status is not None:
+            clauses.append("status = ?")
+            values.append(status)
+        rows = self._connection.execute(
+            "SELECT * FROM review_question_batches WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY updated_at DESC, rowid DESC",
+            tuple(values),
+        ).fetchall()
+        return tuple(self._batch_record(row) for row in rows)
+
+    def update_batch_status(self, batch_id: str, status: str) -> QuestionBatchRecord:
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_question_batches SET status = ?, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (status, batch_id),
+            )
+            if cursor.rowcount != 1:
+                raise LookupError(batch_id)
+        return self.get_batch(batch_id)
+
+    def attach_batch_run(
+        self, batch_id: str, run_id: str
+    ) -> QuestionBatchRecord:
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_question_batches SET run_id = ?, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND run_id IS NULL",
+                (run_id, batch_id),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError("question batch already has a run")
+        return self.get_batch(batch_id)
+
     def save_candidate(
         self,
         *,
         batch_id: str,
         question: QuestionSnapshot,
         draft_id: str | None,
+        source_refs: tuple[str, ...] = (),
+        correction_note: str = "",
         duplicate_of_question_id: str | None = None,
         status: str = "draft",
         candidate_id: str | None = None,
@@ -96,13 +138,16 @@ class ReviewRepository:
         with self._transaction():
             self._connection.execute(
                 "INSERT INTO review_question_candidates "
-                "(id, batch_id, draft_id, question_json, "
-                "duplicate_of_question_id, status) VALUES (?, ?, ?, ?, ?, ?)",
+                "(id, batch_id, draft_id, question_json, source_refs_json, "
+                "correction_note, duplicate_of_question_id, status) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     identifier,
                     batch_id,
                     draft_id,
                     _canonical_json(asdict(question)),
+                    _canonical_json(source_refs),
+                    correction_note,
                     duplicate_of_question_id,
                     status,
                 ),
@@ -126,6 +171,67 @@ class ReviewRepository:
             (draft_id,),
         ).fetchone()
         return None if row is None else self._candidate_record(row)
+
+    def list_candidates(
+        self,
+        workspace_id: str,
+        *,
+        query: str | None = None,
+        topic: str | None = None,
+        difficulty: str | None = None,
+        source_id: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[QuestionCandidateRecord, ...]:
+        rows = self._connection.execute(
+            "SELECT c.* FROM review_question_candidates c "
+            "JOIN review_question_batches b ON b.id = c.batch_id "
+            "WHERE b.workspace_id = ? ORDER BY c.updated_at DESC, c.rowid DESC",
+            (workspace_id,),
+        ).fetchall()
+        records = [self._candidate_record(row) for row in rows]
+        if query:
+            needle = query.casefold()
+            records = [
+                item
+                for item in records
+                if needle in item.question.title.casefold()
+                or needle in item.question.question_text.casefold()
+            ]
+        if topic:
+            records = [item for item in records if topic in item.question.topics]
+        if difficulty:
+            records = [
+                item for item in records if item.question.difficulty == difficulty
+            ]
+        if source_id:
+            records = [
+                item
+                for item in records
+                if source_id in item.source_refs
+            ]
+        if status:
+            records = [item for item in records if item.status == status]
+        return tuple(records[offset : offset + limit])
+
+    def update_candidate(
+        self,
+        candidate_id: str,
+        *,
+        question: QuestionSnapshot,
+        status: str | None = None,
+    ) -> QuestionCandidateRecord:
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_question_candidates SET question_json = ?, "
+                "status = COALESCE(?, status), updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ?",
+                (_canonical_json(asdict(question)), status, candidate_id),
+            )
+            if cursor.rowcount != 1:
+                raise LookupError(candidate_id)
+        return self.get_candidate(candidate_id)
 
     def activate_question(
         self,
@@ -187,7 +293,11 @@ class ReviewRepository:
         return self._require_catalog(candidate.question.question_id)
 
     def list_active_questions(
-        self, workspace_id: str
+        self,
+        workspace_id: str,
+        *,
+        topic: str | None = None,
+        difficulty: str | None = None,
     ) -> tuple[QuestionCatalogRecord, ...]:
         rows = self._connection.execute(
             "SELECT * FROM review_question_catalog "
@@ -195,7 +305,24 @@ class ReviewRepository:
             "ORDER BY published_at, rowid",
             (workspace_id,),
         ).fetchall()
-        return tuple(self._catalog_record(row) for row in rows)
+        records = tuple(self._catalog_record(row) for row in rows)
+        if topic is not None:
+            records = tuple(
+                item for item in records if topic in item.snapshot.topics
+            )
+        if difficulty is not None:
+            records = tuple(
+                item
+                for item in records
+                if item.snapshot.difficulty == difficulty
+            )
+        return records
+
+    def get_active_question(self, question_id: str) -> QuestionCatalogRecord:
+        record = self._require_catalog(question_id)
+        if not record.active:
+            raise LookupError(question_id)
+        return record
 
     def create_round(
         self,
@@ -244,6 +371,23 @@ class ReviewRepository:
         if row is None:
             raise ReviewRoundNotFoundError(session_id)
         return self._round_record(row)
+
+    def list_rounds(self, workspace_id: str) -> tuple[ReviewRoundRecord, ...]:
+        rows = self._connection.execute(
+            "SELECT * FROM review_rounds WHERE workspace_id = ? "
+            "ORDER BY updated_at DESC, rowid DESC",
+            (workspace_id,),
+        ).fetchall()
+        return tuple(self._round_record(row) for row in rows)
+
+    def pending_input(self, round_id: str) -> ReviewInputRequestRecord | None:
+        row = self._connection.execute(
+            "SELECT * FROM review_input_requests "
+            "WHERE round_id = ? AND status = 'pending' "
+            "ORDER BY version DESC, rowid DESC LIMIT 1",
+            (round_id,),
+        ).fetchone()
+        return None if row is None else self._input_request_record(row)
 
     def create_input_request(
         self,
@@ -662,6 +806,8 @@ class ReviewRepository:
             batch_id=row["batch_id"],
             draft_id=row["draft_id"],
             question=self._snapshot(row["question_json"]),
+            source_refs=tuple(json.loads(row["source_refs_json"])),
+            correction_note=row["correction_note"],
             duplicate_of_question_id=row["duplicate_of_question_id"],
             status=row["status"],
             created_at=row["created_at"],

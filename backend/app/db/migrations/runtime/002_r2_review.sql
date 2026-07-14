@@ -94,6 +94,8 @@ CREATE TABLE review_question_candidates (
     batch_id TEXT NOT NULL REFERENCES review_question_batches(id) ON DELETE CASCADE,
     draft_id TEXT UNIQUE REFERENCES knowledge_drafts(id) ON DELETE SET NULL,
     question_json TEXT NOT NULL,
+    source_refs_json TEXT NOT NULL DEFAULT '[]',
+    correction_note TEXT NOT NULL DEFAULT '',
     duplicate_of_question_id TEXT,
     status TEXT NOT NULL CHECK (
         status IN ('draft', 'review_pending', 'rejected', 'published')

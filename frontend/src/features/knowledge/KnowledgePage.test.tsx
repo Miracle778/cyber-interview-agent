@@ -66,7 +66,7 @@ describe("KnowledgePage", () => {
     expect(screen.getByRole("button", { name: "重新扫描 Vault" })).toBeDisabled();
   });
 
-  it("uploads source and displays the generated draft question", async () => {
+  it("uploads and displays a source without pretending a question was generated", async () => {
     const onDraftQuestionReady = vi.fn();
     let uploaded = false;
     const source = {
@@ -74,32 +74,26 @@ describe("KnowledgePage", () => {
       storedPath: "artifacts/review/sources/source_1.txt", contentType: "text/plain",
       sizeBytes: 15, createdAt: "2026-07-12T10:00:00Z", draftId: "d1",
     };
-    const generatedDraft = {
-      id: "d1", workspaceId: "w1", sessionId: null, executionId: null,
-      agentType: null, domain: "review", documentType: "question",
-      documentId: "q1", title: "新草稿", markdown: "# 新草稿",
-      contentPath: "artifacts/review/drafts/d1.md", sourceRefs: [],
-      relationRefs: [], status: "draft", version: 1, contentHash: "abc",
-      createdAt: "now", updatedAt: "now",
-    };
     const existingDraft = {
-      ...generatedDraft,
       id: "d-old",
+      workspaceId: "w1", sessionId: null, executionId: null,
+      agentType: null, domain: "review", documentType: "question",
       documentId: "q-old",
       title: "旧草稿",
       markdown: "# 旧草稿",
+      contentPath: "artifacts/review/drafts/d-old.md", sourceRefs: [],
+      relationRefs: [], status: "draft", version: 1, contentHash: "abc",
+      createdAt: "now", updatedAt: "now",
     };
     const fetchMock = mockRoute({
       "/api/knowledge/sources": (init) => {
         if (init?.method === "POST") {
           uploaded = true;
-          return { source, draft: generatedDraft, question };
+          return { source: { ...source, draftId: null } };
         }
         return uploaded ? [source] : [];
       },
-      "/api/knowledge/drafts?": () => uploaded
-        ? [existingDraft, generatedDraft]
-        : [existingDraft],
+      "/api/knowledge/drafts?": () => [existingDraft],
     });
 
     render(
@@ -118,13 +112,14 @@ describe("KnowledgePage", () => {
     fireEvent.change(screen.getByLabelText("选择资料文件"), { target: { files: [file] } });
     fireEvent.click(screen.getByRole("button", { name: "上传资料" }));
 
-    await waitFor(() => expect(onDraftQuestionReady).toHaveBeenCalledWith(question));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "cache.txt" })).toBeInTheDocument());
+    expect(onDraftQuestionReady).not.toHaveBeenCalled();
     const form = fetchMock.mock.calls.find(
       ([url, init]) => String(url).includes("/api/knowledge/sources") && init?.method === "POST",
     )?.[1]?.body as FormData;
     expect(form.get("workspaceId")).toBe("w1");
     expect(form.get("workspacePath")).toBeNull();
-    expect(await screen.findByRole("heading", { level: 1, name: "新草稿" })).toBeInTheDocument();
+    expect(screen.getByText("artifacts/review/sources/source_1.txt")).toBeInTheDocument();
   });
 
   it("rescans the vault and displays indexed count", async () => {

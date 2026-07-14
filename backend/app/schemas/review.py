@@ -1,33 +1,241 @@
-from typing import Literal
+from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from typing import Any, Literal
 
-ReviewMode = Literal["weak-point", "random-mixed", "topic-focused", "recent-mistake"]
-MasteryState = Literal["unknown", "weak", "partial", "stable", "strong"]
+from pydantic import BaseModel, ConfigDict, Field
 
-class ReviewQuestion(BaseModel):
-    id: str
-    title: str
-    question_text: str = Field(alias="questionText")
-    reference_answer: str = Field(alias="referenceAnswer")
-    topics: list[str]
-    difficulty: Literal["easy", "medium", "hard"]
-    key_points: list[str] = Field(alias="keyPoints")
-    follow_ups: list[str] = Field(alias="followUps")
-    mastery: MasteryState
 
-    model_config = {"populate_by_name": True}
+def _to_camel(value: str) -> str:
+    head, *tail = value.split("_")
+    return head + "".join(part.capitalize() for part in tail)
 
-class ReviewRoundSettings(BaseModel):
-    selected_topics: list[str] = Field(alias="selectedTopics")
-    difficulties: list[Literal["easy", "medium", "hard"]]
-    question_count: int = Field(alias="questionCount", ge=1, le=50)
-    mode: ReviewMode
-    allow_follow_up: bool = Field(alias="allowFollowUp", default=True)
-    seed: int
-    answer_model_id: str = Field(alias="answerModelId", min_length=1)
-    reasoning_effort: Literal["none", "low", "medium", "high"] = Field(
-        alias="reasoningEffort", default="none"
+
+class ReviewModel(BaseModel):
+    model_config = ConfigDict(
+        alias_generator=_to_camel,
+        populate_by_name=True,
+        from_attributes=True,
+        extra="forbid",
     )
 
-    model_config = {"populate_by_name": True}
+
+ReviewMode = Literal[
+    "weak-point", "random-mixed", "topic-focused", "recent-mistake"
+]
+MasteryState = Literal["unknown", "weak", "partial", "stable", "strong"]
+Difficulty = Literal["easy", "medium", "hard"]
+
+
+class ReviewQuestion(ReviewModel):
+    id: str
+    title: str
+    question_text: str
+    reference_answer: str
+    topics: list[str]
+    difficulty: Difficulty
+    key_points: list[str]
+    follow_ups: list[str]
+    mastery: MasteryState = "unknown"
+
+
+class ReviewRoundSettings(ReviewModel):
+    selected_topics: list[str]
+    difficulties: list[Difficulty]
+    question_count: int = Field(ge=1, le=50)
+    mode: ReviewMode
+    allow_follow_up: bool = True
+    seed: int | None = None
+    answer_model_id: str = Field(min_length=1)
+    reasoning_effort: Literal["none", "low", "medium", "high"] = "none"
+
+
+class CreateQuestionBatchCommand(ReviewModel):
+    workspace_id: str = Field(min_length=1)
+    source_refs: list[str] = Field(min_length=1)
+    rewrite_feedback: str | None = None
+    rewrite_of_batch_id: str | None = None
+
+
+class UpdateQuestionCandidateCommand(ReviewModel):
+    version: int = Field(ge=1)
+    title: str | None = Field(default=None, min_length=1)
+    question_text: str | None = Field(default=None, min_length=1)
+    reference_answer: str | None = Field(default=None, min_length=1)
+    topics: list[str] | None = None
+    difficulty: Difficulty | None = None
+    key_points: list[str] | None = None
+    follow_ups: list[str] | None = None
+
+
+class RewriteQuestionCandidateCommand(ReviewModel):
+    feedback: str = Field(min_length=1, max_length=5000)
+
+
+class CreateReviewRoundCommand(ReviewRoundSettings):
+    workspace_id: str = Field(min_length=1)
+
+
+class SubmitReviewInputCommand(ReviewModel):
+    input_request_id: str
+    version: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=8, max_length=200)
+    value: str = Field(min_length=1, max_length=20000)
+
+
+class SkipReviewInputCommand(ReviewModel):
+    input_request_id: str
+    version: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=8, max_length=200)
+
+
+class CreateReviewDiscussionCommand(ReviewModel):
+    ordinal: int = Field(ge=1)
+    message: str = Field(min_length=1, max_length=20000)
+
+
+class QuestionSnapshotResource(ReviewModel):
+    question_id: str
+    document_id: str
+    content_hash: str
+    title: str
+    question_text: str
+    reference_answer: str
+    topics: list[str]
+    difficulty: Difficulty
+    key_points: list[str]
+    follow_ups: list[str]
+
+
+class DraftSummaryResource(ReviewModel):
+    id: str
+    title: str
+    markdown: str
+    status: str
+    version: int
+    content_hash: str
+    document_type: str
+
+
+class QuestionCandidateResource(ReviewModel):
+    id: str
+    batch_id: str
+    question: QuestionSnapshotResource
+    source_refs: list[str]
+    correction_note: str
+    duplicate_of_question_id: str | None
+    duplicate_question: QuestionSnapshotResource | None
+    status: str
+    draft: DraftSummaryResource | None
+    created_at: str
+    updated_at: str
+
+
+class QuestionBatchResource(ReviewModel):
+    id: str
+    workspace_id: str
+    session_id: str
+    run_id: str | None
+    source_refs: list[str]
+    rewrite_of_batch_id: str | None
+    status: str
+    candidate_count: int = 0
+    pending_count: int = 0
+    candidates: list[QuestionCandidateResource] = Field(default_factory=list)
+    created_at: str
+    updated_at: str
+
+
+class ActiveQuestionResource(ReviewModel):
+    id: str
+    title: str
+    question_text: str
+    reference_answer: str
+    topics: list[str]
+    difficulty: Difficulty
+    key_points: list[str]
+    follow_ups: list[str]
+    draft_id: str
+    publication_id: str
+    published_at: str
+
+
+class CurrentQuestionResource(ReviewModel):
+    id: str
+    title: str
+    question_text: str
+    topics: list[str]
+    difficulty: Difficulty
+
+
+class ReviewInputResource(ReviewModel):
+    id: str
+    round_id: str
+    ordinal: int
+    kind: Literal["answer", "follow_up"]
+    prompt: str
+    version: int
+    status: str
+    created_at: str
+    resolved_at: str | None
+
+
+class ReviewAttemptResource(ReviewModel):
+    id: str
+    round_id: str
+    ordinal: int
+    question_snapshot: QuestionSnapshotResource
+    answer: str | None
+    follow_up_answer: str | None
+    evaluation: dict[str, Any] | None
+    mastery_suggestion: str | None
+    skipped: bool
+    created_at: str
+    updated_at: str
+
+
+class ReviewReportResource(ReviewModel):
+    id: str
+    report_kind: Literal["session_report", "mastery_report"]
+    title: str
+    status: str
+    version: int
+    publication: dict[str, Any] | None
+
+
+class UsageResource(ReviewModel):
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    call_count: int
+    estimated_count: int
+
+
+class ReviewRoundResource(ReviewModel):
+    id: str
+    workspace_id: str
+    session_id: str
+    execution_id: str | None
+    settings: dict[str, Any]
+    status: str
+    execution_status: str | None
+    current_index: int
+    question_count: int
+    current_question: CurrentQuestionResource | None
+    current_input: ReviewInputResource | None
+    attempts: list[ReviewAttemptResource]
+    reports: list[ReviewReportResource]
+    usage: UsageResource
+    created_at: str
+    updated_at: str
+    completed_at: str | None
+
+
+class DiscussionSessionResource(ReviewModel):
+    id: str
+    workspace_id: str
+    kind: str
+    title: str
+    status: str
+    created_at: str
+    updated_at: str
+    latest_execution_id: str | None

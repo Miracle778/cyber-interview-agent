@@ -9,6 +9,7 @@ from app.api.routes_agent import router as agent_router
 from app.api.routes_drafts import router as drafts_router
 from app.api.routes_hitl import router as hitl_router
 from app.api.routes_knowledge import router as knowledge_router
+from app.api.routes_review import router as review_router
 from app.api.routes_settings import router as settings_router
 from app.agents.factory import AgentFactory
 from app.agents.model_resolver import ChatModelResolver, ModelResolutionError
@@ -45,6 +46,12 @@ from app.knowledge.drafts import (
     DraftVersionChangedError,
 )
 from app.security.workspace_paths import PathPolicyError
+from app.review.errors import (
+    InputAlreadyResolvedError,
+    InsufficientQuestionsError,
+    ReviewConflictError,
+    ReviewRoundNotFoundError,
+)
 from app.services.secrets import (
     EnvironmentSecretStore,
     KeyringSecretStore,
@@ -95,6 +102,11 @@ async def lifespan(application: FastAPI):
             graph_factory=ProductionGraphFactory(AgentFactory(resolved_models)),
             observability=observability,
             observability_flush_timeout_ms=observability_settings.flush_timeout_ms,
+            validate_review_model=lambda _workspace_id, model_id, effort: resolved_models.resolve(
+                role="answer_evaluation",
+                provider_model_id=model_id,
+                reasoning_effort=effort,
+            ),
         )
         application.state.agent_application = agent_application
         await agent_application.recover()
@@ -111,6 +123,7 @@ app.include_router(hitl_router)
 app.include_router(settings_router)
 app.include_router(knowledge_router)
 app.include_router(drafts_router)
+app.include_router(review_router)
 
 
 def _error(status_code: int, code: str, message: str) -> JSONResponse:
@@ -270,6 +283,38 @@ async def session_busy(
     _request: Request, _error_value: SessionBusyError
 ) -> JSONResponse:
     return _error(409, "session_busy", "当前 Session 已有运行中的任务")
+
+
+@app.exception_handler(ReviewRoundNotFoundError)
+async def review_round_not_found(
+    _request: Request, _error_value: ReviewRoundNotFoundError
+) -> JSONResponse:
+    return _error(404, "review_round_not_found", "复习轮次不存在")
+
+
+@app.exception_handler(InsufficientQuestionsError)
+async def insufficient_review_questions(
+    _request: Request, error_value: InsufficientQuestionsError
+) -> JSONResponse:
+    return _error(
+        422,
+        "insufficient_questions",
+        f"当前只有 {error_value.available} 道可用题目，无法创建本轮复习",
+    )
+
+
+@app.exception_handler(InputAlreadyResolvedError)
+async def review_input_already_resolved(
+    _request: Request, _error_value: InputAlreadyResolvedError
+) -> JSONResponse:
+    return _error(409, "review_input_already_resolved", "本题输入已处理")
+
+
+@app.exception_handler(ReviewConflictError)
+async def review_conflict(
+    _request: Request, _error_value: ReviewConflictError
+) -> JSONResponse:
+    return _error(409, "review_conflict", "复习状态已变化，请刷新后重试")
 
 
 @app.exception_handler(PathPolicyError)

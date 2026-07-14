@@ -1,5 +1,14 @@
 # Agent Runtime 框架收敛关键发现
 
+## R2 Task 3 实施发现
+
+- question batch、candidate、active catalog 必须分别建模：上传只登记 source，Agent 输出落 candidate/draft，只有发布 receipt 才进入 active catalog。
+- candidate 详情需要返回已发布重复题的结构化快照；只给 duplicate ID 无法支持人工比较。
+- 模型产生的 source refs 只能引用当前 batch 的 source ID 或其 `sourceId#fragment`，否则回退到批次来源，避免伪造跨文档证据。
+- 页面筛选必须真实传给服务端，来源证据和批次状态也必须来自资源接口；SSE 只触发 Query invalidation。
+- completed round 只显示结果，不能同时重新打开创建表单；离开/继续依靠服务端 round/input facts。
+- 当前浏览器插件与 Node 控制运行时存在初始化冲突：导入官方 browser client 即在其 `globalThis.process = processShim` 处抛出 `Cannot redefine property: process`。这是验收工具阻塞，不是项目页面错误；服务可达不能替代交互浏览器证据。
+
 ## R2 Task 1 实施发现
 
 - generation 2 可在保留数据的情况下引入有序 `runtime_schema_migrations`；fresh 与既有 generation-2 数据库都记录 baseline 1 后应用 R2 migration 2。

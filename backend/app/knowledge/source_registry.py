@@ -90,6 +90,11 @@ class KnowledgeSourceService:
             rows = await cursor.fetchall()
         return tuple(self._record(row) for row in rows)
 
+    async def get(self, source_id: str) -> KnowledgeSourceRecord:
+        async with self._connection() as connection:
+            row = await self._require_row(connection, source_id)
+        return self._record(row)
+
     async def delete(self, source_id: str) -> None:
         async with self._connection() as connection:
             row = await self._require_row(connection, source_id)

@@ -6,7 +6,6 @@ from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 
 from app.api.dependencies import get_workspace_service
 from app.db.connection import connect_index
-from app.knowledge.drafts import CreateDraftCommand, KnowledgeDraftService
 from app.knowledge.source_registry import KnowledgeSourceService
 from app.knowledge.sources import MAX_SOURCE_BYTES, SourceTooLargeError
 from app.knowledge.publication import PublicationService
@@ -16,8 +15,6 @@ from app.schemas.drafts import (
     UploadSourceResource,
 )
 from app.security.workspace_paths import WorkspacePathPolicy
-from app.services.document_ingestion import create_question_draft, extract_text
-from app.services.markdown import render_question_markdown
 from app.services.search_index import rescan_active_documents
 from app.services.vault import initialize_vault
 from app.services.workspace_service import WorkspaceService
@@ -58,28 +55,8 @@ async def upload_source(
         content_type=file.content_type or "application/octet-stream",
         content=content,
     )
-    question = create_question_draft(extract_text(workspace / source.stored_path))
-    drafts = KnowledgeDraftService(workspace, workspace_id=workspace_id)
-    try:
-        draft = await drafts.create(
-            CreateDraftCommand(
-                domain="review",
-                document_type="question",
-                document_id=question.id,
-                title=question.title,
-                markdown=render_question_markdown(question, status="draft"),
-                source_refs=(source.stored_path,),
-                relation_refs=(),
-            )
-        )
-        source = await sources.attach_draft(source.id, draft_id=draft.id)
-    except Exception:
-        await sources.delete(source.id)
-        raise
     return UploadSourceResource(
         source=KnowledgeSourceResource.model_validate(source),
-        draft=KnowledgeDraftResource.model_validate(draft),
-        question=question,
     )
 
 

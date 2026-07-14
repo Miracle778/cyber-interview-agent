@@ -147,6 +147,8 @@ class QuestionCandidateRecord:
     batch_id: str
     draft_id: str | None
     question: QuestionSnapshot
+    source_refs: tuple[str, ...]
+    correction_note: str
     duplicate_of_question_id: str | None
     status: str
     created_at: str

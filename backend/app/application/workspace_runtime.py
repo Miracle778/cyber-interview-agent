@@ -32,6 +32,9 @@ from app.knowledge.drafts import (
 from app.knowledge.publication import PublicationService
 from app.knowledge.publication_handler import KnowledgePublishActionHandler
 from app.middleware.usage import UsageProjection
+from app.review.application import ReviewApplication
+from app.review.service import ReviewDomainService
+from app.review.selector import QuestionSelector
 from app.review.repository import ReviewRepository
 from app.tools.audit import ToolAuditRepository
 
@@ -111,6 +114,7 @@ class WorkspaceRuntime:
     hitl: HitlService
     drafts: KnowledgeDraftService
     publications: PublicationService
+    review: ReviewApplication
 
     @classmethod
     def create(
@@ -121,6 +125,7 @@ class WorkspaceRuntime:
         model_bindings: Callable[[], Mapping[str, str]],
         graph_factory: GraphFactory,
         observability,
+        validate_review_model: Callable[[str, str], None],
     ) -> "WorkspaceRuntime":
         connection = connect_runtime_database(root)
         repository = ProductRepository(connection)
@@ -159,11 +164,28 @@ class WorkspaceRuntime:
             review_repository=reviews,
             get_draft=drafts.get,
         )
+        review = ReviewApplication(
+            workspace_id=workspace_id,
+            workspace_root=root,
+            repository=reviews,
+            sessions=sessions,
+            executions=executions,
+            events=events,
+            drafts=drafts,
+            publications=publications,
+            validate_model=validate_review_model,
+        )
+        projection_service = ReviewDomainService(
+            repository=reviews,
+            selector=QuestionSelector(),
+            create_round_runtime=lambda _workspace, _settings: None,  # type: ignore[arg-type]
+        )
         handlers = create_default_action_handler_registry(
             knowledge_publish_handler=KnowledgePublishActionHandler(
                 drafts=drafts,
                 publications=publications,
                 event_stream=events,
+                after_publication=projection_service.activate_published_draft,
             )
         )
         hitl = HitlService(
@@ -185,6 +207,7 @@ class WorkspaceRuntime:
             hitl=hitl,
             drafts=drafts,
             publications=publications,
+            review=review,
         )
 
     async def close(self) -> None:
@@ -202,6 +225,7 @@ class AgentApplication:
         graph_factory: GraphFactory,
         observability=None,
         observability_flush_timeout_ms: int = 2_000,
+        validate_review_model: Callable[[str, str, str], None] | None = None,
     ) -> None:
         self._workspace_resolver = workspace_resolver
         self._workspace_ids = workspace_ids
@@ -209,6 +233,9 @@ class AgentApplication:
         self._graph_factory = graph_factory
         self._observability = observability or NoopObservabilitySink()
         self._observability_flush_timeout_ms = observability_flush_timeout_ms
+        self._validate_review_model = validate_review_model or (
+            lambda _workspace, _model, _effort: None
+        )
         self._workspaces: dict[str, WorkspaceRuntime] = {}
 
     async def create_session(
@@ -328,6 +355,40 @@ class AgentApplication:
         context, _draft = await self._locate_draft(draft_id)
         return await self._draft_resource(context, await context.drafts.update(draft_id, command))
 
+    def review(self, workspace_id: str) -> ReviewApplication:
+        return self._context(workspace_id).review
+
+    def locate_review_round(self, round_id: str) -> ReviewApplication:
+        for workspace_id in self._workspace_ids():
+            context = self._context(workspace_id)
+            try:
+                context.review.repository.get_round(round_id)
+                return context.review
+            except Exception as error:
+                if error.__class__.__name__ != "ReviewRoundNotFoundError":
+                    raise
+        raise ProductRecordNotFoundError("复习轮次不存在")
+
+    def locate_review_candidate(self, candidate_id: str) -> ReviewApplication:
+        for workspace_id in self._workspace_ids():
+            context = self._context(workspace_id)
+            try:
+                context.review.repository.get_candidate(candidate_id)
+                return context.review
+            except LookupError:
+                continue
+        raise ProductRecordNotFoundError("题目候选不存在")
+
+    def locate_review_batch(self, batch_id: str) -> ReviewApplication:
+        for workspace_id in self._workspace_ids():
+            context = self._context(workspace_id)
+            try:
+                context.review.repository.get_batch(batch_id)
+                return context.review
+            except LookupError:
+                continue
+        raise ProductRecordNotFoundError("题目批次不存在")
+
     async def recover(self) -> tuple[str, ...]:
         recovered = []
         for workspace_id in self._workspace_ids():
@@ -354,6 +415,9 @@ class AgentApplication:
             model_bindings=lambda: self._model_bindings(workspace_id),
             graph_factory=self._graph_factory,
             observability=self._observability,
+            validate_review_model=lambda model_id, effort: self._validate_review_model(
+                workspace_id, model_id, effort
+            ),
         )
         self._workspaces[workspace_id] = context
         return context

@@ -89,13 +89,21 @@ class ProductRepository:
         title: str,
         title_source: str = "user",
         session_id: str | None = None,
+        parent_session_id: str | None = None,
     ) -> SessionRecord:
         session_id = session_id or str(uuid4())
         self.connection.execute(
             "INSERT INTO agent_sessions "
-            "(id, workspace_id, graph_id, graph_version, title, title_source) "
-            "VALUES (?, ?, ?, 1, ?, ?)",
-            (session_id, workspace_id, kind, title, title_source),
+            "(id, workspace_id, graph_id, graph_version, title, title_source, "
+            "parent_session_id) VALUES (?, ?, ?, 1, ?, ?, ?)",
+            (
+                session_id,
+                workspace_id,
+                kind,
+                title,
+                title_source,
+                parent_session_id,
+            ),
         )
         self.connection.commit()
         return self.get_session(session_id)
@@ -345,6 +353,8 @@ class ProductEventStream:
             "review.report.draft_created",
             "review.round.completed",
             "review.round.cancelled",
+            "review.round.started",
+            "review.round.failed",
             "artifact.changed",
             "publication.changed",
             "execution.warning",
@@ -410,7 +420,12 @@ class AgentSessionService:
         self.events = events
 
     async def create(
-        self, *, workspace_id: str, kind: str, title: str | None
+        self,
+        *,
+        workspace_id: str,
+        kind: str,
+        title: str | None,
+        parent_session_id: str | None = None,
     ) -> SessionRecord:
         clean_title = (title or "").strip()
         session = self.repository.create_session(
@@ -418,6 +433,7 @@ class AgentSessionService:
             kind=kind,
             title=clean_title or "新会话",
             title_source="user" if clean_title else "placeholder",
+            parent_session_id=parent_session_id,
         )
         await self.events.publish(
             session.id, None, "session.created", {"title": session.title, "kind": kind}

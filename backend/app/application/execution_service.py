@@ -5,7 +5,8 @@ import json
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
-from typing import Any, Literal, Mapping, Protocol
+from typing import Any, Literal, Protocol
+from uuid import uuid4
 
 from langgraph.types import Command
 
@@ -22,7 +23,7 @@ from app.hitl.models import CreatePendingAction, PendingActionRecord
 from app.infrastructure.checkpoints import AgentCheckpointer
 from app.knowledge.drafts import CreateDraftCommand, KnowledgeDraftRecord
 from app.graphs.review_round import DraftRef
-from app.review.models import MasteryEntry, MasteryProjection
+from app.review.models import MasteryEntry, MasteryProjection, QuestionSnapshot
 from app.review.models import ReviewInputReceipt
 from app.review.repository import ReviewRepository
 
@@ -76,7 +77,20 @@ class AgentExecutionService:
         self._checkpointer = AgentCheckpointer(workspace_root)
         self._tasks: dict[str, asyncio.Task[None]] = {}
 
+    def execution(self, execution_id: str) -> ExecutionRecord:
+        return self._repository.get_execution(execution_id)
+
+    def usage(self, session_id: str) -> dict[str, int]:
+        return self._repository.usage(session_id)
+
     async def start(
+        self, session: SessionRecord, *, input: dict[str, Any]
+    ) -> ExecutionRecord:
+        execution = await self.prepare(session, input=input)
+        self.run_prepared(execution, graph_input=input)
+        return execution
+
+    async def prepare(
         self, session: SessionRecord, *, input: dict[str, Any]
     ) -> ExecutionRecord:
         bindings = dict(self._model_bindings())
@@ -97,8 +111,14 @@ class AgentExecutionService:
             "execution.started",
             {"executionId": execution.id},
         )
-        self._spawn(execution.id, graph_input=input)
         return execution
+
+    def run_prepared(
+        self, execution: ExecutionRecord, *, graph_input: object
+    ) -> None:
+        if execution.status != "running":
+            raise ValueError("prepared execution must be running")
+        self._spawn(execution.id, graph_input=graph_input)
 
     async def resume_approval(
         self, execution_id: str, decision: dict[str, Any], _receipt_id: str
@@ -170,6 +190,69 @@ class AgentExecutionService:
                 resume={
                     "inputRequestId": request_id,
                     "value": value,
+                    "receiptId": receipt.id,
+                }
+            ),
+        )
+        return receipt
+
+    async def skip_input(
+        self,
+        execution_id: str,
+        *,
+        request_id: str,
+        receipt_id: str,
+    ) -> ReviewInputReceipt:
+        if self._review_repository is None:
+            raise RuntimeError("review input recovery is not configured")
+        request = self._review_repository.get_input_request(request_id)
+        round_record = self._review_repository.get_round(request.round_id)
+        if round_record.execution_id != execution_id:
+            raise ValueError("input request does not belong to execution")
+        if request.status == "resolved":
+            return self._review_repository.resolve_input(
+                request_id,
+                idempotency_key=receipt_id,
+                value="__skip__",
+                receipt={"accepted": True, "operation": "skip"},
+                receipt_id=receipt_id,
+            )
+        receipt = self._review_repository.resolve_input(
+            request_id,
+            idempotency_key=receipt_id,
+            value="__skip__",
+            receipt={"accepted": True, "operation": "skip"},
+            receipt_id=receipt_id,
+        )
+        execution = self._repository.transition_execution(
+            execution_id,
+            expected=("waiting_for_input", "interrupted"),
+            target="running",
+            increment_resume=True,
+        )
+        await self._events.publish(
+            execution.session_id,
+            execution.id,
+            "review.input.resolved",
+            {
+                "inputRequestId": request_id,
+                "receiptId": receipt.id,
+                "operation": "skip",
+            },
+        )
+        await self._events.publish(
+            execution.session_id,
+            execution.id,
+            "execution.started",
+            {"executionId": execution.id, "resumed": True},
+        )
+        self._spawn(
+            execution.id,
+            graph_input=Command(
+                resume={
+                    "inputRequestId": request_id,
+                    "operation": "skip",
+                    "value": "",
                     "receiptId": receipt.id,
                 }
             ),
@@ -417,10 +500,79 @@ class AgentExecutionService:
                 ),
             )
 
+        async def persist_question_candidates(state: dict[str, Any]) -> None:
+            if self._review_repository is None:
+                raise RuntimeError("question curation is not configured")
+            batch_id = str(execution.input.get("batchId", ""))
+            if not batch_id:
+                raise ValueError("question curation batch is missing")
+            batch = self._review_repository.get_batch(batch_id)
+            active = self._review_repository.list_active_questions(
+                self._workspace_id
+            )
+            by_text = {
+                item.snapshot.question_text.strip().casefold(): item.snapshot.question_id
+                for item in active
+            }
+            for raw in state.get("candidates", ()):
+                question_id = str(uuid4())
+                markdown = (
+                    f"# {raw['title']}\n\n"
+                    f"## 题目\n\n{raw['question_text']}\n\n"
+                    f"## 参考答案\n\n{raw['reference_answer']}\n\n"
+                    f"## 关键点\n\n"
+                    + "\n".join(f"- {item}" for item in raw["key_points"])
+                    + "\n"
+                )
+                proposed_refs = tuple(
+                    str(ref)
+                    for ref in raw["source_refs"]
+                    if any(
+                        str(ref) == source_id
+                        or str(ref).startswith(f"{source_id}#")
+                        for source_id in batch.source_refs
+                    )
+                )
+                source_refs = proposed_refs or batch.source_refs
+                draft = await create_draft(
+                    document_type="question",
+                    title=raw["title"],
+                    markdown=markdown,
+                    source_refs=source_refs,
+                    relation_refs=tuple(raw["topics"]),
+                )
+                snapshot = QuestionSnapshot(
+                    question_id=question_id,
+                    document_id=draft.document_id,
+                    content_hash=draft.content_hash,
+                    title=raw["title"],
+                    question_text=raw["question_text"],
+                    reference_answer=raw["reference_answer"],
+                    topics=tuple(raw["topics"]),
+                    difficulty=raw["difficulty"],
+                    key_points=tuple(raw["key_points"]),
+                    follow_ups=tuple(raw["follow_ups"]),
+                )
+                self._review_repository.save_candidate(
+                    batch_id=batch_id,
+                    question=snapshot,
+                    draft_id=draft.id,
+                    source_refs=source_refs,
+                    correction_note=raw["correction_note"],
+                    duplicate_of_question_id=by_text.get(
+                        snapshot.question_text.strip().casefold()
+                    ),
+                    status="review_pending",
+                )
+            self._review_repository.update_batch_status(batch_id, "completed")
+
         final_state: dict[str, Any] = {}
         interrupted = False
         interrupt_kind: Literal["input", "approval"] | None = None
         projected_text = False
+        projected_attempts: set[str] = set()
+        projected_drafts: set[str] = set()
+        projected_progress: tuple[int, str] | None = None
         projector = AgentEventProjector()
         try:
             async with self._checkpointer.open() as saver:
@@ -451,6 +603,47 @@ class AgentExecutionService:
                         data = part.get("data")
                         if isinstance(data, dict):
                             final_state = data
+                            if session.kind == "review.round":
+                                for attempt_id in data.get("attempt_ids", ()):
+                                    if attempt_id in projected_attempts:
+                                        continue
+                                    projected_attempts.add(attempt_id)
+                                    await self._events.publish(
+                                        session.id,
+                                        execution.id,
+                                        "review.attempt.completed",
+                                        {
+                                            "attemptId": attempt_id,
+                                            "count": len(projected_attempts),
+                                        },
+                                    )
+                                progress = (
+                                    int(data.get("current_index", 0)),
+                                    str(data.get("status", "running")),
+                                )
+                                if progress != projected_progress:
+                                    projected_progress = progress
+                                    await self._events.publish(
+                                        session.id,
+                                        execution.id,
+                                        "review.progress.changed",
+                                        {
+                                            "currentIndex": progress[0],
+                                            "status": progress[1],
+                                        },
+                                    )
+                                for draft_id in data.get(
+                                    "report_draft_ids", ()
+                                ):
+                                    if draft_id in projected_drafts:
+                                        continue
+                                    projected_drafts.add(draft_id)
+                                    await self._events.publish(
+                                        session.id,
+                                        execution.id,
+                                        "review.report.draft_created",
+                                        {"draftId": draft_id},
+                                    )
                         if part.get("interrupts"):
                             interrupted = True
                             for item in part["interrupts"]:
@@ -497,6 +690,9 @@ class AgentExecutionService:
                 )
                 return
 
+            if session.kind == "question.curate":
+                await persist_question_candidates(final_state)
+
             response = _assistant_content(final_state)
             if response:
                 self._repository.append_message(
@@ -523,6 +719,13 @@ class AgentExecutionService:
                 "execution.completed",
                 {"executionId": execution.id},
             )
+            if session.kind == "review.round":
+                await self._events.publish(
+                    session.id,
+                    execution.id,
+                    "review.round.completed",
+                    {"executionId": execution.id},
+                )
         except asyncio.CancelledError:
             raise
         except Exception as error:
@@ -537,6 +740,14 @@ class AgentExecutionService:
                 },
             )
             try:
+                if (
+                    session.kind == "question.curate"
+                    and self._review_repository is not None
+                    and execution.input.get("batchId")
+                ):
+                    self._review_repository.update_batch_status(
+                        str(execution.input["batchId"]), "failed"
+                    )
                 current = self._repository.get_execution(execution.id)
                 if current.status == "running":
                     self._repository.transition_execution(
@@ -558,6 +769,22 @@ class AgentExecutionService:
                             )
                         },
                     )
+                    if session.kind == "review.round":
+                        await self._events.publish(
+                            session.id,
+                            execution.id,
+                            "review.round.failed",
+                            {
+                                "executionId": execution.id,
+                                "code": str(
+                                    getattr(
+                                        error,
+                                        "code",
+                                        "agent_execution_failed",
+                                    )
+                                ),
+                            },
+                        )
             except Exception:
                 logger.exception(
                     "failed to persist agent execution failure",

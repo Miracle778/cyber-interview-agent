@@ -112,8 +112,7 @@ export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanne
     setIsUploading(true);
     try {
       const result = await uploadSource(workspace.id, selectedFile);
-      onDraftQuestionReady(result.question);
-      selectResource({ kind: "draft", id: result.draft.id });
+      selectResource({ kind: "source", id: result.source.id });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["knowledge-sources", workspace.id] }),
         queryClient.invalidateQueries({ queryKey: ["knowledge-drafts", workspace.id] }),
@@ -230,7 +229,7 @@ export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanne
                 <span>{drafts.length}</span>
               </div>
               {draftsQuery.isLoading ? <p className="status-note">正在读取草稿…</p> : null}
-              {!draftsQuery.isLoading && drafts.length === 0 ? <p className="status-note">上传资料后自动生成</p> : null}
+              {!draftsQuery.isLoading && drafts.length === 0 ? <p className="status-note">题库整理或 Agent 报告生成后显示</p> : null}
               {drafts.map((item) => (
                 <button
                   key={item.id}

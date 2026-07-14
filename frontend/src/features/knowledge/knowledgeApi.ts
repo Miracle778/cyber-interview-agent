@@ -1,6 +1,4 @@
 import { ApiError, apiGet } from "../../shared/api/client";
-import type { ReviewQuestion } from "../review/reviewTypes";
-import type { KnowledgeDraft } from "./draftTypes";
 import type { KnowledgeSource } from "./knowledgeTypes";
 
 export interface RescanVaultResponse {
@@ -25,8 +23,6 @@ async function readError(response: Response, fallback: string): Promise<never> {
 
 export interface UploadSourceResponse {
   source: KnowledgeSource;
-  draft: KnowledgeDraft;
-  question: ReviewQuestion;
 }
 
 export function listSources(workspaceId: string): Promise<KnowledgeSource[]> {

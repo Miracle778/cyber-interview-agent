@@ -10,7 +10,6 @@ import { getWorkspace, type WorkspaceConfig } from "../../features/settings/sett
 import { MobileNavigation } from "../navigation/MobileNavigation";
 import { PrimaryNavigation } from "../navigation/PrimaryNavigation";
 import { PageHeader } from "./PageHeader";
-import { FlowSummary } from "../../features/review/FlowSummary";
 
 type HealthState = {
   status: "checking" | "connected" | "disconnected";
@@ -99,19 +98,7 @@ export function AppShell() {
                   health={health}
                   workspace={workspace}
                 >
-                  <div className="review-layout">
-                    <div className="review-layout__main">
-                      <ReviewPage workspace={workspace} draftQuestion={draftQuestion} />
-                    </div>
-                    <aside className="review-layout__aside">
-                      <FlowSummary
-                        healthStatus={health.status}
-                        workspace={workspace}
-                        draftQuestion={draftQuestion}
-                        indexedCount={indexedCount}
-                      />
-                    </aside>
-                  </div>
+                  <ReviewPage workspace={workspace} draftQuestion={draftQuestion} />
                 </PageFrame>
               }
             />

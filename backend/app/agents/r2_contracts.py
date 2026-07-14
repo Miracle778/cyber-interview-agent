@@ -69,6 +69,7 @@ class ReviewRoundState(TypedDict, total=False):
     current_answer: str
     current_evaluation: dict
     current_follow_up: str
+    skipped: bool
     attempt_ids: list[str]
     report_draft_ids: list[str]
     report_drafts: list[dict]

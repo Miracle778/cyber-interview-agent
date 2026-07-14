@@ -101,6 +101,17 @@ describe("useAgentEvents", () => {
     });
   });
 
+  it("collects R2 progress events for resource invalidation", () => {
+    const { result } = renderHook(() =>
+      useAgentEvents("s1", {
+        createEventSource: (url) => new FakeEventSource(url),
+      }),
+    );
+    const source = FakeEventSource.instances[0];
+    act(() => source.emit({ id: 9, type: "review.progress.changed", sessionId: "s1", executionId: "r1", timestamp: "now", payload: { roundId: "round-1", currentIndex: 2 } }));
+    expect(result.current.events.map((event) => event.type)).toEqual(["review.progress.changed"]);
+  });
+
   it("clears a replayed failure when a newer execution starts", () => {
     const { result } = renderHook(() =>
       useAgentEvents("s1", {

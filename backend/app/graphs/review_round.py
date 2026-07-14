@@ -96,8 +96,12 @@ def create_review_round_graph(
         return {
             "current_input_request": asdict(request),
             "current_answer": str(value["value"]),
+            "skipped": value.get("operation") == "skip",
             "status": "running",
         }
+
+    def after_answer(state: ReviewRoundState) -> str:
+        return "persist_attempt" if state.get("skipped") else "evaluate_answer"
 
     async def evaluate_answer(
         state: ReviewRoundState,
@@ -162,8 +166,13 @@ def create_review_round_graph(
     async def persist_attempt(state: ReviewRoundState) -> dict[str, Any]:
         round_record = repository.get_round(state["round_id"])
         ordinal = state["current_index"] + 1
-        evaluation = AnswerEvaluationV2.model_validate(
-            state["current_evaluation"]
+        skipped = bool(state.get("skipped"))
+        evaluation = (
+            None
+            if skipped
+            else AnswerEvaluationV2.model_validate(
+                state["current_evaluation"]
+            )
         )
         identifier = str(
             uuid5(NAMESPACE_URL, f"review-attempt:{round_record.id}:{ordinal}")
@@ -176,8 +185,11 @@ def create_review_round_graph(
             ],
             answer=state["current_answer"],
             follow_up_answer=state.get("current_follow_up"),
-            evaluation=evaluation.model_dump(),
-            mastery_suggestion=evaluation.mastery_suggestion,
+            evaluation=None if evaluation is None else evaluation.model_dump(),
+            mastery_suggestion=(
+                None if evaluation is None else evaluation.mastery_suggestion
+            ),
+            skipped=skipped,
             attempt_id=identifier,
         )
         return {"attempt_ids": [*state.get("attempt_ids", []), attempt_id]}
@@ -202,6 +214,7 @@ def create_review_round_graph(
             "current_answer": "",
             "current_evaluation": {},
             "current_follow_up": "",
+            "skipped": False,
             "status": status,
         }
 
@@ -297,7 +310,7 @@ def create_review_round_graph(
     graph.add_node("finish", finish)
     graph.add_edge(START, "load_round")
     graph.add_edge("load_round", "request_answer")
-    graph.add_edge("request_answer", "evaluate_answer")
+    graph.add_conditional_edges("request_answer", after_answer)
     graph.add_conditional_edges("evaluate_answer", after_evaluation)
     graph.add_edge("request_follow_up", "evaluate_answer")
     graph.add_edge("persist_attempt", "advance")

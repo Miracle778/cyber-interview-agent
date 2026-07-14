@@ -1,125 +1,80 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import { ReviewPage } from "./ReviewPage";
-import type { ReviewQuestion } from "./reviewTypes";
+import type { ReviewRound } from "./reviewTypes";
 
 class FakeEventSource {
-  onopen: ((event: Event) => void) | null = null;
-  onerror: ((event: Event) => void) | null = null;
-  constructor(public url: string) {}
+  onopen = null;
+  onerror = null;
   addEventListener() {}
   close() {}
 }
 
-const workspace: WorkspaceConfig = {
-  id: "w1",
-  workspacePath: "/tmp/cyber-demo",
-  vaultPath: "/tmp/cyber-demo/knowledge-vault",
+const workspace: WorkspaceConfig = { id: "w1", workspacePath: "/tmp/demo", vaultPath: "/tmp/demo/vault" };
+const waitingRound: ReviewRound = {
+  id: "round-1", workspaceId: "w1", sessionId: "session-1", executionId: "run-1",
+  settings: { topics: [], difficulties: ["medium"], mode: "random-mixed", question_count: 2, allow_follow_up: true, seed: 1, answer_model_id: "model-1", reasoning_effort: "medium" },
+  status: "waiting_for_input", executionStatus: "waiting_for_input", currentIndex: 0, questionCount: 2,
+  currentQuestion: { id: "q1", title: "MVCC", questionText: "Read View 如何判断可见性？", topics: ["database"], difficulty: "medium" },
+  currentInput: { id: "input-1", roundId: "round-1", ordinal: 1, kind: "answer", prompt: "Read View 如何判断可见性？", version: 1, status: "pending", createdAt: "now", resolvedAt: null },
+  attempts: [], reports: [], usage: { inputTokens: 12, outputTokens: 4, totalTokens: 16, callCount: 1, estimatedCount: 0 }, createdAt: "now", updatedAt: "now", completedAt: null,
 };
 
-const question: ReviewQuestion = {
-  id: "q1",
-  title: "缓存穿透",
-  questionText: "缓存穿透是什么？",
-  referenceAnswer: "请求不存在的数据导致缓存无法命中。",
-  topics: ["缓存"],
-  difficulty: "medium",
-  keyPoints: ["缓存空值", "布隆过滤器"],
-  followUps: [],
-  mastery: "unknown",
-};
+function wrapper({ children }: { children: ReactNode }) {
+  return <MemoryRouter><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{children}</QueryClientProvider></MemoryRouter>;
+}
 
-const session = {
-  id: "s1", workspaceId: "w1", kind: "review.single",
-  title: "单题复习：缓存穿透", status: "active", createdAt: "now",
-  updatedAt: "now", latestExecutionId: "r1",
-};
+function mockApi(rounds: ReviewRound[]) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.includes("/api/review/rounds?")) return Response.json(rounds);
+    if (url === "/api/review/rounds/round-1") return Response.json(rounds[0]);
+    if (url.includes("/api/review/questions?")) return Response.json([]);
+    if (url === "/api/settings/providers") return Response.json([]);
+    if (url.includes("/model-bindings")) return Response.json({ workspaceId: "w1", bindings: {} });
+    if (url.includes("/api/agent/sessions/session-1")) return Response.json({});
+    if (url.includes("/api/agent/actions?")) return Response.json([]);
+    throw new Error(`unexpected ${url}`);
+  });
+}
 
-describe("ReviewPage persistent runtime flow", () => {
+describe("R2 ReviewPage", () => {
   beforeEach(() => vi.stubGlobal("EventSource", FakeEventSource));
-  afterEach(() => {
-    cleanup();
-    vi.restoreAllMocks();
-    vi.unstubAllGlobals();
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  it("separates question curation and review as primary entries", async () => {
+    mockApi([]);
+    render(<ReviewPage workspace={workspace} />, { wrapper });
+
+    const navigation = await screen.findByRole("navigation", { name: "复习工作台入口" });
+    expect(within(navigation).getByRole("button", { name: /题库整理/ })).toBeInTheDocument();
+    expect(within(navigation).getByRole("button", { name: /开始复习/ })).toHaveAttribute("aria-current", "page");
+    expect(await screen.findByText("创建复习轮次")).toBeInTheDocument();
+
+    fireEvent.click(within(navigation).getByRole("button", { name: /题库整理/ }));
+    expect(await screen.findByRole("heading", { name: "题库整理" })).toBeInTheDocument();
+    expect(screen.queryByText("创建复习轮次")).toBeNull();
   });
 
-  it("requires a draft question before review", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json([], { status: 200 }),
-    );
-    render(<MemoryRouter><ReviewPage workspace={workspace} draftQuestion={null} /></MemoryRouter>);
+  it("restores a waiting round from server resources without showing HITL", async () => {
+    mockApi([waitingRound]);
+    render(<ReviewPage workspace={workspace} />, { wrapper });
 
-    expect(screen.getByRole("region", { name: "复习会话" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "当前练习" })).toBeInTheDocument();
-    expect(screen.getByText("请先上传资料生成题库草稿")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "发送回答" })).toBeDisabled();
+    expect(await screen.findByRole("region", { name: "当前复习轮次" })).toHaveTextContent("Read View 如何判断可见性？");
+    expect(screen.getByLabelText("轮次运行状态")).toHaveTextContent("model-1");
+    expect(screen.getByLabelText("轮次运行状态")).toHaveTextContent("medium");
+    expect(screen.getByLabelText("轮次运行状态")).toHaveTextContent("16 tokens");
+    expect(screen.queryByText("待确认操作")).toBeNull();
   });
 
-  it("creates a review.single session and starts an execution", async () => {
-    const calls: string[] = [];
-    let runBody: string | undefined;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const url = String(input);
-      const method = init?.method ?? "GET";
-      calls.push(`${method} ${url}`);
-      if (url.includes("/api/agent/sessions?")) return Response.json([]);
-      if (url === "/api/agent/sessions" && method === "POST") return Response.json(session, { status: 201 });
-      if (url === "/api/agent/sessions/s1/executions") {
-        runBody = init?.body as string | undefined;
-        return Response.json({ id: "r1", sessionId: "s1", status: "running", resumeCount: 0, errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: null }, { status: 202 });
-      }
-      if (url === "/api/agent/sessions/s1") return Response.json({ ...session, messages: [{ id: "m1", executionId: "r1", role: "user", content: "缓存空值", createdAt: "now" }], latestExecution: { id: "r1", sessionId: "s1", status: "running", resumeCount: 0, errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: null }, currentAction: null });
-      if (url.includes("/api/agent/actions?")) return Response.json([]);
-      throw new Error(`unexpected ${method} ${url}`);
-    });
-    render(<MemoryRouter><ReviewPage workspace={workspace} draftQuestion={question} /></MemoryRouter>);
-
-    fireEvent.change(screen.getByLabelText("你的回答"), { target: { value: "缓存空值" } });
-    fireEvent.click(screen.getByRole("button", { name: "发送回答" }));
-
-    await waitFor(() => expect(calls).toContain("POST /api/agent/sessions"));
-    expect(calls).toContain("POST /api/agent/sessions/s1/executions");
-    expect(JSON.parse(runBody ?? "{}").input).toMatchObject({
-      user_answer: "缓存空值",
-    });
-    expect(await screen.findByText((_, node) => node?.tagName === "P" && node.textContent === "你：缓存空值")).toBeInTheDocument();
-  });
-
-  it("restores evaluation, draft and pending publication from persisted APIs", async () => {
-    const olderSession = {
-      ...session,
-      id: "s-old",
-      title: "旧复习会话",
-      latestExecutionId: "r-old",
-    };
-    const action = {
-      id: "a1", workspaceId: "w1", sessionId: "s1", executionId: "r1",
-      actionType: "knowledge.publish", preview: {
-        draftId: "d1", question,
-        evaluation: { score: "partial", missing_key_points: ["布隆过滤器"], evidence: "提到缓存空值" },
-      }, editableFields: ["title", "markdown"], status: "pending", version: 1,
-      createdAt: "now", resolvedAt: null,
-    };
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (url.includes("/api/agent/sessions?")) return Response.json([session, olderSession]);
-      if (url === "/api/agent/sessions/s1") return Response.json({ ...session, usage: { inputTokens: 120, outputTokens: 40, totalTokens: 160, callCount: 2, estimatedCount: 1 }, latestWarning: { code: "loop_detected", message: "检测到重复执行" }, messages: [], latestExecution: { id: "r1", sessionId: "s1", status: "waiting_for_approval", resumeCount: 0, errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: null }, currentAction: action });
-      if (url.includes("/api/agent/actions?")) return Response.json([action]);
-      if (url === "/api/knowledge/drafts/d1") return Response.json({ id: "d1", workspaceId: "w1", sessionId: "s1", executionId: "r1", agentType: "review.single", domain: "review", documentType: "session_report", documentId: "doc1", title: "报告", markdown: "# 报告", contentPath: "draft.md", sourceRefs: ["q1"], relationRefs: [], status: "review_pending", version: 1, contentHash: "h1", createdAt: "now", updatedAt: "now", publication: null });
-      throw new Error(`unexpected ${url}`);
-    });
-
-    render(<MemoryRouter><ReviewPage workspace={workspace} draftQuestion={null} /></MemoryRouter>);
-
-    expect(await screen.findByText("评分：partial")).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "复习结果" })).toBeInTheDocument();
-    expect(screen.getByLabelText("历史会话")).toHaveValue("s1");
-    expect(screen.getByText("草稿状态：review_pending")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "批准发布" })).toBeInTheDocument();
-    expect(screen.getByLabelText("运行用量")).toHaveTextContent("160 tokens");
-    expect(screen.getByLabelText("运行用量")).toHaveTextContent("含 1 次估算");
-    expect(screen.getByRole("alert")).toHaveTextContent("检查重复的模型或工具调用");
+  it("shows completed results without reopening setup", async () => {
+    mockApi([{ ...waitingRound, status: "completed", executionStatus: "completed", currentQuestion: null, currentInput: null, completedAt: "later" }]);
+    render(<ReviewPage workspace={workspace} />, { wrapper });
+    expect(await screen.findByText("本轮复习结果")).toBeInTheDocument();
+    expect(screen.queryByText("创建复习轮次")).toBeNull();
   });
 });
