@@ -9,7 +9,7 @@
 | 1. 题库与持久轮次领域事实 | 已完成 | additive migration、catalog/round/input/mastery repository、selector、publication projection |
 | 2. Agent 与长生命周期 Graph | 已完成 | 题目整理、评价/追问、报告、discussion、input resume |
 | 3. API 与完整 Web 体验 | 人工浏览器验收未通过，交互模型需修订 | 现有 API/页面可运行，但题库过程不可见、复习回答阻塞、历史与创建入口混杂 |
-| 4. 会话化交互修订与重新验收 | Task 1–3 已完成，Task 4 待执行 | 已落 durable facts、题库整理会话、历史优先复习与异步评价；待 UI/UX 审计和最终验收 |
+| 4. 会话化交互修订与重新验收 | Task 1–3 + Task 4 自动验证已完成；浏览器审计待用户执行 | durable facts、题库整理会话、历史优先复习与异步评价已落；过时测试已修，全量回归 270/94 绿，文档门禁通过；待用户执行 4 宽度 UI/UX 审计 + 10 场景浏览器验收 |
 
 ## 工作位置
 
@@ -42,7 +42,11 @@
 
 ## 下一步
 
-执行 Task 4：修复最小浏览器路径发现的轮次状态文案，运行一次最终 `ui-ux-pro-max` 审计、针对性集成/重启测试、单次全量回归与完整浏览器验收，再刷新 verification/learning 和文档门禁。
+Task 4 自动验证与文档部分已完成（过时测试修复、全量回归 270/94 绿、文档门禁通过）。待用户执行：
+
+1. 4 宽度 UI/UX 审计（375/768/1024/1440）：accessibility / loading / navigation / responsive / performance 五类检查，修复发现的文案与布局问题（已知：左侧轮次列表 `waiting_for_input` 误写为"已完成"）。
+2. 10 场景浏览器/重启验收：整理会话、刷新恢复、命令 receipt、模糊命令澄清、历史优先复习、异步回答气泡、重启续跑、失败重试、响应式与键盘。
+3. 审计通过后合入 `main`，同步 verification/learning 到主仓库。
 
 ## 所有权状态
 

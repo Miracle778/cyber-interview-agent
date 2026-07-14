@@ -1,5 +1,15 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-07-14：R2 Task 4（Claude 接手自动验证与文档）
+
+- Codex 额度用完，Claude 接手 Task 4 的自动验证与文档部分；浏览器审计交用户执行。
+- 修复过时测试 `App.test.tsx`：redesign 改 history-first 后，旧测试仍期望 ReviewSetup 默认可见，改为先验证 ReviewLanding（“复习历史”heading + “创建复习”按钮 + 空状态），点“创建复习”再验证 ReviewSetup（“创建复习轮次”heading + “题量不足”文案）。提交 `8028416`。
+- 全量回归：后端 270 passed，前端 94 passed（较 Task 3 的 84 增加 10，含修复的 App 测试），tsc OK，build OK。
+- 定向集成/重启测试（curation session API / async answer / restart / review routes）：11 passed。
+- verification 文档刷新：自动验证数字更新为 270/94，补 Task 4 测试修复说明，人工验证节补 4 宽度 UI/UX 审计清单 + 10 场景浏览器验收清单（交用户执行）。
+- 文档门禁通过（verification + learning 七件套 + redesign plan）。
+- 待用户执行：Step 1（375/768/1024/1440 四宽度 UI/UX 审计）+ Step 4（10 个浏览器/重启验收场景）。已知待修：左侧轮次列表 `waiting_for_input` 文案误写为“已完成”。
+
 ## 2026-07-14：R2 会话化交互 Task 3
 
 - 复习入口改为 history-first；创建面板显式打开，进入轮次后保持历史/对话/运行状态三栏，页面不再自动进入最新轮次。
