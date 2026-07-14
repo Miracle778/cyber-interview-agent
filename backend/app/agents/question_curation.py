@@ -10,7 +10,7 @@ from langchain_core.messages import HumanMessage
 
 from app.agents.context import AgentContext
 from app.agents.factory import AgentFactory, AgentSpec
-from app.agents.r2_contracts import QuestionCandidateBatch
+from app.agents.question_curation_contracts import QuestionCandidateBatch
 
 
 class AgentRunnable(Protocol):

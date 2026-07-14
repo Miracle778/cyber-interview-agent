@@ -139,7 +139,7 @@ load frozen question
 | Role | 用途 | 输入 | 输出 | 工具 |
 |---|---|---|---|---|
 | `question_generation` | 多来源题目候选与重写 | source excerpts、现有相似题摘要、用户重写意见 | `QuestionCandidateBatch` | 只读 source/active knowledge |
-| `answer_evaluation` | 当前题回答与追问补充评价 | frozen question、answer、可选 supplement | `AnswerEvaluationV2` | 默认无工具 |
+| `answer_evaluation` | 当前题回答与追问补充评价 | frozen question、answer、可选 supplement | `RoundAnswerEvaluation` | 默认无工具 |
 | `report_summarization` | session report 与 mastery 解释 | 结构化 attempts、round settings、confirmed prior reports | Markdown/结构化报告 | 只读确认报告 |
 | `agent_chat` | 派生深入讨论 | question snapshot、attempt evidence、对话消息 | 对话消息 | 受限只读知识工具 |
 
@@ -156,7 +156,7 @@ load frozen question
 
 ### 5.3 `ReviewRoundState`
 
-Graph state 至少包含：
+`ReviewRoundState` 定义在 `app/graphs/review_round.py`，不与 Agent 结构化输出混放。Graph state 至少包含：
 
 ```text
 round_id

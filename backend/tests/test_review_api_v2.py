@@ -9,7 +9,10 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from langgraph.graph import END, START, StateGraph
 
-from app.agents.r2_contracts import AnswerEvaluationV2, SessionReportOutput
+from app.agents.review_round_contracts import (
+    ReviewSessionReportOutput,
+    RoundAnswerEvaluation,
+)
 from app.api.dependencies import get_agent_application
 from app.api.routes_review import router as review_router
 from app.application.workspace_runtime import AgentApplication
@@ -21,7 +24,7 @@ from app.review.models import QuestionSnapshot
 
 class FakeRoundAgents:
     async def evaluate(self, **_values):
-        return AnswerEvaluationV2(
+        return RoundAnswerEvaluation(
             score="good",
             missing_key_points=[],
             evidence="回答覆盖关键点",
@@ -31,7 +34,7 @@ class FakeRoundAgents:
         )
 
     async def report(self, **_values):
-        return SessionReportOutput(
+        return ReviewSessionReportOutput(
             title="复习报告",
             markdown="# 复习报告\n\n本轮回答完整。",
             mastery_explanation="当前题目已稳定掌握。",

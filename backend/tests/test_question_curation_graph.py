@@ -4,11 +4,13 @@ from pathlib import Path
 
 from app.agents.context import AgentContext
 from app.agents.question_curation import QuestionCurationAgent
-from app.agents.r2_contracts import (
-    AnswerEvaluationV2,
+from app.agents.question_curation_contracts import (
     QuestionCandidate,
     QuestionCandidateBatch,
-    SessionReportOutput,
+)
+from app.agents.review_round_contracts import (
+    ReviewSessionReportOutput,
+    RoundAnswerEvaluation,
 )
 from app.graphs.question_curation import create_question_curation_graph
 
@@ -68,8 +70,8 @@ def test_question_candidate_batch_is_strict_and_source_backed() -> None:
         )
 
 
-def test_answer_evaluation_v2_exposes_evidence_not_hidden_reasoning() -> None:
-    evaluation = AnswerEvaluationV2(
+def test_round_answer_evaluation_exposes_evidence_not_hidden_reasoning() -> None:
+    evaluation = RoundAnswerEvaluation(
         score="partial",
         missing_key_points=["m_ids"],
         evidence="回答说明了事务 ID 上下界。",
@@ -80,14 +82,14 @@ def test_answer_evaluation_v2_exposes_evidence_not_hidden_reasoning() -> None:
 
     assert "reasoning" not in evaluation.model_dump()
     with pytest.raises(ValidationError):
-        AnswerEvaluationV2.model_validate(
+        RoundAnswerEvaluation.model_validate(
             {**evaluation.model_dump(), "chain_of_thought": "secret"}
         )
 
 
 def test_follow_up_prompt_is_required_only_when_follow_up_is_requested() -> None:
     with pytest.raises(ValidationError, match="follow_up_prompt"):
-        AnswerEvaluationV2(
+        RoundAnswerEvaluation(
             score="partial",
             missing_key_points=["m_ids"],
             evidence="partial",
@@ -96,7 +98,7 @@ def test_follow_up_prompt_is_required_only_when_follow_up_is_requested() -> None
             mastery_suggestion="partial",
         )
 
-    complete = AnswerEvaluationV2(
+    complete = RoundAnswerEvaluation(
         score="good",
         missing_key_points=[],
         evidence="complete",
@@ -108,7 +110,7 @@ def test_follow_up_prompt_is_required_only_when_follow_up_is_requested() -> None
 
 
 def test_session_report_output_contains_structured_mastery_proposal() -> None:
-    output = SessionReportOutput(
+    output = ReviewSessionReportOutput(
         title="数据库复习报告",
         markdown="# 数据库复习报告\n",
         mastery_explanation="MVCC 仍需巩固。",

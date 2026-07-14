@@ -37,8 +37,9 @@
 ### Agent and Graph
 
 - `backend/app/agents/question_curation.py`: question generation/rewrite Agent.
+- `backend/app/agents/question_curation_contracts.py`: strict question-generation structured outputs.
 - `backend/app/agents/review_round.py`: evaluation, follow-up, report and discussion role Agents.
-- `backend/app/agents/r2_contracts.py`: strict structured outputs and compact Graph state.
+- `backend/app/agents/review_round_contracts.py`: strict round-evaluation and report outputs.
 - `backend/app/graphs/question_curation.py`: source refs to question draft batch.
 - `backend/app/graphs/review_round.py`: long-lived answer/follow-up interrupt loop and report draft creation.
 - `backend/app/graphs/review_discussion.py`: isolated child discussion session.
@@ -283,7 +284,8 @@ Expected: targeted tests pass; no existing Runtime row is lost.
 ### Task 2: Build question curation and long-lived review Graphs
 
 **Files:**
-- Create: `backend/app/agents/r2_contracts.py`
+- Create: `backend/app/agents/question_curation_contracts.py`
+- Create: `backend/app/agents/review_round_contracts.py`
 - Create: `backend/app/agents/question_curation.py`
 - Create: `backend/app/agents/review_round.py`
 - Create: `backend/app/graphs/question_curation.py`
@@ -303,7 +305,7 @@ Expected: targeted tests pass; no existing Runtime row is lost.
 - Test: `backend/tests/test_review_round_middleware.py`
 
 **Interfaces:**
-- Produces `QuestionCandidateBatch`, `AnswerEvaluationV2`, `FollowUpDecision`, `SessionReportOutput`, and compact `ReviewRoundState`.
+- Produces `QuestionCandidateBatch`, `RoundAnswerEvaluation`, and `ReviewSessionReportOutput`; the compact `ReviewRoundState` belongs to the round Graph module.
 - Adds `AgentExecutionService.resume_input(execution_id, *, request_id, value, receipt_id)`.
 - Adds explicit factory support for `question.curate`, `review.round`, and `review.discussion`.
 - Emits `review.input.required`, `review.input.resolved`, `review.attempt.completed`, `review.progress.changed`, `review.report.draft_created`, and round terminal events.
@@ -313,7 +315,7 @@ Expected: targeted tests pass; no existing Runtime row is lost.
 Use Pydantic `extra="forbid"`. The evaluation contract must include score, evidence, missing points, optional follow-up reason and mastery suggestion; it must never expose hidden reasoning.
 
 ```python
-class AnswerEvaluationV2(BaseModel):
+class RoundAnswerEvaluation(BaseModel):
     model_config = ConfigDict(extra="forbid")
     score: Literal["poor", "partial", "good"]
     missing_key_points: list[str]

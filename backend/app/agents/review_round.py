@@ -10,7 +10,10 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from app.agents.context import AgentContext
 from app.agents.factory import AgentFactory, AgentSpec, ModelOverride
-from app.agents.r2_contracts import AnswerEvaluationV2, SessionReportOutput
+from app.agents.review_round_contracts import (
+    ReviewSessionReportOutput,
+    RoundAnswerEvaluation,
+)
 from app.review.models import QuestionSnapshot
 
 
@@ -61,7 +64,7 @@ class ReviewRoundAgents:
                     role="answer_evaluation",
                     system_prompt=_EVALUATION_PROMPT,
                     middleware=middleware,
-                    response_format=AnswerEvaluationV2,
+                    response_format=RoundAnswerEvaluation,
                 ),
                 model_bindings=model_bindings,
                 model_override=answer_model_override,
@@ -72,7 +75,7 @@ class ReviewRoundAgents:
                     role="report_summarization",
                     system_prompt=_REPORT_PROMPT,
                     middleware=middleware,
-                    response_format=SessionReportOutput,
+                    response_format=ReviewSessionReportOutput,
                 ),
                 model_bindings=model_bindings,
                 model_override=None,
@@ -100,7 +103,7 @@ class ReviewRoundAgents:
         context: AgentContext,
         config: dict[str, Any],
         progress_scope: tuple[str, ...] = (),
-    ) -> AnswerEvaluationV2:
+    ) -> RoundAnswerEvaluation:
         prompt = (
             f"冻结题目：{json.dumps(asdict(question), ensure_ascii=False)}\n"
             f"用户回答：{answer}"
@@ -118,7 +121,7 @@ class ReviewRoundAgents:
         )
         if "structured_response" not in result:
             raise ValueError("模型未生成结构化回答评价")
-        return AnswerEvaluationV2.model_validate(
+        return RoundAnswerEvaluation.model_validate(
             result["structured_response"]
         )
 
@@ -130,7 +133,7 @@ class ReviewRoundAgents:
         prior_reports: tuple[str, ...],
         context: AgentContext,
         config: dict[str, Any],
-    ) -> SessionReportOutput:
+    ) -> ReviewSessionReportOutput:
         payload = {
             "attempts": attempts,
             "settings": settings,
@@ -149,7 +152,7 @@ class ReviewRoundAgents:
         )
         if "structured_response" not in result:
             raise ValueError("模型未生成结构化轮次报告")
-        return SessionReportOutput.model_validate(
+        return ReviewSessionReportOutput.model_validate(
             result["structured_response"]
         )
 

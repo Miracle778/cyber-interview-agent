@@ -7,7 +7,10 @@ from langgraph.types import Command
 
 from app.agents.context import AgentContext
 from app.agents.factory import ModelOverride
-from app.agents.r2_contracts import AnswerEvaluationV2, SessionReportOutput
+from app.agents.review_round_contracts import (
+    ReviewSessionReportOutput,
+    RoundAnswerEvaluation,
+)
 from app.agents.review_round import ReviewRoundAgents
 from app.application.session_service import ProductRepository
 from app.graphs.review_round import DraftRef, create_review_round_graph
@@ -67,7 +70,7 @@ def _question() -> QuestionSnapshot:
 
 @pytest.mark.asyncio
 async def test_evaluation_uses_isolated_thread_and_optional_supplement() -> None:
-    evaluation = AnswerEvaluationV2(
+    evaluation = RoundAnswerEvaluation(
         score="good",
         missing_key_points=[],
         evidence="补充回答覆盖活跃事务列表。",
@@ -99,7 +102,7 @@ async def test_evaluation_uses_isolated_thread_and_optional_supplement() -> None
 
 @pytest.mark.asyncio
 async def test_report_uses_report_role_thread() -> None:
-    report = SessionReportOutput(
+    report = ReviewSessionReportOutput(
         title="数据库复习报告",
         markdown="# 数据库复习报告\n",
         mastery_explanation="MVCC 已趋于稳定。",
@@ -152,7 +155,7 @@ class SequencedRoundAgents:
     async def evaluate(self, *, question, answer, supplement, **_kwargs):
         self.evaluations.append((question.question_id, answer, supplement))
         if question.question_id == "q1" and supplement is None:
-            return AnswerEvaluationV2(
+            return RoundAnswerEvaluation(
                 score="partial",
                 missing_key_points=["活跃事务列表"],
                 evidence="回答了上下界",
@@ -160,7 +163,7 @@ class SequencedRoundAgents:
                 follow_up_prompt="活跃事务中的版本是否可见？",
                 mastery_suggestion="partial",
             )
-        return AnswerEvaluationV2(
+        return RoundAnswerEvaluation(
             score="good",
             missing_key_points=[],
             evidence="回答完整",
@@ -170,7 +173,7 @@ class SequencedRoundAgents:
         )
 
     async def report(self, **_kwargs):
-        return SessionReportOutput(
+        return ReviewSessionReportOutput(
             title="复习报告",
             markdown="# 复习报告\n",
             mastery_explanation="掌握度提升",

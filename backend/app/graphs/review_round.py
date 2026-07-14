@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any, Awaitable, Callable, Literal, Protocol, Sequence
+from typing import Any, Awaitable, Callable, Literal, Protocol, Sequence, TypedDict
 from uuid import NAMESPACE_URL, uuid5
 
 from langchain_core.runnables import RunnableConfig
@@ -10,10 +10,9 @@ from langgraph.runtime import Runtime
 from langgraph.types import interrupt
 
 from app.agents.context import AgentContext
-from app.agents.r2_contracts import (
-    AnswerEvaluationV2,
-    ReviewRoundState,
-    SessionReportOutput,
+from app.agents.review_round_contracts import (
+    ReviewSessionReportOutput,
+    RoundAnswerEvaluation,
 )
 from app.review.models import ReviewAttemptRecord
 from app.review.repository import ReviewRepository
@@ -27,10 +26,30 @@ class DraftRef:
     report_kind: Literal["session_report", "mastery_report"]
 
 
-class RoundAgents(Protocol):
-    async def evaluate(self, **kwargs: Any) -> AnswerEvaluationV2: ...
+class ReviewRoundState(TypedDict, total=False):
+    round_id: str
+    settings: dict
+    question_snapshots: list[dict]
+    current_index: int
+    current_input_request: dict
+    current_answer: str
+    current_evaluation: dict
+    current_follow_up: str
+    skipped: bool
+    attempt_ids: list[str]
+    report_draft_ids: list[str]
+    report_drafts: list[dict]
+    publication_action_ids: list[str]
+    publication_index: int
+    publication_decisions: list[dict]
+    status: str
+    response: str
 
-    async def report(self, **kwargs: Any) -> SessionReportOutput: ...
+
+class RoundAgents(Protocol):
+    async def evaluate(self, **kwargs: Any) -> RoundAnswerEvaluation: ...
+
+    async def report(self, **kwargs: Any) -> ReviewSessionReportOutput: ...
 
 
 DraftCreator = Callable[..., Awaitable[Sequence[DraftRef]]]
@@ -125,7 +144,7 @@ def create_review_round_graph(
         return {"current_evaluation": evaluation.model_dump()}
 
     def after_evaluation(state: ReviewRoundState) -> str:
-        evaluation = AnswerEvaluationV2.model_validate(
+        evaluation = RoundAnswerEvaluation.model_validate(
             state["current_evaluation"]
         )
         settings = repository.get_round(state["round_id"]).settings
@@ -138,7 +157,7 @@ def create_review_round_graph(
         return "persist_attempt"
 
     async def request_follow_up(state: ReviewRoundState) -> dict[str, Any]:
-        evaluation = AnswerEvaluationV2.model_validate(
+        evaluation = RoundAnswerEvaluation.model_validate(
             state["current_evaluation"]
         )
         request = repository.ensure_input_request(
@@ -170,7 +189,7 @@ def create_review_round_graph(
         evaluation = (
             None
             if skipped
-            else AnswerEvaluationV2.model_validate(
+            else RoundAnswerEvaluation.model_validate(
                 state["current_evaluation"]
             )
         )
@@ -242,7 +261,7 @@ def create_review_round_graph(
     async def save_report_drafts(state: ReviewRoundState) -> dict[str, Any]:
         round_record = repository.get_round(state["round_id"])
         attempts = repository.list_attempts(round_record.id)
-        report = SessionReportOutput.model_validate(state["response"])
+        report = ReviewSessionReportOutput.model_validate(state["response"])
         drafts = tuple(
             await create_report_drafts(
                 round_record=round_record,

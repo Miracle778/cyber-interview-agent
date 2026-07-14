@@ -3,11 +3,13 @@ import logging
 import pytest
 
 from app.agents.review_contracts import AnswerEvaluation
-from app.agents.r2_contracts import (
-    AnswerEvaluationV2,
+from app.agents.question_curation_contracts import (
     QuestionCandidate,
     QuestionCandidateBatch,
-    SessionReportOutput,
+)
+from app.agents.review_round_contracts import (
+    ReviewSessionReportOutput,
+    RoundAnswerEvaluation,
 )
 from app.infrastructure.checkpoints import AgentCheckpointer
 
@@ -36,7 +38,7 @@ async def test_checkpoint_serializer_explicitly_allows_review_contract(
 @pytest.mark.parametrize(
     "value",
     [
-        AnswerEvaluationV2(
+        RoundAnswerEvaluation(
             score="partial",
             missing_key_points=["边界"],
             evidence="覆盖定义",
@@ -59,14 +61,14 @@ async def test_checkpoint_serializer_explicitly_allows_review_contract(
                 )
             ]
         ),
-        SessionReportOutput(
+        ReviewSessionReportOutput(
             title="复习报告",
             markdown="# 复习报告",
             mastery_explanation="继续练习",
         ),
     ],
 )
-async def test_checkpoint_serializer_explicitly_allows_r2_contracts(
+async def test_checkpoint_serializer_allows_review_domain_contracts(
     tmp_path, caplog, value
 ) -> None:
     (tmp_path / ".cyber-interview-agent").mkdir()
