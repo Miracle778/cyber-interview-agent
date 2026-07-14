@@ -9,24 +9,88 @@ function wrapper({ children }: { children: ReactNode }) { return <QueryClientPro
 
 describe("QuestionCatalog", () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); });
-  it("shows persisted candidates instead of an empty placeholder", async () => {
+  it("opens in the durable three-pane curation session workbench", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.includes("/api/knowledge/sources")) return Response.json([{ id: "s1", workspaceId: "w1", originalFilename: "mysql.md", storedPath: "sources/mysql.md", contentType: "text/markdown", sizeBytes: 20, createdAt: "now", draftId: null }]);
-      if (url.includes("/api/review/question-batches")) return Response.json([]);
-      if (url.includes("/api/review/question-candidates")) return Response.json([{ id: "c1", batchId: "b1", sourceRefs: ["s1"], correctionNote: "修正事务边界", duplicateOfQuestionId: null, duplicateQuestion: null, status: "published", createdAt: "now", updatedAt: "now", question: { questionId: "q1", documentId: "d1", contentHash: "h", title: "MVCC 可见性", questionText: "Read View 如何判断？", referenceAnswer: "比较上下界", topics: ["database"], difficulty: "medium", keyPoints: ["上下界"], followUps: [] }, draft: { id: "d1", title: "MVCC 可见性", markdown: "# MVCC 可见性", status: "published", version: 1, contentHash: "h", documentType: "question" } }]);
+      if (url.includes("/api/review/curation-sessions")) return Response.json([{
+        id: "cs1", workspaceId: "w1", title: "mysql.md", sourceRefs: ["s1"], sources: [{ id: "s1", filename: "mysql.md", organizationState: "previously_curated" }], activeBatchId: "b1", executionId: "e1", executionStatus: "completed", stage: "waiting_for_command", progress: { completed: 1, total: 1 }, summary: { items: [{ ordinal: 1, candidateId: "c1", title: "MVCC 可见性", topics: ["database"], difficulty: "medium", sourceCount: 1, recommendation: "recommend_confirm" }] }, summaryVersion: 1, warnings: [], candidateCount: 1, pendingCount: 1, publishedCount: 0, messages: [{ id: "m1", executionId: "e1", role: "assistant", content: "整理完成，请确认推荐题。", messageKind: "curation_summary", payload: {}, createdAt: "now" }], usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20, callCount: 1, estimatedCount: 0 }, createdAt: "now", updatedAt: "now",
+      }]);
       throw new Error(`unexpected ${url}`);
     });
     render(<QuestionCatalog workspace={workspace} />, { wrapper });
-    expect(await screen.findByRole("button", { name: /MVCC 可见性/ })).toBeInTheDocument();
-    expect(screen.getByRole("article")).toHaveTextContent("MVCC 可见性");
-    expect(screen.getByLabelText("Topic 筛选")).toBeInTheDocument();
-    expect(screen.getByLabelText("来源筛选")).toBeInTheDocument();
-    expect(screen.getByLabelText("状态筛选")).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "来源证据" })).toHaveTextContent("mysql.md");
-    expect(screen.queryByText("暂无候选题。选择资料后点击“AI 整理”。")).toBeNull();
+    expect(await screen.findByRole("button", { name: /mysql\.md/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "整理会话" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("complementary", { name: "整理会话列表" })).toBeInTheDocument();
+    expect(screen.getByRole("log", { name: "整理对话" })).toHaveTextContent("整理完成，请确认推荐题");
+    expect(screen.getByRole("complementary", { name: "整理运行状态" })).toHaveTextContent("等待确认");
+    expect(screen.getByLabelText("回复整理 Agent")).toBeEnabled();
+  });
 
-    fireEvent.change(screen.getByLabelText("状态筛选"), { target: { value: "published" } });
-    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith(expect.stringContaining("status=published"), expect.anything()));
+  it("selects sources in a dialog and warns without blocking repeated curation", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/api/knowledge/sources")) return Response.json([
+        { id: "s1", workspaceId: "w1", originalFilename: "mysql.md", storedPath: "sources/mysql.md", contentType: "text/markdown", sizeBytes: 20, createdAt: "now", draftId: null },
+        { id: "s2", workspaceId: "w1", originalFilename: "redis.md", storedPath: "sources/redis.md", contentType: "text/markdown", sizeBytes: 20, createdAt: "now", draftId: null },
+      ]);
+      if (url.includes("/api/review/curation-sessions") && init?.method === "POST") return Response.json({ id: "cs2" }, { status: 202 });
+      if (url.includes("/api/review/curation-sessions")) return Response.json([{ id: "cs1", workspaceId: "w1", title: "mysql.md", sourceRefs: ["s1"], sources: [{ id: "s1", filename: "mysql.md", organizationState: "previously_curated" }], activeBatchId: null, executionId: null, executionStatus: null, stage: "completed", progress: { completed: 1, total: 1 }, summary: { items: [] }, summaryVersion: 0, warnings: [], candidateCount: 0, pendingCount: 0, publishedCount: 0, messages: [], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, callCount: 0, estimatedCount: 0 }, createdAt: "now", updatedAt: "now" }]);
+      throw new Error(`unexpected ${url}`);
+    });
+    render(<QuestionCatalog workspace={workspace} />, { wrapper });
+    await screen.findByRole("button", { name: /mysql\.md/ });
+    fireEvent.click(screen.getByRole("button", { name: "AI 整理" }));
+    const dialog = screen.getByRole("dialog", { name: "选择整理资料" });
+    expect(dialog).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(/mysql\.md/));
+    expect(screen.getByText("这份资料之前整理过，仍可再次整理并自动合并相似题。")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "开始整理" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/review/curation-sessions",
+      expect.objectContaining({ body: JSON.stringify({ workspaceId: "w1", sourceRefs: ["s1"] }) }),
+    ));
+  });
+
+  it("keeps the question library as a separate secondary view", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/api/knowledge/sources")) return Response.json([]);
+      if (url.includes("/api/review/curation-sessions")) return Response.json([]);
+      if (url.includes("/api/review/question-batches")) return Response.json([]);
+      if (url.includes("/api/review/question-candidates")) return Response.json([]);
+      throw new Error(`unexpected ${url}`);
+    });
+    render(<QuestionCatalog workspace={workspace} />, { wrapper });
+    await screen.findByRole("tab", { name: "整理会话" });
+    fireEvent.click(screen.getByRole("tab", { name: "题目库" }));
+    expect(await screen.findByLabelText("Topic 筛选")).toBeInTheDocument();
+    expect(await screen.findByText("暂无候选题。选择资料后点击“AI 整理”。")).toBeInTheDocument();
+  });
+
+  it("renders a command optimistically and reconciles the durable timeline", async () => {
+    let finishCommand: (() => void) | undefined;
+    let commandDone = false;
+    const baseSession = { id: "cs1", workspaceId: "w1", title: "mysql.md", sourceRefs: ["s1"], sources: [{ id: "s1", filename: "mysql.md", organizationState: "not_curated" }], activeBatchId: "b1", executionId: "e1", executionStatus: "completed", stage: "waiting_for_command", progress: { completed: 1, total: 1 }, summary: { items: [] }, summaryVersion: 1, warnings: [], candidateCount: 1, pendingCount: 1, publishedCount: 0, usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20, callCount: 1, estimatedCount: 0 }, createdAt: "now", updatedAt: "now" };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/api/knowledge/sources")) return Response.json([]);
+      if (url.endsWith("/commands") && init?.method === "POST") {
+        await new Promise<void>((resolve) => { finishCommand = () => { commandDone = true; resolve(); }; });
+        return Response.json({ id: "receipt-1", sessionId: "cs1", summaryVersion: 1, kind: "confirm", targetIds: [], status: "completed", result: {}, createdAt: "now", completedAt: "now" }, { status: 202 });
+      }
+      if (url.includes("/api/review/curation-sessions")) return Response.json([{ ...baseSession, messages: commandDone ? [{ id: "m-user", executionId: "e1", role: "user", content: "确认全部推荐题", messageKind: "text", payload: {}, createdAt: "now" }, { id: "m-receipt", executionId: "e1", role: "assistant", content: "已发布 1 道题。", messageKind: "command_receipt", payload: {}, createdAt: "now" }] : [] }]);
+      throw new Error(`unexpected ${url}`);
+    });
+    render(<QuestionCatalog workspace={workspace} />, { wrapper });
+    const composer = await screen.findByLabelText("回复整理 Agent");
+    fireEvent.change(composer, { target: { value: "确认全部推荐题" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    expect(screen.getByText("发送中…")).toBeInTheDocument();
+    expect(screen.getByText("确认全部推荐题")).toBeInTheDocument();
+    await waitFor(() => expect(finishCommand).toBeTypeOf("function"));
+    finishCommand!();
+    expect(await screen.findByText("已发布 1 道题。")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("发送中…")).toBeNull());
   });
 });

@@ -1,11 +1,37 @@
 import { apiGet, apiPatch, apiPost } from "../../shared/api/client";
 import type {
   ActiveQuestion,
+  CurationCommandReceipt,
+  CurationSession,
   CreateReviewRoundRequest,
   QuestionBatch,
   QuestionCandidate,
   ReviewRound,
 } from "./reviewTypes";
+
+export function listCurationSessions(workspaceId: string): Promise<CurationSession[]> {
+  return apiGet(`/api/review/curation-sessions?${new URLSearchParams({ workspaceId })}`);
+}
+
+export function getCurationSession(id: string): Promise<CurationSession> {
+  return apiGet(`/api/review/curation-sessions/${id}`);
+}
+
+export function createCurationSession(workspaceId: string, sourceRefs: string[]): Promise<CurationSession> {
+  return apiPost("/api/review/curation-sessions", { workspaceId, sourceRefs });
+}
+
+export function submitCurationCommand(
+  session: CurationSession,
+  text: string,
+  idempotencyKey: string,
+): Promise<CurationCommandReceipt> {
+  return apiPost(`/api/review/curation-sessions/${session.id}/commands`, {
+    text,
+    summaryVersion: session.summaryVersion,
+    idempotencyKey,
+  });
+}
 
 export function listQuestionBatches(workspaceId: string): Promise<QuestionBatch[]> {
   return apiGet(`/api/review/question-batches?${new URLSearchParams({ workspaceId })}`);

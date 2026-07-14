@@ -4,6 +4,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.agent import MessageResource
+
 
 def _to_camel(value: str) -> str:
     head, *tail = value.split("_")
@@ -54,6 +56,17 @@ class CreateQuestionBatchCommand(ReviewModel):
     source_refs: list[str] = Field(min_length=1)
     rewrite_feedback: str | None = None
     rewrite_of_batch_id: str | None = None
+
+
+class CreateCurationSessionCommand(ReviewModel):
+    workspace_id: str = Field(min_length=1)
+    source_refs: list[str] = Field(min_length=1)
+
+
+class SubmitCurationCommand(ReviewModel):
+    text: str = Field(min_length=1, max_length=5000)
+    summary_version: int = Field(ge=0)
+    idempotency_key: str = Field(min_length=8, max_length=200)
 
 
 class UpdateQuestionCandidateCommand(ReviewModel):
@@ -217,6 +230,49 @@ class UsageResource(ReviewModel):
     total_tokens: int
     call_count: int
     estimated_count: int
+
+
+class CurationSourceResource(ReviewModel):
+    id: str
+    filename: str
+    organization_state: Literal[
+        "not_curated", "in_progress", "previously_curated"
+    ]
+
+
+class CurationSessionResource(ReviewModel):
+    id: str
+    workspace_id: str
+    title: str
+    source_refs: list[str]
+    sources: list[CurationSourceResource]
+    active_batch_id: str | None
+    execution_id: str | None
+    execution_status: str | None
+    stage: str
+    progress: dict[str, int]
+    summary: dict[str, Any]
+    summary_version: int
+    warnings: list[dict[str, Any]]
+    candidate_count: int
+    pending_count: int
+    published_count: int
+    messages: list[MessageResource]
+    usage: UsageResource
+    created_at: str
+    updated_at: str
+
+
+class CurationCommandReceiptResource(ReviewModel):
+    id: str
+    session_id: str
+    summary_version: int
+    kind: str
+    target_ids: list[str]
+    status: str
+    result: dict[str, Any]
+    created_at: str
+    completed_at: str | None
 
 
 class ReviewRoundResource(ReviewModel):

@@ -20,6 +20,7 @@ R2_TABLES = {
 }
 
 R2_SESSION_EXPERIENCE_TABLES = {
+    "review_curation_command_receipts",
     "review_curation_sessions",
     "review_question_source_links",
 }
@@ -44,7 +45,7 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-    ] == [1, 2, 3]
+    ] == [1, 2, 3, 4]
     connection.close()
 
 
@@ -83,7 +84,7 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-    ] == [1, 2, 3]
+    ] == [1, 2, 3, 4]
     reopened.close()
 
 

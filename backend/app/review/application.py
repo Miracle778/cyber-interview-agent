@@ -7,13 +7,18 @@ from uuid import uuid4
 
 from app.application.execution_service import AgentExecutionService
 from app.application.session_service import AgentSessionService, ProductEventStream
+from app.hitl.models import ResolveActionCommand
+from app.hitl.repository import PendingActionRepository
+from app.hitl.service import HitlService
 from app.knowledge.drafts import KnowledgeDraftService, UpdateDraftCommand
 from app.knowledge.source_registry import KnowledgeSourceService
 from app.knowledge.publication import PublicationService
 from app.review.errors import ReviewConflictError
-from app.review.models import ReviewRoundSettings
+from app.review.curation_commands import CurationCommandService
+from app.review.models import CurationSummary, ReviewRoundSettings
 from app.review.repository import ReviewRepository
 from app.review.selector import QuestionSelector
+from app.review.timeline import SessionTimelineProjector
 from app.services.document_ingestion import extract_text
 
 
@@ -30,6 +35,8 @@ class ReviewApplication:
         drafts: KnowledgeDraftService,
         publications: PublicationService,
         validate_model: Callable[[str, str], None],
+        actions: PendingActionRepository,
+        hitl: HitlService,
     ) -> None:
         self.workspace_id = workspace_id
         self.workspace_root = workspace_root
@@ -40,7 +47,521 @@ class ReviewApplication:
         self.drafts = drafts
         self.publications = publications
         self.validate_model = validate_model
+        self.actions = actions
+        self.hitl = hitl
         self.selector = QuestionSelector()
+        self.curation_commands = CurationCommandService()
+        self.timeline = SessionTimelineProjector(
+            self.sessions.repository, self.events
+        )
+
+    async def create_curation_session(
+        self, *, source_refs: tuple[str, ...]
+    ) -> dict[str, Any]:
+        selected = tuple(dict.fromkeys(source_refs))
+        if not selected:
+            raise ValueError("source_refs must not be empty")
+        source_service = KnowledgeSourceService(
+            self.workspace_root, workspace_id=self.workspace_id
+        )
+        sources = [await source_service.get(source_id) for source_id in selected]
+        existing = self.repository.list_curation_sessions(self.workspace_id)
+        warnings: list[dict[str, object]] = []
+        for source_id in selected:
+            related = [item for item in existing if source_id in item.source_refs]
+            if not related:
+                continue
+            in_progress = any(
+                item.stage
+                not in {"waiting_for_command", "completed", "failed"}
+                for item in related
+            )
+            warnings.append(
+                {
+                    "sourceId": source_id,
+                    "code": (
+                        "source_curating"
+                        if in_progress
+                        else "source_previously_curated"
+                    ),
+                }
+            )
+        visible_names = [source.original_filename for source in sources[:2]]
+        suffix = "" if len(sources) <= 2 else f" 等 {len(sources)} 份资料"
+        session = await self.sessions.create(
+            workspace_id=self.workspace_id,
+            kind="question.curate",
+            title=" + ".join(visible_names) + suffix,
+        )
+        self.repository.create_curation_session(
+            workspace_id=self.workspace_id,
+            session_id=session.id,
+            source_refs=selected,
+            warnings=tuple(warnings),
+        )
+        self.repository.update_curation_progress(
+            session.id,
+            stage="reading_sources",
+            completed_units=0,
+            total_units=len(sources),
+        )
+        await self.timeline.append(
+            session_id=session.id,
+            execution_id=None,
+            role="assistant",
+            message_kind="stage",
+            content="正在读取所选资料",
+            payload={
+                "resourceId": session.id,
+                "version": 0,
+                "stage": "reading_sources",
+            },
+        )
+        excerpts: list[str] = []
+        for index, source in enumerate(sources, start=1):
+            text = extract_text(self.workspace_root / source.stored_path)
+            excerpts.append(
+                f"{source.id}:{source.original_filename}\n{text[:20_000]}"
+            )
+            self.repository.update_curation_progress(
+                session.id,
+                stage="reading_sources",
+                completed_units=index,
+                total_units=len(sources),
+            )
+        batch = self.repository.create_batch(
+            workspace_id=self.workspace_id,
+            session_id=session.id,
+            run_id=None,
+            source_refs=selected,
+        )
+        self.repository.update_curation_progress(
+            session.id,
+            stage="generating",
+            completed_units=0,
+            total_units=max(1, len(excerpts)),
+            active_batch_id=batch.id,
+        )
+        execution = await self.executions.start(
+            session,
+            input={
+                "batchId": batch.id,
+                "source_excerpts": excerpts,
+                "similar_questions": [
+                    item.snapshot.question_text
+                    for item in self.repository.list_active_questions(
+                        self.workspace_id
+                    )
+                ],
+                "rewrite_feedback": None,
+            },
+        )
+        self.repository.attach_batch_run(batch.id, execution.id)
+        await self.timeline.append(
+            session_id=session.id,
+            execution_id=execution.id,
+            role="assistant",
+            message_kind="stage",
+            content="正在生成候选题",
+            payload={
+                "resourceId": session.id,
+                "version": 0,
+                "stage": "generating",
+            },
+        )
+        return await self.curation_resource(session.id)
+
+    async def curation_resource(self, session_id: str) -> dict[str, Any]:
+        record = self.repository.get_curation_session(session_id)
+        if record.workspace_id != self.workspace_id:
+            raise LookupError(session_id)
+        session = self.sessions.get(session_id)
+        source_service = KnowledgeSourceService(
+            self.workspace_root, workspace_id=self.workspace_id
+        )
+        sources = [
+            await source_service.get(source_id) for source_id in record.source_refs
+        ]
+        batches = [
+            batch
+            for batch in self.repository.list_batches(self.workspace_id)
+            if batch.session_id == session_id
+        ]
+        candidates = [
+            candidate
+            for candidate in self.repository.list_candidates(self.workspace_id)
+            if any(candidate.batch_id == batch.id for batch in batches)
+        ]
+        latest = self.sessions.repository.latest_execution(session_id)
+        warnings_by_source = {
+            str(item["sourceId"]): str(item["code"])
+            for item in record.warnings
+        }
+        source_resources = []
+        for source in sources:
+            warning = warnings_by_source.get(source.id)
+            state = (
+                "in_progress"
+                if warning == "source_curating"
+                else "previously_curated"
+                if warning == "source_previously_curated"
+                else "not_curated"
+            )
+            source_resources.append(
+                {
+                    "id": source.id,
+                    "filename": source.original_filename,
+                    "organization_state": state,
+                }
+            )
+        return {
+            "id": record.session_id,
+            "workspace_id": record.workspace_id,
+            "title": session.title,
+            "source_refs": record.source_refs,
+            "sources": source_resources,
+            "active_batch_id": record.active_batch_id,
+            "execution_id": None if latest is None else latest.id,
+            "execution_status": None if latest is None else latest.status,
+            "stage": record.stage,
+            "progress": {
+                "completed": record.completed_units,
+                "total": record.total_units,
+            },
+            "summary": asdict(record.summary),
+            "summary_version": record.summary_version,
+            "warnings": record.warnings,
+            "candidate_count": len(candidates),
+            "pending_count": sum(
+                item.status == "review_pending" for item in candidates
+            ),
+            "published_count": sum(
+                item.status == "published" for item in candidates
+            ),
+            "messages": [
+                asdict(item)
+                for item in self.sessions.repository.list_messages(session_id)
+            ],
+            "usage": self.executions.usage(session_id),
+            "created_at": record.created_at,
+            "updated_at": record.updated_at,
+        }
+
+    async def list_curation_resources(self) -> tuple[dict[str, Any], ...]:
+        return tuple(
+            [
+                await self.curation_resource(record.session_id)
+                for record in self.repository.list_curation_sessions(
+                    self.workspace_id
+                )
+            ]
+        )
+
+    async def execute_curation_command(
+        self,
+        session_id: str,
+        *,
+        text: str,
+        summary_version: int,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        curation = self.repository.get_curation_session(session_id)
+        parsed = self.curation_commands.parse(
+            text=text,
+            summary=curation.summary,
+            current_summary_version=curation.summary_version,
+            expected_summary_version=summary_version,
+        )
+        command_payload: dict[str, object] = {
+            "kind": parsed.kind,
+            "candidateIds": parsed.candidate_ids,
+            "feedback": parsed.feedback,
+            "clarification": parsed.clarification,
+        }
+        receipt, created = self.repository.begin_curation_command(
+            session_id=session_id,
+            idempotency_key=idempotency_key,
+            text=text,
+            summary_version=summary_version,
+            command=command_payload,
+        )
+        if not created:
+            return self._curation_command_resource(receipt)
+        latest = self.sessions.repository.latest_execution(session_id)
+        execution_id = None if latest is None else latest.id
+        await self.timeline.append(
+            session_id=session_id,
+            execution_id=execution_id,
+            role="user",
+            message_kind="text",
+            content=text,
+            payload={
+                "resourceId": receipt.id,
+                "version": summary_version,
+            },
+        )
+        result: dict[str, object]
+        terminal_status = "completed"
+        if parsed.kind == "clarify":
+            result = {"clarification": parsed.clarification}
+            await self.timeline.append(
+                session_id=session_id,
+                execution_id=execution_id,
+                role="assistant",
+                message_kind="command_receipt",
+                content=parsed.clarification,
+                payload={
+                    "resourceId": receipt.id,
+                    "version": summary_version,
+                },
+            )
+        elif parsed.kind == "reject":
+            rejected = []
+            for candidate_id in parsed.candidate_ids:
+                candidate = self.repository.get_candidate(candidate_id)
+                if candidate.draft_id is not None:
+                    draft = await self.drafts.get(candidate.draft_id)
+                    await self.drafts.mark_rejected(
+                        draft.id,
+                        expected_version=draft.version,
+                        expected_hash=draft.content_hash,
+                    )
+                self.repository.update_candidate_status(
+                    candidate_id, status="rejected"
+                )
+                rejected.append(candidate_id)
+            result = {"rejectedIds": rejected, "rejectedCount": len(rejected)}
+        elif parsed.kind == "confirm":
+            published: list[str] = []
+            failed: list[dict[str, str]] = []
+            for candidate_id in parsed.candidate_ids:
+                try:
+                    await self._publish_curation_candidate(
+                        candidate_id,
+                        idempotency_key=(
+                            f"{idempotency_key}:{candidate_id}"
+                        ),
+                    )
+                    published.append(candidate_id)
+                except Exception:
+                    failed.append(
+                        {
+                            "candidateId": candidate_id,
+                            "code": "publication_failed",
+                        }
+                    )
+            result = {
+                "publishedIds": published,
+                "publishedCount": len(published),
+                "failures": failed,
+            }
+            terminal_status = "partial_failure" if failed else "completed"
+        elif parsed.kind == "rewrite":
+            candidate = self.repository.get_candidate(parsed.candidate_ids[0])
+            execution = await self._start_curation_execution(
+                session_id=session_id,
+                source_refs=curation.source_refs,
+                rewrite_feedback=parsed.feedback,
+                rewrite_of_batch_id=candidate.batch_id,
+            )
+            result = {"executionId": execution.id}
+        else:
+            refreshed = self._summarize_curation(session_id)
+            result = {"summaryVersion": refreshed.summary_version}
+
+        receipt = self.repository.complete_curation_command(
+            receipt.id, result=result, status=terminal_status
+        )
+        if parsed.kind != "clarify":
+            await self.timeline.append(
+                session_id=session_id,
+                execution_id=execution_id,
+                role="assistant",
+                message_kind="command_receipt",
+                content=self._command_result_text(parsed.kind, result),
+                payload={
+                    "resourceId": receipt.id,
+                    "version": summary_version,
+                },
+            )
+        await self.events.publish(
+            session_id,
+            execution_id,
+            "curation.command.resolved",
+            {
+                "resourceId": receipt.id,
+                "kind": parsed.kind,
+                "status": receipt.status,
+                "count": len(parsed.candidate_ids),
+                "version": summary_version,
+            },
+        )
+        return self._curation_command_resource(receipt)
+
+    async def _publish_curation_candidate(
+        self, candidate_id: str, *, idempotency_key: str
+    ) -> None:
+        candidate = self.repository.get_candidate(candidate_id)
+        if candidate.status == "published":
+            return
+        if candidate.draft_id is None:
+            raise ReviewConflictError("candidate has no draft")
+        draft = await self.drafts.get(candidate.draft_id)
+        publication_session = await self.sessions.create(
+            workspace_id=self.workspace_id,
+            kind="knowledge.publish",
+            title=f"发布题目：{draft.title}",
+        )
+        execution = await self.executions.start(
+            publication_session,
+            input={
+                "draftId": draft.id,
+                "draftVersion": draft.version,
+                "contentHash": draft.content_hash,
+                "title": draft.title,
+                "markdown": draft.markdown,
+            },
+        )
+        await self.drafts.mark_review_pending(
+            draft.id,
+            expected_version=draft.version,
+            expected_hash=draft.content_hash,
+        )
+        await self.executions.wait(execution.id)
+        pending = await self.actions.list_pending(
+            self.workspace_id, session_id=publication_session.id
+        )
+        if len(pending) != 1:
+            raise ReviewConflictError("publication action was not created")
+        await self.hitl.approve(
+            pending[0].id,
+            ResolveActionCommand(
+                version=pending[0].version,
+                idempotency_key=idempotency_key,
+            ),
+        )
+        await self.executions.wait(execution.id)
+
+    async def _start_curation_execution(
+        self,
+        *,
+        session_id: str,
+        source_refs: tuple[str, ...],
+        rewrite_feedback: str | None,
+        rewrite_of_batch_id: str | None,
+    ):
+        session = self.sessions.get(session_id)
+        source_service = KnowledgeSourceService(
+            self.workspace_root, workspace_id=self.workspace_id
+        )
+        excerpts = []
+        for source_id in source_refs:
+            source = await source_service.get(source_id)
+            text = extract_text(self.workspace_root / source.stored_path)
+            excerpts.append(
+                f"{source.id}:{source.original_filename}\n{text[:20_000]}"
+            )
+        batch = self.repository.create_batch(
+            workspace_id=self.workspace_id,
+            session_id=session_id,
+            run_id=None,
+            source_refs=source_refs,
+            rewrite_of_batch_id=rewrite_of_batch_id,
+        )
+        current = self.repository.get_curation_session(session_id)
+        self.repository.update_curation_progress(
+            session_id,
+            stage="generating",
+            completed_units=0,
+            total_units=max(1, len(excerpts)),
+            active_batch_id=batch.id,
+        )
+        execution = await self.executions.start(
+            session,
+            input={
+                "batchId": batch.id,
+                "source_excerpts": excerpts,
+                "similar_questions": [
+                    item.snapshot.question_text
+                    for item in self.repository.list_active_questions(
+                        self.workspace_id
+                    )
+                ],
+                "rewrite_feedback": rewrite_feedback,
+            },
+        )
+        self.repository.attach_batch_run(batch.id, execution.id)
+        await self.timeline.append(
+            session_id=session_id,
+            execution_id=execution.id,
+            role="assistant",
+            message_kind="stage",
+            content="正在按要求重写候选题",
+            payload={
+                "resourceId": session_id,
+                "version": current.summary_version,
+                "stage": "generating",
+            },
+        )
+        return execution
+
+    def _summarize_curation(self, session_id: str):
+        current = self.repository.get_curation_session(session_id)
+        candidates = [
+            item
+            for item in self.repository.list_candidates(self.workspace_id)
+            if self.repository.get_batch(item.batch_id).session_id == session_id
+        ]
+        summary = CurationSummary(
+            items=tuple(
+                {
+                    "ordinal": index,
+                    "candidateId": item.id,
+                    "title": item.question.title,
+                    "topics": item.question.topics,
+                    "difficulty": item.question.difficulty,
+                    "sourceCount": len(item.source_refs),
+                    "recommendation": (
+                        "suggest_reject"
+                        if item.status == "rejected"
+                        else "link_existing"
+                        if item.duplicate_of_question_id
+                        else "recommend_confirm"
+                    ),
+                }
+                for index, item in enumerate(candidates, start=1)
+            )
+        )
+        return self.repository.replace_curation_summary(
+            session_id,
+            expected_version=current.summary_version,
+            summary=summary,
+        )
+
+    @staticmethod
+    def _command_result_text(kind: str, result: dict[str, object]) -> str:
+        if kind == "confirm":
+            return f"已发布 {result.get('publishedCount', 0)} 道题。"
+        if kind == "reject":
+            return f"已拒绝 {result.get('rejectedCount', 0)} 道题。"
+        if kind == "rewrite":
+            return "已开始按要求重写。"
+        return "已重新生成整理总结。"
+
+    @staticmethod
+    def _curation_command_resource(receipt) -> dict[str, Any]:
+        candidate_ids = receipt.command.get("candidateIds", ())
+        return {
+            "id": receipt.id,
+            "session_id": receipt.session_id,
+            "summary_version": receipt.summary_version,
+            "kind": receipt.command["kind"],
+            "target_ids": candidate_ids,
+            "status": receipt.status,
+            "result": receipt.result,
+            "created_at": receipt.created_at,
+            "completed_at": receipt.completed_at,
+        }
 
     async def create_question_batch(
         self,

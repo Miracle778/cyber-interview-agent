@@ -164,17 +164,6 @@ class WorkspaceRuntime:
             review_repository=reviews,
             get_draft=drafts.get,
         )
-        review = ReviewApplication(
-            workspace_id=workspace_id,
-            workspace_root=root,
-            repository=reviews,
-            sessions=sessions,
-            executions=executions,
-            events=events,
-            drafts=drafts,
-            publications=publications,
-            validate_model=validate_review_model,
-        )
         projection_service = ReviewDomainService(
             repository=reviews,
             selector=QuestionSelector(),
@@ -195,6 +184,19 @@ class WorkspaceRuntime:
             resume_action=executions.resume_approval,
         )
         holder["hitl"] = hitl
+        review = ReviewApplication(
+            workspace_id=workspace_id,
+            workspace_root=root,
+            repository=reviews,
+            sessions=sessions,
+            executions=executions,
+            events=events,
+            drafts=drafts,
+            publications=publications,
+            validate_model=validate_review_model,
+            actions=actions,
+            hitl=hitl,
+        )
         return cls(
             workspace_id=workspace_id,
             root=root,
@@ -388,6 +390,16 @@ class AgentApplication:
             except LookupError:
                 continue
         raise ProductRecordNotFoundError("题目批次不存在")
+
+    def locate_review_session(self, session_id: str) -> ReviewApplication:
+        for workspace_id in self._workspace_ids():
+            context = self._context(workspace_id)
+            try:
+                context.review.repository.get_curation_session(session_id)
+                return context.review
+            except LookupError:
+                continue
+        raise ProductRecordNotFoundError("题库整理会话不存在")
 
     async def recover(self) -> tuple[str, ...]:
         recovered = []

@@ -9,7 +9,7 @@
 | 1. 题库与持久轮次领域事实 | 已完成 | additive migration、catalog/round/input/mastery repository、selector、publication projection |
 | 2. Agent 与长生命周期 Graph | 已完成 | 题目整理、评价/追问、报告、discussion、input resume |
 | 3. API 与完整 Web 体验 | 人工浏览器验收未通过，交互模型需修订 | 现有 API/页面可运行，但题库过程不可见、复习回答阻塞、历史与创建入口混杂 |
-| 4. 会话化交互修订与重新验收 | Task 1 已完成，Task 2 待执行 | 已落 durable session/answer facts；待整理会话/题目库双视图、历史优先复习、异步 SSE 与验收 |
+| 4. 会话化交互修订与重新验收 | Task 1–2 已完成，Task 3 待执行 | 已落 durable facts 与题库整理会话；待历史优先复习、异步 SSE 与最终验收 |
 
 ## 工作位置
 
@@ -42,7 +42,7 @@
 
 ## 下一步
 
-执行 Task 2：按 source 集合创建可恢复的题库整理 Agent 会话，完成受约束命令、summary/source links API 和“整理会话/题目库”双视图；随后进入异步复习会话与最终验收。
+执行 Task 3：将复习改为历史优先入口，回答先返回 `202` receipt，再通过安全 SSE 阶段和完整评价卡更新同一会话；完成刷新/重启恢复后进入最终验收。
 
 ## 所有权状态
 

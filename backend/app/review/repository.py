@@ -18,6 +18,7 @@ from app.review.models import (
     CurationSessionRecord,
     CurationStage,
     CurationSummary,
+    CurationCommandReceiptRecord,
     Difficulty,
     InputKind,
     MasteryEntry,
@@ -200,6 +201,84 @@ class ReviewRepository:
             (question_id,),
         ).fetchall()
         return tuple(self._question_source_link_record(row) for row in rows)
+
+    def begin_curation_command(
+        self,
+        *,
+        session_id: str,
+        idempotency_key: str,
+        text: str,
+        summary_version: int,
+        command: dict[str, object],
+        receipt_id: str | None = None,
+    ) -> tuple[CurationCommandReceiptRecord, bool]:
+        text_hash = sha256(text.encode("utf-8")).hexdigest()
+        existing = self._connection.execute(
+            "SELECT * FROM review_curation_command_receipts "
+            "WHERE session_id = ? AND idempotency_key = ?",
+            (session_id, idempotency_key),
+        ).fetchone()
+        if existing is not None:
+            record = self._curation_command_receipt(existing)
+            if (
+                record.text_hash != text_hash
+                or record.summary_version != summary_version
+            ):
+                raise ReviewConflictError(
+                    "curation command idempotency key changed"
+                )
+            return record, False
+        identifier = receipt_id or str(uuid4())
+        with self._transaction():
+            self._connection.execute(
+                "INSERT INTO review_curation_command_receipts "
+                "(id, session_id, idempotency_key, text_hash, "
+                "summary_version, command_json) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    identifier,
+                    session_id,
+                    idempotency_key,
+                    text_hash,
+                    summary_version,
+                    _canonical_json(command),
+                ),
+            )
+        return self.get_curation_command_receipt(identifier), True
+
+    def get_curation_command_receipt(
+        self, receipt_id: str
+    ) -> CurationCommandReceiptRecord:
+        row = self._connection.execute(
+            "SELECT * FROM review_curation_command_receipts WHERE id = ?",
+            (receipt_id,),
+        ).fetchone()
+        if row is None:
+            raise LookupError(receipt_id)
+        return self._curation_command_receipt(row)
+
+    def complete_curation_command(
+        self,
+        receipt_id: str,
+        *,
+        result: dict[str, object],
+        status: str = "completed",
+    ) -> CurationCommandReceiptRecord:
+        if status not in {"completed", "partial_failure", "failed"}:
+            raise ValueError("unsupported curation command terminal status")
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_curation_command_receipts SET result_json = ?, "
+                "status = ?, completed_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND status = 'processing'",
+                (_canonical_json(result), status, receipt_id),
+            )
+            if cursor.rowcount != 1:
+                current = self.get_curation_command_receipt(receipt_id)
+                if current.status != status or current.result != result:
+                    raise ReviewConflictError(
+                        "curation command receipt already completed"
+                    )
+        return self.get_curation_command_receipt(receipt_id)
 
     def create_batch(
         self,
@@ -401,6 +480,19 @@ class ReviewRepository:
                 "status = COALESCE(?, status), updated_at = CURRENT_TIMESTAMP "
                 "WHERE id = ?",
                 (_canonical_json(asdict(question)), status, candidate_id),
+            )
+            if cursor.rowcount != 1:
+                raise LookupError(candidate_id)
+        return self.get_candidate(candidate_id)
+
+    def update_candidate_status(
+        self, candidate_id: str, *, status: str
+    ) -> QuestionCandidateRecord:
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_question_candidates SET status = ?, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (status, candidate_id),
             )
             if cursor.rowcount != 1:
                 raise LookupError(candidate_id)
@@ -1253,6 +1345,23 @@ class ReviewRepository:
             merge_reason=row["merge_reason"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+        )
+
+    @staticmethod
+    def _curation_command_receipt(
+        row: sqlite3.Row,
+    ) -> CurationCommandReceiptRecord:
+        return CurationCommandReceiptRecord(
+            id=row["id"],
+            session_id=row["session_id"],
+            idempotency_key=row["idempotency_key"],
+            text_hash=row["text_hash"],
+            summary_version=row["summary_version"],
+            command=json.loads(row["command_json"]),
+            result=json.loads(row["result_json"]),
+            status=row["status"],
+            created_at=row["created_at"],
+            completed_at=row["completed_at"],
         )
 
     def _catalog_record(self, row: sqlite3.Row) -> QuestionCatalogRecord:

@@ -71,7 +71,7 @@ class QuestionCurationAgent:
     ) -> QuestionCandidateBatch:
         units = _generation_units(source_excerpts)
         candidates = []
-        seen: set[str] = set()
+        candidate_index: dict[str, int] = {}
         known_questions = list(similar_questions)
         for source_unit in units:
             body = ["来源：", *source_unit]
@@ -91,9 +91,23 @@ class QuestionCurationAgent:
             )
             for candidate in batch.candidates:
                 key = candidate.question_text.strip().casefold()
-                if key in seen:
+                existing_index = candidate_index.get(key)
+                if existing_index is not None:
+                    existing = candidates[existing_index]
+                    candidates[existing_index] = existing.model_copy(
+                        update={
+                            "source_refs": list(
+                                dict.fromkeys(
+                                    [
+                                        *existing.source_refs,
+                                        *candidate.source_refs,
+                                    ]
+                                )
+                            )
+                        }
+                    )
                     continue
-                seen.add(key)
+                candidate_index[key] = len(candidates)
                 candidates.append(candidate)
                 known_questions.append(candidate.question_text)
                 if len(candidates) == 50:

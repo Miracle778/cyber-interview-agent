@@ -204,6 +204,20 @@ class QuestionSourceLinkRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class CurationCommandReceiptRecord:
+    id: str
+    session_id: str
+    idempotency_key: str
+    text_hash: str
+    summary_version: int
+    command: dict[str, object]
+    result: dict[str, object]
+    status: str
+    created_at: str
+    completed_at: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class ReviewRoundRecord:
     id: str
     workspace_id: str

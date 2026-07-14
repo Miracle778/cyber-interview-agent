@@ -370,6 +370,10 @@ class ProductEventStream:
         {
             "session.created",
             "session.message.created",
+            "curation.stage.changed",
+            "curation.progress.changed",
+            "curation.summary.ready",
+            "curation.command.resolved",
             "execution.started",
             "assistant.delta",
             "approval.required",

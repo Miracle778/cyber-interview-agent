@@ -72,6 +72,78 @@ export interface QuestionBatch {
   updatedAt: string;
 }
 
+export type CurationStage =
+  | "queued"
+  | "reading_sources"
+  | "generating"
+  | "merging"
+  | "summarizing"
+  | "waiting_for_command"
+  | "publishing"
+  | "completed"
+  | "failed";
+
+export interface CurationMessage {
+  id: string;
+  executionId: string | null;
+  role: "user" | "assistant" | "system" | string;
+  content: string;
+  messageKind: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface CurationSource {
+  id: string;
+  filename: string;
+  organizationState: "not_curated" | "in_progress" | "previously_curated";
+}
+
+export interface CurationSummaryItem {
+  ordinal: number;
+  candidateId: string;
+  title: string;
+  topics: string[];
+  difficulty: Difficulty;
+  sourceCount: number;
+  recommendation: "recommend_confirm" | "suggest_reject" | "link_existing" | string;
+}
+
+export interface CurationSession {
+  id: string;
+  workspaceId: string;
+  title: string;
+  sourceRefs: string[];
+  sources: CurationSource[];
+  activeBatchId: string | null;
+  executionId: string | null;
+  executionStatus: string | null;
+  stage: CurationStage;
+  progress: { completed: number; total: number };
+  summary: { items: CurationSummaryItem[] };
+  summaryVersion: number;
+  warnings: { sourceId: string; code: string }[];
+  candidateCount: number;
+  pendingCount: number;
+  publishedCount: number;
+  messages: CurationMessage[];
+  usage: { inputTokens: number; outputTokens: number; totalTokens: number; callCount: number; estimatedCount: number };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CurationCommandReceipt {
+  id: string;
+  sessionId: string;
+  summaryVersion: number;
+  kind: string;
+  targetIds: string[];
+  status: string;
+  result: Record<string, unknown>;
+  createdAt: string;
+  completedAt: string | null;
+}
+
 export interface ReviewInput {
   id: string;
   roundId: string;

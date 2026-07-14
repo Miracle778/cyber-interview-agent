@@ -23,9 +23,15 @@ from app.hitl.models import CreatePendingAction, PendingActionRecord
 from app.infrastructure.checkpoints import AgentCheckpointer
 from app.knowledge.drafts import CreateDraftCommand, KnowledgeDraftRecord
 from app.graphs.review_round import DraftRef
-from app.review.models import MasteryEntry, MasteryProjection, QuestionSnapshot
+from app.review.models import (
+    CurationSummary,
+    MasteryEntry,
+    MasteryProjection,
+    QuestionSnapshot,
+)
 from app.review.models import ReviewInputReceipt
 from app.review.repository import ReviewRepository
+from app.review.timeline import SessionTimelineProjector
 
 
 logger = logging.getLogger(__name__)
@@ -507,6 +513,43 @@ class AgentExecutionService:
             if not batch_id:
                 raise ValueError("question curation batch is missing")
             batch = self._review_repository.get_batch(batch_id)
+            timeline = SessionTimelineProjector(self._repository, self._events)
+            try:
+                curation = self._review_repository.get_curation_session(
+                    session.id
+                )
+            except LookupError:
+                curation = None
+            raw_candidates = tuple(state.get("candidates", ()))
+            if curation is not None:
+                curation = self._review_repository.update_curation_progress(
+                    session.id,
+                    stage="merging",
+                    completed_units=0,
+                    total_units=max(1, len(raw_candidates)),
+                )
+                await self._events.publish(
+                    session.id,
+                    execution.id,
+                    "curation.stage.changed",
+                    {
+                        "resourceId": session.id,
+                        "stage": "merging",
+                        "version": curation.summary_version,
+                    },
+                )
+                await timeline.append(
+                    session_id=session.id,
+                    execution_id=execution.id,
+                    role="assistant",
+                    message_kind="stage",
+                    content="正在合并相似题并整理来源",
+                    payload={
+                        "resourceId": session.id,
+                        "version": curation.summary_version,
+                        "stage": "merging",
+                    },
+                )
             active = self._review_repository.list_active_questions(
                 self._workspace_id
             )
@@ -514,7 +557,8 @@ class AgentExecutionService:
                 item.snapshot.question_text.strip().casefold(): item.snapshot.question_id
                 for item in active
             }
-            for raw in state.get("candidates", ()):
+            persisted = []
+            for index, raw in enumerate(raw_candidates, start=1):
                 question_id = str(uuid4())
                 markdown = (
                     f"# {raw['title']}\n\n"
@@ -553,7 +597,7 @@ class AgentExecutionService:
                     key_points=tuple(raw["key_points"]),
                     follow_ups=tuple(raw["follow_ups"]),
                 )
-                self._review_repository.save_candidate(
+                candidate = self._review_repository.save_candidate(
                     batch_id=batch_id,
                     question=snapshot,
                     draft_id=draft.id,
@@ -564,7 +608,112 @@ class AgentExecutionService:
                     ),
                     status="review_pending",
                 )
+                persisted.append(candidate)
+                for source_ref in source_refs:
+                    source_id = str(source_ref).split("#", 1)[0]
+                    self._review_repository.upsert_question_source_link(
+                        question_id=snapshot.question_id,
+                        source_id=source_id,
+                        batch_id=batch.id,
+                        session_id=session.id,
+                        evidence_ref=str(source_ref),
+                        merge_reason=(
+                            "linked_to_active_question"
+                            if candidate.duplicate_of_question_id
+                            else "generated_from_source"
+                        ),
+                    )
+                if curation is not None:
+                    self._review_repository.update_curation_progress(
+                        session.id,
+                        stage="merging",
+                        completed_units=index,
+                        total_units=max(1, len(raw_candidates)),
+                    )
+                    await self._events.publish(
+                        session.id,
+                        execution.id,
+                        "curation.progress.changed",
+                        {
+                            "resourceId": session.id,
+                            "completed": index,
+                            "total": max(1, len(raw_candidates)),
+                        },
+                    )
             self._review_repository.update_batch_status(batch_id, "completed")
+            if curation is None:
+                return
+            curation = self._review_repository.update_curation_progress(
+                session.id,
+                stage="summarizing",
+                completed_units=0,
+                total_units=1,
+            )
+            await self._events.publish(
+                session.id,
+                execution.id,
+                "curation.stage.changed",
+                {
+                    "resourceId": session.id,
+                    "stage": "summarizing",
+                    "version": curation.summary_version,
+                },
+            )
+            summary = CurationSummary(
+                items=tuple(
+                    {
+                        "ordinal": index,
+                        "candidateId": candidate.id,
+                        "title": candidate.question.title,
+                        "topics": candidate.question.topics,
+                        "difficulty": candidate.question.difficulty,
+                        "sourceCount": len(candidate.source_refs),
+                        "recommendation": (
+                            "link_existing"
+                            if candidate.duplicate_of_question_id
+                            else "recommend_confirm"
+                        ),
+                        "reason": (
+                            "与已发布题目相同，建议确认来源关联"
+                            if candidate.duplicate_of_question_id
+                            else "结构完整且来源明确"
+                        ),
+                    }
+                    for index, candidate in enumerate(persisted, start=1)
+                )
+            )
+            curation = self._review_repository.replace_curation_summary(
+                session.id,
+                expected_version=curation.summary_version,
+                summary=summary,
+            )
+            curation = self._review_repository.update_curation_progress(
+                session.id,
+                stage="waiting_for_command",
+                completed_units=1,
+                total_units=1,
+            )
+            await timeline.append(
+                session_id=session.id,
+                execution_id=execution.id,
+                role="assistant",
+                message_kind="curation_summary",
+                content=f"已整理 {len(summary.items)} 道候选题，请确认处理方式。",
+                payload={
+                    "resourceId": session.id,
+                    "version": curation.summary_version,
+                },
+            )
+            await self._events.publish(
+                session.id,
+                execution.id,
+                "curation.summary.ready",
+                {
+                    "resourceId": session.id,
+                    "count": len(summary.items),
+                    "version": curation.summary_version,
+                },
+            )
 
         final_state: dict[str, Any] = {}
         interrupted = False

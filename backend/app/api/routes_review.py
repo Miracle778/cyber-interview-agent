@@ -10,9 +10,12 @@ from app.application.workspace_runtime import AgentApplication
 from app.review.models import ReviewRoundSettings
 from app.schemas.review import (
     ActiveQuestionResource,
+    CreateCurationSessionCommand,
     CreateQuestionBatchCommand,
     CreateReviewDiscussionCommand,
     CreateReviewRoundCommand,
+    CurationSessionResource,
+    CurationCommandReceiptResource,
     DiscussionSessionResource,
     QuestionBatchResource,
     QuestionCandidateResource,
@@ -20,11 +23,67 @@ from app.schemas.review import (
     RewriteQuestionCandidateCommand,
     SkipReviewInputCommand,
     SubmitReviewInputCommand,
+    SubmitCurationCommand,
     UpdateQuestionCandidateCommand,
 )
 
 
 router = APIRouter(prefix="/api/review", tags=["review"])
+
+
+@router.post(
+    "/curation-sessions",
+    response_model=CurationSessionResource,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_curation_session(
+    command: CreateCurationSessionCommand,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    return await application.review(command.workspace_id).create_curation_session(
+        source_refs=tuple(command.source_refs)
+    )
+
+
+@router.get(
+    "/curation-sessions", response_model=list[CurationSessionResource]
+)
+async def list_curation_sessions(
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    application: AgentApplication = Depends(get_agent_application),
+):
+    return await application.review(workspace_id).list_curation_resources()
+
+
+@router.get(
+    "/curation-sessions/{session_id}",
+    response_model=CurationSessionResource,
+)
+async def get_curation_session(
+    session_id: str,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_review_session(session_id)
+    return await review.curation_resource(session_id)
+
+
+@router.post(
+    "/curation-sessions/{session_id}/commands",
+    response_model=CurationCommandReceiptResource,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def submit_curation_command(
+    session_id: str,
+    command: SubmitCurationCommand,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_review_session(session_id)
+    return await review.execute_curation_command(
+        session_id,
+        text=command.text,
+        summary_version=command.summary_version,
+        idempotency_key=command.idempotency_key,
+    )
 
 
 @router.post(

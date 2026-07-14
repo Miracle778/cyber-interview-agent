@@ -10,6 +10,10 @@
 - 用户追加前端质量要求：实施前、实施中和最终审查均使用 `ui-ux-pro-max`。检索后确定 `AI-native + data-dense dashboard + modern dark`，基线为 variance 4 / motion 3 / density 8，并明确拒绝不适合应用工作台的 Landing Page、紫粉营销和重玻璃拟态建议。
 - 用户已确认正式修订规格；新增 `docs/superpowers/plans/2026-07-14-r2-agent-session-interaction-redesign.md`，按 durable session facts、题库整理会话、异步复习会话、最终 UI/UX/验收四个纵向任务执行。计划已对齐 spec 状态名、202 answer receipt、原子接收、重启恢复、安全 SSE 和一次最终全量回归预算，尚未修改业务代码。
 - 会话化修订 Task 1 已实现：migration 003、结构化 timeline message、curation session/summary/source-link facts、attempt evaluation 状态及原子 answer acceptance；针对性测试 `24 passed`，compile 与 diff check 通过。计划中 verification/learning 路径已修正为仓库现有的 `r2-complete-review-agent` 命名。
+- 会话化修订 Task 2 已实现：新增持久 command receipt migration 004、source-scoped curation session API、受约束命令/澄清/幂等、显式确认直接发布、跨来源相似题证据合并，以及“整理会话/题目库”双视图。
+- Task 2 前端默认展示会话列表、对话/总结/命令输入和运行状态三栏；AI 整理改为选源弹窗，重复/进行中资料只提示不阻断；题目库保留候选编辑和真实 pending publication ActionCenter。
+- `ui-ux-pro-max` 实施门禁采用 data-dense Agent workbench、语义 token、44px 交互目标和 150–300ms 动效，拒绝 Landing Page、紫粉营销和重玻璃建议；本任务完成后退出 skill。
+- Task 2 针对性验证：后端 `45 passed`（含整理会话/summary/timeline 重启恢复）；前端相关 `9 passed`（含命令乐观消息与服务端 timeline 对账）；`tsc --noEmit` 与 `git diff --check` 通过。未运行全量回归、build、浏览器或 Langfuse；下一步为 Task 3 异步复习会话。
 
 ## 2026-07-14：R2 Task 4 非浏览器验收完成
 
