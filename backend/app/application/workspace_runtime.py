@@ -407,6 +407,7 @@ class AgentApplication:
             context = self._context(workspace_id)
             recovered.extend(context.executions.recover())
             context.review.repository.reconcile_abandoned_work()
+            await context.executions.resume_evaluating_attempts()
             await context.hitl.reconcile()
         return tuple(recovered)
 

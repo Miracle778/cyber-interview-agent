@@ -790,14 +790,61 @@ class ReviewApplication:
             raise ReviewConflictError("input request changed")
         if round_record.execution_id is None:
             raise ReviewConflictError("round has no execution")
-        await self.executions.resume_input(
-            round_record.execution_id,
+        receipt = self.repository.accept_review_answer(
             request_id=request_id,
+            expected_version=version,
+            idempotency_key=idempotency_key,
             value=value,
             receipt_id=idempotency_key,
         )
-        await self.executions.wait(round_record.execution_id)
-        return self.repository.get_round(round_id)
+        await self.executions.resume_accepted_input(
+            round_record.execution_id,
+            receipt=receipt,
+            value=value,
+        )
+        return receipt
+
+    @staticmethod
+    def answer_receipt_resource(receipt) -> dict[str, Any]:
+        return {
+            "receipt_id": receipt.id,
+            "round_id": receipt.round_id,
+            "attempt_id": receipt.attempt_id,
+            "input_request_id": receipt.input_request_id,
+            "status": receipt.status,
+            "accepted_at": receipt.accepted_at,
+            "version": receipt.version,
+        }
+
+    async def retry_evaluation(
+        self, round_id: str, *, idempotency_key: str
+    ):
+        round_record = self.repository.get_round(round_id)
+        existing = self.repository.find_evaluation_retry_receipt(
+            round_id, idempotency_key=idempotency_key
+        )
+        if existing is not None:
+            return existing
+        if round_record.execution_id is None:
+            raise ReviewConflictError("round has no execution")
+        attempt = next(
+            (
+                item
+                for item in reversed(self.repository.list_attempts(round_id))
+                if item.ordinal == round_record.current_index + 1
+                and item.status == "evaluation_failed"
+            ),
+            None,
+        )
+        if attempt is None:
+            raise ReviewConflictError("current attempt is not retryable")
+        receipt = self.repository.retry_attempt_evaluation(
+            attempt.id, idempotency_key=idempotency_key
+        )
+        await self.executions.retry_evaluation(
+            round_record.execution_id, receipt=receipt
+        )
+        return receipt
 
     async def skip(
         self, round_id: str, *, request_id: str, version: int, idempotency_key: str
@@ -918,6 +965,14 @@ class ReviewApplication:
             "current_question": current_question,
             "current_input": None if pending is None else asdict(pending),
             "attempts": [asdict(item) for item in attempts],
+            "messages": [
+                asdict(message)
+                for message in self.sessions.repository.list_messages(
+                    round_record.session_id
+                )
+                if message.message_kind
+                in {"review_prompt", "review_answer", "evaluation_card", "error"}
+            ],
             "reports": reports,
             "usage": self.executions.usage(round_record.session_id),
             "execution_status": None if execution is None else execution.status,

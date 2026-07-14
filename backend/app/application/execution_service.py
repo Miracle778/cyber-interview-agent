@@ -29,7 +29,7 @@ from app.review.models import (
     MasteryProjection,
     QuestionSnapshot,
 )
-from app.review.models import ReviewInputReceipt
+from app.review.models import ReviewAnswerReceipt, ReviewInputReceipt
 from app.review.repository import ReviewRepository
 from app.review.timeline import SessionTimelineProjector
 
@@ -202,6 +202,51 @@ class AgentExecutionService:
         )
         return receipt
 
+    async def resume_accepted_input(
+        self,
+        execution_id: str,
+        *,
+        receipt: ReviewAnswerReceipt,
+        value: str,
+    ) -> None:
+        """Schedule model work after the answer transaction has committed."""
+        execution = self._repository.get_execution(execution_id)
+        if execution.status != "running" or execution_id in self._tasks:
+            return
+        await self._events.publish(
+            execution.session_id,
+            execution.id,
+            "review.answer.accepted",
+            {
+                "receiptId": receipt.id,
+                "roundId": receipt.round_id,
+                "attemptId": receipt.attempt_id,
+                "inputRequestId": receipt.input_request_id,
+                "version": receipt.version,
+            },
+        )
+        await self._events.publish(
+            execution.session_id,
+            execution.id,
+            "review.evaluation.started",
+            {
+                "roundId": receipt.round_id,
+                "attemptId": receipt.attempt_id,
+                "inputRequestId": receipt.input_request_id,
+                "version": receipt.version,
+            },
+        )
+        self._spawn(
+            execution.id,
+            graph_input=Command(
+                resume={
+                    "inputRequestId": receipt.input_request_id,
+                    "value": value,
+                    "receiptId": receipt.id,
+                }
+            ),
+        )
+
     async def skip_input(
         self,
         execution_id: str,
@@ -308,6 +353,78 @@ class AgentExecutionService:
 
     def recover(self) -> tuple[str, ...]:
         return self._repository.interrupt_running()
+
+    async def resume_evaluating_attempts(self) -> tuple[str, ...]:
+        if self._review_repository is None:
+            return ()
+        resumed: list[str] = []
+        for attempt in self._review_repository.list_evaluating_attempts():
+            round_record = self._review_repository.get_round(attempt.round_id)
+            if round_record.execution_id is None:
+                continue
+            execution = self._repository.get_execution(round_record.execution_id)
+            if execution.status != "interrupted":
+                continue
+            request, receipt = self._review_repository.resolved_input_for_attempt(
+                attempt
+            )
+            value = (
+                attempt.follow_up_answer
+                if request.kind == "follow_up"
+                else attempt.answer
+            )
+            if value is None:
+                continue
+            execution = self._repository.transition_execution(
+                execution.id,
+                expected=("interrupted",),
+                target="running",
+                increment_resume=True,
+            )
+            await self._events.publish(
+                execution.session_id,
+                execution.id,
+                "review.evaluation.started",
+                {
+                    "roundId": receipt.round_id,
+                    "attemptId": receipt.attempt_id,
+                    "inputRequestId": receipt.input_request_id,
+                    "version": receipt.version,
+                    "recovered": True,
+                },
+            )
+            self._spawn(
+                execution.id,
+                graph_input=Command(
+                    resume={
+                        "inputRequestId": receipt.input_request_id,
+                        "value": value,
+                        "receiptId": receipt.id,
+                    }
+                ),
+            )
+            resumed.append(attempt.id)
+        return tuple(resumed)
+
+    async def retry_evaluation(
+        self, execution_id: str, *, receipt: ReviewAnswerReceipt
+    ) -> None:
+        execution = self._repository.get_execution(execution_id)
+        if execution.status != "running" or execution_id in self._tasks:
+            return
+        await self._events.publish(
+            execution.session_id,
+            execution.id,
+            "review.evaluation.started",
+            {
+                "roundId": receipt.round_id,
+                "attemptId": receipt.attempt_id,
+                "inputRequestId": receipt.input_request_id,
+                "version": receipt.version,
+                "retried": True,
+            },
+        )
+        self._spawn(execution.id, graph_input=None)
 
     def _round_model_override(self, session_id: str) -> ModelOverride:
         if self._review_repository is None:
@@ -719,10 +836,13 @@ class AgentExecutionService:
         interrupted = False
         interrupt_kind: Literal["input", "approval"] | None = None
         projected_text = False
-        projected_attempts: set[str] = set()
+        projected_attempts: dict[str, str] = {}
         projected_drafts: set[str] = set()
         projected_progress: tuple[int, str] | None = None
         projector = AgentEventProjector()
+        review_timeline = SessionTimelineProjector(
+            self._repository, self._events
+        )
         try:
             async with self._checkpointer.open() as saver:
                 graph = self._graph_factory(
@@ -754,18 +874,65 @@ class AgentExecutionService:
                             final_state = data
                             if session.kind == "review.round":
                                 for attempt_id in data.get("attempt_ids", ()):
-                                    if attempt_id in projected_attempts:
+                                    attempt = self._review_repository.get_attempt(
+                                        attempt_id
+                                    )
+                                    if projected_attempts.get(attempt_id) == attempt.status:
                                         continue
-                                    projected_attempts.add(attempt_id)
+                                    projected_attempts[attempt_id] = attempt.status
+                                    if attempt.status not in {
+                                        "waiting_for_follow_up",
+                                        "completed",
+                                    }:
+                                        continue
+                                    evaluation = attempt.evaluation or {}
                                     await self._events.publish(
                                         session.id,
                                         execution.id,
-                                        "review.attempt.completed",
+                                        "review.evaluation.completed",
                                         {
+                                            "roundId": attempt.round_id,
                                             "attemptId": attempt_id,
-                                            "count": len(projected_attempts),
+                                            "ordinal": attempt.ordinal,
+                                            "status": attempt.status,
+                                            "score": evaluation.get("score"),
+                                            "version": self._review_repository.get_round(
+                                                attempt.round_id
+                                            ).version,
                                         },
                                     )
+                                    existing_card = any(
+                                        message.message_kind == "evaluation_card"
+                                        and message.payload.get("attemptId") == attempt_id
+                                        and message.payload.get("status") == attempt.status
+                                        for message in self._repository.list_messages(
+                                            session.id
+                                        )
+                                    )
+                                    if not existing_card:
+                                        await review_timeline.append(
+                                            session_id=session.id,
+                                            execution_id=execution.id,
+                                            role="assistant",
+                                            message_kind="evaluation_card",
+                                            content=(
+                                                "评价完成，Agent 需要一次必要追问。"
+                                                if attempt.status == "waiting_for_follow_up"
+                                                else "本题评价已完成。"
+                                            ),
+                                            payload={
+                                                "resourceId": attempt.id,
+                                                "version": self._review_repository.get_round(
+                                                    attempt.round_id
+                                                ).version,
+                                                "roundId": attempt.round_id,
+                                                "attemptId": attempt.id,
+                                                "ordinal": attempt.ordinal,
+                                                "status": attempt.status,
+                                                "evaluation": evaluation,
+                                                "masterySuggestion": attempt.mastery_suggestion,
+                                            },
+                                        )
                                 progress = (
                                     int(data.get("current_index", 0)),
                                     str(data.get("status", "running")),
@@ -810,6 +977,37 @@ class AgentExecutionService:
                                         "unsupported_interrupt"
                                     )
                                 interrupt_kind = current_kind
+                                if (
+                                    current_kind == "input"
+                                    and self._review_repository is not None
+                                ):
+                                    request_id = str(value["inputRequestId"])
+                                    already_projected = any(
+                                        message.message_kind == "review_prompt"
+                                        and message.payload.get("inputRequestId") == request_id
+                                        for message in self._repository.list_messages(
+                                            session.id
+                                        )
+                                    )
+                                    if not already_projected:
+                                        request = self._review_repository.get_input_request(
+                                            request_id
+                                        )
+                                        await review_timeline.append(
+                                            session_id=session.id,
+                                            execution_id=execution.id,
+                                            role="assistant",
+                                            message_kind="review_prompt",
+                                            content=request.prompt,
+                                            payload={
+                                                "resourceId": request.id,
+                                                "version": request.version,
+                                                "roundId": request.round_id,
+                                                "inputRequestId": request.id,
+                                                "ordinal": request.ordinal,
+                                                "kind": request.kind,
+                                            },
+                                        )
                     for event in projector.project(part):
                         if event.type == "assistant.delta":
                             projected_text = True
@@ -878,6 +1076,84 @@ class AgentExecutionService:
         except asyncio.CancelledError:
             raise
         except Exception as error:
+            if session.kind == "review.round" and self._review_repository is not None:
+                try:
+                    round_record = self._review_repository.get_round_by_session(
+                        session.id
+                    )
+                    evaluating = [
+                        attempt
+                        for attempt in self._review_repository.list_attempts(
+                            round_record.id
+                        )
+                        if attempt.status == "evaluating"
+                    ]
+                    if evaluating:
+                        attempt = evaluating[-1]
+                        error_code = str(
+                            getattr(error, "code", "evaluation_failed")
+                        )[:100]
+                        self._review_repository.fail_attempt_evaluation(
+                            attempt.id, error_code=error_code
+                        )
+                        await review_timeline.append(
+                            session_id=session.id,
+                            execution_id=execution.id,
+                            role="assistant",
+                            message_kind="error",
+                            content="评价暂时失败，回答已保存，可以直接重试评价。",
+                            payload={
+                                "resourceId": attempt.id,
+                                "version": round_record.version,
+                                "roundId": round_record.id,
+                                "attemptId": attempt.id,
+                                "code": error_code,
+                            },
+                        )
+                        await self._events.publish(
+                            session.id,
+                            execution.id,
+                            "review.evaluation.failed",
+                            {
+                                "roundId": round_record.id,
+                                "attemptId": attempt.id,
+                                "code": error_code,
+                                "version": round_record.version,
+                            },
+                        )
+                        current = self._repository.get_execution(execution.id)
+                        if current.status == "running":
+                            self._repository.transition_execution(
+                                execution.id,
+                                expected=("running",),
+                                target="interrupted",
+                                error_code=error_code,
+                                error_message="评价失败，可重试",
+                            )
+                        logger.warning(
+                            "review evaluation failed",
+                            extra={
+                                "execution_id": execution.id,
+                                "session_id": session.id,
+                                "error_code": error_code,
+                            },
+                        )
+                        return
+                except Exception as persistence_error:
+                    logger.error(
+                        "failed to persist review evaluation failure",
+                        extra={
+                            "execution_id": execution.id,
+                            "error_code": str(
+                                getattr(
+                                    persistence_error,
+                                    "code",
+                                    "failure_persistence_failed",
+                                )
+                            ),
+                        },
+                    )
+
             logger.exception(
                 "agent execution failed",
                 extra={

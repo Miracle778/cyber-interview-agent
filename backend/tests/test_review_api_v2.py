@@ -238,8 +238,14 @@ async def test_active_catalog_and_round_answer_are_resource_driven(
                 "value": "比较事务上下界和活跃事务集合",
             },
         )
-        assert answered.status_code == 200, answered.text
-        result = answered.json()
+        assert answered.status_code == 202, answered.text
+        receipt = answered.json()
+        assert receipt["status"] == "evaluating"
+        assert receipt["roundId"] == round_value["id"]
+        await application.wait_execution(round_value["executionId"])
+        result = (
+            await client.get(f"/api/review/rounds/{round_value['id']}")
+        ).json()
         assert result["status"] == "report_pending"
         assert result["executionStatus"] == "waiting_for_approval"
         assert result["attempts"][0]["evaluation"]["score"] == "good"
@@ -253,8 +259,9 @@ async def test_active_catalog_and_round_answer_are_resource_driven(
                 "value": "比较事务上下界和活跃事务集合",
             },
         )
-        assert duplicate.status_code == 200
-        assert len(duplicate.json()["attempts"]) == 1
+        assert duplicate.status_code == 202
+        assert duplicate.json()["receiptId"] == receipt["receiptId"]
+        assert len(result["attempts"]) == 1
 
     review = application.locate_review_round(round_value["id"])
     with pytest.raises(InputAlreadyResolvedError):

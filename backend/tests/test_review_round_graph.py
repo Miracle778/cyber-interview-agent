@@ -258,11 +258,14 @@ async def test_review_round_graph_reuses_one_execution_across_interrupts(
         {"round_id": "round-1"}, config, context=context
     )
     q1_request = q1["__interrupt__"][0].value
-    repository.resolve_input(
-        q1_request["inputRequestId"],
+    product.transition_execution(
+        "r1", expected=("running",), target="waiting_for_input"
+    )
+    repository.accept_review_answer(
+        request_id=q1_request["inputRequestId"],
+        expected_version=q1_request["version"],
         idempotency_key="answer-q1",
         value="answer 1",
-        receipt={"accepted": True},
     )
     follow_up = await graph.ainvoke(
         Command(
@@ -276,11 +279,14 @@ async def test_review_round_graph_reuses_one_execution_across_interrupts(
         context=context,
     )
     follow_up_request = follow_up["__interrupt__"][0].value
-    repository.resolve_input(
-        follow_up_request["inputRequestId"],
+    product.transition_execution(
+        "r1", expected=("running",), target="waiting_for_input"
+    )
+    repository.accept_review_answer(
+        request_id=follow_up_request["inputRequestId"],
+        expected_version=follow_up_request["version"],
         idempotency_key="follow-up-q1",
         value="supplement",
-        receipt={"accepted": True},
     )
     q2 = await graph.ainvoke(
         Command(
@@ -294,11 +300,14 @@ async def test_review_round_graph_reuses_one_execution_across_interrupts(
         context=context,
     )
     q2_request = q2["__interrupt__"][0].value
-    repository.resolve_input(
-        q2_request["inputRequestId"],
+    product.transition_execution(
+        "r1", expected=("running",), target="waiting_for_input"
+    )
+    repository.accept_review_answer(
+        request_id=q2_request["inputRequestId"],
+        expected_version=q2_request["version"],
         idempotency_key="answer-q2",
         value="answer 2",
-        receipt={"accepted": True},
     )
     first_approval = await graph.ainvoke(
         Command(

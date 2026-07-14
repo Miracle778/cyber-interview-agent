@@ -370,9 +370,42 @@ class ReviewRepository:
                 "UPDATE review_rounds SET status = 'failed', "
                 "updated_at = CURRENT_TIMESTAMP WHERE status = 'running' "
                 "AND execution_id IN (SELECT id FROM agent_runs WHERE status IN "
-                "('interrupted', 'failed', 'cancelled'))"
+                "('interrupted', 'failed', 'cancelled')) "
+                "AND NOT EXISTS (SELECT 1 FROM review_attempts attempt "
+                "WHERE attempt.round_id = review_rounds.id "
+                "AND attempt.status IN ('evaluating', 'evaluation_failed'))"
             ).rowcount
         return batches, rounds
+
+    def list_evaluating_attempts(self) -> tuple[ReviewAttemptRecord, ...]:
+        rows = self._connection.execute(
+            "SELECT * FROM review_attempts WHERE status = 'evaluating' "
+            "ORDER BY created_at, id"
+        ).fetchall()
+        return tuple(self._attempt_record(row) for row in rows)
+
+    def resolved_input_for_attempt(
+        self, attempt: ReviewAttemptRecord
+    ) -> tuple[ReviewInputRequestRecord, ReviewAnswerReceipt]:
+        kind = "follow_up" if attempt.follow_up_answer is not None else "answer"
+        request_row = self._connection.execute(
+            "SELECT * FROM review_input_requests WHERE round_id = ? "
+            "AND ordinal = ? AND kind = ? AND status = 'resolved' "
+            "ORDER BY version DESC, created_at DESC LIMIT 1",
+            (attempt.round_id, attempt.ordinal, kind),
+        ).fetchone()
+        if request_row is None:
+            raise LookupError(attempt.id)
+        receipt_row = self._connection.execute(
+            "SELECT * FROM review_input_receipts WHERE input_request_id = ?",
+            (request_row["id"],),
+        ).fetchone()
+        if receipt_row is None:
+            raise LookupError(attempt.id)
+        return (
+            self._input_request_record(request_row),
+            self._answer_receipt(receipt_row),
+        )
 
     def save_candidate(
         self,
@@ -1049,6 +1082,104 @@ class ReviewRepository:
                 raise ReviewConflictError("attempt is not awaiting evaluation")
         return self.get_attempt(attempt_id)
 
+    def retry_attempt_evaluation(
+        self, attempt_id: str, *, idempotency_key: str
+    ) -> ReviewAnswerReceipt:
+        with self._transaction():
+            existing = self._connection.execute(
+                "SELECT * FROM review_evaluation_retry_receipts "
+                "WHERE attempt_id = ? AND idempotency_key = ?",
+                (attempt_id, idempotency_key),
+            ).fetchone()
+            if existing is not None:
+                return self._retry_answer_receipt(existing)
+            attempt = self._connection.execute(
+                "SELECT * FROM review_attempts WHERE id = ?", (attempt_id,)
+            ).fetchone()
+            if attempt is None:
+                raise LookupError(attempt_id)
+            if attempt["status"] != "evaluation_failed":
+                raise ReviewConflictError("attempt is not retryable")
+            kind = "follow_up" if attempt["follow_up_answer"] is not None else "answer"
+            request = self._connection.execute(
+                "SELECT * FROM review_input_requests WHERE round_id = ? "
+                "AND ordinal = ? AND kind = ? AND status = 'resolved' "
+                "ORDER BY version DESC, created_at DESC LIMIT 1",
+                (attempt["round_id"], attempt["ordinal"], kind),
+            ).fetchone()
+            if request is None:
+                raise ReviewConflictError("retry input receipt is missing")
+            round_row = self._connection.execute(
+                "SELECT * FROM review_rounds WHERE id = ?",
+                (attempt["round_id"],),
+            ).fetchone()
+            if round_row is None or round_row["execution_id"] is None:
+                raise ReviewConflictError("round execution is missing")
+            execution = self._connection.execute(
+                "SELECT status FROM agent_runs WHERE id = ?",
+                (round_row["execution_id"],),
+            ).fetchone()
+            if execution is None or execution["status"] != "interrupted":
+                raise ReviewConflictError("evaluation execution is not retryable")
+            self._connection.execute(
+                "UPDATE review_attempts SET status = 'evaluating', "
+                "evaluation_error_code = NULL, "
+                "evaluation_started_at = CURRENT_TIMESTAMP, "
+                "evaluation_completed_at = NULL, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ?",
+                (attempt_id,),
+            )
+            self._connection.execute(
+                "UPDATE agent_runs SET status = 'running', error_code = NULL, "
+                "error_message = NULL, resume_count = resume_count + 1, "
+                "last_resumed_at = CURRENT_TIMESTAMP, finished_at = NULL "
+                "WHERE id = ?",
+                (round_row["execution_id"],),
+            )
+            self._connection.execute(
+                "UPDATE agent_sessions SET status = 'active', "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (round_row["session_id"],),
+            )
+            identifier = str(uuid4())
+            payload = {
+                "roundId": attempt["round_id"],
+                "attemptId": attempt_id,
+                "inputRequestId": request["id"],
+                "status": "evaluating",
+                "version": int(round_row["version"]),
+            }
+            self._connection.execute(
+                "INSERT INTO review_evaluation_retry_receipts "
+                "(id, attempt_id, input_request_id, idempotency_key, receipt_json) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    identifier,
+                    attempt_id,
+                    request["id"],
+                    idempotency_key,
+                    _canonical_json(payload),
+                ),
+            )
+            row = self._connection.execute(
+                "SELECT * FROM review_evaluation_retry_receipts WHERE id = ?",
+                (identifier,),
+            ).fetchone()
+            assert row is not None
+            return self._retry_answer_receipt(row)
+
+    def find_evaluation_retry_receipt(
+        self, round_id: str, *, idempotency_key: str
+    ) -> ReviewAnswerReceipt | None:
+        row = self._connection.execute(
+            "SELECT receipt.* FROM review_evaluation_retry_receipts receipt "
+            "JOIN review_attempts attempt ON attempt.id = receipt.attempt_id "
+            "WHERE attempt.round_id = ? AND receipt.idempotency_key = ? "
+            "ORDER BY receipt.created_at DESC, receipt.rowid DESC LIMIT 1",
+            (round_id, idempotency_key),
+        ).fetchone()
+        return self._retry_answer_receipt(row) if row is not None else None
+
     def advance_round(
         self,
         round_id: str,
@@ -1455,6 +1586,20 @@ class ReviewRepository:
             attempt_id=str(payload["attemptId"]),
             input_request_id=row["input_request_id"],
             message_id=str(payload["messageId"]),
+            status=cast(AttemptStatus, payload["status"]),
+            version=int(payload["version"]),
+            accepted_at=row["created_at"],
+        )
+
+    @staticmethod
+    def _retry_answer_receipt(row: sqlite3.Row) -> ReviewAnswerReceipt:
+        payload = json.loads(row["receipt_json"])
+        return ReviewAnswerReceipt(
+            id=row["id"],
+            round_id=str(payload["roundId"]),
+            attempt_id=str(payload["attemptId"]),
+            input_request_id=row["input_request_id"],
+            message_id="",
             status=cast(AttemptStatus, payload["status"]),
             version=int(payload["version"]),
             accepted_at=row["created_at"],

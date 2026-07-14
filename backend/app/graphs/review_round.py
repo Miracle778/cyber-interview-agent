@@ -43,6 +43,7 @@ class ReviewRoundState(TypedDict, total=False):
     publication_index: int
     publication_decisions: list[dict]
     status: str
+    attempt_status: str
     response: str
 
 
@@ -143,19 +144,6 @@ def create_review_round_graph(
         )
         return {"current_evaluation": evaluation.model_dump()}
 
-    def after_evaluation(state: ReviewRoundState) -> str:
-        evaluation = RoundAnswerEvaluation.model_validate(
-            state["current_evaluation"]
-        )
-        settings = repository.get_round(state["round_id"]).settings
-        if (
-            settings.allow_follow_up
-            and evaluation.follow_up_required
-            and not state.get("current_follow_up")
-        ):
-            return "request_follow_up"
-        return "persist_attempt"
-
     async def request_follow_up(state: ReviewRoundState) -> dict[str, Any]:
         evaluation = RoundAnswerEvaluation.model_validate(
             state["current_evaluation"]
@@ -193,25 +181,56 @@ def create_review_round_graph(
                 state["current_evaluation"]
             )
         )
-        identifier = str(
-            uuid5(NAMESPACE_URL, f"review-attempt:{round_record.id}:{ordinal}")
+        if skipped:
+            identifier = str(
+                uuid5(NAMESPACE_URL, f"review-attempt:{round_record.id}:{ordinal}")
+            )
+            attempt_id = repository.save_attempt(
+                round_id=round_record.id,
+                ordinal=ordinal,
+                question_snapshot=round_record.question_snapshots[
+                    state["current_index"]
+                ],
+                answer=state["current_answer"],
+                follow_up_answer=None,
+                evaluation=None,
+                mastery_suggestion=None,
+                skipped=True,
+                attempt_id=identifier,
+            )
+            attempt_status = "completed"
+        else:
+            attempt = next(
+                item
+                for item in repository.list_attempts(round_record.id)
+                if item.ordinal == ordinal
+            )
+            completed = repository.complete_attempt_evaluation(
+                attempt.id,
+                evaluation=evaluation.model_dump(),
+                mastery_suggestion=evaluation.mastery_suggestion,
+                needs_follow_up=(
+                    round_record.settings.allow_follow_up
+                    and evaluation.follow_up_required
+                    and not state.get("current_follow_up")
+                ),
+            )
+            attempt_id = completed.id
+            attempt_status = completed.status
+        attempt_ids = list(state.get("attempt_ids", []))
+        if attempt_id not in attempt_ids:
+            attempt_ids.append(attempt_id)
+        return {
+            "attempt_ids": attempt_ids,
+            "attempt_status": attempt_status,
+        }
+
+    def after_persist_attempt(state: ReviewRoundState) -> str:
+        return (
+            "request_follow_up"
+            if state.get("attempt_status") == "waiting_for_follow_up"
+            else "advance"
         )
-        attempt_id = repository.save_attempt(
-            round_id=round_record.id,
-            ordinal=ordinal,
-            question_snapshot=round_record.question_snapshots[
-                state["current_index"]
-            ],
-            answer=state["current_answer"],
-            follow_up_answer=state.get("current_follow_up"),
-            evaluation=None if evaluation is None else evaluation.model_dump(),
-            mastery_suggestion=(
-                None if evaluation is None else evaluation.mastery_suggestion
-            ),
-            skipped=skipped,
-            attempt_id=identifier,
-        )
-        return {"attempt_ids": [*state.get("attempt_ids", []), attempt_id]}
 
     async def advance(state: ReviewRoundState) -> dict[str, Any]:
         round_record = repository.get_round(state["round_id"])
@@ -234,6 +253,7 @@ def create_review_round_graph(
             "current_evaluation": {},
             "current_follow_up": "",
             "skipped": False,
+            "attempt_status": "",
             "status": status,
         }
 
@@ -330,9 +350,9 @@ def create_review_round_graph(
     graph.add_edge(START, "load_round")
     graph.add_edge("load_round", "request_answer")
     graph.add_conditional_edges("request_answer", after_answer)
-    graph.add_conditional_edges("evaluate_answer", after_evaluation)
+    graph.add_edge("evaluate_answer", "persist_attempt")
     graph.add_edge("request_follow_up", "evaluate_answer")
-    graph.add_edge("persist_attempt", "advance")
+    graph.add_conditional_edges("persist_attempt", after_persist_attempt)
     graph.add_conditional_edges("advance", after_advance)
     graph.add_edge("generate_reports", "save_report_drafts")
     graph.add_edge("save_report_drafts", "prepare_publication")

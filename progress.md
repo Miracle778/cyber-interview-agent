@@ -1,5 +1,14 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-07-14：R2 会话化交互 Task 3
+
+- 复习入口改为 history-first；创建面板显式打开，进入轮次后保持历史/对话/运行状态三栏，页面不再自动进入最新轮次。
+- 回答接口改为原子接受后返回 `202` receipt；后台从同一 LangGraph checkpoint 评价，SSE 投影 answer accepted/evaluation started/completed/failed，事件不含回答、参考答案或评价正文。
+- 增加 durable 评价重试 receipt、失败保答、幂等重试与启动恢复；同一重试 key 在评价完成后仍返回原回执，异常原文不进入事件或日志。
+- 后端针对性 `21 passed`；前端针对性 `17 passed`；`tsc --noEmit` 与 `git diff --check` 通过。未运行本阶段最终全量回归或 build。
+- 无 Langfuse 的最小真实浏览器路径通过：round `cf712f97-0dcf-4ede-9513-065fa1bf6513`、session `135df4f0-2123-408d-b6ea-c2314078ee11`；回答气泡约 282ms 出现，评价卡约 56.4s 完成，刷新后重新进入同一轮次可恢复回答、评价与追问。
+- 浏览器发现左侧历史的进行中轮次误显示“已完成”；留到 Task 4 最终 UI/UX 审计修复，不将本次最小路径表述为完整浏览器验收。
+
 ## 2026-07-14：R2 人工浏览器反馈与会话化交互修订
 
 - 用户在 R2 worktree 启动真实页面后确认现有交互不合格：题库只显示批次数字、看不到 Agent 过程；复习默认混入创建态，回答请求同步等待 LLM，缺少即时用户消息和评价阶段。

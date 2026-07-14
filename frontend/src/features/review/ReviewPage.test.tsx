@@ -22,6 +22,7 @@ const waitingRound: ReviewRound = {
   currentQuestion: { id: "q1", title: "MVCC", questionText: "Read View 如何判断可见性？", topics: ["database"], difficulty: "medium" },
   currentInput: { id: "input-1", roundId: "round-1", ordinal: 1, kind: "answer", prompt: "Read View 如何判断可见性？", version: 1, status: "pending", createdAt: "now", resolvedAt: null },
   attempts: [], reports: [], usage: { inputTokens: 12, outputTokens: 4, totalTokens: 16, callCount: 1, estimatedCount: 0 }, createdAt: "now", updatedAt: "now", completedAt: null,
+  messages: [],
 };
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -53,17 +54,20 @@ describe("R2 ReviewPage", () => {
     const navigation = await screen.findByRole("navigation", { name: "复习工作台入口" });
     expect(within(navigation).getByRole("button", { name: /题库整理/ })).toBeInTheDocument();
     expect(within(navigation).getByRole("button", { name: /开始复习/ })).toHaveAttribute("aria-current", "page");
-    expect(await screen.findByText("创建复习轮次")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "创建复习" })).toBeInTheDocument();
 
     fireEvent.click(within(navigation).getByRole("button", { name: /题库整理/ }));
     expect(await screen.findByRole("heading", { name: "题库整理" })).toBeInTheDocument();
-    expect(screen.queryByText("创建复习轮次")).toBeNull();
+    expect(screen.queryByRole("button", { name: "创建复习" })).toBeNull();
   });
 
-  it("restores a waiting round from server resources without showing HITL", async () => {
+  it("defaults to history and enters a selected round without showing HITL", async () => {
     mockApi([waitingRound]);
     render(<ReviewPage workspace={workspace} />, { wrapper });
 
+    expect(await screen.findByRole("heading", { name: "复习历史" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "当前复习轮次" })).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: /2 题/ }));
     expect(await screen.findByRole("region", { name: "当前复习轮次" })).toHaveTextContent("Read View 如何判断可见性？");
     expect(screen.getByLabelText("轮次运行状态")).toHaveTextContent("model-1");
     expect(screen.getByLabelText("轮次运行状态")).toHaveTextContent("medium");
@@ -74,7 +78,19 @@ describe("R2 ReviewPage", () => {
   it("shows completed results without reopening setup", async () => {
     mockApi([{ ...waitingRound, status: "completed", executionStatus: "completed", currentQuestion: null, currentInput: null, completedAt: "later" }]);
     render(<ReviewPage workspace={workspace} />, { wrapper });
+    await screen.findByRole("heading", { name: "复习历史" });
+    fireEvent.click(await screen.findByRole("button", { name: /2 题/ }));
     expect(await screen.findByText("本轮复习结果")).toBeInTheDocument();
+    expect(screen.queryByText("创建复习轮次")).toBeNull();
+  });
+
+  it("opens and closes creation as a distinct panel", async () => {
+    mockApi([]);
+    render(<ReviewPage workspace={workspace} />, { wrapper });
+    fireEvent.click(await screen.findByRole("button", { name: "创建复习" }));
+    expect(await screen.findByText("创建复习轮次")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "返回历史" }));
+    expect(await screen.findByRole("heading", { name: "复习历史" })).toBeInTheDocument();
     expect(screen.queryByText("创建复习轮次")).toBeNull();
   });
 });

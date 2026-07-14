@@ -6,6 +6,7 @@ import type {
   CreateReviewRoundRequest,
   QuestionBatch,
   QuestionCandidate,
+  ReviewAnswerReceipt,
   ReviewRound,
 } from "./reviewTypes";
 
@@ -81,7 +82,7 @@ export function createReviewRound(command: CreateReviewRoundRequest): Promise<Re
   return apiPost("/api/review/rounds", command);
 }
 
-export function submitReviewAnswer(round: ReviewRound, value: string, idempotencyKey: string): Promise<ReviewRound> {
+export function submitReviewAnswer(round: ReviewRound, value: string, idempotencyKey: string): Promise<ReviewAnswerReceipt> {
   if (!round.currentInput) throw new Error("当前轮次没有待回答输入");
   return apiPost(`/api/review/rounds/${round.id}/answers`, {
     inputRequestId: round.currentInput.id,
@@ -89,6 +90,10 @@ export function submitReviewAnswer(round: ReviewRound, value: string, idempotenc
     idempotencyKey,
     value,
   });
+}
+
+export function retryReviewEvaluation(roundId: string, idempotencyKey: string): Promise<ReviewAnswerReceipt> {
+  return apiPost(`/api/review/rounds/${roundId}/retry-evaluation`, { idempotencyKey });
 }
 
 export function skipReviewQuestion(round: ReviewRound, idempotencyKey: string): Promise<ReviewRound> {

@@ -20,9 +20,11 @@ from app.schemas.review import (
     QuestionBatchResource,
     QuestionCandidateResource,
     ReviewRoundResource,
+    ReviewAnswerReceiptResource,
     RewriteQuestionCandidateCommand,
     SkipReviewInputCommand,
     SubmitReviewInputCommand,
+    RetryReviewEvaluationCommand,
     SubmitCurationCommand,
     UpdateQuestionCandidateCommand,
 )
@@ -270,21 +272,42 @@ async def get_review_round(
     return await review.round_resource(round_id)
 
 
-@router.post("/rounds/{round_id}/answers", response_model=ReviewRoundResource)
+@router.post(
+    "/rounds/{round_id}/answers",
+    response_model=ReviewAnswerReceiptResource,
+    status_code=202,
+)
 async def submit_review_answer(
     round_id: str,
     command: SubmitReviewInputCommand,
     application: AgentApplication = Depends(get_agent_application),
 ):
     review = application.locate_review_round(round_id)
-    await review.submit_answer(
+    receipt = await review.submit_answer(
         round_id,
         request_id=command.input_request_id,
         version=command.version,
         idempotency_key=command.idempotency_key,
         value=command.value,
     )
-    return await review.round_resource(round_id)
+    return review.answer_receipt_resource(receipt)
+
+
+@router.post(
+    "/rounds/{round_id}/retry-evaluation",
+    response_model=ReviewAnswerReceiptResource,
+    status_code=202,
+)
+async def retry_review_evaluation(
+    round_id: str,
+    command: RetryReviewEvaluationCommand,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_review_round(round_id)
+    receipt = await review.retry_evaluation(
+        round_id, idempotency_key=command.idempotency_key
+    )
+    return review.answer_receipt_resource(receipt)
 
 
 @router.post("/rounds/{round_id}/skip", response_model=ReviewRoundResource)

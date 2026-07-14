@@ -26,6 +26,11 @@ interface UseAgentEventsOptions {
 
 const EVENT_TYPES = [
   "session.created",
+  "session.message.created",
+  "curation.stage.changed",
+  "curation.progress.changed",
+  "curation.summary.ready",
+  "curation.command.resolved",
   "execution.started",
   "assistant.delta",
   "approval.required",
@@ -40,6 +45,10 @@ const EVENT_TYPES = [
   "review.round.started",
   "review.input.required",
   "review.input.resolved",
+  "review.answer.accepted",
+  "review.evaluation.started",
+  "review.evaluation.completed",
+  "review.evaluation.failed",
   "review.attempt.completed",
   "review.progress.changed",
   "review.report.draft_created",
@@ -126,7 +135,7 @@ export function useAgentEvents(
         if (!Number.isInteger(event.id) || eventIdsRef.current.has(event.id)) return;
         eventIdsRef.current.add(event.id);
         cursorRef.current = Math.max(cursorRef.current, event.id);
-        setEvents((current) => [...current, event]);
+        setEvents((current) => [...current, event].slice(-100));
         if (event.type === "execution.started") {
           setExecutionError(null);
         } else if (event.type === "execution.failed") {

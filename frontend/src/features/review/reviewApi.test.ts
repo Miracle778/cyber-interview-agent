@@ -4,6 +4,7 @@ import {
   listCurationSessions,
   submitCurationCommand,
   submitReviewAnswer,
+  retryReviewEvaluation,
 } from "./reviewApi";
 import type { CurationSession, ReviewRound } from "./reviewTypes";
 
@@ -17,6 +18,18 @@ describe("reviewApi", () => {
     expect(body).toEqual({ inputRequestId: "input-1", version: 3, idempotencyKey: "answer-key-123", value: "answer" });
     expect(body).not.toHaveProperty("sessionId");
     expect(body).not.toHaveProperty("executionId");
+  });
+
+  it("retries the current failed evaluation with an idempotency key", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({}));
+    await retryReviewEvaluation("round-1", "retry-evaluation-1");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/review/rounds/round-1/retry-evaluation",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ idempotencyKey: "retry-evaluation-1" }),
+      }),
+    );
   });
 
   it("uses the durable curation session contract", async () => {

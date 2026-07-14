@@ -9,7 +9,7 @@ const round: RoundValue = {
   status: "waiting_for_input", executionStatus: "waiting_for_input", currentIndex: 0, questionCount: 1,
   currentQuestion: { id: "q", title: "缓存", questionText: "缓存穿透是什么？", topics: ["cache"], difficulty: "medium" },
   currentInput: { id: "i", roundId: "r", ordinal: 1, kind: "answer", prompt: "缓存穿透是什么？", version: 1, status: "pending", createdAt: "now", resolvedAt: null },
-  attempts: [], reports: [], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, callCount: 0, estimatedCount: 0 }, createdAt: "now", updatedAt: "now", completedAt: null,
+  attempts: [], messages: [], reports: [], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, callCount: 0, estimatedCount: 0 }, createdAt: "now", updatedAt: "now", completedAt: null,
 };
 
 describe("ReviewRound", () => {

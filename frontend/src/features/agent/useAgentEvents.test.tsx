@@ -108,8 +108,21 @@ describe("useAgentEvents", () => {
       }),
     );
     const source = FakeEventSource.instances[0];
-    act(() => source.emit({ id: 9, type: "review.progress.changed", sessionId: "s1", executionId: "r1", timestamp: "now", payload: { roundId: "round-1", currentIndex: 2 } }));
-    expect(result.current.events.map((event) => event.type)).toEqual(["review.progress.changed"]);
+    act(() => {
+      source.emit({ id: 9, type: "review.evaluation.started", sessionId: "s1", executionId: "r1", timestamp: "now", payload: { roundId: "round-1", attemptId: "a1" } });
+      source.emit({ id: 10, type: "session.message.created", sessionId: "s1", executionId: "r1", timestamp: "now", payload: { messageId: "m1", messageKind: "evaluation_card" } });
+    });
+    expect(result.current.events.map((event) => event.type)).toEqual(["review.evaluation.started", "session.message.created"]);
+  });
+
+  it("bounds the retained event window", () => {
+    const { result } = renderHook(() => useAgentEvents("s1", { createEventSource: (url) => new FakeEventSource(url) }));
+    const source = FakeEventSource.instances[0];
+    act(() => {
+      for (let id = 1; id <= 140; id += 1) source.emit({ id, type: "review.progress.changed", sessionId: "s1", executionId: "r1", timestamp: "now", payload: {} });
+    });
+    expect(result.current.events).toHaveLength(100);
+    expect(result.current.events[0].id).toBe(41);
   });
 
   it("clears a replayed failure when a newer execution starts", () => {

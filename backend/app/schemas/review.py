@@ -95,6 +95,10 @@ class SubmitReviewInputCommand(ReviewModel):
     value: str = Field(min_length=1, max_length=20000)
 
 
+class RetryReviewEvaluationCommand(ReviewModel):
+    idempotency_key: str = Field(min_length=8, max_length=200)
+
+
 class SkipReviewInputCommand(ReviewModel):
     input_request_id: str
     version: int = Field(ge=1)
@@ -232,6 +236,16 @@ class UsageResource(ReviewModel):
     estimated_count: int
 
 
+class ReviewAnswerReceiptResource(ReviewModel):
+    receipt_id: str
+    round_id: str
+    attempt_id: str
+    input_request_id: str
+    status: Literal["evaluating"]
+    accepted_at: str
+    version: int
+
+
 class CurationSourceResource(ReviewModel):
     id: str
     filename: str
@@ -288,6 +302,7 @@ class ReviewRoundResource(ReviewModel):
     current_question: CurrentQuestionResource | None
     current_input: ReviewInputResource | None
     attempts: list[ReviewAttemptResource]
+    messages: list[MessageResource]
     reports: list[ReviewReportResource]
     usage: UsageResource
     created_at: str

@@ -9,7 +9,7 @@
 | 1. 题库与持久轮次领域事实 | 已完成 | additive migration、catalog/round/input/mastery repository、selector、publication projection |
 | 2. Agent 与长生命周期 Graph | 已完成 | 题目整理、评价/追问、报告、discussion、input resume |
 | 3. API 与完整 Web 体验 | 人工浏览器验收未通过，交互模型需修订 | 现有 API/页面可运行，但题库过程不可见、复习回答阻塞、历史与创建入口混杂 |
-| 4. 会话化交互修订与重新验收 | Task 1–2 已完成，Task 3 待执行 | 已落 durable facts 与题库整理会话；待历史优先复习、异步 SSE 与最终验收 |
+| 4. 会话化交互修订与重新验收 | Task 1–3 已完成，Task 4 待执行 | 已落 durable facts、题库整理会话、历史优先复习与异步评价；待 UI/UX 审计和最终验收 |
 
 ## 工作位置
 
@@ -42,7 +42,7 @@
 
 ## 下一步
 
-执行 Task 3：将复习改为历史优先入口，回答先返回 `202` receipt，再通过安全 SSE 阶段和完整评价卡更新同一会话；完成刷新/重启恢复后进入最终验收。
+执行 Task 4：修复最小浏览器路径发现的轮次状态文案，运行一次最终 `ui-ux-pro-max` 审计、针对性集成/重启测试、单次全量回归与完整浏览器验收，再刷新 verification/learning 和文档门禁。
 
 ## 所有权状态
 

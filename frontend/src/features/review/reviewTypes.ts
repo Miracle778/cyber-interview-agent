@@ -171,8 +171,32 @@ export interface ReviewAttempt {
   } | null;
   masterySuggestion: MasteryState | null;
   skipped: boolean;
+  status: "evaluating" | "waiting_for_follow_up" | "completed" | "evaluation_failed";
+  evaluationErrorCode: string | null;
+  evaluationStartedAt: string | null;
+  evaluationCompletedAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ReviewTimelineMessage {
+  id: string;
+  executionId: string | null;
+  role: string;
+  content: string;
+  messageKind: "review_prompt" | "review_answer" | "evaluation_card" | "error" | string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface ReviewAnswerReceipt {
+  receiptId: string;
+  roundId: string;
+  attemptId: string;
+  inputRequestId: string;
+  status: "evaluating";
+  acceptedAt: string;
+  version: number;
 }
 
 export interface ReviewRound {
@@ -203,6 +227,7 @@ export interface ReviewRound {
   } | null;
   currentInput: ReviewInput | null;
   attempts: ReviewAttempt[];
+  messages: ReviewTimelineMessage[];
   reports: { id: string; reportKind: "session_report" | "mastery_report"; title: string; status: string; version: number; publication: { state: string; target_path: string; error_code: string | null } | null }[];
   usage: { inputTokens: number; outputTokens: number; totalTokens: number; callCount: number; estimatedCount: number };
   createdAt: string;
