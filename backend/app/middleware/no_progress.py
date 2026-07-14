@@ -24,12 +24,14 @@ class NoProgressMiddleware(AgentMiddleware):
         *,
         warning_limit: int = 2,
         hard_limit: int = 3,
+        include_context_scope: bool = False,
     ) -> None:
         if warning_limit >= hard_limit:
             raise ValueError("warning_limit must be below hard_limit")
         self._projection = projection
         self.warning_limit = warning_limit
         self.hard_limit = hard_limit
+        self.include_context_scope = include_context_scope
 
     async def aafter_model(self, state, runtime) -> None:
         message = next(
@@ -42,7 +44,14 @@ class NoProgressMiddleware(AgentMiddleware):
         )
         if message is None:
             return None
-        fingerprint = _fingerprint(message)
+        fingerprint = _fingerprint(
+            message,
+            context_scope=(
+                getattr(runtime.context, "progress_scope", ())
+                if self.include_context_scope
+                else ()
+            ),
+        )
         try:
             count = self._projection.observe_progress(runtime.context, fingerprint)
         except Exception:
@@ -55,7 +64,9 @@ class NoProgressMiddleware(AgentMiddleware):
         return None
 
 
-def _fingerprint(message: AIMessage) -> str:
+def _fingerprint(
+    message: AIMessage, *, context_scope: tuple[str, ...] = ()
+) -> str:
     normalized_calls = [
         {"name": call.get("name"), "args": call.get("args", {})}
         for call in message.tool_calls
@@ -63,7 +74,7 @@ def _fingerprint(message: AIMessage) -> str:
     body = {
         "content": re.sub(r"\s+", " ", message.text).strip().lower(),
         "tool_calls": normalized_calls,
+        "context_scope": context_scope,
     }
     encoded = json.dumps(body, ensure_ascii=False, sort_keys=True, default=str)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
-

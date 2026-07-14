@@ -32,6 +32,7 @@ from app.knowledge.drafts import (
 from app.knowledge.publication import PublicationService
 from app.knowledge.publication_handler import KnowledgePublishActionHandler
 from app.middleware.usage import UsageProjection
+from app.review.repository import ReviewRepository
 from app.tools.audit import ToolAuditRepository
 
 
@@ -130,6 +131,7 @@ class WorkspaceRuntime:
         publications = PublicationService(root, workspace_id=workspace_id)
         audit = ToolAuditRepository(root)
         projection = SqliteMiddlewareProjection(connection)
+        reviews = ReviewRepository(connection)
         holder: dict[str, HitlService] = {}
 
         def build(kind: str, **dependencies):
@@ -154,6 +156,8 @@ class WorkspaceRuntime:
             create_action=create_action,
             create_draft=drafts.create,
             mark_draft_review_pending=drafts.mark_review_pending,
+            review_repository=reviews,
+            get_draft=drafts.get,
         )
         handlers = create_default_action_handler_registry(
             knowledge_publish_handler=KnowledgePublishActionHandler(

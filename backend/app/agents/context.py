@@ -12,3 +12,4 @@ class AgentContext:
     run_id: str
     allowed_tools: frozenset[str]
     allowed_scopes: frozenset[str]
+    progress_scope: tuple[str, ...] = ()

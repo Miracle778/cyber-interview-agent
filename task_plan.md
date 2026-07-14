@@ -7,7 +7,7 @@
 | 阶段 | 状态 | 产出 |
 |---|---|---|
 | 1. 题库与持久轮次领域事实 | 已完成 | additive migration、catalog/round/input/mastery repository、selector、publication projection |
-| 2. Agent 与长生命周期 Graph | 进行中 | 题目整理、评价/追问、报告、discussion、input resume |
+| 2. Agent 与长生命周期 Graph | 已完成 | 题目整理、评价/追问、报告、discussion、input resume |
 | 3. API 与完整 Web 体验 | 待开始 | R2 resources、SSE 刷新、题库与复习工作台 |
 | 4. 真实验收与收尾 | 待开始 | Provider、浏览器/重启、全量回归、verification/learning |
 
@@ -40,7 +40,7 @@
 
 ## 下一步
 
-按 `docs/superpowers/plans/2026-07-14-r2-complete-review-agent.md` 执行 Task 2。
+按 `docs/superpowers/plans/2026-07-14-r2-complete-review-agent.md` 执行 Task 3 API 与完整 Web 体验。
 
 ## 所有权状态
 

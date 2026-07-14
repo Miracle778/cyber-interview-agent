@@ -24,6 +24,7 @@ from app.review.models import (
     QuestionSnapshot,
     ReasoningEffort,
     ReportProposalRecord,
+    ReviewAttemptRecord,
     ReviewInputReceipt,
     ReviewInputRequestRecord,
     ReviewMode,
@@ -236,6 +237,14 @@ class ReviewRepository:
             raise ReviewRoundNotFoundError(round_id)
         return self._round_record(row)
 
+    def get_round_by_session(self, session_id: str) -> ReviewRoundRecord:
+        row = self._connection.execute(
+            "SELECT * FROM review_rounds WHERE session_id = ?", (session_id,)
+        ).fetchone()
+        if row is None:
+            raise ReviewRoundNotFoundError(session_id)
+        return self._round_record(row)
+
     def create_input_request(
         self,
         *,
@@ -255,6 +264,35 @@ class ReviewRepository:
                 (identifier, round_id, ordinal, kind, prompt, version),
             )
         return self.get_input_request(identifier)
+
+    def ensure_input_request(
+        self,
+        *,
+        round_id: str,
+        ordinal: int,
+        kind: InputKind,
+        prompt: str,
+        version: int,
+    ) -> ReviewInputRequestRecord:
+        row = self._connection.execute(
+            "SELECT * FROM review_input_requests "
+            "WHERE round_id = ? AND ordinal = ? AND kind = ? AND version = ?",
+            (round_id, ordinal, kind, version),
+        ).fetchone()
+        if row is not None:
+            existing = self._input_request_record(row)
+            if existing.prompt != prompt:
+                raise ReviewConflictError(
+                    "input request identity has different prompt"
+                )
+            return existing
+        return self.create_input_request(
+            round_id=round_id,
+            ordinal=ordinal,
+            kind=kind,
+            prompt=prompt,
+            version=version,
+        )
 
     def get_input_request(self, request_id: str) -> ReviewInputRequestRecord:
         row = self._connection.execute(
@@ -289,6 +327,12 @@ class ReviewRepository:
                 if existing["idempotency_key"] != idempotency_key:
                     raise InputAlreadyResolvedError(
                         f"input request {request_id!r} is already resolved"
+                    )
+                if existing["value_hash"] != sha256(
+                    value.encode("utf-8")
+                ).hexdigest():
+                    raise InputAlreadyResolvedError(
+                        f"input request {request_id!r} has different content"
                     )
                 return self._input_receipt(existing)
             if request["status"] != "pending":
@@ -364,6 +408,14 @@ class ReviewRepository:
                 ),
             )
         return identifier
+
+    def list_attempts(self, round_id: str) -> tuple[ReviewAttemptRecord, ...]:
+        rows = self._connection.execute(
+            "SELECT * FROM review_attempts WHERE round_id = ? "
+            "ORDER BY ordinal, id",
+            (round_id,),
+        ).fetchall()
+        return tuple(self._attempt_record(row) for row in rows)
 
     def advance_round(
         self,
@@ -463,6 +515,19 @@ class ReviewRepository:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
+
+    def find_report_proposal(
+        self, round_id: str, report_kind: str
+    ) -> ReportProposalRecord | None:
+        row = self._connection.execute(
+            "SELECT draft_id FROM review_report_proposals "
+            "WHERE round_id = ? AND report_kind = ? "
+            "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            (round_id, report_kind),
+        ).fetchone()
+        if row is None:
+            return None
+        return self.get_report_proposal(row["draft_id"])
 
     def update_mastery(
         self,
@@ -659,6 +724,26 @@ class ReviewRepository:
             value_hash=row["value_hash"],
             receipt=json.loads(row["receipt_json"]),
             created_at=row["created_at"],
+        )
+
+    def _attempt_record(self, row: sqlite3.Row) -> ReviewAttemptRecord:
+        evaluation = (
+            None
+            if row["evaluation_json"] is None
+            else json.loads(row["evaluation_json"])
+        )
+        return ReviewAttemptRecord(
+            id=row["id"],
+            round_id=row["round_id"],
+            ordinal=row["ordinal"],
+            question_snapshot=self._snapshot(row["question_snapshot_json"]),
+            answer=row["answer"],
+            follow_up_answer=row["follow_up_answer"],
+            evaluation=evaluation,
+            mastery_suggestion=row["mastery_suggestion"],
+            skipped=bool(row["skipped"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
         )
 
     @staticmethod

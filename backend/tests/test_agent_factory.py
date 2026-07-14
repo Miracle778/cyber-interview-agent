@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 
 from app.agents.context import AgentContext
-from app.agents.factory import AgentFactory, AgentSpec
+from app.agents.factory import AgentFactory, AgentSpec, ModelOverride
 from app.agents.review_contracts import AnswerEvaluation
 from app.agents.model_resolver import ChatModelResolver, ModelResolutionError
 from app.db.app_database import connect_app_database
@@ -194,3 +194,60 @@ async def test_agent_factory_returns_a_real_runnable_agent_graph():
     )
 
     assert result["messages"][-1].text == "Agent response"
+
+
+def test_agent_factory_uses_validated_session_model_override(monkeypatch):
+    captured = {}
+
+    class StubResolver:
+        def resolve(self, *, role, provider_model_id, reasoning_effort="none"):
+            captured["resolve"] = (
+                role,
+                provider_model_id,
+                reasoning_effort,
+            )
+            return object()
+
+    monkeypatch.setattr(
+        "app.agents.factory.create_agent", lambda **kwargs: kwargs
+    )
+    factory = AgentFactory(StubResolver())
+
+    factory.create(
+        AgentSpec(role="answer_evaluation", system_prompt="Evaluate"),
+        model_bindings={"answer_evaluation": "workspace-default"},
+        model_override=ModelOverride(
+            provider_model_id="session-model",
+            reasoning_effort="medium",
+        ),
+    )
+
+    assert captured["resolve"] == (
+        "answer_evaluation",
+        "session-model",
+        "medium",
+    )
+
+
+def test_model_resolver_maps_reasoning_effort_to_provider_options(
+    model_setup, monkeypatch
+):
+    repository, secrets = model_setup
+    model_record = _seed_model(
+        repository, secrets, api_format="openai-compatible"
+    )
+    captured = {}
+    monkeypatch.setattr(
+        "app.agents.model_resolver.ChatOpenAI",
+        lambda **kwargs: captured.update(kwargs) or GenericFakeChatModel(
+            messages=iter([AIMessage(content="ok")])
+        ),
+    )
+
+    ChatModelResolver(repository, {"keyring": secrets}).resolve(
+        role="answer_evaluation",
+        provider_model_id=model_record.id,
+        reasoning_effort="high",
+    )
+
+    assert captured["reasoning_effort"] == "high"

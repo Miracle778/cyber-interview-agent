@@ -194,6 +194,21 @@ class ReviewInputReceipt:
 
 
 @dataclass(frozen=True, slots=True)
+class ReviewAttemptRecord:
+    id: str
+    round_id: str
+    ordinal: int
+    question_snapshot: QuestionSnapshot
+    answer: str | None
+    follow_up_answer: str | None
+    evaluation: dict[str, object] | None
+    mastery_suggestion: str | None
+    skipped: bool
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
 class ReportProposalRecord:
     draft_id: str
     round_id: str

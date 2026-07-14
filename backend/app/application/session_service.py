@@ -11,6 +11,7 @@ from uuid import uuid4
 
 ExecutionStatus = Literal[
     "running",
+    "waiting_for_input",
     "waiting_for_approval",
     "interrupted",
     "completed",
@@ -198,6 +199,7 @@ class ProductRepository:
             ),
         )
         session_status = {
+            "waiting_for_input": "waiting_for_input",
             "waiting_for_approval": "waiting_for_approval",
             "interrupted": "interrupted",
             "completed": "completed",
@@ -336,6 +338,13 @@ class ProductEventStream:
             "assistant.delta",
             "approval.required",
             "approval.resolved",
+            "review.input.required",
+            "review.input.resolved",
+            "review.attempt.completed",
+            "review.progress.changed",
+            "review.report.draft_created",
+            "review.round.completed",
+            "review.round.cancelled",
             "artifact.changed",
             "publication.changed",
             "execution.warning",

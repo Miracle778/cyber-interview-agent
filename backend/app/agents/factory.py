@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from langchain.agents import create_agent
 from langchain.agents.structured_output import ToolStrategy
@@ -24,6 +24,16 @@ class AgentSpec:
     response_format: type[BaseModel] | type[Any] | dict[str, Any] | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ModelOverride:
+    provider_model_id: str
+    reasoning_effort: Literal["none", "low", "medium", "high"] = "none"
+
+    def __post_init__(self) -> None:
+        if not self.provider_model_id.strip():
+            raise ValueError("provider_model_id must not be empty")
+
+
 class AgentFactory:
     def __init__(self, models: ChatModelResolver) -> None:
         self._models = models
@@ -33,18 +43,26 @@ class AgentFactory:
         spec: AgentSpec,
         *,
         model_bindings: Mapping[str, str],
+        model_override: ModelOverride | None = None,
         checkpointer=None,
     ):
-        try:
-            provider_model_id = model_bindings[spec.role]
-        except KeyError as error:
-            raise ModelResolutionError(
-                ProviderErrorCode.MODEL_NOT_FOUND
-            ) from error
-        model = self._models.resolve(
-            role=spec.role,
-            provider_model_id=provider_model_id,
-        )
+        if model_override is None:
+            try:
+                provider_model_id = model_bindings[spec.role]
+            except KeyError as error:
+                raise ModelResolutionError(
+                    ProviderErrorCode.MODEL_NOT_FOUND
+                ) from error
+            model = self._models.resolve(
+                role=spec.role,
+                provider_model_id=provider_model_id,
+            )
+        else:
+            model = self._models.resolve(
+                role=spec.role,
+                provider_model_id=model_override.provider_model_id,
+                reasoning_effort=model_override.reasoning_effort,
+            )
         return create_agent(
             model=model,
             tools=spec.tools,

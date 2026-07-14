@@ -6,10 +6,15 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
 from app.agents.factory import AgentFactory
+from app.agents.question_curation import QuestionCurationAgent
 from app.agents.review import ReviewAgents
+from app.agents.review_round import ReviewRoundAgents
 from app.graphs.publication import create_publication_graph
+from app.graphs.question_curation import create_question_curation_graph
 from app.graphs.review import create_review_graph
-from app.middleware.defaults import build_default_middleware
+from app.graphs.review_discussion import create_review_discussion_graph
+from app.graphs.review_round import create_review_round_graph
+from app.middleware.defaults import REVIEW_ROUND_BUDGET, build_default_middleware
 from app.middleware.tool_policy import ToolPolicyMiddleware
 
 
@@ -27,6 +32,53 @@ class ProductionGraphFactory:
         self._agents = agents
 
     def __call__(self, kind: str, **dependencies):
+        if kind in {"question.curate", "review.round", "review.discussion"}:
+            bindings = dependencies["model_bindings"]
+            summary_model = self._agents.resolve_model(
+                "report_summarization", model_bindings=bindings
+            )
+            middleware = build_default_middleware(
+                summary_model=summary_model,
+                projection=dependencies["projection"],
+                policy=ToolPolicyMiddleware(
+                    audit=dependencies["audit"], required_scopes={}
+                ),
+                observability=dependencies["observability"],
+                interrupt_on={},
+                budget_profile=REVIEW_ROUND_BUDGET,
+            )
+            if kind == "question.curate":
+                agent = QuestionCurationAgent.create(
+                    self._agents,
+                    model_bindings=bindings,
+                    middleware=middleware,
+                    tools=dependencies.get("question_tools", ()),
+                    checkpointer=dependencies["checkpointer"],
+                )
+                return create_question_curation_graph(
+                    agent, checkpointer=dependencies["checkpointer"]
+                )
+            agents = ReviewRoundAgents.create(
+                self._agents,
+                model_bindings=bindings,
+                middleware=middleware,
+                discussion_tools=dependencies.get("discussion_tools", ()),
+                answer_model_override=dependencies.get("answer_model_override"),
+                checkpointer=dependencies["checkpointer"],
+            )
+            if kind == "review.discussion":
+                return create_review_discussion_graph(
+                    agents, checkpointer=dependencies["checkpointer"]
+                )
+            return create_review_round_graph(
+                agents,
+                repository=dependencies["review_repository"],
+                create_report_drafts=dependencies["create_report_drafts"],
+                request_publication_action=dependencies[
+                    "request_publication_action"
+                ],
+                checkpointer=dependencies["checkpointer"],
+            )
         if kind == "review.single":
             bindings = dependencies["model_bindings"]
             summary_model = self._agents.resolve_model(

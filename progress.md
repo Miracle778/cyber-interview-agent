@@ -1,5 +1,14 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-07-14：R2 Task 2 Agent 与长生命周期 Graph
+
+- 完成严格结构化题目/评价/报告契约、四个隔离 role thread 和回答模型/思考强度 override。
+- 完成 question curation、review round、derived discussion 三类显式 Graph；多题轮次在同一 execution/checkpoint 经回答、必要追问、报告和两次发布审批恢复。
+- 普通输入 interrupt 与 HITL approval 已分流；输入 receipt 幂等、同 key 异值冲突，未知 interrupt 稳定失败。
+- 默认 middleware pipeline 新增不可变 review-round 预算，保留默认值并将 round/index/input request 纳入 no-progress 指纹。
+- 针对性 Task 2 与受影响 Runtime/Agent 测试 `44 passed`；完整切片复核 `44 passed`，compileall 与 diff check 通过。
+- 未运行全量回归、浏览器或 Langfuse；下一步为 Task 3 API/Web 闭环。
+
 ## 2026-07-14：R2 Task 1 题库与持久轮次领域事实
 
 - 从 `e3d64b3` 在现有隔离 worktree 创建 `codex/r2-complete-review-agent`，未创建 subagent。

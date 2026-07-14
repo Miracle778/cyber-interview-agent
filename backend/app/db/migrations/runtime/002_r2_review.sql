@@ -191,7 +191,7 @@ CREATE TABLE review_input_requests (
     ),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     resolved_at TEXT,
-    UNIQUE(round_id, id)
+    UNIQUE(round_id, ordinal, kind, version)
 );
 
 CREATE INDEX idx_review_input_requests_round_status

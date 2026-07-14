@@ -53,6 +53,17 @@ class AgentEventProjector:
                 if not interrupt_id or interrupt_id in self._interrupts:
                     continue
                 self._interrupts.add(interrupt_id)
+                value = getattr(interrupt, "value", None)
+                if isinstance(value, Mapping) and "inputRequestId" in value:
+                    payload = {
+                        "interrupt_id": interrupt_id,
+                        "input_request_id": str(value["inputRequestId"]),
+                    }
+                    for key in ("kind", "version", "ordinal"):
+                        if key in value:
+                            payload[key] = value[key]
+                    events.append(self._event("review.input.required", payload))
+                    continue
                 events.append(
                     self._event(
                         "approval.required",
