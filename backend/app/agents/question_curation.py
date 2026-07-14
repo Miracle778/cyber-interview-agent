@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -68,21 +69,70 @@ class QuestionCurationAgent:
         context: AgentContext,
         config: dict[str, Any],
     ) -> QuestionCandidateBatch:
-        body = ["来源：", *source_excerpts]
-        if similar_questions:
-            body.extend(("现有相似题：", *similar_questions))
-        if rewrite_feedback:
-            body.extend(("重写要求：", rewrite_feedback))
-        result = await self.runnable.ainvoke(
-            {"messages": [HumanMessage(content="\n".join(body))]},
-            _role_config(config, context, "question_generation"),
-            context=context,
-        )
-        if "structured_response" not in result:
-            raise ValueError("模型未生成结构化题目候选")
-        return QuestionCandidateBatch.model_validate(
-            result["structured_response"]
-        )
+        units = _generation_units(source_excerpts)
+        candidates = []
+        seen: set[str] = set()
+        known_questions = list(similar_questions)
+        for source_unit in units:
+            body = ["来源：", *source_unit]
+            if known_questions:
+                body.extend(("现有相似题：", *known_questions))
+            if rewrite_feedback:
+                body.extend(("重写要求：", rewrite_feedback))
+            result = await self.runnable.ainvoke(
+                {"messages": [HumanMessage(content="\n".join(body))]},
+                _role_config(config, context, "question_generation"),
+                context=context,
+            )
+            if "structured_response" not in result:
+                raise ValueError("模型未生成结构化题目候选")
+            batch = QuestionCandidateBatch.model_validate(
+                result["structured_response"]
+            )
+            for candidate in batch.candidates:
+                key = candidate.question_text.strip().casefold()
+                if key in seen:
+                    continue
+                seen.add(key)
+                candidates.append(candidate)
+                known_questions.append(candidate.question_text)
+                if len(candidates) == 50:
+                    return QuestionCandidateBatch(candidates=candidates)
+        return QuestionCandidateBatch(candidates=candidates)
+
+
+_NUMBERED_ITEM = re.compile(r"^\s*\d{1,3}[.、)]\s+")
+_MAX_NUMBERED_ITEMS_PER_CALL = 6
+
+
+def _generation_units(
+    source_excerpts: tuple[str, ...],
+) -> tuple[tuple[str, ...], ...]:
+    split_sources = [_split_numbered_source(source) for source in source_excerpts]
+    if all(len(chunks) == 1 for chunks in split_sources):
+        return (source_excerpts,)
+    return tuple((chunk,) for chunks in split_sources for chunk in chunks)
+
+
+def _split_numbered_source(source: str) -> tuple[str, ...]:
+    lines = source.splitlines()
+    starts = [
+        index for index, line in enumerate(lines) if _NUMBERED_ITEM.match(line)
+    ]
+    if len(starts) <= _MAX_NUMBERED_ITEMS_PER_CALL:
+        return (source,)
+    prefix = lines[: starts[0]]
+    items = [
+        lines[start : starts[index + 1] if index + 1 < len(starts) else None]
+        for index, start in enumerate(starts)
+    ]
+    return tuple(
+        "\n".join(
+            [*prefix, *[line for item in group for line in item]]
+        ).strip()
+        for offset in range(0, len(items), _MAX_NUMBERED_ITEMS_PER_CALL)
+        for group in (items[offset : offset + _MAX_NUMBERED_ITEMS_PER_CALL],)
+    )
 
 
 def _role_config(

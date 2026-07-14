@@ -2,9 +2,11 @@
 
 ## R2 Task 4 验收发现
 
-- “Provider 连通性 ok”不等于完整 Agent 合约通过：真实 GLM-5.2 能返回合法结构化 candidates，但对明确 12 题的来源先后只返回 3、6 题，完整覆盖率仍不合格。
-- 题库提示必须明确逐项覆盖、禁止抽样/合并；该修正提高了产量，但不能用提示文本替代真实数量验收。
+- “Provider 连通性 ok”不等于完整 Agent 合约通过：真实 GLM-5.2 对 12 题来源先后只返回 3、6 题；仅强化提示仍无法保证结构化数组完整覆盖。
+- 对可识别的编号题源，应按语义条目分片而不是无限重试整段提示；每 6 题调用后聚合并按题干去重，真实同批稳定得到并发布 11 个候选。
 - 长模型调用不能让 batch 永久 `generating`：启动恢复必须把 interrupted/failed/cancelled execution 对应的生成批次和 running round 收敛到 `failed`。
+- checkpoint 安全白名单必须包含 Graph 实际持久化的 strict Pydantic structured response；“外层已转 dict”不代表 role Agent 内部 checkpoint 不会保存原对象。
+- 真实十题完成了两次重启、报告发布、派生讨论与 weak-point 选题，但 19 calls 消耗 102094 tokens；下一轮成本优化应隔离 evaluator 历史并收紧追问门槛。
 - 最终回归发现的两个前端失败均是顶层测试仍断言已删除的 FlowSummary/旧引导链接；更新到 R2 setup/空态契约后 84/84 通过。
 - 当前阻塞与 Langfuse 无关；本轮按约定没有配置或启动 Langfuse。
 

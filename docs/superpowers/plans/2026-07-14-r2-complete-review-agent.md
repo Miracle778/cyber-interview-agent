@@ -85,7 +85,7 @@
 - Produces `ReviewDomainService` for later Graph and API tasks.
 - `KnowledgePublishActionHandler` receives an optional `after_publication(draft, publication)` callback so published question/mastery drafts update rebuildable projections after the existing publication transaction succeeds.
 
-- [ ] **Step 1: Write additive migration tests**
+- [x] **Step 1: Write additive migration tests**
 
 Add tests proving a fresh database and an existing generation-2 database both receive migration version 2 without backup/replacement:
 
@@ -130,7 +130,7 @@ cd backend
 
 Expected: the new test fails because migration history and R2 tables do not exist.
 
-- [ ] **Step 2: Add migration history and R2 tables**
+- [x] **Step 2: Add migration history and R2 tables**
 
 Keep `CURRENT_SCHEMA_GENERATION = 2`. Add an internal `runtime_schema_migrations` table after the generation check, register the baseline as version 1, and apply ordered SQL files whose version has not been recorded. Do not classify a database as replaceable when it already has `runtime_schema_metadata`.
 
@@ -178,7 +178,7 @@ Also define round, attempt, input-request and mastery tables with foreign keys, 
 
 Run the migration test again; expected: PASS and the preserved session remains present.
 
-- [ ] **Step 3: Define strict domain records**
+- [x] **Step 3: Define strict domain records**
 
 In `models.py`, define frozen dataclasses and literals. Required public shapes:
 
@@ -219,7 +219,7 @@ class ReviewRoundSettings:
 
 Reject question counts outside 1–50, empty topic filters for `topic-focused`, missing reference answers, empty model IDs, unsupported reasoning-effort values, and malformed snapshot hashes before persistence. The application layer must additionally verify that the model ID belongs to an enabled model available to the current Workspace.
 
-- [ ] **Step 4: Test deterministic selection**
+- [x] **Step 4: Test deterministic selection**
 
 Cover all four modes:
 
@@ -239,13 +239,13 @@ Run:
 
 Expected before implementation: collection/import failure. Expected after implementation: PASS.
 
-- [ ] **Step 5: Implement repository and selector**
+- [x] **Step 5: Implement repository and selector**
 
 Use canonical JSON (`ensure_ascii=False`, sorted keys, compact separators) and explicit `BEGIN IMMEDIATE` around compare-and-set transitions. `resolve_input` must return the existing receipt for the same idempotency key and raise `InputAlreadyResolvedError` for a different key.
 
 The selector must consume only active catalog rows and confirmed mastery projection. Freeze all selected questions into `review_rounds.question_snapshots_json`; later catalog edits never alter an existing round.
 
-- [ ] **Step 6: Test publication projection and mastery compare-and-set**
+- [x] **Step 6: Test publication projection and mastery compare-and-set**
 
 Add tests proving:
 
@@ -256,7 +256,7 @@ Add tests proving:
 - mastery update requires the expected projection version;
 - unconfirmed mastery drafts never affect selection.
 
-- [ ] **Step 7: Implement domain service and publication callback**
+- [x] **Step 7: Implement domain service and publication callback**
 
 `ReviewDomainService.create_round` must select and freeze questions, create the `review.round` product session through an injected callback, create one round record, and return the first input request without invoking a model.
 
@@ -267,7 +267,7 @@ global projection. The selector must consume that refreshed version and record i
 
 `activate_published_draft` parses the stored structured candidate, verifies draft/publication IDs and hashes, then updates question or mastery projection. It must not parse arbitrary Vault Markdown as authoritative structured state.
 
-- [ ] **Step 8: Run Task 1 verification and commit**
+- [x] **Step 8: Run Task 1 verification and commit**
 
 ```bash
 .venv/bin/python -m pytest -q --tb=short   tests/test_runtime_migrations.py   tests/test_review_repository.py   tests/test_review_selector.py   tests/test_review_service.py   tests/test_publication_service.py
@@ -308,7 +308,7 @@ Expected: targeted tests pass; no existing Runtime row is lost.
 - Adds explicit factory support for `question.curate`, `review.round`, and `review.discussion`.
 - Emits `review.input.required`, `review.input.resolved`, `review.attempt.completed`, `review.progress.changed`, `review.report.draft_created`, and round terminal events.
 
-- [ ] **Step 1: Write structured Agent contract tests**
+- [x] **Step 1: Write structured Agent contract tests**
 
 Use Pydantic `extra="forbid"`. The evaluation contract must include score, evidence, missing points, optional follow-up reason and mastery suggestion; it must never expose hidden reasoning.
 
@@ -325,7 +325,7 @@ class AnswerEvaluationV2(BaseModel):
 
 Question candidates must include title, question text, corrected reference answer, topics, difficulty, key points, follow-ups, source refs and a concise correction note.
 
-- [ ] **Step 2: Implement role Agents with isolated threads**
+- [x] **Step 2: Implement role Agents with isolated threads**
 
 Create role-specific agents through the existing `AgentFactory`:
 
@@ -338,7 +338,7 @@ Question generation may use only safe source-reader tools. Evaluation has no too
 
 `AgentFactory` accepts a validated immutable session override for `answer_evaluation` containing `provider_model_id` and `reasoning_effort`. `ModelResolver` resolves the model through the existing Provider repository and maps the normalized effort to Provider-specific constructor/call options; `none` omits the option. Unknown, disabled or unsupported model/effort combinations fail before the round starts. Do not put Provider URL, API key or arbitrary model strings in Graph state.
 
-- [ ] **Step 3: Write the multi-interrupt Graph test**
+- [x] **Step 3: Write the multi-interrupt Graph test**
 
 The test must execute one compiled Graph through this sequence:
 
@@ -359,7 +359,7 @@ start
 
 Assert one execution ID, stable outer thread ID, increasing input request versions, exactly one attempt per ordinal and isolated role thread IDs.
 
-- [ ] **Step 4: Implement the deterministic Graph loop**
+- [x] **Step 4: Implement the deterministic Graph loop**
 
 `ReviewRoundState` stores only round ID, settings, frozen snapshots, current index, current request, compact current answer/evaluation/follow-up, attempt IDs, report draft IDs and status.
 
@@ -381,7 +381,7 @@ finish_round
 
 `request_answer` and `request_follow_up` create domain input requests before calling `interrupt({"inputRequestId": ..., "kind": ...})`. The model cannot advance `current_index`, choose question count or decide whether a round is complete.
 
-- [ ] **Step 5: Separate input and approval recovery**
+- [x] **Step 5: Separate input and approval recovery**
 
 Update execution status literals and transition checks:
 
@@ -401,13 +401,13 @@ Command(resume={
 
 A duplicate idempotency key returns the previous receipt without calling `graph.astream` again.
 
-- [ ] **Step 6: Add round-aware middleware profiles**
+- [x] **Step 6: Add round-aware middleware profiles**
 
 Allow `build_default_middleware` to accept an immutable budget profile while retaining current defaults. Add a `review_round` profile with per-call run limits, long-thread limits and a round fingerprint containing round ID, current index and input request ID. Do not add a second pipeline.
 
 Test a ten-question fake-model round that triggers at least one summary, records usage, avoids false no-progress detection across similar questions, and stops at a deterministic hard budget.
 
-- [ ] **Step 7: Implement report, mastery and discussion completion**
+- [x] **Step 7: Implement report, mastery and discussion completion**
 
 Generate two drafts at round completion:
 
@@ -420,7 +420,7 @@ If a round already has a published report and the user requests regeneration, cr
 version and a deterministic merge proposal. Non-conflicting sections merge automatically; conflicting
 mastery evidence remains in a pending action preview and requires the user's versioned decision.
 
-- [ ] **Step 8: Run Task 2 verification and commit**
+- [x] **Step 8: Run Task 2 verification and commit**
 
 ```bash
 .venv/bin/python -m pytest -q --tb=short   tests/test_question_curation_graph.py   tests/test_review_round_graph.py   tests/test_review_input_resume.py   tests/test_review_discussion_graph.py   tests/test_review_round_middleware.py   tests/test_review_agent_graph.py   tests/test_agent_restart_v2.py
@@ -480,7 +480,7 @@ Expected: multi-interrupt execution, restart recovery, middleware profile and di
 - `POST /api/review/rounds/{round_id}/cancel`
 - `POST /api/review/rounds/{round_id}/discussions`
 
-- [ ] **Step 1: Write API contract tests**
+- [x] **Step 1: Write API contract tests**
 
 Define camelCase commands:
 
@@ -505,7 +505,7 @@ class SubmitReviewInputCommand(ReviewModel):
 
 Tests must cover batch list/detail and restart-visible progress; candidate search/filter/detail/edit/rewrite; active catalog exclusion of unpublished candidates; round creation with a valid enabled model/effort snapshot; rejection of unknown, disabled or unsupported combinations; list/detail, answer, duplicate answer, conflicting answer, skip, cancel, insufficient questions, missing round, derived discussion and safe error bodies.
 
-- [ ] **Step 2: Implement application composition and routes**
+- [x] **Step 2: Implement application composition and routes**
 
 Add `ReviewApplication` to each `WorkspaceRuntime` using the same SQLite connection, session service, execution service, draft service, publication callbacks and product event stream.
 
@@ -513,7 +513,7 @@ Route handlers must resolve workspace and round server-side. They must not accep
 
 Map stable domain errors to 404/409/422 in `main.py`, without returning reference answers, provider errors or raw exception strings.
 
-- [ ] **Step 3: Write frontend state-view tests**
+- [x] **Step 3: Write frontend state-view tests**
 
 Cover exactly three main states:
 
@@ -529,7 +529,7 @@ Also cover:
 - AI 建议、重复对比和 pending decision 绑定当前候选，无不确定项时确认卡完全不渲染；
 - history switching、page refresh、pending action on demand、model failure preserving typed input、duplicate submit conflict 和 missing-session cleanup。
 
-- [ ] **Step 4: Implement typed API and components**
+- [x] **Step 4: Implement typed API and components**
 
 Use TanStack Query for server resources and mutation invalidation. Keep only unsent text、筛选/面板开合和 transient control state locally. Do not reconstruct progress、catalog counts 或 batch status from SSE arrays.
 
@@ -562,13 +562,13 @@ History appears in the existing page layout; derived discussion is an explicit a
 
 模型与思考强度由创建轮次命令写入 session/round 配置，并在进行中只读展示；不得只在组件内切换下拉值而不影响后续模型调用。若本阶段支持中途修改，必须新增显式命令、审计生效边界并测试“从下一次调用生效”。
 
-- [ ] **Step 5: Connect question curation to Knowledge**
+- [x] **Step 5: Connect question curation to Knowledge**
 
 Uploading a source only registers the source. The user selects one or more sources and requests a question batch. Display candidate title, corrected answer, classification, duplicate warning and source evidence through the existing draft review/publish flow. `KnowledgePage` 保留 source/知识文档能力；题目候选的整理、筛选与确认集中在 `QuestionCatalog` 工作台，不能让用户在两个页面重复处理同一 candidate。
 
 Active question counts and topics come from `GET /api/review/questions`, not component-held uploaded draft state.
 
-- [ ] **Step 6: Make SSE refresh domain resources**
+- [x] **Step 6: Make SSE refresh domain resources**
 
 Add R2 event types to `useAgentEvents`. On progress/input/report events, invalidate the current round and history queries. Keep cursor deduplication and missing-session termination from `06cd5d3`.
 
@@ -588,7 +588,7 @@ frontend/node_modules/.bin/playwright test   --config playwright.config.ts tests
 
 Expected happy path: enter “题库整理”, import/select sources, inspect rendered candidate detail, resolve one duplicate/pending decision, publish question candidates, switch to “开始复习”, create a two-question round, answer once, handle one follow-up, complete, approve the report and see the Vault target path. Capture desktop evidence for both reference layouts; compare information hierarchy and behavior, not screenshot pixels.
 
-- [ ] **Step 8: Commit Task 3**
+- [x] **Step 8: Commit Task 3**
 
 ```bash
 git add backend/app backend/tests frontend/src tests/e2e
@@ -604,7 +604,7 @@ git commit -m "feat(review): complete the multi-question Web experience"
 - Create: `docs/learning/r2-complete-review-agent/overview.md` (local)
 - Create: `docs/learning/r2-complete-review-agent/architecture.md` (local)
 - Create: `docs/learning/r2-complete-review-agent/code-walkthrough.md` (local)
-- Create: `docs/learning/r2-complete-review-agent/code-trace.md` (local)
+- Create: `docs/learning/r2-complete-review-agent/failure-journal.md` (local)
 - Create: `docs/learning/r2-complete-review-agent/exercises.md` (local)
 - Create: `docs/learning/r2-complete-review-agent/interview-questions.md` (local)
 - Create: `docs/learning/r2-complete-review-agent/presentation-script.md` (local)
@@ -616,7 +616,7 @@ git commit -m "feat(review): complete the multi-question Web experience"
 - Final evidence proves the Web review requirements in `docs/my_idea.md` section 3.
 - R8 WeChat/Feishu native chat remains explicitly pending and is not claimed by responsive Web evidence.
 
-- [ ] **Step 1: Run a real ten-question Provider acceptance**
+- [x] **Step 1: Run a real ten-question Provider acceptance**
 
 Use one OpenAI-compatible structured question/evaluation call and one Anthropic-compatible streamed follow-up/report or discussion call. Complete at least ten questions and verify:
 
@@ -629,7 +629,7 @@ Use one OpenAI-compatible structured question/evaluation call and one Anthropic-
 
 Record Provider type, model ID, session ID and round ID; never record API keys or content. A Langfuse trace ID is not required for current R2 evidence.
 
-- [ ] **Step 2: Run restart and failure acceptance**
+- [x] **Step 2: Run restart and failure acceptance**
 
 Cover:
 
@@ -665,7 +665,7 @@ Verify the full user journey:
 
 Do not claim this satisfies WeChat/Feishu Channel acceptance.
 
-- [ ] **Step 4: Run final regression once**
+- [x] **Step 4: Run final regression once**
 
 ```bash
 cd backend

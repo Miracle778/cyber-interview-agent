@@ -1,13 +1,16 @@
 # Agent Runtime 框架收敛进度
 
-## 2026-07-14：R2 Task 4 部分验收
+## 2026-07-14：R2 Task 4 非浏览器验收完成
 
 - 识别本机真实 Provider：OpenAI-compatible `GLM-5.2` 与 Anthropic-compatible `claude-haiku-4-5` 均为 connectivity `ok`；demo workspace 的 question/evaluation 与 report 角色绑定符合验收组合。
 - 新增分阶段真实验收脚本，支持题库生成/发布、十题轮次、两次重启、报告审批、派生讨论和下一轮 weak-point 检查；脚本只记录 Provider 类型、模型/资源 ID、usage 和路径，不记录密钥或正文。
-- 第一次真实 12 题整理约 3 分钟完成，只生成 3 个候选；收紧完整覆盖提示后第二次生成 6 个候选，仍未达到单批 10 题门槛，因此未继续十题轮次且未声明 Provider 验收通过。
+- 第一次真实 12 题整理只生成 3 个候选，收紧提示后为 6 个；改为按编号语义边界每 6 题分片、聚合去重后，同一批生成并发布 11 个候选，达到十题验收门槛。
+- 真实 round `4c9098f2-df8e-4553-b3ed-8d0bdea03ea7` 完成 10 attempts、1 skip、9 follow-ups；等待首答和等待报告审批前各重启一次，均从持久状态恢复。两份报告成功发布，派生 discussion 未改变父轮次 attempts，weak-point 下一轮成功选题，context compacted 为 true。
+- 真实组合使用 OpenAI-compatible `GLM-5.2` 评价与 Anthropic-compatible `claude-haiku-4-5` 报告，共 19 calls、102094 tokens；功能通过但成本偏高，列为后续上下文隔离与追问阈值优化项。
 - 真实中断诊断发现 batch 可能永久停在 `generating`；新增启动对账，将无可继续 execution 的 generating batch/running round 标记 `failed`，重启用例 2 passed。
-- 第一次最终回归：后端 `242 passed`；前端首次 `82 passed, 2 failed`（旧 App UI 断言），只修复失败文件后最终前端 `84 passed`；生产 build 通过并保留既存大 chunk 警告。
-- 浏览器交互仍因 browser client `Cannot redefine property: process` 未执行；learning 七件套和文档门禁按规则未生成/未运行，R2 未关闭。
+- 重启日志发现 role checkpoint 的 strict Pydantic structured response 不在允许列表；显式加入 R2 三类输出并补 round-trip 测试，避免恢复时静默丢失结构化状态。
+- 最终回归：后端第二次/最终 `246 passed`；前端首次 `82 passed, 2 failed`（旧 App UI 断言），只修复失败文件后最终 `84 passed`；production build 通过并保留主 chunk 约 538 kB 警告。
+- verification 用户指南与 foundation learning 七件套已生成。浏览器交互仍因 browser client `Cannot redefine property: process` 未执行，文档门禁因此必须保持失败，R2 未关闭。
 
 ## 2026-07-14：R2 Task 3 API 与 Web 闭环
 

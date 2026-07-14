@@ -9,6 +9,9 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 _CHECKPOINT_TYPE_ALLOWLIST = (
     ("app.agents.review_contracts", "AnswerEvaluation"),
+    ("app.agents.r2_contracts", "AnswerEvaluationV2"),
+    ("app.agents.r2_contracts", "QuestionCandidateBatch"),
+    ("app.agents.r2_contracts", "SessionReportOutput"),
 )
 
 

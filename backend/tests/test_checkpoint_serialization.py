@@ -3,6 +3,12 @@ import logging
 import pytest
 
 from app.agents.review_contracts import AnswerEvaluation
+from app.agents.r2_contracts import (
+    AnswerEvaluationV2,
+    QuestionCandidate,
+    QuestionCandidateBatch,
+    SessionReportOutput,
+)
 from app.infrastructure.checkpoints import AgentCheckpointer
 
 
@@ -24,3 +30,49 @@ async def test_checkpoint_serializer_explicitly_allows_review_contract(
 
     assert restored == evaluation
     assert "unregistered type" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "value",
+    [
+        AnswerEvaluationV2(
+            score="partial",
+            missing_key_points=["边界"],
+            evidence="覆盖定义",
+            follow_up_required=True,
+            follow_up_prompt="请补充边界",
+            mastery_suggestion="partial",
+        ),
+        QuestionCandidateBatch(
+            candidates=[
+                QuestionCandidate(
+                    title="MVCC",
+                    question_text="什么是 MVCC？",
+                    reference_answer="多版本并发控制",
+                    topics=["database"],
+                    difficulty="medium",
+                    key_points=["版本链"],
+                    follow_ups=[],
+                    source_refs=["source-1"],
+                    correction_note="结构化原题",
+                )
+            ]
+        ),
+        SessionReportOutput(
+            title="复习报告",
+            markdown="# 复习报告",
+            mastery_explanation="继续练习",
+        ),
+    ],
+)
+async def test_checkpoint_serializer_explicitly_allows_r2_contracts(
+    tmp_path, caplog, value
+) -> None:
+    (tmp_path / ".cyber-interview-agent").mkdir()
+    caplog.set_level(logging.WARNING, logger="langgraph.checkpoint.serde.jsonplus")
+    async with AgentCheckpointer(tmp_path).open() as saver:
+        restored = saver.serde.loads_typed(saver.serde.dumps_typed(value))
+
+    assert restored == value
+    assert "not in allowed_msgpack_modules" not in caplog.text

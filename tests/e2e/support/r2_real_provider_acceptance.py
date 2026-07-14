@@ -65,7 +65,7 @@ async def _json(
     return response.json()
 
 
-async def _poll(get_value, predicate, *, attempts: int = 180):
+async def _poll(get_value, predicate, *, attempts: int = 420):
     last = None
     for _ in range(attempts):
         last = await get_value()

@@ -9,7 +9,7 @@
 | 1. 题库与持久轮次领域事实 | 已完成 | additive migration、catalog/round/input/mastery repository、selector、publication projection |
 | 2. Agent 与长生命周期 Graph | 已完成 | 题目整理、评价/追问、报告、discussion、input resume |
 | 3. API 与完整 Web 体验 | 代码完成，最小浏览器交互受工具阻塞 | R2 resources、SSE 刷新、题库与复习工作台、服务可达证据 |
-| 4. 真实验收与收尾 | 进行中，受 Provider 覆盖率与浏览器工具阻塞 | 全量回归通过；真实十题/浏览器/verification/learning 未关闭 |
+| 4. 真实验收与收尾 | 进行中，仅受浏览器工具阻塞 | 真实 Provider 十题与重启通过；全量回归、verification、learning 已完成，浏览器门禁未关闭 |
 
 ## 工作位置
 
@@ -40,9 +40,9 @@
 
 ## 下一步
 
-补齐 Task 4 两项门禁：题库 Agent 对 12 题来源单批稳定生成至少 10 个候选，并完成真实十题轮次；修复浏览器插件初始化后执行最小与完整浏览器验收。两项完成后再生成 learning 七件套、运行文档门禁并关闭 R2。
+修复 browser client 的 `Cannot redefine property: process` 初始化冲突后，执行最小与完整浏览器验收；随后刷新浏览器证据、通过文档门禁并关闭 R2。真实 Provider、重启、回归、verification 与 learning 已完成，不重复运行无变化的 Provider 场景。
 
 ## 所有权状态
 
-- 产品：R1/Agent Harness 已完成；R2 Task 1–3 代码完成，Task 4 验收待执行。
-- 用户学习/实践：待完成，不阻塞 R2。
+- 产品：R1/Agent Harness 已完成；R2 Task 1–3 与 Task 4 非浏览器部分完成，尚未达到“可人工验证”。
+- 用户学习/实践：learning 七件套已生成，用户练习待完成，不阻塞 R2 产品收尾。

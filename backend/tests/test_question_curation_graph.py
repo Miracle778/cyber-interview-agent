@@ -23,6 +23,16 @@ class RecordingAgent:
         return self.result
 
 
+class SequencedAgent(RecordingAgent):
+    def __init__(self, results):
+        super().__init__(None)
+        self.results = iter(results)
+
+    async def ainvoke(self, input, config=None, *, context=None):
+        self.calls.append((input, config, context))
+        return {"structured_response": next(self.results)}
+
+
 def _context() -> AgentContext:
     return AgentContext(
         workspace_id="w1",
@@ -140,6 +150,49 @@ async def test_question_generation_uses_an_isolated_role_thread() -> None:
         "thread_id": "s1:question_generation"
     }
     assert runnable.calls[0][2] == _context()
+
+
+@pytest.mark.asyncio
+async def test_numbered_question_sources_are_chunked_and_deduplicated() -> None:
+    def candidate(number: int, text: str) -> QuestionCandidate:
+        return QuestionCandidate(
+            title=f"题目 {number}",
+            question_text=text,
+            reference_answer=f"答案 {number}",
+            topics=["systems"],
+            difficulty="medium",
+            key_points=[f"关键点 {number}"],
+            follow_ups=[],
+            source_refs=["source-1"],
+            correction_note="结构化原题",
+        )
+
+    first = QuestionCandidateBatch(
+        candidates=[candidate(number, f"问题 {number}？") for number in range(1, 7)]
+    )
+    second = QuestionCandidateBatch(
+        candidates=[candidate(6, "问题 6？"), *[candidate(number, f"问题 {number}？") for number in range(7, 13)]]
+    )
+    runnable = SequencedAgent([first, second])
+    agent = QuestionCurationAgent(runnable)
+    source = "source-1:questions.md\n" + "\n".join(
+        f"{number}. 问题 {number}？答：答案 {number}。"
+        for number in range(1, 13)
+    )
+
+    result = await agent.generate(
+        source_excerpts=(source,),
+        similar_questions=(),
+        rewrite_feedback=None,
+        context=_context(),
+        config={"configurable": {"thread_id": "s1"}},
+    )
+
+    assert len(runnable.calls) == 2
+    assert "1. 问题 1" in runnable.calls[0][0]["messages"][0].content
+    assert "7. 问题 7" not in runnable.calls[0][0]["messages"][0].content
+    assert "7. 问题 7" in runnable.calls[1][0]["messages"][0].content
+    assert len(result.candidates) == 12
 
 
 @pytest.mark.asyncio
