@@ -18,6 +18,7 @@
 - Keep secrets, reference answers, user answers, source content and report bodies out of product event payloads and OpenTelemetry attributes.
 - Use targeted tests during Tasks 1–3. Run the full backend/frontend regression no more than twice: once after cross-layer integration if needed and once before final acceptance.
 - Run one minimal browser happy path after Task 3 and one complete browser/restart acceptance pass in Task 4.
+- Run R2 acceptance with Langfuse unconfigured and not started. Do not require Langfuse login, trace lookup, normal-export evidence or unreachable-endpoint testing in this stage.
 - Responsive Web remains a UI quality gate, not evidence that the R8 WeChat/Feishu Channel requirement is complete.
 - Do not modify `docs/my_idea.md`.
 
@@ -49,11 +50,13 @@
 - `backend/app/schemas/review.py`: public camelCase commands and resources.
 - `frontend/src/features/review/reviewApi.ts`: typed R2 API client.
 - `frontend/src/features/review/reviewTypes.ts`: R2 resource types.
+- `frontend/src/features/review/ReviewShell.tsx`: 一级导航、模块上下文和响应式侧栏/抽屉。
 - `frontend/src/features/review/ReviewSetup.tsx`: filters, modes and round creation.
 - `frontend/src/features/review/ReviewRound.tsx`: current question, answer/follow-up, progress and runtime cards.
 - `frontend/src/features/review/ReviewResults.tsx`: attempts, session/mastery drafts and publication state.
 - `frontend/src/features/review/ReviewHistory.tsx`: session/round history and derived discussion entry.
-- `frontend/src/features/review/QuestionCatalog.tsx`: candidate review status and active question coverage.
+- `frontend/src/features/review/QuestionCatalog.tsx`: 题库摘要、批次进度、筛选和候选题列表工作台。
+- `frontend/src/features/review/QuestionDetailPanel.tsx`: 渲染预览、Markdown 编辑、AI 建议、重复对比和按需确认。
 - `frontend/src/features/review/ReviewPage.tsx`: state-based composition only; no durable round state in component arrays.
 
 ---
@@ -210,9 +213,11 @@ class ReviewRoundSettings:
     question_count: int
     allow_follow_up: bool
     seed: int
+    answer_model_id: str
+    reasoning_effort: Literal["none", "low", "medium", "high"]
 ```
 
-Reject question counts outside 1–50, empty topic filters for `topic-focused`, missing reference answers, and malformed snapshot hashes before persistence.
+Reject question counts outside 1–50, empty topic filters for `topic-focused`, missing reference answers, empty model IDs, unsupported reasoning-effort values, and malformed snapshot hashes before persistence. The application layer must additionally verify that the model ID belongs to an enabled model available to the current Workspace.
 
 - [ ] **Step 4: Test deterministic selection**
 
@@ -289,6 +294,8 @@ Expected: targeted tests pass; no existing Runtime row is lost.
 - Modify: `backend/app/application/event_projector.py`
 - Modify: `backend/app/application/session_service.py`
 - Modify: `backend/app/middleware/defaults.py`
+- Modify: `backend/app/agents/factory.py`
+- Modify: `backend/app/agents/model_resolver.py`
 - Test: `backend/tests/test_question_curation_graph.py`
 - Test: `backend/tests/test_review_round_graph.py`
 - Test: `backend/tests/test_review_input_resume.py`
@@ -328,6 +335,8 @@ Create role-specific agents through the existing `AgentFactory`:
 - `agent_chat` uses `<discussion_session>:agent_chat`.
 
 Question generation may use only safe source-reader tools. Evaluation has no tools. Report generation reads structured attempts and at most three confirmed reports. Discussion receives the frozen question and selected attempt evidence, never the parent checkpoint/messages.
+
+`AgentFactory` accepts a validated immutable session override for `answer_evaluation` containing `provider_model_id` and `reasoning_effort`. `ModelResolver` resolves the model through the existing Provider repository and maps the normalized effort to Provider-specific constructor/call options; `none` omits the option. Unknown, disabled or unsupported model/effort combinations fail before the round starts. Do not put Provider URL, API key or arbitrary model strings in Graph state.
 
 - [ ] **Step 3: Write the multi-interrupt Graph test**
 
@@ -437,11 +446,13 @@ Expected: multi-interrupt execution, restart recovery, middleware profile and di
 - Test: `backend/tests/test_review_api_restart.py`
 - Create: `frontend/src/features/review/reviewApi.ts`
 - Modify: `frontend/src/features/review/reviewTypes.ts`
+- Create: `frontend/src/features/review/ReviewShell.tsx`
 - Create: `frontend/src/features/review/ReviewSetup.tsx`
 - Create: `frontend/src/features/review/ReviewRound.tsx`
 - Create: `frontend/src/features/review/ReviewResults.tsx`
 - Create: `frontend/src/features/review/ReviewHistory.tsx`
 - Create: `frontend/src/features/review/QuestionCatalog.tsx`
+- Create: `frontend/src/features/review/QuestionDetailPanel.tsx`
 - Modify: `frontend/src/features/review/ReviewPage.tsx`
 - Modify: `frontend/src/features/knowledge/KnowledgePage.tsx`
 - Modify: `frontend/src/features/agent/useAgentEvents.ts`
@@ -449,12 +460,18 @@ Expected: multi-interrupt execution, restart recovery, middleware profile and di
 - Test: `frontend/src/features/review/ReviewPage.test.tsx`
 - Test: `frontend/src/features/review/ReviewRound.test.tsx`
 - Test: `frontend/src/features/review/QuestionCatalog.test.tsx`
+- Test: `frontend/src/features/review/QuestionDetailPanel.test.tsx`
 - Test: `tests/e2e/r2-review-happy-path.spec.ts`
 
 **Interfaces:**
 - `POST /api/review/question-batches`
-- `GET /api/review/questions?workspaceId=&topic=&difficulty=`
-- `POST /api/review/questions/{question_id}/rewrite`
+- `GET /api/review/question-batches?workspaceId=&status=`
+- `GET /api/review/question-batches/{batch_id}`
+- `GET /api/review/question-candidates?workspaceId=&query=&topic=&difficulty=&sourceId=&status=&page=`
+- `GET /api/review/question-candidates/{candidate_id}`
+- `PATCH /api/review/question-candidates/{candidate_id}`
+- `POST /api/review/question-candidates/{candidate_id}/rewrite`
+- `GET /api/review/questions?workspaceId=&topic=&difficulty=` (published active catalog only)
 - `POST /api/review/rounds`
 - `GET /api/review/rounds?workspaceId=`
 - `GET /api/review/rounds/{round_id}`
@@ -476,6 +493,8 @@ class CreateReviewRoundCommand(ReviewModel):
     question_count: int = Field(ge=1, le=50)
     allow_follow_up: bool = True
     seed: int | None = None
+    answer_model_id: str
+    reasoning_effort: Literal["none", "low", "medium", "high"] = "none"
 
 class SubmitReviewInputCommand(ReviewModel):
     input_request_id: str
@@ -484,7 +503,7 @@ class SubmitReviewInputCommand(ReviewModel):
     value: str = Field(min_length=1, max_length=20000)
 ```
 
-Tests must cover creation, list/detail, answer, duplicate answer, conflicting answer, skip, cancel, insufficient questions, missing round, derived discussion and safe error bodies.
+Tests must cover batch list/detail and restart-visible progress; candidate search/filter/detail/edit/rewrite; active catalog exclusion of unpublished candidates; round creation with a valid enabled model/effort snapshot; rejection of unknown, disabled or unsupported combinations; list/detail, answer, duplicate answer, conflicting answer, skip, cancel, insufficient questions, missing round, derived discussion and safe error bodies.
 
 - [ ] **Step 2: Implement application composition and routes**
 
@@ -502,11 +521,28 @@ Cover exactly three main states:
 - waiting/running -> current question, ordinal/total, answer or follow-up, usage/context and controls;
 - report/completed -> attempt summary, mastery changes, drafts and publication state.
 
-Also cover history switching, page refresh, pending action on demand, model failure preserving typed input, duplicate submit conflict and missing-session cleanup.
+Also cover:
+
+- 一级导航将“题库整理”和“开始复习”作为独立入口，切换后保留各自 Query/resource 上下文；
+- 题库列表的搜索、topic/难度/来源/状态筛选、真实批次进度与服务端计数；
+- 选中候选默认显示渲染后的 Markdown，只有进入编辑或选择“Markdown 原文”才显示源码；
+- AI 建议、重复对比和 pending decision 绑定当前候选，无不确定项时确认卡完全不渲染；
+- history switching、page refresh、pending action on demand、model failure preserving typed input、duplicate submit conflict 和 missing-session cleanup。
 
 - [ ] **Step 4: Implement typed API and components**
 
-Use TanStack Query for server resources and mutation invalidation. Keep only unsent text and transient control state locally. Do not reconstruct progress from SSE arrays.
+Use TanStack Query for server resources and mutation invalidation. Keep only unsent text、筛选/面板开合和 transient control state locally. Do not reconstruct progress、catalog counts 或 batch status from SSE arrays.
+
+按照 spec 11 的 UI 契约实现统一 `ReviewShell`：桌面端保持稳定深色应用侧栏，一级入口为“题库整理”和“开始复习”；题库模块的二级导航是分类/待确认计数，复习模块的二级导航是轮次历史/派生讨论。窄屏将二级导航降级为抽屉，不把桌面三栏压缩到 375px。
+
+题库整理桌面端必须形成“应用导航 + 题目列表 + 详情面板”工作台：
+
+- 页头操作为“导入文档”和“AI 整理”；摘要、解析进度、搜索与组合筛选位于列表上方；
+- 列表行展示题目、分类、难度、来源与状态，选择行只加载详情，不触发发布；
+- 详情面板默认渲染 Markdown，提供原文/编辑入口、AI 建议、重复对比、保存草稿和确认入库；
+- 人工确认只在当前候选存在 pending decision 时渲染，普通已整理题目不预留空卡片。
+
+复习桌面端形成“会话导航 + 对话式答题 + 运行状态”三栏：题目、回答、结构化评价和追问在中央消息流中；模型/思考强度、usage/context、掌握度与产物在右栏；普通 input request 不显示审批 UI。
 
 `ReviewPage` composes:
 
@@ -524,9 +560,11 @@ Use TanStack Query for server resources and mutation invalidation. Keep only uns
 
 History appears in the existing page layout; derived discussion is an explicit action on an attempt. Approval UI renders only when the current action is pending.
 
+模型与思考强度由创建轮次命令写入 session/round 配置，并在进行中只读展示；不得只在组件内切换下拉值而不影响后续模型调用。若本阶段支持中途修改，必须新增显式命令、审计生效边界并测试“从下一次调用生效”。
+
 - [ ] **Step 5: Connect question curation to Knowledge**
 
-Uploading a source only registers the source. The user selects one or more sources and requests a question batch. Display candidate title, corrected answer, classification, duplicate warning and source evidence through the existing draft review/publish flow.
+Uploading a source only registers the source. The user selects one or more sources and requests a question batch. Display candidate title, corrected answer, classification, duplicate warning and source evidence through the existing draft review/publish flow. `KnowledgePage` 保留 source/知识文档能力；题目候选的整理、筛选与确认集中在 `QuestionCatalog` 工作台，不能让用户在两个页面重复处理同一 candidate。
 
 Active question counts and topics come from `GET /api/review/questions`, not component-held uploaded draft state.
 
@@ -542,13 +580,13 @@ No event payload may contain the full answer, reference answer, source text or r
 cd backend
 .venv/bin/python -m pytest -q --tb=short   tests/test_review_api_v2.py tests/test_review_api_restart.py   tests/test_agent_routes_v2.py tests/test_draft_routes.py
 cd ../frontend
-./node_modules/.bin/vitest run   src/features/review/reviewApi.test.ts   src/features/review/ReviewPage.test.tsx   src/features/review/ReviewRound.test.tsx   src/features/review/QuestionCatalog.test.tsx   --reporter=dot
+./node_modules/.bin/vitest run   src/features/review/reviewApi.test.ts   src/features/review/ReviewPage.test.tsx   src/features/review/ReviewRound.test.tsx   src/features/review/QuestionCatalog.test.tsx   src/features/review/QuestionDetailPanel.test.tsx   --reporter=dot
 npm run build
 cd ..
 frontend/node_modules/.bin/playwright test   --config playwright.config.ts tests/e2e/r2-review-happy-path.spec.ts   --reporter=line
 ```
 
-Expected happy path: publish question candidates, create a two-question round, answer once, handle one follow-up, complete, approve the report and see the Vault target path.
+Expected happy path: enter “题库整理”, import/select sources, inspect rendered candidate detail, resolve one duplicate/pending decision, publish question candidates, switch to “开始复习”, create a two-question round, answer once, handle one follow-up, complete, approve the report and see the Vault target path. Capture desktop evidence for both reference layouts; compare information hierarchy and behavior, not screenshot pixels.
 
 - [ ] **Step 8: Commit Task 3**
 
@@ -587,9 +625,9 @@ Use one OpenAI-compatible structured question/evaluation call and one Anthropic-
 - native and estimated usage visibility;
 - at least one role-thread summary;
 - later selection reflects confirmed mastery;
-- Langfuse contains metadata-only spans and no source/answer/report body.
+- the complete round works with no Langfuse environment variables or services.
 
-Record Provider type, model ID, session ID, round ID and safe trace ID; never record API keys or content.
+Record Provider type, model ID, session ID and round ID; never record API keys or content. A Langfuse trace ID is not required for current R2 evidence.
 
 - [ ] **Step 2: Run restart and failure acceptance**
 
@@ -602,8 +640,9 @@ Cover:
 - conflicting duplicate with a different key;
 - model failure and retry without index advance;
 - cancel during an active round;
-- Langfuse unavailable while the round still completes;
 - discussion child session without parent message/checkpoint mutation.
+
+Run these scenarios in the default environment with Langfuse unconfigured. Do not add a separate “Langfuse service unavailable” scenario in R2.
 
 Re-run only the failed scenario after a fix.
 
@@ -613,7 +652,7 @@ Verify the full user journey:
 
 1. upload loosely formatted question material;
 2. generate multiple corrected/classified candidates;
-3. edit/reject/rewrite/publish candidates;
+3. use search/filters, rendered preview, Markdown edit, duplicate comparison and on-demand confirmation to edit/reject/rewrite/publish candidates;
 4. create a ten-question round using a selected strategy;
 5. answer, follow up, skip, leave and continue;
 6. finish and inspect per-round/mastery reports;
@@ -621,6 +660,8 @@ Verify the full user journey:
 8. create a derived discussion and return to the unchanged parent round;
 9. start another round and confirm weak-point selection uses confirmed mastery;
 10. verify desktop layout and baseline responsive Web quality.
+
+桌面验收使用 spec 中两张效果图做结构参照：题库页核对“导航 + 列表 + 详情”，复习页核对“会话 + 对话 + 状态”；允许 token、真实数据和组件细节不同，但一级入口、区域职责、主要操作顺序与状态显隐不得偏离。375px 单独验证抽屉/顺序降级，不要求复刻桌面三栏。
 
 Do not claim this satisfies WeChat/Feishu Channel acceptance.
 
@@ -640,7 +681,7 @@ Record exact fresh counts from these commands.
 
 - [ ] **Step 5: Finalize verification and learning documents**
 
-Reshape verification into a user guide, then generate the seven `foundation` learning files only after implementation is stable. Include the status-ownership table for Graph checkpoint, Runtime SQLite, Vault, Query cache and Langfuse.
+Reshape verification into a user guide, then generate the seven `foundation` learning files only after implementation is stable. Include the status-ownership table for Graph checkpoint, Runtime SQLite, Vault and Query cache. Mention OpenTelemetry/Langfuse only as optional observability outside the current acceptance evidence.
 
 Run:
 
@@ -663,7 +704,7 @@ After merging, explicitly synchronize ignored `docs/verification/r2-complete-rev
 
 ## Plan Self-Review
 
-- Spec coverage: question curation, four selection modes, long-lived round, answer/follow-up input, skip/cancel/restart, reports, mastery, discussion, middleware, API, Web UI, Provider, Langfuse and browser acceptance are each assigned to a task.
+- Spec coverage: question curation, four selection modes, long-lived round, answer/follow-up input, skip/cancel/restart, reports, mastery, discussion, middleware, API, Web UI, Provider, default no-Langfuse operation and browser acceptance are each assigned to a task.
 - Original idea coverage: corrected/classified question bank, 10/20-question rounds, configurable strategy, logical follow-up, session history/title, derived discussion, per-session report, conflict review, recent-three confirmed reports and global mastery feedback are explicit.
 - Boundary check: Web responsive quality is retained but does not claim R8 Channel completion.
 - Runtime check: migration is additive on generation 2; no new Agent loop, registry, gateway or pipeline is introduced.

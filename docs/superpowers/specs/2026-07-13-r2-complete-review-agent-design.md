@@ -89,7 +89,10 @@ Graph 在展示题目后通过 input interrupt 暂停。应用层把 interrupt �
 - difficulty 范围；
 - mode：`weak-point`、`random-mixed`、`topic-focused`、`recent-mistake`；
 - question count，范围 1-50；
-- 是否允许必要追问。
+- 是否允许必要追问；
+- 本轮交互评价使用的已配置模型，以及该模型声明支持的思考强度。
+
+模型选择值是 Workspace 中已启用 `provider_model_id` 的服务端引用，不是允许前端传入任意 Provider/model 字符串。思考强度使用统一枚举并由 Provider adapter 映射；模型不支持时 UI 不提供该选项，API 收到不支持组合返回 422。轮次创建时冻结 `answer_evaluation` 的模型与思考强度，后续调用和审计均使用该快照；题目生成、报告和派生讨论仍分别使用自己的 role binding，除非对应命令也显式提供经过验证的 session override。
 
 确定性 selector 从 active catalog 和已确认 mastery projection 中选题。轮次启动时冻结题目 ID、内容版本/hash、顺序和 mastery before，避免轮次中题库外部编辑改变当前问题。
 
@@ -274,8 +277,13 @@ R2 使用 additive migration，不再次清空刚收敛的 Runtime generation。
 
 ```text
 POST /api/review/question-batches
+GET  /api/review/question-batches
+GET  /api/review/question-batches/{id}
+GET  /api/review/question-candidates
+GET  /api/review/question-candidates/{id}
+PATCH /api/review/question-candidates/{id}
+POST /api/review/question-candidates/{id}/rewrite
 GET  /api/review/questions
-POST /api/review/questions/{id}/rewrite
 
 POST /api/review/rounds
 GET  /api/review/rounds
@@ -285,6 +293,8 @@ POST /api/review/rounds/{id}/skip
 POST /api/review/rounds/{id}/cancel
 POST /api/review/rounds/{id}/discussions
 ```
+
+`question-candidates` 是整理工作台资源，支持 `query`、`topic`、`difficulty`、`sourceId`、`status`、分页和排序；资源包含安全的 source ref、draft/publication state、duplicate summary 和 pending decision ID。`questions` 只返回已发布 active catalog，供轮次设置与 selector 使用，不能用未确认 candidate 伪装 active question。`question-batches` 列表/详情返回真实解析计数和状态，供进度条在刷新后恢复。
 
 `answers` 请求必须包含 `inputRequestId`、`version` 和 `idempotencyKey`。领域 API 在内部调用现有 Agent session/execution/application service；不复制 checkpoint/resume 实现。Action 审批继续使用 `/api/agent/actions/...`。
 
@@ -302,7 +312,75 @@ POST /api/review/rounds/{id}/discussions
 
 ## 11. 前端信息架构
 
-复习页保留现有视觉系统，按轮次状态切换三个主视图：
+R2 使用统一的复习工作台 Shell，而不是把题库、单题表单、运行状态和人工确认平铺在同一页面。一级导航先区分上游的“题库整理”和下游的“开始复习”，页面内部再按当前资源和状态渐进披露操作。
+
+### 11.1 设计原则与还原优先级
+
+- **任务链清晰**：题库整理负责“导入 -> 解析 -> 去重 -> 结构化 -> 确认入库”，开始复习负责“选题 -> 回答 -> 评价/追问 -> 报告”；两者是独立一级入口，但共享题库和 session 事实。
+- **主任务优先**：当前问题、回答输入和题目内容始终占据最大区域；历史、usage、context 和产物作为辅助信息放在侧栏或窄屏折叠区。
+- **按需确认**：普通答题、浏览题目和已确定状态不显示 HITL。只有当前资源确实存在 pending action、重复冲突或 AI 整理不确定项时，才在资源上下文内展示确认卡片。
+- **默认渲染 Markdown**：题目、参考答案、报告等阅读态默认展示渲染结果；只有用户主动进入编辑或选择“Markdown 原文”标签时展示源码。
+- **服务端事实驱动**：计数、筛选结果、进度、状态、草稿、usage 和 publication 均来自 API/Query；效果图中的数字只用于说明布局，不能写死。
+- **保留现有视觉系统**：使用项目现有 token、组件和可访问性规则还原信息层级，不为逐像素复制效果图引入新的 UI 框架。
+
+还原优先级如下：
+
+1. 必须还原：一级导航、页面区域职责、状态显隐、主要操作顺序、Markdown 阅读/编辑边界、桌面与窄屏信息优先级。
+2. 尽量还原：三栏比例、卡片密度、列表层级、颜色语义、图标与间距。
+3. 允许调整：具体像素、示例文案、图标形状和统计数字；调整不得改变任务链或把服务端事实退化为前端本地状态。
+
+### 11.2 应用 Shell 与一级导航
+
+桌面端左侧使用稳定应用导航：
+
+```text
+Cyber Interview Agent
+├─ 题库整理       count
+├─ 开始复习
+├─ 当前模块的集合/会话列表
+└─ 设置
+```
+
+- `题库整理` 是独立一级入口，展示 active catalog 总量或待处理提示；不能藏在知识库上传页或复习历史中。
+- `开始复习` 进入轮次工作台。未开始时显示轮次设置；进行中时显示当前会话与派生讨论列表。
+- 一级入口下方的二级列表随模块变化：题库模块展示分类与待确认数量，复习模块展示轮次历史和派生讨论。
+- 选中态只表达当前位置，不改变资源状态；“进行中”“待确认”等状态使用独立 badge/dot。
+
+### 11.3 题库整理工作台
+
+题库整理桌面端采用“应用导航 + 题目列表 + 详情面板”三段布局：
+
+1. **左侧导航**：一级入口、全部题目、topic 分类、待确认；数量来自 `GET /api/review/questions` 聚合结果。
+2. **中间工作区**：页头提供“导入文档”和“AI 整理”；摘要卡展示全部、待确认、疑似重复和本周新增；随后是解析进度、搜索、状态/topic/难度/来源筛选以及可多选的题目列表。
+3. **右侧详情**：展示选中题目的渲染预览、Markdown 原文/编辑入口、参考答案、tags、难度、source ref、AI 建议、重复相似度与保存/确认入库操作。
+
+题库整理状态规则：
+
+- source 上传只建立来源；“AI 整理”明确选择一个或多个 source 后创建 question batch。
+- 解析条显示真实批次进度和待确认数量；失败项可针对性重试，不重跑已完成候选。
+- 列表至少区分 `待确认`、`疑似重复`、`已整理`、`已归档`，并支持搜索与组合筛选。
+- 点击行只切换详情资源，不自动接受建议或发布。
+- AI 整理建议属于可编辑草稿；用户可保留原题、应用建议或稍后处理。
+- “需要人工确认”只在候选不确定、重复冲突或版本冲突时出现，并与当前选中题绑定；没有 pending decision 时整个确认卡不渲染。
+- “确认入库”走现有 draft/publication action，成功后刷新 catalog、统计和详情 publication state；不能仅修改前端 badge。
+
+桌面参考图：
+
+![R2 题库整理桌面参考](../assets/r2/question-curation-desktop-reference.png)
+
+### 11.4 复习轮次工作台
+
+复习轮次桌面端采用“会话导航 + 对话式答题 + 运行状态”三栏布局：
+
+- **左栏**：`题库整理`、`开始复习` 一级入口，下方展示复习会话；派生 discussion 作为父会话的缩进子项，不与主轮次混为同一 thread。
+- **中栏**：顶部显示轮次标题和 `ordinal / total`；正文以消息流展示题目、用户回答、结构化评价和必要追问；底部固定回答输入区。
+- **右栏**：展示本轮进度、选题模式、当前模型、思考强度、token/context、掌握度变化和报告草稿等运行事实。
+- 模型与思考强度在创建轮次时冻结为 session 配置；进行中可展示但默认不静默切换。若产品允许中途修改，必须通过显式命令并记录从下一次模型调用生效。
+- 评价卡使用 `poor` / `partial` / `good` 的稳定语义展示证据和缺失点，不展示 hidden reasoning。
+- 普通回答和追问使用 input request，不展示 HITL；只有报告发布等真实 pending action 才显示确认区域。
+- 输入发送后保留幂等状态；失败时保留用户文本并提供重试，不乐观推进题号。
+
+复习页按轮次状态切换三个主视图：
 
 1. **轮次设置**：topic、difficulty、mode、question count、追问开关和预计范围；
 2. **进行中**：当前题、ordinal/total、回答区、必要追问、进度、tokens/context/预算、稍后继续/跳过/取消；“稍后继续”只离开页面并保留 `waiting_for_input`，不调用新 pause API；
@@ -310,9 +388,20 @@ POST /api/review/rounds/{id}/discussions
 
 侧边或折叠区域显示历史轮次与派生讨论。人工确认只在存在 pending action 时出现；普通答题 input 不伪装成审批。刷新后页面完全从 round/session/action resources 恢复，不依赖组件内累计数组。
 
+桌面参考图：
+
+![R2 复习轮次桌面参考](../assets/r2/review-round-desktop-reference.png)
+
+### 11.5 响应式与可访问性
+
 窄屏 Web 保持单列，主要回答操作触控区域不小于 44px；375px 无横向溢出。
 当前题和输入框优先于历史、usage 详情和报告附件。微信、飞书原生聊天窗口中的
 Agent 对话属于 R8，不在 R2 用响应式浏览器页面替代。
+
+- 窄屏顶部先提供当前模块、返回/菜单和关键状态；列表与详情改为路由或抽屉顺序浏览，不能把三栏强行压缩。
+- 题库详情抽屉打开后必须有明确返回列表操作，并保留搜索、筛选与滚动位置。
+- 复习中优先显示题目、评价/追问和输入；运行状态进入可展开面板，会话历史进入抽屉。
+- 焦点顺序、键盘操作、aria label、错误提示和颜色对比遵循现有设计系统；状态不能只依赖颜色表达。
 
 ## 12. 一致性、失败与恢复
 
@@ -357,15 +446,19 @@ Agent 对话属于 R8，不在 R2 用响应式浏览器页面替代。
 - Anthropic-compatible：追问、报告或 discussion 至少一条真实流式调用；
 - 原生 usage 与缺失 usage 的 estimated fallback 都可见；
 - 真实长轮次至少触发一次 summary，内容仍能继续恢复；
-- Langfuse 正常和不可用两种状态均不泄露正文或改变业务结果。
+- 当前 R2 验收环境默认不配置 Langfuse，不启动 Langfuse 容器，也不要求查询 trace；完整复习闭环必须在无 Langfuse 的默认环境中正常完成。
+
+Langfuse 正常导出、可视化内容检查和服务不可达场景不属于当前 R2 交付门禁，后续 observability 专项验收再覆盖。OpenTelemetry/Langfuse 仍是可选观测实现，不得成为业务启动或执行依赖。
 
 ### 14.3 浏览器验收
 
+- 左侧一级导航能在“题库整理”和“开始复习”间切换，并分别恢复对应筛选/会话上下文；
+- 题库整理覆盖导入、真实批次进度、组合筛选、详情预览、Markdown 原文/编辑、重复对比和确认入库；无待确认项时不渲染人工确认卡；
 - 从已发布题库创建至少 10 题轮次并完成；
 - 覆盖必要追问、跳过、刷新、后端重启、重复提交和取消；
 - 轮次报告/mastery draft 的接受、编辑、拒绝和发布；
 - 派生 discussion 后返回主轮次，消息不互相污染；
-- 桌面和 375px 窄屏 Web 无溢出，人工确认仅在 pending action 时出现；该证据不计入 R8 Channel 验收；
+- 桌面验证三栏职责与主要操作顺序，375px 窄屏 Web 验证列表/详情、会话/状态降级且无溢出；人工确认仅在 pending action 时出现；该证据不计入 R8 Channel 验收；
 - Vault target path、报告 evidence 和下一轮 selection 实际引用已确认 mastery。
 
 ## 15. 产品成熟度边界
