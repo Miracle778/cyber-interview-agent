@@ -24,6 +24,7 @@
 - 不修改 `docs/my_idea.md`。
 - 效果图是结构参考，不是硬编码数据或逐像素验收基线。
 - 必须还原一级入口、区域职责、主要操作顺序、状态显隐和 Markdown 阅读/编辑边界。
+- 会话化前端实施前、实施中和最终审查必须使用 `ui-ux-pro-max`，产出设计系统、页面约束和五类 UX 验收证据，不能只在收尾换颜色。
 - R8 明确为微信、飞书等原生对话入口；响应式 Web 只属于 Web UI 质量，不代表 Channel。
 - R8 复用同一 application service、session/checkpoint、HITL、工具权限和知识发布规则，不复制 Agent Runtime。
 - R2 计划最多四个纵向任务，一个 Agent 负责到底，不创建 subagent。

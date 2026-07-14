@@ -375,6 +375,28 @@ R2 使用统一的复习工作台 Shell，而不是把题库、单题表单、�
 2. 尽量还原：三栏比例、卡片密度、列表层级、颜色语义、图标与间距。
 3. 允许调整：具体像素、示例文案、图标形状和统计数字；调整不得改变任务链或把服务端事实退化为前端本地状态。
 
+#### 11.1.1 `ui-ux-pro-max` 前端设计门禁
+
+R2 会话化前端不是在功能完成后临时“美化 CSS”。实施前、实施中和最终验收必须使用已安装的 `ui-ux-pro-max`：
+
+1. **实施前生成设计系统**：先运行 `--design-system`，再按整理会话、题目库、复习历史和复习聊天分别查询 UX/page 规则；把选定的 token、布局、组件状态和 anti-pattern 写入实施计划。禁止只引用 skill 名称而没有可执行产出。
+2. **实施中按设计系统落地**：先统一 Shell、导航、三栏、消息、状态、表单、抽屉、表格和响应式 primitives，再完成纵向页面；不得每个组件自行硬编码颜色、圆角、阴影、间距或 motion。
+3. **功能稳定后执行最终 UI/UX 审查**：使用 `ui-ux-pro-max` 的 accessibility、loading、navigation、responsive 和 performance 检查表审查真实页面，修复后再进行完整浏览器验收。
+
+本项目采用 `AI-native + data-dense dashboard + modern dark`，设计旋钮基线为 `variance 4 / motion 3 / density 8`。数据库检索得到的 Landing Page、紫粉营销配色、重玻璃拟态和装饰性 ambient glow 不适合当前生产力工作台，不得机械采用。视觉实现应延续现有深色中性表面与青色主强调色，保持 Lucide 图标的一致笔画，不为了 skill 建议替换整套图标或引入新 UI 框架。
+
+最低质量规则：
+
+- 使用 semantic tokens；组件内不新增无来源的 raw hex、随机 shadow/radius 或任意 z-index；
+- 使用 4/8px spacing rhythm，高密度但正文不小于可读下限；桌面列表行、状态卡和消息层级清晰；
+- 每个页面只保留一个 primary CTA；破坏性操作与普通操作在视觉和空间上分离；
+- 异步操作 100ms 内产生视觉反馈，超过 300ms 显示 stage/progress 或 skeleton，不允许空白等待；
+- 键盘可完成导航、会话选择、发送、确认和抽屉关闭；焦点可见，Tab 顺序与视觉顺序一致；
+- 普通文本对比度至少 4.5:1，状态不只靠颜色表达；交互目标至少 44×44px；
+- motion 以 150–300ms 的 transform/opacity 为主，表达状态因果并支持 `prefers-reduced-motion`；
+- 在 375、768、1024 和 1440px 检查，无横向溢出、遮挡、不可达操作或不受控 layout shift；
+- 50 项以上会话/题目列表评估虚拟化或分页，长时间线使用渐进加载，避免一次渲染全部历史。
+
 ### 11.2 应用 Shell 与一级导航
 
 桌面端使用稳定应用导航，一级入口继续区分“题库整理”和“开始复习”。进入题库整理后出现“整理会话/题目库”二级视图；进入开始复习后默认先到历史首页，只有点击“继续复习”或创建成功才进入聊天工作台。
@@ -494,6 +516,8 @@ Agent 对话属于 R8，不在 R2 用响应式浏览器页面替代。
 
 ### 14.1 自动验证
 
+- design tokens、组件状态和 breakpoint contract 测试；禁止新增页面级 raw hex 与不一致 icon family 的静态检查；
+- 键盘导航、focus restore、aria-live 阶段提示、reduced-motion 和 375px 无溢出的前端测试；
 - 多文件 curation session、重复来源 warning、stage/progress、失败分片重试和重启恢复；
 - 会话内相似题合并、低置信度降级、active catalog 不覆盖以及多 source/evidence 关联；
 - 明确确认/部分确认/拒绝/重写/重新总结命令、含糊命令 clarification、command receipt 幂等和批量发布部分失败；
@@ -520,6 +544,7 @@ Langfuse 正常导出、可视化内容检查和服务不可达场景不属于�
 
 ### 14.3 浏览器验收
 
+- 验收前执行一次 `ui-ux-pro-max` 最终审查，记录 accessibility、loading、navigation、responsive、performance 五类结论和修正证据；
 - 一级导航能在“题库整理”和“开始复习”间切换；题库二级“整理会话/题目库”分别恢复会话和筛选上下文；
 - 选择多份 source 创建一个整理 session；重复来源显示提示但可继续；左栏会话、中栏真实读取/分片/生成/合并/总结消息、右栏 runtime 持续更新；
 - 总结卡逐题显示推荐结论；明确文字命令完成全部/部分确认、拒绝和重写，含糊命令不发布；发布结果和多来源关联可从题目库追溯；
@@ -531,6 +556,7 @@ Langfuse 正常导出、可视化内容检查和服务不可达场景不属于�
 - 轮次报告/mastery draft 的接受、编辑、拒绝和发布；
 - 派生 discussion 后返回主轮次，消息不互相污染；
 - 桌面验证三栏职责与主要操作顺序，375px 窄屏 Web 验证列表/详情、会话/状态降级且无溢出；人工确认仅在 pending action 时出现；该证据不计入 R8 Channel 验收；
+- 同时检查 768/1024/1440px、键盘全流程、可见焦点、44px 目标、4.5:1 对比度、reduced-motion、异步反馈和长列表性能；视觉结果应达到概念图的信息层级与感知质量，但不做逐像素截图匹配；
 - Vault target path、报告 evidence 和下一轮 selection 实际引用已确认 mastery。
 
 ## 15. 产品成熟度边界
