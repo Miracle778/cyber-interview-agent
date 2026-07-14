@@ -14,6 +14,10 @@ from app.review.errors import (
     ReviewRoundNotFoundError,
 )
 from app.review.models import (
+    AttemptStatus,
+    CurationSessionRecord,
+    CurationStage,
+    CurationSummary,
     Difficulty,
     InputKind,
     MasteryEntry,
@@ -22,9 +26,11 @@ from app.review.models import (
     QuestionCandidateRecord,
     QuestionCatalogRecord,
     QuestionSnapshot,
+    QuestionSourceLinkRecord,
     ReasoningEffort,
     ReportProposalRecord,
     ReviewAttemptRecord,
+    ReviewAnswerReceipt,
     ReviewInputReceipt,
     ReviewInputRequestRecord,
     ReviewMode,
@@ -44,6 +50,156 @@ class ReviewRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self._connection = connection
         self._connection.row_factory = sqlite3.Row
+
+    def create_curation_session(
+        self,
+        *,
+        workspace_id: str,
+        session_id: str,
+        source_refs: tuple[str, ...],
+        warnings: tuple[dict[str, object], ...] = (),
+    ) -> CurationSessionRecord:
+        if not source_refs:
+            raise ValueError("curation session requires at least one source")
+        with self._transaction():
+            self._connection.execute(
+                "INSERT INTO review_curation_sessions "
+                "(session_id, workspace_id, source_refs_json, warning_json) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    session_id,
+                    workspace_id,
+                    _canonical_json(source_refs),
+                    _canonical_json(warnings),
+                ),
+            )
+        return self.get_curation_session(session_id)
+
+    def get_curation_session(self, session_id: str) -> CurationSessionRecord:
+        row = self._connection.execute(
+            "SELECT * FROM review_curation_sessions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            raise LookupError(session_id)
+        return self._curation_session_record(row)
+
+    def list_curation_sessions(
+        self, workspace_id: str, *, limit: int = 50, offset: int = 0
+    ) -> tuple[CurationSessionRecord, ...]:
+        rows = self._connection.execute(
+            "SELECT * FROM review_curation_sessions WHERE workspace_id = ? "
+            "ORDER BY updated_at DESC, rowid DESC LIMIT ? OFFSET ?",
+            (workspace_id, limit, offset),
+        ).fetchall()
+        return tuple(self._curation_session_record(row) for row in rows)
+
+    def update_curation_progress(
+        self,
+        session_id: str,
+        *,
+        stage: CurationStage,
+        completed_units: int,
+        total_units: int,
+        active_batch_id: str | None = None,
+    ) -> CurationSessionRecord:
+        if completed_units < 0 or total_units < 0 or (
+            total_units and completed_units > total_units
+        ):
+            raise ValueError("invalid curation progress")
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_curation_sessions SET stage = ?, "
+                "completed_units = ?, total_units = ?, "
+                "active_batch_id = COALESCE(?, active_batch_id), "
+                "updated_at = CURRENT_TIMESTAMP WHERE session_id = ?",
+                (
+                    stage,
+                    completed_units,
+                    total_units,
+                    active_batch_id,
+                    session_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise LookupError(session_id)
+        return self.get_curation_session(session_id)
+
+    def replace_curation_summary(
+        self,
+        session_id: str,
+        *,
+        expected_version: int,
+        summary: CurationSummary,
+    ) -> CurationSessionRecord:
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_curation_sessions SET summary_json = ?, "
+                "summary_version = summary_version + 1, "
+                "updated_at = CURRENT_TIMESTAMP "
+                "WHERE session_id = ? AND summary_version = ?",
+                (
+                    _canonical_json({"items": summary.items}),
+                    session_id,
+                    expected_version,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError("curation summary version changed")
+        return self.get_curation_session(session_id)
+
+    def upsert_question_source_link(
+        self,
+        *,
+        question_id: str,
+        source_id: str,
+        batch_id: str,
+        session_id: str,
+        evidence_ref: str,
+        merge_reason: str,
+        link_id: str | None = None,
+    ) -> QuestionSourceLinkRecord:
+        existing = self._connection.execute(
+            "SELECT * FROM review_question_source_links "
+            "WHERE question_id = ? AND source_id = ? AND evidence_ref = ?",
+            (question_id, source_id, evidence_ref),
+        ).fetchone()
+        if existing is not None:
+            record = self._question_source_link_record(existing)
+            if (
+                record.batch_id != batch_id
+                or record.session_id != session_id
+                or record.merge_reason != merge_reason
+            ):
+                raise ReviewConflictError("question source link identity changed")
+            return record
+        identifier = link_id or str(uuid4())
+        with self._transaction():
+            self._connection.execute(
+                "INSERT INTO review_question_source_links "
+                "(id, question_id, source_id, batch_id, session_id, "
+                "evidence_ref, merge_reason) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    identifier,
+                    question_id,
+                    source_id,
+                    batch_id,
+                    session_id,
+                    evidence_ref,
+                    merge_reason,
+                ),
+            )
+        return self._require_question_source_link(identifier)
+
+    def list_question_source_links(
+        self, question_id: str
+    ) -> tuple[QuestionSourceLinkRecord, ...]:
+        rows = self._connection.execute(
+            "SELECT * FROM review_question_source_links WHERE question_id = ? "
+            "ORDER BY created_at, rowid",
+            (question_id,),
+        ).fetchall()
+        return tuple(self._question_source_link_record(row) for row in rows)
 
     def create_batch(
         self,
@@ -525,6 +681,175 @@ class ReviewRepository:
             assert row is not None
             return self._input_receipt(row)
 
+    def accept_review_answer(
+        self,
+        *,
+        request_id: str,
+        expected_version: int,
+        idempotency_key: str,
+        value: str,
+        receipt_id: str | None = None,
+        attempt_id: str | None = None,
+        message_id: str | None = None,
+    ) -> ReviewAnswerReceipt:
+        value_hash = sha256(value.encode("utf-8")).hexdigest()
+        with self._transaction():
+            request = self._connection.execute(
+                "SELECT * FROM review_input_requests WHERE id = ?",
+                (request_id,),
+            ).fetchone()
+            if request is None:
+                raise LookupError(request_id)
+            if int(request["version"]) != expected_version:
+                raise ReviewConflictError("input request version changed")
+
+            existing = self._connection.execute(
+                "SELECT * FROM review_input_receipts "
+                "WHERE input_request_id = ?",
+                (request_id,),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    existing["idempotency_key"] != idempotency_key
+                    or existing["value_hash"] != value_hash
+                ):
+                    raise InputAlreadyResolvedError(
+                        f"input request {request_id!r} is already resolved"
+                    )
+                return self._answer_receipt(existing)
+            if request["status"] != "pending":
+                raise InputAlreadyResolvedError(
+                    f"input request {request_id!r} is {request['status']!r}"
+                )
+
+            round_row = self._connection.execute(
+                "SELECT * FROM review_rounds WHERE id = ?",
+                (request["round_id"],),
+            ).fetchone()
+            if round_row is None:
+                raise ReviewRoundNotFoundError(str(request["round_id"]))
+            execution_id = round_row["execution_id"]
+            if execution_id is None:
+                raise ReviewConflictError("round has no execution")
+
+            execution = self._connection.execute(
+                "SELECT status FROM agent_runs WHERE id = ?",
+                (execution_id,),
+            ).fetchone()
+            if execution is None or execution["status"] not in {
+                "waiting_for_input",
+                "interrupted",
+            }:
+                raise ReviewConflictError("round execution is not resumable")
+
+            ordinal = int(request["ordinal"])
+            snapshots = json.loads(round_row["question_snapshots_json"])
+            if not 1 <= ordinal <= len(snapshots):
+                raise ReviewConflictError("input ordinal has no frozen question")
+
+            attempt_row = self._connection.execute(
+                "SELECT * FROM review_attempts "
+                "WHERE round_id = ? AND ordinal = ?",
+                (request["round_id"], ordinal),
+            ).fetchone()
+            if request["kind"] == "answer":
+                if attempt_row is not None:
+                    raise ReviewConflictError("answer attempt already exists")
+                resolved_attempt_id = attempt_id or str(uuid4())
+                self._connection.execute(
+                    "INSERT INTO review_attempts "
+                    "(id, round_id, ordinal, question_snapshot_json, answer, "
+                    "status, evaluation_started_at) "
+                    "VALUES (?, ?, ?, ?, ?, 'evaluating', CURRENT_TIMESTAMP)",
+                    (
+                        resolved_attempt_id,
+                        request["round_id"],
+                        ordinal,
+                        _canonical_json(snapshots[ordinal - 1]),
+                        value,
+                    ),
+                )
+            else:
+                if attempt_row is None:
+                    raise ReviewConflictError(
+                        "follow-up input requires an existing attempt"
+                    )
+                resolved_attempt_id = str(attempt_row["id"])
+                self._connection.execute(
+                    "UPDATE review_attempts SET follow_up_answer = ?, "
+                    "status = 'evaluating', evaluation_error_code = NULL, "
+                    "evaluation_started_at = CURRENT_TIMESTAMP, "
+                    "evaluation_completed_at = NULL, "
+                    "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (value, resolved_attempt_id),
+                )
+
+            resolved_message_id = message_id or str(uuid4())
+            message_payload = {
+                "roundId": request["round_id"],
+                "attemptId": resolved_attempt_id,
+                "inputRequestId": request_id,
+                "ordinal": ordinal,
+            }
+            self._connection.execute(
+                "INSERT INTO agent_messages "
+                "(id, session_id, run_id, role, content, message_kind, "
+                "payload_json) VALUES (?, ?, ?, 'user', ?, "
+                "'review_answer', ?)",
+                (
+                    resolved_message_id,
+                    round_row["session_id"],
+                    execution_id,
+                    value,
+                    _canonical_json(message_payload),
+                ),
+            )
+            resolved_receipt_id = receipt_id or str(uuid4())
+            receipt_payload = {
+                "roundId": request["round_id"],
+                "attemptId": resolved_attempt_id,
+                "messageId": resolved_message_id,
+                "status": "evaluating",
+                "version": int(round_row["version"]),
+            }
+            self._connection.execute(
+                "INSERT INTO review_input_receipts "
+                "(id, input_request_id, idempotency_key, value_hash, "
+                "receipt_json) VALUES (?, ?, ?, ?, ?)",
+                (
+                    resolved_receipt_id,
+                    request_id,
+                    idempotency_key,
+                    value_hash,
+                    _canonical_json(receipt_payload),
+                ),
+            )
+            self._connection.execute(
+                "UPDATE review_input_requests SET status = 'resolved', "
+                "resolved_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (request_id,),
+            )
+            cursor = self._connection.execute(
+                "UPDATE agent_runs SET status = 'running', "
+                "resume_count = resume_count + 1, "
+                "last_resumed_at = CURRENT_TIMESTAMP, finished_at = NULL "
+                "WHERE id = ? AND status IN ('waiting_for_input', 'interrupted')",
+                (execution_id,),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError("round execution changed before resume")
+            self._connection.execute(
+                "UPDATE agent_sessions SET status = 'active', "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (round_row["session_id"],),
+            )
+            receipt_row = self._connection.execute(
+                "SELECT * FROM review_input_receipts WHERE id = ?",
+                (resolved_receipt_id,),
+            ).fetchone()
+            assert receipt_row is not None
+            return self._answer_receipt(receipt_row)
+
     def save_attempt(
         self,
         *,
@@ -577,6 +902,60 @@ class ReviewRepository:
             (round_id,),
         ).fetchall()
         return tuple(self._attempt_record(row) for row in rows)
+
+    def get_attempt(self, attempt_id: str) -> ReviewAttemptRecord:
+        row = self._connection.execute(
+            "SELECT * FROM review_attempts WHERE id = ?", (attempt_id,)
+        ).fetchone()
+        if row is None:
+            raise LookupError(attempt_id)
+        return self._attempt_record(row)
+
+    def complete_attempt_evaluation(
+        self,
+        attempt_id: str,
+        *,
+        evaluation: dict[str, object],
+        mastery_suggestion: str,
+        needs_follow_up: bool,
+    ) -> ReviewAttemptRecord:
+        target = "waiting_for_follow_up" if needs_follow_up else "completed"
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_attempts SET evaluation_json = ?, "
+                "mastery_suggestion = ?, status = ?, "
+                "evaluation_error_code = NULL, "
+                "evaluation_completed_at = CURRENT_TIMESTAMP, "
+                "updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND status = 'evaluating'",
+                (
+                    _canonical_json(evaluation),
+                    mastery_suggestion,
+                    target,
+                    attempt_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError("attempt is not awaiting evaluation")
+        return self.get_attempt(attempt_id)
+
+    def fail_attempt_evaluation(
+        self, attempt_id: str, *, error_code: str
+    ) -> ReviewAttemptRecord:
+        if not error_code or len(error_code) > 100:
+            raise ValueError("evaluation error code must be stable and bounded")
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_attempts SET status = 'evaluation_failed', "
+                "evaluation_error_code = ?, "
+                "evaluation_completed_at = CURRENT_TIMESTAMP, "
+                "updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND status = 'evaluating'",
+                (error_code, attempt_id),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError("attempt is not awaiting evaluation")
+        return self.get_attempt(attempt_id)
 
     def advance_round(
         self,
@@ -752,6 +1131,17 @@ class ReviewRepository:
             raise LookupError(question_id)
         return self._catalog_record(row)
 
+    def _require_question_source_link(
+        self, link_id: str
+    ) -> QuestionSourceLinkRecord:
+        row = self._connection.execute(
+            "SELECT * FROM review_question_source_links WHERE id = ?",
+            (link_id,),
+        ).fetchone()
+        if row is None:
+            raise LookupError(link_id)
+        return self._question_source_link_record(row)
+
     @contextmanager
     def _transaction(self) -> Iterator[None]:
         self._connection.execute("BEGIN IMMEDIATE")
@@ -827,6 +1217,40 @@ class ReviewRepository:
             correction_note=row["correction_note"],
             duplicate_of_question_id=row["duplicate_of_question_id"],
             status=row["status"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    @staticmethod
+    def _curation_session_record(row: sqlite3.Row) -> CurationSessionRecord:
+        summary = json.loads(row["summary_json"])
+        return CurationSessionRecord(
+            session_id=row["session_id"],
+            workspace_id=row["workspace_id"],
+            source_refs=tuple(json.loads(row["source_refs_json"])),
+            active_batch_id=row["active_batch_id"],
+            stage=cast(CurationStage, row["stage"]),
+            completed_units=row["completed_units"],
+            total_units=row["total_units"],
+            summary=CurationSummary(items=tuple(summary.get("items", ()))),
+            summary_version=row["summary_version"],
+            warnings=tuple(json.loads(row["warning_json"])),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    @staticmethod
+    def _question_source_link_record(
+        row: sqlite3.Row,
+    ) -> QuestionSourceLinkRecord:
+        return QuestionSourceLinkRecord(
+            id=row["id"],
+            question_id=row["question_id"],
+            source_id=row["source_id"],
+            batch_id=row["batch_id"],
+            session_id=row["session_id"],
+            evidence_ref=row["evidence_ref"],
+            merge_reason=row["merge_reason"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -907,6 +1331,24 @@ class ReviewRepository:
             skipped=bool(row["skipped"]),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            status=cast(AttemptStatus, row["status"]),
+            evaluation_error_code=row["evaluation_error_code"],
+            evaluation_started_at=row["evaluation_started_at"],
+            evaluation_completed_at=row["evaluation_completed_at"],
+        )
+
+    @staticmethod
+    def _answer_receipt(row: sqlite3.Row) -> ReviewAnswerReceipt:
+        payload = json.loads(row["receipt_json"])
+        return ReviewAnswerReceipt(
+            id=row["id"],
+            round_id=str(payload["roundId"]),
+            attempt_id=str(payload["attemptId"]),
+            input_request_id=row["input_request_id"],
+            message_id=str(payload["messageId"]),
+            status=cast(AttemptStatus, payload["status"]),
+            version=int(payload["version"]),
+            accepted_at=row["created_at"],
         )
 
     @staticmethod

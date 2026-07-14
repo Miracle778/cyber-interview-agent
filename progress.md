@@ -9,6 +9,7 @@
 - 新 Agent 会话概念图已保存到 `docs/superpowers/assets/r2/agent-session-redesign-reference.png`，正式 R2 spec 已按架构、API、状态、失败和验收边界修订；尚未开始业务代码修改。
 - 用户追加前端质量要求：实施前、实施中和最终审查均使用 `ui-ux-pro-max`。检索后确定 `AI-native + data-dense dashboard + modern dark`，基线为 variance 4 / motion 3 / density 8，并明确拒绝不适合应用工作台的 Landing Page、紫粉营销和重玻璃拟态建议。
 - 用户已确认正式修订规格；新增 `docs/superpowers/plans/2026-07-14-r2-agent-session-interaction-redesign.md`，按 durable session facts、题库整理会话、异步复习会话、最终 UI/UX/验收四个纵向任务执行。计划已对齐 spec 状态名、202 answer receipt、原子接收、重启恢复、安全 SSE 和一次最终全量回归预算，尚未修改业务代码。
+- 会话化修订 Task 1 已实现：migration 003、结构化 timeline message、curation session/summary/source-link facts、attempt evaluation 状态及原子 answer acceptance；针对性测试 `24 passed`，compile 与 diff check 通过。计划中 verification/learning 路径已修正为仓库现有的 `r2-complete-review-agent` 命名。
 
 ## 2026-07-14：R2 Task 4 非浏览器验收完成
 

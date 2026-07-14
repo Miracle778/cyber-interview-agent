@@ -189,6 +189,15 @@ class ReviewAttemptResource(ReviewModel):
     evaluation: dict[str, Any] | None
     mastery_suggestion: str | None
     skipped: bool
+    status: Literal[
+        "evaluating",
+        "waiting_for_follow_up",
+        "completed",
+        "evaluation_failed",
+    ]
+    evaluation_error_code: str | None
+    evaluation_started_at: str | None
+    evaluation_completed_at: str | None
     created_at: str
     updated_at: str
 

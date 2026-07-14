@@ -18,6 +18,30 @@ ExecutionStatus = Literal[
     "failed",
     "cancelled",
 ]
+MessageKind = Literal[
+    "text",
+    "stage",
+    "curation_summary",
+    "question_card",
+    "review_prompt",
+    "review_answer",
+    "evaluation_card",
+    "command_receipt",
+    "error",
+]
+_MESSAGE_KINDS = frozenset(
+    {
+        "text",
+        "stage",
+        "curation_summary",
+        "question_card",
+        "review_prompt",
+        "review_answer",
+        "evaluation_card",
+        "command_receipt",
+        "error",
+    }
+)
 
 
 class ProductRecordNotFoundError(RuntimeError):
@@ -64,6 +88,8 @@ class MessageRecord:
     execution_id: str | None
     role: str
     content: str
+    message_kind: MessageKind
+    payload: dict[str, Any]
     created_at: str
 
 
@@ -238,40 +264,41 @@ class ProductRepository:
         execution_id: str | None,
         role: str,
         content: str,
+        message_kind: MessageKind = "text",
+        payload: dict[str, Any] | None = None,
     ) -> MessageRecord:
+        if message_kind not in _MESSAGE_KINDS:
+            raise ValueError(f"unsupported message kind: {message_kind}")
+        if payload is not None and not isinstance(payload, dict):
+            raise ValueError("message payload must be an object")
         message_id = str(uuid4())
+        safe_payload = payload or {}
         self.connection.execute(
-            "INSERT INTO agent_messages(id, session_id, run_id, role, content) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (message_id, session_id, execution_id, role, content),
+            "INSERT INTO agent_messages "
+            "(id, session_id, run_id, role, content, message_kind, payload_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                message_id,
+                session_id,
+                execution_id,
+                role,
+                content,
+                message_kind,
+                _json(safe_payload),
+            ),
         )
         self.connection.commit()
         row = self.connection.execute(
             "SELECT * FROM agent_messages WHERE id = ?", (message_id,)
         ).fetchone()
-        return MessageRecord(
-            id=row["id"],
-            execution_id=row["run_id"],
-            role=row["role"],
-            content=row["content"],
-            created_at=row["created_at"],
-        )
+        return _message(row)
 
     def list_messages(self, session_id: str) -> tuple[MessageRecord, ...]:
         rows = self.connection.execute(
             "SELECT * FROM agent_messages WHERE session_id = ? ORDER BY rowid",
             (session_id,),
         ).fetchall()
-        return tuple(
-            MessageRecord(
-                id=row["id"],
-                execution_id=row["run_id"],
-                role=row["role"],
-                content=row["content"],
-                created_at=row["created_at"],
-            )
-            for row in rows
-        )
+        return tuple(_message(row) for row in rows)
 
     def append_event(
         self,
@@ -342,6 +369,7 @@ class ProductEventStream:
     _allowed = frozenset(
         {
             "session.created",
+            "session.message.created",
             "execution.started",
             "assistant.delta",
             "approval.required",
@@ -501,6 +529,21 @@ def _event(row) -> EventRecord:
         execution_id=row["run_id"],
         type=row["type"],
         payload=json.loads(row["payload_json"]),
+        created_at=row["created_at"],
+    )
+
+
+def _message(row) -> MessageRecord:
+    payload = json.loads(row["payload_json"])
+    if not isinstance(payload, dict):
+        raise ValueError("stored message payload must be an object")
+    return MessageRecord(
+        id=row["id"],
+        execution_id=row["run_id"],
+        role=row["role"],
+        content=row["content"],
+        message_kind=row["message_kind"],
+        payload=payload,
         created_at=row["created_at"],
     )
 

@@ -19,6 +19,11 @@ R2_TABLES = {
     "review_mastery_projection",
 }
 
+R2_SESSION_EXPERIENCE_TABLES = {
+    "review_curation_sessions",
+    "review_question_source_links",
+}
+
 
 def _tables(connection) -> set[str]:
     return {
@@ -33,13 +38,13 @@ def _tables(connection) -> set[str]:
 def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
     connection = connect_runtime_database(tmp_path)
 
-    assert R2_TABLES <= _tables(connection)
+    assert R2_TABLES | R2_SESSION_EXPERIENCE_TABLES <= _tables(connection)
     assert [
         row[0]
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-    ] == [1, 2]
+    ] == [1, 2, 3]
     connection.close()
 
 
@@ -69,7 +74,7 @@ def test_existing_generation_two_database_applies_r2_migration(
 
     reopened = connect_runtime_database(tmp_path)
 
-    assert R2_TABLES <= _tables(reopened)
+    assert R2_TABLES | R2_SESSION_EXPERIENCE_TABLES <= _tables(reopened)
     assert reopened.execute(
         "SELECT title FROM agent_sessions WHERE id = 'keep'"
     ).fetchone()[0] == "keep me"
@@ -78,7 +83,7 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-    ] == [1, 2]
+    ] == [1, 2, 3]
     reopened.close()
 
 
@@ -99,3 +104,52 @@ def test_r2_migration_adds_waiting_for_input_status(tmp_path: Path) -> None:
         "SELECT status FROM agent_runs WHERE id = 'execution'"
     ).fetchone()[0] == "waiting_for_input"
     connection.close()
+
+
+def test_session_experience_migration_adds_structured_messages_and_attempt_state(
+    tmp_path: Path,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+
+    message_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(agent_messages)")
+    }
+    attempt_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(review_attempts)")
+    }
+
+    assert {"message_kind", "payload_json"} <= message_columns
+    assert {
+        "status",
+        "evaluation_error_code",
+        "evaluation_started_at",
+        "evaluation_completed_at",
+    } <= attempt_columns
+    connection.close()
+
+
+def test_session_experience_migration_preserves_existing_r2_rows(
+    tmp_path: Path,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+    connection.execute(
+        "INSERT INTO agent_sessions "
+        "(id, workspace_id, graph_id, graph_version, title) "
+        "VALUES ('s-existing', 'w1', 'review.round', 1, 'Existing')"
+    )
+    connection.execute(
+        "INSERT INTO agent_messages "
+        "(id, session_id, role, content) "
+        "VALUES ('m-existing', 's-existing', 'assistant', 'Keep me')"
+    )
+    connection.commit()
+    connection.close()
+
+    reopened = connect_runtime_database(tmp_path)
+    row = reopened.execute(
+        "SELECT content, message_kind, payload_json FROM agent_messages "
+        "WHERE id = 'm-existing'"
+    ).fetchone()
+
+    assert tuple(row) == ("Keep me", "text", "{}")
+    reopened.close()

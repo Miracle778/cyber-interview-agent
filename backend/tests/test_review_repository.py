@@ -6,6 +6,7 @@ import pytest
 from app.infrastructure.runtime_database import connect_runtime_database
 from app.review.errors import InputAlreadyResolvedError, ReviewConflictError
 from app.review.models import (
+    CurationSummary,
     MasteryEntry,
     MasteryProjection,
     QuestionSnapshot,
@@ -269,4 +270,275 @@ def test_mastery_projection_requires_expected_version(tmp_path: Path) -> None:
     assert updated.entries[0].state == "weak"
     with pytest.raises(ReviewConflictError):
         repository.update_mastery(proposal, expected_version=0)
+    connection.close()
+
+
+def test_curation_session_progress_summary_and_source_links_are_durable(
+    tmp_path: Path,
+) -> None:
+    connection = _connection(tmp_path)
+    repository = ReviewRepository(connection)
+    session = repository.create_curation_session(
+        workspace_id="w1",
+        session_id="s1",
+        source_refs=("source-1", "source-2"),
+    )
+    batch = repository.create_batch(
+        workspace_id="w1",
+        session_id="s1",
+        run_id="r1",
+        source_refs=session.source_refs,
+        batch_id="batch-curation",
+    )
+
+    progressing = repository.update_curation_progress(
+        "s1",
+        stage="generating",
+        completed_units=2,
+        total_units=5,
+        active_batch_id=batch.id,
+    )
+    summarized = repository.replace_curation_summary(
+        "s1",
+        expected_version=0,
+        summary=CurationSummary(
+            items=(
+                {
+                    "ordinal": 1,
+                    "candidateId": "candidate-a",
+                    "recommendation": "recommend_confirm",
+                },
+            )
+        ),
+    )
+    first_link = repository.upsert_question_source_link(
+        question_id="a",
+        source_id="source-1",
+        batch_id=batch.id,
+        session_id="s1",
+        evidence_ref="source-1#fragment-1",
+        merge_reason="generated_from_source",
+    )
+    second_link = repository.upsert_question_source_link(
+        question_id="a",
+        source_id="source-1",
+        batch_id=batch.id,
+        session_id="s1",
+        evidence_ref="source-1#fragment-1",
+        merge_reason="generated_from_source",
+    )
+
+    assert progressing.stage == "generating"
+    assert (progressing.completed_units, progressing.total_units) == (2, 5)
+    assert summarized.summary_version == 1
+    assert summarized.summary.items[0]["candidateId"] == "candidate-a"
+    assert first_link == second_link
+    assert repository.list_question_source_links("a") == (first_link,)
+    assert repository.list_curation_sessions("w1")[0].session_id == "s1"
+    connection.close()
+
+
+def test_accept_review_answer_is_atomic_and_idempotent(tmp_path: Path) -> None:
+    connection = _connection(tmp_path)
+    repository = ReviewRepository(connection)
+    repository.create_round(
+        workspace_id="w1",
+        session_id="s1",
+        execution_id="r1",
+        settings=_settings(),
+        question_snapshots=(_snapshot(),),
+        mastery_before=_mastery(),
+        round_id="round-1",
+    )
+    request = repository.create_input_request(
+        round_id="round-1",
+        ordinal=1,
+        kind="answer",
+        prompt="Explain a",
+        request_id="input-1",
+    )
+    connection.execute(
+        "UPDATE agent_runs SET status = 'waiting_for_input' WHERE id = 'r1'"
+    )
+    connection.execute(
+        "UPDATE agent_sessions SET status = 'waiting_for_input' WHERE id = 's1'"
+    )
+    connection.commit()
+
+    first = repository.accept_review_answer(
+        request_id=request.id,
+        expected_version=request.version,
+        idempotency_key="answer-key",
+        value="My answer",
+        receipt_id="receipt-1",
+        attempt_id="attempt-1",
+        message_id="message-1",
+    )
+    second = repository.accept_review_answer(
+        request_id=request.id,
+        expected_version=request.version,
+        idempotency_key="answer-key",
+        value="My answer",
+        receipt_id="ignored",
+        attempt_id="ignored",
+        message_id="ignored",
+    )
+
+    attempt = repository.list_attempts("round-1")[0]
+    message = connection.execute(
+        "SELECT role, content, message_kind, payload_json "
+        "FROM agent_messages WHERE id = 'message-1'"
+    ).fetchone()
+    execution_status = connection.execute(
+        "SELECT status FROM agent_runs WHERE id = 'r1'"
+    ).fetchone()[0]
+
+    assert first == second
+    assert first.attempt_id == "attempt-1"
+    assert first.status == "evaluating"
+    assert attempt.status == "evaluating"
+    assert attempt.answer == "My answer"
+    assert tuple(message[:3]) == ("user", "My answer", "review_answer")
+    assert "My answer" not in message[3]
+    assert execution_status == "running"
+    with pytest.raises(InputAlreadyResolvedError):
+        repository.accept_review_answer(
+            request_id=request.id,
+            expected_version=request.version,
+            idempotency_key="answer-key",
+            value="Different answer",
+        )
+    connection.close()
+
+
+def test_accept_review_answer_rolls_back_when_execution_cannot_resume(
+    tmp_path: Path,
+) -> None:
+    connection = _connection(tmp_path)
+    repository = ReviewRepository(connection)
+    repository.create_round(
+        workspace_id="w1",
+        session_id="s1",
+        execution_id="r1",
+        settings=_settings(),
+        question_snapshots=(_snapshot(),),
+        mastery_before=_mastery(),
+        round_id="round-1",
+    )
+    request = repository.create_input_request(
+        round_id="round-1",
+        ordinal=1,
+        kind="answer",
+        prompt="Explain a",
+        request_id="input-1",
+    )
+
+    with pytest.raises(ReviewConflictError):
+        repository.accept_review_answer(
+            request_id=request.id,
+            expected_version=request.version,
+            idempotency_key="answer-key",
+            value="My answer",
+        )
+
+    assert repository.get_input_request(request.id).status == "pending"
+    assert repository.list_attempts("round-1") == ()
+    assert connection.execute(
+        "SELECT COUNT(*) FROM agent_messages WHERE session_id = 's1'"
+    ).fetchone()[0] == 0
+    connection.close()
+
+
+def test_attempt_evaluation_transitions_store_validated_result(
+    tmp_path: Path,
+) -> None:
+    connection = _connection(tmp_path)
+    repository = ReviewRepository(connection)
+    repository.create_round(
+        workspace_id="w1",
+        session_id="s1",
+        execution_id="r1",
+        settings=_settings(),
+        question_snapshots=(_snapshot(),),
+        mastery_before=_mastery(),
+        round_id="round-1",
+    )
+    request = repository.create_input_request(
+        round_id="round-1",
+        ordinal=1,
+        kind="answer",
+        prompt="Explain a",
+        request_id="input-1",
+    )
+    connection.execute(
+        "UPDATE agent_runs SET status = 'waiting_for_input' WHERE id = 'r1'"
+    )
+    connection.commit()
+    receipt = repository.accept_review_answer(
+        request_id=request.id,
+        expected_version=request.version,
+        idempotency_key="answer-key",
+        value="My answer",
+        attempt_id="attempt-1",
+    )
+
+    completed = repository.complete_attempt_evaluation(
+        receipt.attempt_id,
+        evaluation={"score": "partial", "missing_key_points": ["edge"]},
+        mastery_suggestion="partial",
+        needs_follow_up=True,
+    )
+
+    assert completed.status == "waiting_for_follow_up"
+    assert completed.evaluation == {
+        "score": "partial",
+        "missing_key_points": ["edge"],
+    }
+    assert completed.mastery_suggestion == "partial"
+    assert completed.evaluation_completed_at is not None
+    connection.close()
+
+
+def test_attempt_evaluation_failure_preserves_answer_and_uses_safe_code(
+    tmp_path: Path,
+) -> None:
+    connection = _connection(tmp_path)
+    repository = ReviewRepository(connection)
+    repository.create_round(
+        workspace_id="w1",
+        session_id="s1",
+        execution_id="r1",
+        settings=_settings(),
+        question_snapshots=(_snapshot(),),
+        mastery_before=_mastery(),
+        round_id="round-1",
+    )
+    request = repository.create_input_request(
+        round_id="round-1",
+        ordinal=1,
+        kind="answer",
+        prompt="Explain a",
+        request_id="input-1",
+    )
+    connection.execute(
+        "UPDATE agent_runs SET status = 'waiting_for_input' WHERE id = 'r1'"
+    )
+    connection.commit()
+    receipt = repository.accept_review_answer(
+        request_id=request.id,
+        expected_version=request.version,
+        idempotency_key="answer-key",
+        value="My answer",
+        attempt_id="attempt-1",
+    )
+
+    failed = repository.fail_attempt_evaluation(
+        receipt.attempt_id, error_code="structured_output_invalid"
+    )
+
+    assert failed.status == "evaluation_failed"
+    assert failed.answer == "My answer"
+    assert failed.evaluation is None
+    assert failed.evaluation_error_code == "structured_output_invalid"
+    assert failed.evaluation_completed_at is not None
     connection.close()

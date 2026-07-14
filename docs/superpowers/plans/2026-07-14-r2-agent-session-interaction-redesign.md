@@ -472,7 +472,7 @@ With Langfuse variables unset, start the existing backend/frontend dev commands.
 5. verify SSE stages and one final evaluation card;
 6. refresh and verify the same session/timeline restores.
 
-Record only IDs, visible statuses, timings and screenshots in `docs/verification/r2.md`; do not claim full browser acceptance yet.
+Record only IDs, visible statuses, timings and screenshots in `docs/verification/r2-complete-review-agent.md`; do not claim full browser acceptance yet.
 
 ### Step 6: Commit the review vertical slice
 
@@ -496,14 +496,14 @@ git commit -m "feat(review): make review sessions asynchronous"
 **Files:**
 
 - Modify as findings require: `frontend/src/features/review/**`, `frontend/src/app/global.css`
-- Modify local: `docs/verification/r2.md`
-- Regenerate local: `docs/learning/r2/**`
+- Modify local: `docs/verification/r2-complete-review-agent.md`
+- Regenerate local: `docs/learning/r2-complete-review-agent/**`
 - Modify: `task_plan.md`, `findings.md`, `progress.md`
 - Test: affected backend/frontend files plus final suites
 
 ### Step 1: Run the final `ui-ux-pro-max` audit once
 
-Re-run focused searches for `accessibility`, `loading feedback`, `navigation`, `responsive dashboard`, and `react performance`. Audit the real page at 375, 768, 1024 and 1440 widths. Capture a concise evidence table in `docs/verification/r2.md` with:
+Re-run focused searches for `accessibility`, `loading feedback`, `navigation`, `responsive dashboard`, and `react performance`. Audit the real page at 375, 768, 1024 and 1440 widths. Capture a concise evidence table in `docs/verification/r2-complete-review-agent.md` with:
 
 - accessibility: keyboard order, visible focus, labels, 44px targets, contrast;
 - loading: immediate acknowledgement, honest progress, retry and empty/error states;
@@ -554,23 +554,24 @@ With Langfuse unconfigured:
 9. exercise evaluation failure/retry with a controlled failure adapter;
 10. verify desktop and 375px layouts, keyboard navigation, reduced motion, Markdown reading/editing boundary, and conditional HITL visibility.
 
-Update `docs/verification/r2.md` with truthful evidence. Browser acceptance remains failed if any required scenario was not actually run.
+Update `docs/verification/r2-complete-review-agent.md` with truthful evidence. Browser acceptance remains failed if any required scenario was not actually run.
 
 ### Step 5: Refresh final user/learning documents and run the gate
 
-Reshape `docs/verification/r2.md` into the final user guide only after browser acceptance passes. Regenerate the R2 foundation-profile seven-file learning pack once, compare its depth with R1.2/R1.3, and record ownership status separately from product completion.
+Reshape `docs/verification/r2-complete-review-agent.md` into the final user guide only after browser acceptance passes. Regenerate the R2 foundation-profile seven-file learning pack once, compare its depth with R1.2/R1.3, and record ownership status separately from product completion.
 
 Run:
 
 ```bash
 python3 scripts/check_stage_docs.py \
-  --verification docs/verification/r2.md \
-  --learning docs/learning/r2/ \
+  --verification docs/verification/r2-complete-review-agent.md \
+  --learning docs/learning/r2-complete-review-agent/ \
   --plan docs/superpowers/plans/2026-07-14-r2-agent-session-interaction-redesign.md
 git diff --check
 rg -n "TB""D|TO""DO|FIX""ME|浏览器验收通过" \
   docs/superpowers/plans/2026-07-14-r2-agent-session-interaction-redesign.md \
-  docs/verification/r2.md docs/learning/r2
+  docs/verification/r2-complete-review-agent.md \
+  docs/learning/r2-complete-review-agent
 ```
 
 Expected: documentation gate passes; placeholder scan has no unresolved placeholder and every browser claim has matching evidence.
@@ -608,4 +609,4 @@ Report these separately:
 - [x] HITL is visible only for real pending decisions; explicit curation confirmation text is itself the decision receipt.
 - [x] UI design gates have concrete commands, artifacts and exit conditions.
 - [x] Full regression/build and complete browser acceptance each run once at the prescribed point.
-- [x] `docs/verification/r2.md` and `docs/learning/r2/` are explicitly synchronized after merge even though Git ignores them.
+- [x] `docs/verification/r2-complete-review-agent.md` and `docs/learning/r2-complete-review-agent/` are explicitly synchronized after merge even though Git ignores them.

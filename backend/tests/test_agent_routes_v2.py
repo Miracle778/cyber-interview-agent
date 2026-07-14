@@ -89,6 +89,8 @@ async def test_session_and_execution_resources_do_not_expose_graph_internals(api
         detail = (await client.get(f"/api/agent/sessions/{session['id']}")).json()
         assert detail["latestExecution"]["status"] == "completed"
         assert detail["messages"][-1]["content"] == "Echo: hello"
+        assert detail["messages"][-1]["messageKind"] == "text"
+        assert detail["messages"][-1]["payload"] == {}
 
 
 @pytest.mark.asyncio

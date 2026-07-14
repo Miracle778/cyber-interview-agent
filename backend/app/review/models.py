@@ -22,6 +22,20 @@ MasteryState: TypeAlias = Literal[
     "unknown", "weak", "partial", "stable", "strong"
 ]
 ReasoningEffort: TypeAlias = Literal["none", "low", "medium", "high"]
+CurationStage: TypeAlias = Literal[
+    "queued",
+    "reading_sources",
+    "generating",
+    "merging",
+    "summarizing",
+    "waiting_for_command",
+    "publishing",
+    "completed",
+    "failed",
+]
+AttemptStatus: TypeAlias = Literal[
+    "evaluating", "waiting_for_follow_up", "completed", "evaluation_failed"
+]
 
 _DIFFICULTIES = frozenset({"easy", "medium", "hard"})
 _MODES = frozenset(
@@ -156,6 +170,40 @@ class QuestionCandidateRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class CurationSummary:
+    items: tuple[dict[str, object], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class CurationSessionRecord:
+    session_id: str
+    workspace_id: str
+    source_refs: tuple[str, ...]
+    active_batch_id: str | None
+    stage: CurationStage
+    completed_units: int
+    total_units: int
+    summary: CurationSummary
+    summary_version: int
+    warnings: tuple[dict[str, object], ...]
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class QuestionSourceLinkRecord:
+    id: str
+    question_id: str
+    source_id: str
+    batch_id: str
+    session_id: str
+    evidence_ref: str
+    merge_reason: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
 class ReviewRoundRecord:
     id: str
     workspace_id: str
@@ -208,6 +256,22 @@ class ReviewAttemptRecord:
     skipped: bool
     created_at: str
     updated_at: str
+    status: AttemptStatus = "completed"
+    evaluation_error_code: str | None = None
+    evaluation_started_at: str | None = None
+    evaluation_completed_at: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewAnswerReceipt:
+    id: str
+    round_id: str
+    attempt_id: str
+    input_request_id: str
+    message_id: str
+    status: AttemptStatus
+    version: int
+    accepted_at: str
 
 
 @dataclass(frozen=True, slots=True)

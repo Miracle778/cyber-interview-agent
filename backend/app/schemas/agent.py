@@ -52,6 +52,8 @@ class MessageResource(AgentModel):
     execution_id: str | None
     role: str
     content: str
+    message_kind: str
+    payload: dict[str, Any]
     created_at: str
 
 
