@@ -124,7 +124,7 @@ class SqliteMiddlewareProjection:
         return cursor.rowcount == 1
 
 
-def build_curation_intent_context(
+def build_curation_command_context(
     *,
     workspace_id: str,
     workspace_root: Path,
@@ -140,7 +140,7 @@ def build_curation_intent_context(
         run_id=run_id,
         allowed_tools=frozenset(),
         allowed_scopes=frozenset(),
-        progress_scope=("curation_intent", idempotency_key, invocation_id),
+        progress_scope=("curation_command", idempotency_key, invocation_id),
     )
 
 
@@ -247,7 +247,7 @@ class WorkspaceRuntime:
                 text=text,
                 candidates=candidates,
                 conversation=conversation,
-                context=build_curation_intent_context(
+                context=build_curation_command_context(
                     workspace_id=workspace_id,
                     workspace_root=root,
                     session_id=session_id,

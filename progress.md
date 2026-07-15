@@ -228,3 +228,10 @@
 - 候选题总结已锚定在最新 `curation_summary` 消息之后，后续用户/Agent 对话按时间顺序显示在卡片下方；列表压缩为紧凑行并限制为 192px 内部滚动区。
 - 运行状态栏移除耗时；Token 以 `k` 为单位进入默认展开的运行详情；“资料提示”改名“提示”并在存在时默认展开。真实页面两区同时展开时右栏 `clientHeight=scrollHeight=535px`，无额外滚动。
 - 修正上下文压缩事实：Provider model 新增可配置最大输入 Token；middleware 使用 70% Token 主阈值、20% Token 保留量和 100 消息兜底，并将真实当前/阈值 Token 投影到 session API；前端已删除 timeline 条数推算。定向后端 68 项、前端 14 项通过，待重启服务后完成真实页面数据验收。
+
+## 2026-07-15：持久上下文架构 Task 3
+
+- 用确定性 parser 优先处理明确序号、唯一焦点和危险多焦点指代；复杂自由表达才进入结构化模型分类。
+- `CurationIntentAgent` 收敛为无工具、无 checkpoint 的 classifier/summarizer 组件，执行名称与模型 role 分离。
+- 新增领域上下文 adapter：完整 turn、焦点题全文、其他题轻量索引，并保证显式命令不加载上下文或调用模型。
+- TDD 证据：RED 为缺少新模块/接口；GREEN 定向回归 27 passed。

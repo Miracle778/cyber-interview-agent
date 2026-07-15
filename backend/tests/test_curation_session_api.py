@@ -11,7 +11,10 @@ from app.application.workspace_runtime import AgentApplication
 from app.knowledge.source_registry import KnowledgeSourceService
 from app.graphs.publication import create_publication_graph
 from tests.test_review_api_v2 import _graph_factory
-from app.agents.curation_intent import CandidateSelector, CurationIntentPlan
+from app.review.curation_command_contracts import (
+    CandidateSelector,
+    CurationCommandPlan,
+)
 
 
 def _session_graph_factory(kind, **dependencies):
@@ -412,10 +415,10 @@ async def test_curation_intent_receives_recent_focus_and_projects_command_timing
         async def resolve(**kwargs):
             captured.append(kwargs)
             if len(captured) == 1:
-                return CurationIntentPlan(
+                return CurationCommandPlan(
                     inspect=CandidateSelector(scope="explicit", ordinals=[1])
                 )
-            return CurationIntentPlan(response="已理解你指的是刚才查看的题目。")
+            return CurationCommandPlan(response="已理解你指的是刚才查看的题目。")
 
         review.resolve_curation_intent = resolve
         detail = (

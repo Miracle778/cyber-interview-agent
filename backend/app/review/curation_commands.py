@@ -4,7 +4,10 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from app.agents.curation_intent import CandidateSelector, CurationIntentPlan
+from app.review.curation_command_contracts import (
+    CandidateSelector,
+    CurationCommandPlan,
+)
 
 from app.review.models import CurationSummary
 
@@ -28,10 +31,10 @@ class ParsedCurationCommand:
 
 
 class CurationCommandService:
-    def resolve_intent(
+    def resolve_plan(
         self,
         *,
-        intent: CurationIntentPlan,
+        plan: CurationCommandPlan,
         summary: CurationSummary,
         candidates: tuple[dict[str, Any], ...],
         current_summary_version: int,
@@ -39,9 +42,9 @@ class CurationCommandService:
     ) -> ParsedCurationCommand:
         if current_summary_version != expected_summary_version:
             raise StaleCurationSummaryError("curation summary changed before command resolution")
-        if intent.clarification.strip():
-            return ParsedCurationCommand(kind="clarify", clarification=intent.clarification.strip())
-        inspect = self._resolve_selector(intent.inspect, summary, candidates)
+        if plan.clarification.strip():
+            return ParsedCurationCommand(kind="clarify", clarification=plan.clarification.strip())
+        inspect = self._resolve_selector(plan.inspect, summary, candidates)
         if inspect:
             return ParsedCurationCommand(
                 kind="clarify",
@@ -50,22 +53,22 @@ class CurationCommandService:
                     inspect, candidates
                 ),
             )
-        if intent.response.strip():
+        if plan.response.strip():
             return ParsedCurationCommand(
-                kind="clarify", clarification=intent.response.strip()
+                kind="clarify", clarification=plan.response.strip()
             )
-        publish = self._resolve_selector(intent.publish, summary, candidates)
-        reject = self._resolve_selector(intent.reject, summary, candidates)
-        rewrite = self._resolve_selector(intent.regenerate, summary, candidates)
+        publish = self._resolve_selector(plan.publish, summary, candidates)
+        reject = self._resolve_selector(plan.reject, summary, candidates)
+        rewrite = self._resolve_selector(plan.regenerate, summary, candidates)
         if publish and rewrite:
-            return ParsedCurationCommand(kind="mixed", candidate_ids=publish, rewrite_candidate_ids=rewrite, feedback=intent.feedback.strip() or None)
+            return ParsedCurationCommand(kind="mixed", candidate_ids=publish, rewrite_candidate_ids=rewrite, feedback=plan.feedback.strip() or None)
         if publish:
             return ParsedCurationCommand(kind="confirm", candidate_ids=publish)
         if reject:
             return ParsedCurationCommand(kind="reject", candidate_ids=reject)
         if rewrite:
-            return ParsedCurationCommand(kind="rewrite", candidate_ids=rewrite, feedback=intent.feedback.strip() or None)
-        if intent.resummarize:
+            return ParsedCurationCommand(kind="rewrite", candidate_ids=rewrite, feedback=plan.feedback.strip() or None)
+        if plan.resummarize:
             return ParsedCurationCommand(kind="resummarize")
         return ParsedCurationCommand(kind="clarify", clarification="我还不能确定要处理哪些题目，请再说明要发布、拒绝还是按备注重新生成。")
 
@@ -161,31 +164,66 @@ class CurationCommandService:
             raise StaleCurationSummaryError(
                 "curation summary changed before command resolution"
             )
+        plan = self.try_parse(text, summary, ())
+        if plan is not None:
+            return self.resolve_plan(
+                plan=plan,
+                summary=summary,
+                candidates=tuple(
+                    {"id": str(item["candidateId"])} for item in summary.items
+                ),
+                current_summary_version=current_summary_version,
+                expected_summary_version=expected_summary_version,
+            )
+        return ParsedCurationCommand(
+            kind="clarify",
+            clarification=(
+                "请明确回复“确认全部推荐题”“确认第 1、3 题”"
+                "“拒绝第 2 题”或“重写第 4 题：修改要求”。"
+            ),
+        )
+
+    def try_parse(
+        self,
+        text: str,
+        summary: CurationSummary,
+        focused_candidate_ids: tuple[str, ...],
+    ) -> CurationCommandPlan | None:
         clean = text.strip()
         if clean in {"重新总结", "重新汇总"}:
-            return ParsedCurationCommand(kind="resummarize")
+            return CurationCommandPlan(resummarize=True)
         if re.fullmatch(r"确认(?:所有|全部)推荐题", clean):
-            identifiers = tuple(
-                str(item["candidateId"])
-                for item in summary.items
-                if item.get("recommendation") == "recommend_confirm"
+            return CurationCommandPlan(
+                publish=CandidateSelector(scope="recommended")
             )
-            return self._targets("confirm", identifiers)
+
+        inspect = re.fullmatch(
+            r"(?:查看)?第?\s*(\d+)\s*题(?:是什么|怎么写的|的内容)?[？?]?",
+            clean,
+        )
+        if inspect:
+            return CurationCommandPlan(
+                inspect=CandidateSelector(
+                    scope="explicit", ordinals=[int(inspect.group(1))]
+                )
+            )
 
         rewrite = re.fullmatch(
             r"重写第?\s*(\d+)\s*题?\s*[:：]\s*(.+)", clean
         )
         if rewrite:
-            identifiers = self._resolve_ordinals(
-                summary, (int(rewrite.group(1)),)
-            )
-            return ParsedCurationCommand(
-                kind="rewrite",
-                candidate_ids=identifiers,
+            return CurationCommandPlan(
+                regenerate=CandidateSelector(
+                    scope="explicit", ordinals=[int(rewrite.group(1))]
+                ),
                 feedback=rewrite.group(2).strip(),
             )
 
-        for prefix, kind in (("确认", "confirm"), ("拒绝", "reject")):
+        for prefix, field in (
+            ("确认", "publish"),
+            ("发布", "publish"),
+            ("拒绝", "reject"),
+        ):
             if not clean.startswith(prefix):
                 continue
             ordinal_text = clean[len(prefix) :].strip()
@@ -197,17 +235,40 @@ class CurationCommandService:
                 int(value)
                 for value in re.split(r"\s*[、,，]\s*", ordinal_text)
             )
-            return self._targets(
-                kind, self._resolve_ordinals(summary, ordinals)
+            selector = CandidateSelector(scope="explicit", ordinals=list(ordinals))
+            return CurationCommandPlan(
+                **{field: selector}
             )
 
-        return ParsedCurationCommand(
-            kind="clarify",
-            clarification=(
-                "请明确回复“确认全部推荐题”“确认第 1、3 题”"
-                "“拒绝第 2 题”或“重写第 4 题：修改要求”。"
-            ),
+        pronoun = re.fullmatch(
+            r"(?:这题|刚才那题)\s*(发布|确认|拒绝|重写)(?:吧)?", clean
         )
+        if pronoun:
+            if len(focused_candidate_ids) != 1:
+                return CurationCommandPlan(
+                    clarification=(
+                        "当前同时关联多道题，请明确要操作的题号。"
+                        if focused_candidate_ids
+                        else "当前没有明确关联的题目，请指定题号。"
+                    )
+                )
+            ordinal_by_id = {
+                str(item["candidateId"]): int(item["ordinal"])
+                for item in summary.items
+            }
+            ordinal = ordinal_by_id.get(focused_candidate_ids[0])
+            if ordinal is None:
+                return CurationCommandPlan(
+                    clarification="当前关联题目已经变化，请重新指定题号。"
+                )
+            selector = CandidateSelector(scope="explicit", ordinals=[ordinal])
+            action = pronoun.group(1)
+            if action in {"发布", "确认"}:
+                return CurationCommandPlan(publish=selector)
+            if action == "拒绝":
+                return CurationCommandPlan(reject=selector)
+            return CurationCommandPlan(regenerate=selector)
+        return None
 
     @staticmethod
     def _resolve_ordinals(

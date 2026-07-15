@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from langchain_core.messages import AIMessage
 
-from app.application.workspace_runtime import build_curation_intent_context
+from app.application.workspace_runtime import build_curation_command_context
 from app.middleware.no_progress import NoProgressError, NoProgressMiddleware
 
 
@@ -35,8 +35,8 @@ async def test_independent_curation_commands_do_not_share_loop_fingerprint(
     )
     state = {"messages": [AIMessage(content="查看候选题详情")]}
 
-    for key in ("command-one", "command-two", "command-three"):
-        context = build_curation_intent_context(
+    contexts = [
+        build_curation_command_context(
             workspace_id="w1",
             workspace_root=tmp_path,
             session_id="s1",
@@ -44,11 +44,13 @@ async def test_independent_curation_commands_do_not_share_loop_fingerprint(
             idempotency_key=key,
             invocation_id=f"invocation-{key}",
         )
-        await middleware.aafter_model(
-            state, SimpleNamespace(context=context)
-        )
+        for key in ("command-one", "command-two", "command-three")
+    ]
+    assert len({context.progress_scope for context in contexts}) == 3
+    for context in contexts:
+        await middleware.aafter_model(state, SimpleNamespace(context=context))
 
-    repeated = build_curation_intent_context(
+    repeated = build_curation_command_context(
         workspace_id="w1",
         workspace_root=tmp_path,
         session_id="s1",
@@ -56,7 +58,7 @@ async def test_independent_curation_commands_do_not_share_loop_fingerprint(
         idempotency_key="command-three",
         invocation_id="invocation-command-three",
     )
-    retried_request = build_curation_intent_context(
+    retried_request = build_curation_command_context(
         workspace_id="w1",
         workspace_root=tmp_path,
         session_id="s1",
@@ -64,11 +66,7 @@ async def test_independent_curation_commands_do_not_share_loop_fingerprint(
         idempotency_key="command-three",
         invocation_id="invocation-command-three-retry",
     )
-    await middleware.aafter_model(
-        state, SimpleNamespace(context=retried_request)
-    )
+    await middleware.aafter_model(state, SimpleNamespace(context=retried_request))
     await middleware.aafter_model(state, SimpleNamespace(context=repeated))
     with pytest.raises(NoProgressError):
-        await middleware.aafter_model(
-            state, SimpleNamespace(context=repeated)
-        )
+        await middleware.aafter_model(state, SimpleNamespace(context=repeated))

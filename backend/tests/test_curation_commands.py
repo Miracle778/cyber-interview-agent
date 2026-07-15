@@ -5,7 +5,10 @@ from app.review.curation_commands import (
     StaleCurationSummaryError,
 )
 from app.review.models import CurationSummary
-from app.agents.curation_intent import CandidateSelector, CurationIntentPlan
+from app.review.curation_command_contracts import (
+    CandidateSelector,
+    CurationCommandPlan,
+)
 
 
 def _summary() -> CurationSummary:
@@ -129,8 +132,8 @@ def test_stale_summary_version_is_rejected_before_target_resolution() -> None:
 
 
 def test_free_intent_can_regenerate_noted_and_publish_the_rest() -> None:
-    command = CurationCommandService().resolve_intent(
-        intent=CurationIntentPlan(
+    command = CurationCommandService().resolve_plan(
+        plan=CurationCommandPlan(
             publish=CandidateSelector(scope="unnoted"),
             regenerate=CandidateSelector(scope="noted"),
         ),
@@ -157,8 +160,8 @@ def test_free_intent_can_regenerate_noted_and_publish_the_rest() -> None:
 
 
 def test_free_intent_can_return_a_grounded_conversation_response() -> None:
-    command = CurationCommandService().resolve_intent(
-        intent=CurationIntentPlan(response="第 2 题讨论事务隔离级别。"),
+    command = CurationCommandService().resolve_plan(
+        plan=CurationCommandPlan(response="第 2 题讨论事务隔离级别。"),
         summary=_summary(),
         candidates=(),
         current_summary_version=3,
@@ -170,8 +173,8 @@ def test_free_intent_can_return_a_grounded_conversation_response() -> None:
 
 
 def test_question_inspection_response_is_deterministic_and_includes_key_points() -> None:
-    command = CurationCommandService().resolve_intent(
-        intent=CurationIntentPlan(
+    command = CurationCommandService().resolve_plan(
+        plan=CurationCommandPlan(
             inspect=CandidateSelector(scope="explicit", ordinals=[1])
         ),
         summary=_summary(),
@@ -198,3 +201,34 @@ def test_question_inspection_response_is_deterministic_and_includes_key_points()
     assert "关键点：" in command.clarification
     assert "1. 上下界" in command.clarification
     assert "必要追问：" in command.clarification
+
+
+def test_deterministic_commands_use_ordinals_and_durable_focus() -> None:
+    service = CurationCommandService()
+
+    explicit = service.try_parse("发布第 5 题", _summary(), ())
+    focused = service.try_parse(
+        "这题发布吧", _summary(), ("candidate-5",)
+    )
+
+    assert explicit is not None
+    assert explicit.publish.ordinals == [5]
+    assert focused is not None
+    assert focused.publish.ordinals == [5]
+
+
+def test_multi_focus_pronoun_clarifies_and_complex_text_uses_model() -> None:
+    service = CurationCommandService()
+
+    ambiguous = service.try_parse(
+        "这题发布吧", _summary(), ("candidate-2", "candidate-5")
+    )
+
+    assert ambiguous is not None
+    assert ambiguous.clarification == "当前同时关联多道题，请明确要操作的题号。"
+    assert (
+        service.try_parse(
+            "加了备注的重新生成，其他的发布", _summary(), ()
+        )
+        is None
+    )

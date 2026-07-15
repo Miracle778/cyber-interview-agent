@@ -198,7 +198,7 @@ git commit -m "feat(review): persist curation conversation focus"
 - Renames factory method `create_curation_intent_agent` to `create_curation_command_models`.
 - Renames `build_curation_intent_context` to `build_curation_command_context`.
 
-- [ ] **Step 1: Add RED deterministic-parser and adapter tests**
+- [x] **Step 1: Add RED deterministic-parser and adapter tests**
 
 Assert these exact cases:
 
@@ -213,7 +213,7 @@ assert service.try_parse("加了备注的重新生成，其他的发布", summar
 
 For the adapter, create twelve alternating visible messages and put `candidateIds=["candidate-6"]` on the latest assistant receipt. Assert only valid IDs recover, turns stay complete, candidate 6 becomes a required full resource, and all other candidates appear only in the compact working-state index.
 
-- [ ] **Step 2: Verify parser RED**
+- [x] **Step 2: Verify parser RED**
 
 ```bash
 cd backend
@@ -222,7 +222,7 @@ cd backend
 
 Expected: FAIL because focus-aware parsing, contracts, and adapter do not exist.
 
-- [ ] **Step 3: Implement contracts, parser, and adapter**
+- [x] **Step 3: Implement contracts, parser, and adapter**
 
 `CurationCommandPlan` retains publish/reject/regenerate/inspect selectors, feedback, resummarize, clarification, and response. Unknown free language returns `None` from `try_parse`; unsafe multi-focus pronouns return a clarification plan. `resolve_plan` remains the single summary-version and selector validator.
 
@@ -230,15 +230,15 @@ Expected: FAIL because focus-aware parsing, contracts, and adapter do not exist.
 
 `CurationContextAdapter.build_material` must include summary version, focus, and compact ordinal/title/status/recommendation/note index in working state; include full question/answer/key-points/follow-ups only for focused candidates; group only visible `text` and `command_receipt` records after the cursor; and exclude the current command from history.
 
-- [ ] **Step 4: Verify parser GREEN**
+- [x] **Step 4: Verify parser GREEN**
 
 Run Step 2. Expected: all selected tests PASS.
 
-- [ ] **Step 5: Add RED classifier/summarizer tests**
+- [x] **Step 5: Add RED classifier/summarizer tests**
 
 Assert model roles stay `question_generation` and `report_summarization`, execution names become `curation_command_classifier` and `curation_context_summarizer`, neither runnable receives tools/checkpointer, classifier receives only rendered assembled context, summarizer receives prior summary plus overflow turns but no candidate/source bodies, and each invocation has a unique `progress_scope`.
 
-- [ ] **Step 6: Verify model-component RED**
+- [x] **Step 6: Verify model-component RED**
 
 ```bash
 cd backend
@@ -247,11 +247,11 @@ cd backend
 
 Expected: FAIL because the renamed components and factory method do not exist.
 
-- [ ] **Step 7: Implement one-shot model components**
+- [x] **Step 7: Implement one-shot model components**
 
 Create strict structured-output `create_agent` runnables with empty tools, `checkpointer=None`, explicit execution names, and existing middleware. Classifier input is `AssembledContext.render()`. Summarizer input is only the prior `ContextSummary` and `overflow_turns`; it returns `CurationDialogueSummary`. Keep unique invocation IDs in `AgentContext.progress_scope` so no-progress fingerprints cannot collide.
 
-- [ ] **Step 8: Verify GREEN and commit**
+- [x] **Step 8: Verify GREEN and commit**
 
 Run Steps 2 and 6. Expected: all selected tests PASS.
 
