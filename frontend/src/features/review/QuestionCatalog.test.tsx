@@ -25,6 +25,9 @@ describe("QuestionCatalog", () => {
     expect(screen.getByRole("log", { name: "整理对话" })).toHaveTextContent("整理完成，请确认推荐题");
     expect(screen.getByRole("complementary", { name: "整理运行状态" })).toHaveTextContent("等待确认");
     expect(screen.getByLabelText("回复题匠")).toBeEnabled();
+    const conversation = screen.getByRole("main");
+    const sessionList = screen.getByRole("complementary", { name: "整理会话列表" });
+    expect(conversation.compareDocumentPosition(sessionList) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("selects sources in a dialog and warns without blocking repeated curation", async () => {

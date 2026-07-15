@@ -75,7 +75,7 @@ export function QuestionCatalog({ workspace }: { workspace: WorkspaceConfig }) {
         <button type="button" role="tab" aria-selected={view === "sessions"} onClick={() => setView("sessions")}><MessagesSquare size={16} />整理会话</button>
         <button type="button" role="tab" aria-selected={view === "library"} onClick={() => setView("library")}><Library size={16} />题目库</button>
       </nav>
-      {view === "sessions" ? <div className="curation-workbench"><CurationSessionList sessions={sessions.data ?? []} selectedId={selected?.id ?? null} onSelect={setSelectedId} onCreate={() => setDialogOpen(true)} /><CurationConversation session={selected} optimisticMessage={optimisticMessage} busy={command.isPending} onSubmit={sendCommand} /><CurationRuntimePanel session={selected} /></div> : <QuestionLibrary workspace={workspace} sources={sources.data ?? []} />}
+      {view === "sessions" ? <div className="curation-workbench"><CurationConversation session={selected} optimisticMessage={optimisticMessage} busy={command.isPending} onSubmit={sendCommand} /><CurationSessionList sessions={sessions.data ?? []} selectedId={selected?.id ?? null} onSelect={setSelectedId} onCreate={() => setDialogOpen(true)} /><CurationRuntimePanel session={selected} /></div> : <QuestionLibrary workspace={workspace} sources={sources.data ?? []} />}
       <SourceSelectionDialog open={dialogOpen} sources={sources.data ?? []} sourceStates={sourceStates} busy={create.isPending} onClose={() => setDialogOpen(false)} onConfirm={(ids) => create.mutate(ids)} />
     </section>
   );

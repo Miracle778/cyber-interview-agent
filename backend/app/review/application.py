@@ -6,7 +6,11 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from app.application.execution_service import AgentExecutionService
-from app.application.session_service import AgentSessionService, ProductEventStream
+from app.application.session_service import (
+    AgentSessionService,
+    MessageRecord,
+    ProductEventStream,
+)
 from app.hitl.models import ResolveActionCommand
 from app.hitl.repository import PendingActionRepository
 from app.hitl.service import HitlService
@@ -20,6 +24,27 @@ from app.review.repository import ReviewRepository
 from app.review.selector import QuestionSelector
 from app.review.timeline import SessionTimelineProjector
 from app.services.document_ingestion import extract_text
+
+
+_CURATION_TIMELINE_KINDS = frozenset(
+    {
+        "stage",
+        "curation_summary",
+        "question_card",
+        "command_receipt",
+        "error",
+    }
+)
+
+
+def _is_curation_timeline_message(message: MessageRecord) -> bool:
+    if message.message_kind in _CURATION_TIMELINE_KINDS:
+        return True
+    return (
+        message.message_kind == "text"
+        and message.role == "user"
+        and isinstance(message.payload.get("resourceId"), str)
+    )
 
 
 class ReviewApplication:
@@ -155,6 +180,7 @@ class ReviewApplication:
                 ],
                 "rewrite_feedback": None,
             },
+            project_input_message=False,
         )
         self.repository.attach_batch_run(batch.id, execution.id)
         await self.timeline.append(
@@ -241,6 +267,7 @@ class ReviewApplication:
             "messages": [
                 asdict(item)
                 for item in self.sessions.repository.list_messages(session_id)
+                if _is_curation_timeline_message(item)
             ],
             "usage": self.executions.usage(session_id),
             "created_at": record.created_at,
@@ -421,6 +448,7 @@ class ReviewApplication:
                 "title": draft.title,
                 "markdown": draft.markdown,
             },
+            project_input_message=False,
         )
         await self.drafts.mark_review_pending(
             draft.id,
@@ -489,6 +517,7 @@ class ReviewApplication:
                 ],
                 "rewrite_feedback": rewrite_feedback,
             },
+            project_input_message=False,
         )
         self.repository.attach_batch_run(batch.id, execution.id)
         await self.timeline.append(
@@ -607,6 +636,7 @@ class ReviewApplication:
                 ],
                 "rewrite_feedback": rewrite_feedback,
             },
+            project_input_message=False,
         )
         return self.repository.attach_batch_run(batch.id, execution.id)
 
@@ -752,7 +782,9 @@ class ReviewApplication:
         )
         round_id = str(uuid4())
         execution = await self.executions.prepare(
-            session, input={"roundId": round_id}
+            session,
+            input={"roundId": round_id},
+            project_input_message=False,
         )
         round_record = self.repository.create_round(
             workspace_id=self.workspace_id,
@@ -903,6 +935,7 @@ class ReviewApplication:
                 "message": message,
                 "parent_round_id": round_id,
             },
+            project_input_message=False,
         )
         await self.executions.wait(execution.id)
         return session

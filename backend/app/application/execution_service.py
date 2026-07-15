@@ -90,14 +90,26 @@ class AgentExecutionService:
         return self._repository.usage(session_id)
 
     async def start(
-        self, session: SessionRecord, *, input: dict[str, Any]
+        self,
+        session: SessionRecord,
+        *,
+        input: dict[str, Any],
+        project_input_message: bool = True,
     ) -> ExecutionRecord:
-        execution = await self.prepare(session, input=input)
+        execution = await self.prepare(
+            session,
+            input=input,
+            project_input_message=project_input_message,
+        )
         self.run_prepared(execution, graph_input=input)
         return execution
 
     async def prepare(
-        self, session: SessionRecord, *, input: dict[str, Any]
+        self,
+        session: SessionRecord,
+        *,
+        input: dict[str, Any],
+        project_input_message: bool = True,
     ) -> ExecutionRecord:
         bindings = dict(self._model_bindings())
         execution = self._repository.create_execution(
@@ -105,12 +117,13 @@ class AgentExecutionService:
             input=input,
             model_bindings=bindings,
         )
-        self._repository.append_message(
-            session.id,
-            execution_id=execution.id,
-            role="user",
-            content=_user_content(input),
-        )
+        if project_input_message:
+            self._repository.append_message(
+                session.id,
+                execution_id=execution.id,
+                role="user",
+                content=_user_content(input),
+            )
         await self._events.publish(
             session.id,
             execution.id,

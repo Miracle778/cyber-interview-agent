@@ -1,5 +1,13 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-07-15：R2 Claude 修复审阅问题修正
+
+- 阻止 R2 内部 Graph input 自动写成用户 text；curation resource 同时过滤旧数据库中无 typed payload 的内部 JSON，真实用户命令仍按 `resourceId` 保留。
+- `SessionMessage` 改为按 `messageKind/payload` 渲染显式 question card，删除文件头和长度启发式。
+- 整理工作台改为对话 DOM 优先；900–1199px 两栏、1200px 以上三栏、窄屏单栏，避免 1024px 主侧栏叠加导致横向溢出。
+- 修正活动复习轮次“已完成”误导文案，并增加组件测试。
+- 新鲜验证：后端针对性 15 passed；前端针对性 19 passed；`npm run build` 通过（保留既有 500 kB chunk warning）；`cafca31` 的 270/94 仅作为历史基线，不再冒充当前 HEAD 最终结果。
+
 ## 2026-07-14：R2 Task 4（Claude 接手自动验证与文档）
 
 - Codex 额度用完，Claude 接手 Task 4 的自动验证与文档部分；浏览器审计交用户执行。

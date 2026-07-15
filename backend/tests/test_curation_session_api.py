@@ -96,6 +96,31 @@ async def test_curation_session_api_projects_progress_summary_and_timeline(
             "stage",
             "curation_summary",
         }
+        assert all(
+            "source_excerpts" not in message["content"]
+            for message in detail["messages"]
+        )
+        assert all(
+            not (message["role"] == "user" and message["content"].startswith("{"))
+            for message in detail["messages"]
+        )
+
+        review = app.locate_review_session(resource["id"])
+        stored = review.sessions.repository.list_messages(resource["id"])
+        assert all("source_excerpts" not in message.content for message in stored)
+
+        # Databases created before this fix may already contain an execution input
+        # projected as a user text message. Keep it out of the product timeline.
+        review.sessions.repository.append_message(
+            resource["id"],
+            execution_id=execution_id,
+            role="user",
+            content='{"source_excerpts": ["private source body"]}',
+        )
+        filtered = await client.get(
+            f"/api/review/curation-sessions/{resource['id']}"
+        )
+        assert "private source body" not in filtered.text
 
         listed = await client.get(
             "/api/review/curation-sessions?workspaceId=w1"
