@@ -325,7 +325,7 @@ git add backend task_plan.md findings.md progress.md
 git commit -m "feat(review): assemble durable curation context"
 ```
 
-- [ ] **Step 6: Run final verification once**
+- [x] **Step 6: Run final verification once**
 
 ```bash
 cd backend
@@ -337,10 +337,10 @@ npm run build
 
 Expected: zero test failures and build exit 0. Record exact counts and final SHA in `progress.md` and local verification.
 
-- [ ] **Step 7: Run one complete browser acceptance pass**
+- [x] **Step 7: Run one complete browser acceptance pass**
 
 Verify: inspect one candidate; add more than eight messages; publish via “这题”; restart and repeat a pronoun command; establish multi-focus and see clarification without publication; confirm current/threshold tokens and compacted state come from backend; confirm no Langfuse service is required. Update local `docs/verification/r2-complete-review-agent.md` with actual evidence and rerun only failed scenarios after fixes.
 
-- [ ] **Step 8: Refresh stage state**
+- [x] **Step 8: Refresh stage state**
 
 Mark Task 11 complete only after browser evidence exists. Update `findings.md` and `progress.md`. Do not close R2 while earlier stage 8-10 browser scenarios or learning/verification synchronization remain pending.

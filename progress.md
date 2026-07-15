@@ -243,3 +243,7 @@
 - 显式发布与重复幂等请求均零 classifier/summarizer 调用；重复请求不推进 context version。
 - 压缩成功推进 summary cursor 并投影 `contextCompacted`；压缩失败记录 warning、保留 cursor，classifier 继续收到最近完整 turn。
 - TDD 证据：集成 RED 6 failed；GREEN API/restart/migration 21 passed，跨模块定向回归 70 passed。
+- 最终自动门禁：后端 `301 passed`（1 条第三方 Starlette 弃用 warning）；前端 `109 passed`；TypeScript/Vite production build 通过。首次全量发现 11 个同根因的无模型绑定启动失败，修复后失败文件 11 passed，再运行第二次也是最后一次后端全量确认 301 passed。
+- 真实浏览器会话 `611cb0d3-c287-46f0-bbe5-0753fd6c5370`：5 轮 inspect 形成超过 8 条消息后，“这题发布吧”准确发布第 1 题；后端真实重启后发布回执与 3/2/1 统计恢复。
+- 真实 structured classifier 将“请同时查看第 2、3 题”投影为两个 candidate ID；随后“这题发布吧”返回多焦点澄清，发布数不变，模型调用数保持 4。页面与 API 均显示实际 context `3160 / 89600` tokens；另一个真实会话为 `contextCompacted=true`。
+- 375px 检查 `clientWidth=scrollWidth=375`，无横向溢出；浏览器 console error 为 0；本次后端未启动或依赖 Langfuse。产品实现基线为 `97529b7`。
