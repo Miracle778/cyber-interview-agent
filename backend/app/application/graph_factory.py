@@ -8,6 +8,7 @@ from langgraph.types import interrupt
 from app.agents.factory import AgentFactory
 from app.agents.question_curation import QuestionCurationAgent
 from app.agents.curation_command import CurationCommandModels
+from app.agents.context_assembly import model_token_counter
 from app.agents.review import ReviewAgents
 from app.agents.review_round import ReviewRoundAgents
 from app.graphs.publication import create_publication_graph
@@ -38,6 +39,9 @@ class ProductionGraphFactory:
             for role in ("question_generation", "report_summarization")
         )
         summary_model = self._agents.resolve_model("report_summarization", model_bindings=model_bindings)
+        classifier_model = self._agents.resolve_model(
+            "question_generation", model_bindings=model_bindings
+        )
         middleware = build_default_middleware(
             summary_model=summary_model,
             projection=projection,
@@ -52,6 +56,7 @@ class ProductionGraphFactory:
             model_bindings=model_bindings,
             middleware=middleware,
             context_limit_tokens=context_limit_tokens,
+            token_counter=model_token_counter(classifier_model),
         )
 
     def __call__(self, kind: str, **dependencies):

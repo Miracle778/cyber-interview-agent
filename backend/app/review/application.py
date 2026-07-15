@@ -3,10 +3,18 @@ from __future__ import annotations
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any, Callable
 from uuid import uuid4
 
 from app.application.execution_service import AgentExecutionService
+from app.agents.context import AgentContext
+from app.agents.context_assembly import (
+    ContextAssembler,
+    ContextBudget,
+    ContextBudgetExceededError,
+    ContextSummary,
+)
+from app.agents.curation_command import CurationCommandModels
 from app.application.session_service import (
     AgentSessionService,
     MessageRecord,
@@ -20,10 +28,16 @@ from app.knowledge.source_registry import KnowledgeSourceService
 from app.knowledge.publication import PublicationService
 from app.review.errors import ReviewConflictError
 from app.review.curation_commands import CurationCommandService
+from app.review.curation_command_contracts import CurationCommandPlan
+from app.review.curation_context import (
+    CurationCommandInterpreter,
+    CurationContextAdapter,
+)
 from app.review.models import CurationSummary, ReviewRoundSettings
 from app.review.repository import ReviewRepository
 from app.review.selector import QuestionSelector
 from app.review.timeline import SessionTimelineProjector
+from app.middleware.usage import ContextUsageProjection
 from app.services.document_ingestion import extract_text
 
 
@@ -63,7 +77,9 @@ class ReviewApplication:
         validate_model: Callable[[str, str], None],
         actions: PendingActionRepository,
         hitl: HitlService,
-        resolve_curation_intent: Callable[..., Awaitable[Any]] | None = None,
+        curation_command_models: CurationCommandModels | None = None,
+        curation_context_projection=None,
+        curation_context_factory: Callable[..., AgentContext] | None = None,
     ) -> None:
         self.workspace_id = workspace_id
         self.workspace_root = workspace_root
@@ -76,7 +92,9 @@ class ReviewApplication:
         self.validate_model = validate_model
         self.actions = actions
         self.hitl = hitl
-        self.resolve_curation_intent = resolve_curation_intent
+        self.curation_command_models = curation_command_models
+        self.curation_context_projection = curation_context_projection
+        self.curation_context_factory = curation_context_factory
         self.selector = QuestionSelector()
         self.curation_commands = CurationCommandService()
         self.timeline = SessionTimelineProjector(
@@ -339,34 +357,167 @@ class ReviewApplication:
         idempotency_key: str,
     ) -> dict[str, Any]:
         command_started_at = datetime.now(timezone.utc).isoformat()
+        existing = self.repository.find_curation_command_receipt(
+            session_id=session_id,
+            idempotency_key=idempotency_key,
+            text=text,
+            summary_version=summary_version,
+        )
+        if existing is not None:
+            return self._curation_command_resource(existing)
         curation = self.repository.get_curation_session(session_id)
-        if self.resolve_curation_intent is None:
-            parsed = self.curation_commands.parse(text=text, summary=curation.summary, current_summary_version=curation.summary_version, expected_summary_version=summary_version)
-        else:
-            candidate_resources = tuple([await self.candidate_resource(str(item["candidateId"])) | {"ordinal": item["ordinal"], "recommendation": item.get("recommendation"), "title": item.get("title", "")} for item in curation.summary.items])
-            ordinal_by_id = {
-                str(item["candidateId"]): int(item["ordinal"])
-                for item in curation.summary.items
-            }
-            visible_messages = [
-                message
-                for message in self.sessions.repository.list_messages(session_id)
-                if message.message_kind in {"text", "command_receipt"}
-            ][-8:]
-            conversation = tuple(
-                {
-                    "role": message.role,
-                    "content": message.content,
-                    "candidateOrdinals": tuple(
-                        ordinal_by_id[candidate_id]
-                        for candidate_id in message.payload.get("candidateIds", ())
-                        if candidate_id in ordinal_by_id
-                    ),
+        if curation.summary_version != summary_version:
+            raise ReviewConflictError("curation summary changed before command resolution")
+        candidate_resources = tuple(
+            [
+                await self.candidate_resource(str(item["candidateId"]))
+                | {
+                    "ordinal": item["ordinal"],
+                    "recommendation": item.get("recommendation"),
+                    "title": item.get("title", ""),
                 }
-                for message in visible_messages
+                for item in curation.summary.items
+            ]
+        )
+        valid_candidate_ids = {
+            str(item["candidateId"]) for item in curation.summary.items
+        }
+        messages = self.sessions.repository.list_messages(session_id)
+        context_record = self.repository.get_or_create_curation_context(
+            session_id
+        )
+        focused_candidate_ids = context_record.focused_candidate_ids
+        if context_record.version == 0 and not focused_candidate_ids:
+            focused_candidate_ids = CurationContextAdapter.recover_focus(
+                messages, valid_candidate_ids
             )
-            intent = await self.resolve_curation_intent(text=text, session_id=session_id, idempotency_key=idempotency_key, candidates=candidate_resources, conversation=conversation)
-            parsed = self.curation_commands.resolve_intent(intent=intent, summary=curation.summary, candidates=candidate_resources, current_summary_version=curation.summary_version, expected_summary_version=summary_version)
+
+        deterministic = self.curation_commands.try_parse(
+            text, curation.summary, focused_candidate_ids
+        )
+        plan: CurationCommandPlan
+        if deterministic is not None:
+            plan = deterministic
+        elif self.curation_command_models is None:
+            plan = CurationCommandPlan(
+                clarification=(
+                    "我还不能安全确定要处理哪些题目，请明确题号和要执行的操作。"
+                )
+            )
+        else:
+            interpreter = CurationCommandInterpreter(
+                self.curation_commands,
+                self.curation_command_models.classifier,
+            )
+
+            async def context_provider():
+                nonlocal context_record
+                latest_execution = self.sessions.repository.latest_execution(
+                    session_id
+                )
+                if latest_execution is None:
+                    raise ReviewConflictError(
+                        "curation session has no execution"
+                    )
+                invocation_context = self._curation_invocation_context(
+                    session_id=session_id,
+                    run_id=latest_execution.id,
+                    idempotency_key=idempotency_key,
+                )
+                prior_summary = self._context_summary(context_record)
+                material = CurationContextAdapter.build_material(
+                    current_input=text,
+                    summary_version=curation.summary_version,
+                    focused_candidate_ids=focused_candidate_ids,
+                    prior_summary=prior_summary,
+                    summarized_through_message_id=(
+                        context_record.summarized_through_message_id
+                    ),
+                    messages=messages,
+                    candidates=candidate_resources,
+                )
+                assembler = ContextAssembler()
+                budget = self._curation_context_budget(
+                    self.curation_command_models.context_limit_tokens
+                )
+                try:
+                    assembled = assembler.assemble(
+                        material,
+                        budget,
+                        self.curation_command_models.token_counter,
+                    )
+                except ContextBudgetExceededError as error:
+                    raise ReviewConflictError(error.code) from error
+                if assembled.overflow_turns:
+                    try:
+                        compacted = await self.curation_command_models.summarizer.summarize(
+                            prior_summary=prior_summary,
+                            overflow_turns=assembled.overflow_turns,
+                            context=invocation_context,
+                        )
+                        context_record = self.repository.replace_curation_context(
+                            session_id,
+                            expected_version=context_record.version,
+                            focused_candidate_ids=focused_candidate_ids,
+                            last_intent=context_record.last_intent,
+                            last_result_candidate_ids=(
+                                context_record.last_result_candidate_ids
+                            ),
+                            dialogue_summary=self._summary_payload(compacted),
+                            summarized_through_message_id=(
+                                compacted.through_message_id
+                            ),
+                        )
+                        material = CurationContextAdapter.build_material(
+                            current_input=text,
+                            summary_version=curation.summary_version,
+                            focused_candidate_ids=focused_candidate_ids,
+                            prior_summary=compacted,
+                            summarized_through_message_id=(
+                                compacted.through_message_id
+                            ),
+                            messages=messages,
+                            candidates=candidate_resources,
+                        )
+                        assembled = assembler.assemble(
+                            material,
+                            budget,
+                            self.curation_command_models.token_counter,
+                        )
+                        if self.curation_context_projection is not None:
+                            self.curation_context_projection.mark_context_compacted(
+                                invocation_context
+                            )
+                    except Exception:
+                        if self.curation_context_projection is not None:
+                            self.curation_context_projection.warning(
+                                invocation_context,
+                                "curation_context_summary_failed",
+                            )
+                if self.curation_context_projection is not None:
+                    self.curation_context_projection.record_context_usage(
+                        invocation_context,
+                        ContextUsageProjection(
+                            current_tokens=assembled.estimated_input_tokens,
+                            threshold_tokens=assembled.threshold_tokens,
+                            estimated=True,
+                        ),
+                    )
+                return assembled, invocation_context
+
+            plan = await interpreter.interpret(
+                text=text,
+                summary=curation.summary,
+                focused_candidate_ids=focused_candidate_ids,
+                context_provider=context_provider,
+            )
+        parsed = self.curation_commands.resolve_plan(
+            plan=plan,
+            summary=curation.summary,
+            candidates=candidate_resources,
+            current_summary_version=curation.summary_version,
+            expected_summary_version=summary_version,
+        )
         command_payload: dict[str, object] = {
             "kind": parsed.kind,
             "candidateIds": parsed.candidate_ids,
@@ -504,7 +655,102 @@ class ReviewApplication:
                 "version": summary_version,
             },
         )
+        result_candidate_ids = self._result_candidate_ids(parsed, result)
+        if result_candidate_ids:
+            latest_context = self.repository.get_or_create_curation_context(
+                session_id
+            )
+            focus = CurationContextAdapter.focus_after(
+                result_candidate_ids, valid_candidate_ids
+            )
+            if focus:
+                self.repository.replace_curation_context(
+                    session_id,
+                    expected_version=latest_context.version,
+                    focused_candidate_ids=focus,
+                    last_intent=(
+                        "inspect"
+                        if plan.inspect.scope != "none"
+                        else parsed.kind
+                    ),
+                    last_result_candidate_ids=focus,
+                    dialogue_summary=latest_context.dialogue_summary,
+                    summarized_through_message_id=(
+                        latest_context.summarized_through_message_id
+                    ),
+                )
         return self._curation_command_resource(receipt)
+
+    def _curation_invocation_context(
+        self,
+        *,
+        session_id: str,
+        run_id: str,
+        idempotency_key: str,
+    ) -> AgentContext:
+        if self.curation_context_factory is not None:
+            return self.curation_context_factory(
+                session_id=session_id,
+                run_id=run_id,
+                idempotency_key=idempotency_key,
+                invocation_id=str(uuid4()),
+            )
+        return AgentContext(
+            workspace_id=self.workspace_id,
+            workspace_root=self.workspace_root,
+            session_id=session_id,
+            run_id=run_id,
+            allowed_tools=frozenset(),
+            allowed_scopes=frozenset(),
+            progress_scope=(
+                "curation_command",
+                idempotency_key,
+                str(uuid4()),
+            ),
+        )
+
+    @staticmethod
+    def _curation_context_budget(context_limit_tokens: int) -> ContextBudget:
+        return ContextBudget(
+            max_input_tokens=max(1, int(context_limit_tokens * 0.70)),
+            reserved_output_tokens=max(1, int(context_limit_tokens * 0.10)),
+            reserved_system_tokens=max(1, int(context_limit_tokens * 0.05)),
+            reserved_schema_tokens=max(1, int(context_limit_tokens * 0.05)),
+        )
+
+    @staticmethod
+    def _context_summary(context_record) -> ContextSummary:
+        stored = context_record.dialogue_summary
+        return ContextSummary(
+            text=str(stored.get("text") or ""),
+            resource_refs=tuple(stored.get("resource_refs") or ()),
+            decisions=tuple(stored.get("decisions") or ()),
+            open_items=tuple(stored.get("open_items") or ()),
+            through_message_id=context_record.summarized_through_message_id,
+        )
+
+    @staticmethod
+    def _summary_payload(summary: ContextSummary) -> dict[str, object]:
+        return {
+            "text": summary.text,
+            "resource_refs": summary.resource_refs,
+            "decisions": summary.decisions,
+            "open_items": summary.open_items,
+        }
+
+    @staticmethod
+    def _result_candidate_ids(parsed, result) -> tuple[str, ...]:
+        if parsed.kind == "clarify":
+            return parsed.candidate_ids
+        if parsed.kind == "reject":
+            return tuple(result.get("rejectedIds", ()))
+        if parsed.kind in {"confirm", "mixed"}:
+            return tuple(result.get("publishedIds", ())) + tuple(
+                result.get("rewriteCandidateIds", ())
+            )
+        if parsed.kind == "rewrite":
+            return parsed.candidate_ids
+        return ()
 
     def _candidate_notes_feedback(self, candidate_ids: tuple[str, ...], extra: str | None) -> str:
         lines = ["请按以下候选题备注重新生成，并保留其余未指定题目："]

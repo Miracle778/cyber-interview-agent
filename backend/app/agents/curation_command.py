@@ -10,6 +10,7 @@ from app.agents.context_assembly import (
     AssembledContext,
     ContextSummary,
     ContextTurn,
+    TokenCounter,
 )
 from app.agents.factory import AgentFactory, AgentSpec
 from app.review.curation_command_contracts import (
@@ -92,6 +93,7 @@ class CurationCommandModels:
     classifier: CurationCommandClassifier
     summarizer: CurationContextSummarizer
     context_limit_tokens: int
+    token_counter: TokenCounter = len
 
     @classmethod
     def create(
@@ -101,6 +103,7 @@ class CurationCommandModels:
         model_bindings,
         middleware=(),
         context_limit_tokens: int,
+        token_counter: TokenCounter = len,
     ) -> CurationCommandModels:
         classifier = factory.create(
             AgentSpec(
@@ -128,6 +131,7 @@ class CurationCommandModels:
             classifier=CurationCommandClassifier(classifier),
             summarizer=CurationContextSummarizer(summarizer),
             context_limit_tokens=context_limit_tokens,
+            token_counter=token_counter,
         )
 
 

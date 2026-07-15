@@ -227,34 +227,25 @@ class WorkspaceRuntime:
             resume_action=executions.resume_approval,
         )
         holder["hitl"] = hitl
-        intent_factory = getattr(graph_factory, "create_curation_intent_agent", None)
-
-        async def resolve_curation_intent(
-            *, text, session_id, idempotency_key, candidates, conversation
-        ):
-            if intent_factory is None:
-                raise RuntimeError("curation intent agent is unavailable")
-            intent_agent = intent_factory(
+        command_models_factory = getattr(
+            graph_factory, "create_curation_command_models", None
+        )
+        command_models = (
+            None
+            if command_models_factory is None
+            else command_models_factory(
                 model_bindings=model_bindings(),
                 projection=projection,
                 audit=audit,
                 observability=observability,
             )
-            latest_execution = repository.latest_execution(session_id)
-            if latest_execution is None:
-                raise RuntimeError("curation session has no execution")
-            return await intent_agent.resolve(
-                text=text,
-                candidates=candidates,
-                conversation=conversation,
-                context=build_curation_command_context(
-                    workspace_id=workspace_id,
-                    workspace_root=root,
-                    session_id=session_id,
-                    run_id=latest_execution.id,
-                    idempotency_key=idempotency_key,
-                    invocation_id=str(uuid4()),
-                ),
+        )
+
+        def curation_context_factory(**values):
+            return build_curation_command_context(
+                workspace_id=workspace_id,
+                workspace_root=root,
+                **values,
             )
         review = ReviewApplication(
             workspace_id=workspace_id,
@@ -268,9 +259,9 @@ class WorkspaceRuntime:
             validate_model=validate_review_model,
             actions=actions,
             hitl=hitl,
-            resolve_curation_intent=(
-                resolve_curation_intent if intent_factory is not None else None
-            ),
+            curation_command_models=command_models,
+            curation_context_projection=projection,
+            curation_context_factory=curation_context_factory,
         )
         return cls(
             workspace_id=workspace_id,

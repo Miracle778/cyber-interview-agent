@@ -1,4 +1,5 @@
 from pathlib import Path
+from dataclasses import replace
 
 import pytest
 import pytest_asyncio
@@ -8,13 +9,11 @@ from httpx import ASGITransport, AsyncClient
 from app.api.dependencies import get_agent_application
 from app.api.routes_review import router as review_router
 from app.application.workspace_runtime import AgentApplication
+from app.agents.context_assembly import ContextSummary
 from app.knowledge.source_registry import KnowledgeSourceService
 from app.graphs.publication import create_publication_graph
 from tests.test_review_api_v2 import _graph_factory
-from app.review.curation_command_contracts import (
-    CandidateSelector,
-    CurationCommandPlan,
-)
+from app.review.curation_command_contracts import CurationCommandPlan
 
 
 def _session_graph_factory(kind, **dependencies):
@@ -24,6 +23,44 @@ def _session_graph_factory(kind, **dependencies):
             checkpointer=dependencies["checkpointer"],
         )
     return _graph_factory(kind, **dependencies)
+
+
+class RecordingClassifier:
+    def __init__(self, plan: CurationCommandPlan) -> None:
+        self.plan = plan
+        self.calls = []
+
+    async def classify(self, assembled, *, context):
+        self.calls.append((assembled, context))
+        return self.plan
+
+
+class RecordingSummarizer:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls = []
+
+    async def summarize(self, *, prior_summary, overflow_turns, context):
+        self.calls.append((prior_summary, overflow_turns, context))
+        if self.fail:
+            raise RuntimeError("summary unavailable")
+        return ContextSummary(
+            text="已压缩早期整理对话",
+            resource_refs=("candidate:remembered",),
+            decisions=("保留已确认焦点",),
+            open_items=("等待后续命令",),
+            through_message_id=overflow_turns[-1].messages[-1].id,
+        )
+
+
+class RecordingCurationModels:
+    def __init__(
+        self, plan: CurationCommandPlan, *, fail_summary: bool = False
+    ) -> None:
+        self.classifier = RecordingClassifier(plan)
+        self.summarizer = RecordingSummarizer(fail=fail_summary)
+        self.context_limit_tokens = 180
+        self.token_counter = lambda text: max(1, len(text) // 12)
 
 
 @pytest_asyncio.fixture
@@ -355,6 +392,14 @@ async def test_explicit_confirm_command_publishes_without_second_decision(
         detail = (
             await client.get(f"/api/review/curation-sessions/{session_id}")
         ).json()
+        review = app.locate_review_session(session_id)
+        models = RecordingCurationModels(
+            CurationCommandPlan(response="不应调用模型")
+        )
+        review.curation_command_models = models
+        context_before = review.repository.get_or_create_curation_context(
+            session_id
+        )
         candidate_id = detail["summary"]["items"][0]["candidateId"]
         messages_before_note = len(detail["messages"])
         noted = await client.put(
@@ -380,6 +425,25 @@ async def test_explicit_confirm_command_publishes_without_second_decision(
         assert confirmed.status_code == 202, confirmed.text
         assert confirmed.json()["status"] == "completed"
         assert confirmed.json()["result"]["publishedCount"] == 1
+        context_after = review.repository.get_or_create_curation_context(
+            session_id
+        )
+        repeated = await client.post(
+            f"/api/review/curation-sessions/{session_id}/commands",
+            json={
+                "text": "确认全部推荐题",
+                "summaryVersion": detail["summaryVersion"],
+                "idempotencyKey": "confirm-command-1",
+            },
+        )
+        context_repeated = review.repository.get_or_create_curation_context(
+            session_id
+        )
+        assert repeated.json()["id"] == confirmed.json()["id"]
+        assert models.classifier.calls == []
+        assert models.summarizer.calls == []
+        assert context_after.version == context_before.version + 1
+        assert context_repeated.version == context_after.version
         candidate = await client.get(
             f"/api/review/question-candidates/{candidate_id}"
         )
@@ -395,12 +459,10 @@ async def test_explicit_confirm_command_publishes_without_second_decision(
 
 
 @pytest.mark.asyncio
-async def test_curation_intent_receives_recent_focus_and_projects_command_timing(
+async def test_curation_focus_survives_more_than_eight_messages_and_projects_timing(
     api, application
 ) -> None:
     app, source_ids = application
-    captured = []
-
     async with AsyncClient(
         transport=ASGITransport(app=api), base_url="http://test"
     ) as client:
@@ -411,16 +473,6 @@ async def test_curation_intent_receives_recent_focus_and_projects_command_timing
         await app.wait_execution(created.json()["executionId"])
         session_id = created.json()["id"]
         review = app.locate_review_session(session_id)
-
-        async def resolve(**kwargs):
-            captured.append(kwargs)
-            if len(captured) == 1:
-                return CurationCommandPlan(
-                    inspect=CandidateSelector(scope="explicit", ordinals=[1])
-                )
-            return CurationCommandPlan(response="已理解你指的是刚才查看的题目。")
-
-        review.resolve_curation_intent = resolve
         detail = (
             await client.get(f"/api/review/curation-sessions/{session_id}")
         ).json()
@@ -433,6 +485,15 @@ async def test_curation_intent_receives_recent_focus_and_projects_command_timing
                 "idempotencyKey": "inspect-context-command-1",
             },
         )
+        latest = review.sessions.repository.latest_execution(session_id)
+        for index in range(10):
+            review.sessions.repository.append_message(
+                session_id,
+                execution_id=None if latest is None else latest.id,
+                role="user" if index % 2 == 0 else "assistant",
+                content=f"无关的历史消息 {index}",
+                message_kind="text" if index % 2 == 0 else "command_receipt",
+            )
         second = await client.post(
             f"/api/review/curation-sessions/{session_id}/commands",
             json={
@@ -444,10 +505,12 @@ async def test_curation_intent_receives_recent_focus_and_projects_command_timing
 
         assert first.status_code == 202, first.text
         assert second.status_code == 202, second.text
-        assert captured[1]["conversation"][-1]["content"].startswith(
-            "第 1 题："
-        )
-        assert captured[1]["conversation"][-1]["candidateOrdinals"] == (1,)
+        assert second.json()["kind"] == "confirm"
+        assert second.json()["result"]["publishedCount"] == 1
+        candidate_id = detail["summary"]["items"][0]["candidateId"]
+        assert (
+            await client.get(f"/api/review/question-candidates/{candidate_id}")
+        ).json()["status"] == "published"
         restored = (
             await client.get(f"/api/review/curation-sessions/{session_id}")
         ).json()
@@ -462,6 +525,150 @@ async def test_curation_intent_receives_recent_focus_and_projects_command_timing
         assert command_messages[-1]["payload"]["startedAt"].endswith(
             "+00:00"
         )
+
+
+@pytest.mark.asyncio
+async def test_multi_focus_pronoun_requires_clarification_without_mutation(
+    api, application
+) -> None:
+    app, source_ids = application
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = (
+            await client.post(
+                "/api/review/curation-sessions",
+                json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+            )
+        ).json()
+        await app.wait_execution(created["executionId"])
+        session_id = created["id"]
+        review = app.locate_review_session(session_id)
+        current = review.repository.get_curation_session(session_id)
+        first_id = str(current.summary.items[0]["candidateId"])
+        first_candidate = review.repository.get_candidate(first_id)
+        second = review.repository.save_candidate(
+            batch_id=first_candidate.batch_id,
+            question=replace(
+                first_candidate.question,
+                question_id="candidate-question-2",
+                document_id="candidate-document-2",
+                content_hash="d" * 64,
+                title="第二道候选题",
+            ),
+            draft_id=None,
+            source_refs=first_candidate.source_refs,
+            status="review_pending",
+            candidate_id="candidate-2",
+        )
+        summary = review.repository.replace_curation_summary(
+            session_id,
+            expected_version=current.summary_version,
+            summary=type(current.summary)(
+                items=current.summary.items
+                + (
+                    {
+                        "ordinal": 2,
+                        "candidateId": second.id,
+                        "title": second.question.title,
+                        "recommendation": "recommend_confirm",
+                    },
+                )
+            ),
+        )
+        context = review.repository.get_or_create_curation_context(session_id)
+        review.repository.replace_curation_context(
+            session_id,
+            expected_version=context.version,
+            focused_candidate_ids=(first_id, second.id),
+            last_intent="inspect",
+            last_result_candidate_ids=(first_id, second.id),
+            dialogue_summary={},
+            summarized_through_message_id=None,
+        )
+
+        response = await client.post(
+            f"/api/review/curation-sessions/{session_id}/commands",
+            json={
+                "text": "这题发布吧",
+                "summaryVersion": summary.summary_version,
+                "idempotencyKey": "multi-focus-command-1",
+            },
+        )
+
+        assert response.status_code == 202, response.text
+        assert response.json()["kind"] == "clarify"
+        assert "多道题" in response.json()["result"]["clarification"]
+        assert review.repository.get_candidate(first_id).status == "review_pending"
+        assert review.repository.get_candidate(second.id).status == "review_pending"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("summary_fails", [False, True])
+async def test_budget_overflow_compacts_or_safely_degrades(
+    api, application, summary_fails
+) -> None:
+    app, source_ids = application
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = (
+            await client.post(
+                "/api/review/curation-sessions",
+                json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+            )
+        ).json()
+        await app.wait_execution(created["executionId"])
+        session_id = created["id"]
+        review = app.locate_review_session(session_id)
+        models = RecordingCurationModels(
+            CurationCommandPlan(response="已识别复杂命令"),
+            fail_summary=summary_fails,
+        )
+        review.curation_command_models = models
+        latest = review.sessions.repository.latest_execution(session_id)
+        for index in range(16):
+            review.sessions.repository.append_message(
+                session_id,
+                execution_id=None if latest is None else latest.id,
+                role="user" if index % 2 == 0 else "assistant",
+                content=(f"第 {index} 条早期历史 " + "上下文 " * 20),
+                message_kind="text" if index % 2 == 0 else "command_receipt",
+            )
+        detail = (
+            await client.get(f"/api/review/curation-sessions/{session_id}")
+        ).json()
+
+        response = await client.post(
+            f"/api/review/curation-sessions/{session_id}/commands",
+            json={
+                "text": "按备注处理，其余按之前说的办",
+                "summaryVersion": detail["summaryVersion"],
+                "idempotencyKey": f"overflow-command-{summary_fails}",
+            },
+        )
+
+        assert response.status_code == 202, response.text
+        assert len(models.summarizer.calls) == 1
+        assert len(models.classifier.calls) == 1
+        assembled = models.classifier.calls[0][0]
+        assert assembled.recent_turns
+        context = review.repository.get_or_create_curation_context(session_id)
+        restored = (
+            await client.get(f"/api/review/curation-sessions/{session_id}")
+        ).json()
+        assert restored["contextUsage"]["thresholdTokens"] > 0
+        if summary_fails:
+            assert context.summarized_through_message_id is None
+            assert restored["contextCompacted"] is False
+            assert review.sessions.repository.latest_warning(session_id) == {
+                "code": "curation_context_summary_failed",
+                "message": "curation_context_summary_failed",
+            }
+        else:
+            assert context.summarized_through_message_id is not None
+            assert context.dialogue_summary["text"] == "已压缩早期整理对话"
+            assert restored["contextCompacted"] is True
 
 
 @pytest.mark.asyncio
@@ -492,6 +699,13 @@ async def test_curation_session_and_summary_restore_after_application_restart(
     )
     await first.wait_execution(created["execution_id"])
     before = await first.review("w1").curation_resource(created["id"])
+    inspected = await first.review("w1").execute_curation_command(
+        created["id"],
+        text="第 1 题是什么？",
+        summary_version=before["summary_version"],
+        idempotency_key="restart-inspect-1",
+    )
+    assert inspected["kind"] == "clarify"
     await first.close()
 
     second = build()
@@ -501,6 +715,16 @@ async def test_curation_session_and_summary_restore_after_application_restart(
         assert restored["stage"] == "waiting_for_command"
         assert restored["summary_version"] == before["summary_version"]
         assert restored["summary"] == before["summary"]
-        assert restored["messages"] == before["messages"]
+        published = await second.review("w1").execute_curation_command(
+            created["id"],
+            text="这题发布吧",
+            summary_version=restored["summary_version"],
+            idempotency_key="restart-publish-pronoun-1",
+        )
+        assert published["kind"] == "confirm"
+        candidate_id = str(restored["summary"]["items"][0]["candidateId"])
+        assert (
+            await second.review("w1").candidate_resource(candidate_id)
+        )["status"] == "published"
     finally:
         await second.close()

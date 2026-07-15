@@ -235,3 +235,11 @@
 - `CurationIntentAgent` 收敛为无工具、无 checkpoint 的 classifier/summarizer 组件，执行名称与模型 role 分离。
 - 新增领域上下文 adapter：完整 turn、焦点题全文、其他题轻量索引，并保证显式命令不加载上下文或调用模型。
 - TDD 证据：RED 为缺少新模块/接口；GREEN 定向回归 27 passed。
+
+## 2026-07-15：持久上下文架构 Task 4
+
+- 删除 `execute_curation_command` 的固定 8 条消息分支，接入持久焦点、完整 turn、token budget、结构化压缩和 classifier lazy provider。
+- inspect 后跨 10 条无关消息及进程重启仍能用“这题”发布；双焦点指代只澄清且不修改候选状态。
+- 显式发布与重复幂等请求均零 classifier/summarizer 调用；重复请求不推进 context version。
+- 压缩成功推进 summary cursor 并投影 `contextCompacted`；压缩失败记录 warning、保留 cursor，classifier 继续收到最近完整 turn。
+- TDD 证据：集成 RED 6 failed；GREEN API/restart/migration 21 passed，跨模块定向回归 70 passed。

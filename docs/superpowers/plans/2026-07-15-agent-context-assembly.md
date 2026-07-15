@@ -281,7 +281,7 @@ git commit -m "refactor(review): interpret curation commands safely"
 - Structured summary success advances summary/cursor and marks compaction; failure records `curation_context_summary_failed` and retains the old cursor.
 - Actual classifier prompt drives context usage; deterministic commands fabricate no model usage.
 
-- [ ] **Step 1: Add RED API and restart tests**
+- [x] **Step 1: Add RED API and restart tests**
 
 Cover six behaviors with recording fakes:
 
@@ -294,7 +294,7 @@ Cover six behaviors with recording fakes:
 
 Restart test: inspect candidate 1, close and recreate runtime against the same workspace, then `这题发布吧`; candidate 1 is recovered from persisted context/structured timeline without parsing free text.
 
-- [ ] **Step 2: Verify integration RED**
+- [x] **Step 2: Verify integration RED**
 
 ```bash
 cd backend
@@ -303,11 +303,11 @@ cd backend
 
 Expected: FAIL on durable-focus, compaction, restart, and zero-call assertions.
 
-- [ ] **Step 3: Replace the eight-message application path**
+- [x] **Step 3: Replace the eight-message application path**
 
 In `execute_curation_command`, call `find_curation_command_receipt` and return an existing receipt before interpretation; load/create/recover context; run deterministic parsing first; unresolved language uses adapter, assembler, optional structured summarization, then classifier. Resolve the plan against frozen summary version/current resources and execute existing domain branches. After a successful receipt, CAS-update focus and result IDs from actual results. Remove `visible_messages[-8:]` and `resolve_curation_intent`. Summary failure emits a warning without cursor advancement; hard budget failure returns stable `context_budget_exceeded`. Do not expose summary text or checkpoint state.
 
-- [ ] **Step 4: Verify integration GREEN and targeted regression**
+- [x] **Step 4: Verify integration GREEN and targeted regression**
 
 Run Step 2, then:
 
@@ -318,7 +318,7 @@ cd backend
 
 Expected: all selected tests PASS without new warnings.
 
-- [ ] **Step 5: Commit integrated implementation**
+- [x] **Step 5: Commit integrated implementation**
 
 ```bash
 git add backend task_plan.md findings.md progress.md
