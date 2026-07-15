@@ -17,6 +17,9 @@ from app.schemas.review import (
     CurationSessionResource,
     CurationCommandReceiptResource,
     AcceptedCurationCommandResource,
+    AcceptedBulkPublicationResource,
+    BulkPublicationPreflightResource,
+    BulkPublicationResource,
     DiscussionSessionResource,
     QuestionBatchResource,
     QuestionCandidateResource,
@@ -27,6 +30,8 @@ from app.schemas.review import (
     SubmitReviewInputCommand,
     RetryReviewEvaluationCommand,
     SubmitCurationCommand,
+    StartBulkPublicationCommand,
+    RetryBulkPublicationCommand,
     UpdateQuestionCandidateCommand,
     UpdateQuestionCandidateNoteCommand,
     PublishQuestionCandidateCommand,
@@ -132,6 +137,65 @@ async def abandon_curation_command(
 ):
     review = application.locate_curation_command(command_id)
     await review.abandon_curation_command(command_id)
+
+
+@router.get(
+    "/curation-sessions/{session_id}/bulk-publication/preflight",
+    response_model=BulkPublicationPreflightResource,
+)
+async def preflight_bulk_publication(
+    session_id: str,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_review_session(session_id)
+    return review.preflight_bulk_publication(session_id)
+
+
+@router.post(
+    "/curation-sessions/{session_id}/bulk-publications",
+    response_model=AcceptedBulkPublicationResource,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def start_bulk_publication(
+    session_id: str,
+    command: StartBulkPublicationCommand,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_review_session(session_id)
+    return await review.start_bulk_publication(
+        session_id,
+        summary_version=command.summary_version,
+        idempotency_key=command.idempotency_key,
+        candidate_ids=tuple(command.candidate_ids),
+    )
+
+
+@router.post(
+    "/bulk-publications/{operation_id}/retry",
+    response_model=AcceptedBulkPublicationResource,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_bulk_publication(
+    operation_id: str,
+    command: RetryBulkPublicationCommand,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_bulk_publication(operation_id)
+    return await review.retry_bulk_publication(
+        operation_id, idempotency_key=command.idempotency_key
+    )
+
+
+@router.get(
+    "/bulk-publications/{operation_id}",
+    response_model=BulkPublicationResource,
+)
+async def get_bulk_publication(
+    operation_id: str,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_bulk_publication(operation_id)
+    return review.bulk_publication_resource(operation_id)
 
 
 @router.post(

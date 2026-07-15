@@ -15,6 +15,8 @@ from app.review.errors import (
 )
 from app.review.models import (
     AttemptStatus,
+    BulkPublicationItemRecord,
+    BulkPublicationRecord,
     CurationContextRecord,
     CurationSessionRecord,
     CurationStage,
@@ -574,7 +576,248 @@ class ReviewRepository:
                 "AND execution_id IN (SELECT id FROM agent_runs WHERE status IN "
                 "('interrupted', 'failed', 'cancelled', 'completed'))"
             )
+            self._connection.execute(
+                "UPDATE review_bulk_publications SET status = "
+                "CASE (SELECT status FROM agent_runs WHERE id = execution_id) "
+                "WHEN 'cancelled' THEN 'cancelled' "
+                "WHEN 'failed' THEN 'failed' ELSE 'interrupted' END "
+                "WHERE status IN ('accepted', 'running') "
+                "AND execution_id IN (SELECT id FROM agent_runs WHERE status IN "
+                "('interrupted', 'failed', 'cancelled', 'completed'))"
+            )
         return batches, rounds
+
+    def create_bulk_publication(
+        self,
+        *,
+        session_id: str,
+        summary_version: int,
+        idempotency_key: str,
+        candidate_ids: tuple[str, ...],
+        operation_id: str | None = None,
+    ) -> tuple[BulkPublicationRecord, bool]:
+        existing = self._connection.execute(
+            "SELECT * FROM review_bulk_publications "
+            "WHERE session_id = ? AND idempotency_key = ?",
+            (session_id, idempotency_key),
+        ).fetchone()
+        if existing is not None:
+            operation = self._bulk_publication(existing)
+            stored = tuple(
+                item.candidate_id
+                for item in self.list_bulk_publication_items(operation.id)
+            )
+            if (
+                operation.summary_version != summary_version
+                or stored != candidate_ids
+            ):
+                raise ReviewConflictError(
+                    "bulk publication idempotency key changed"
+                )
+            return operation, False
+        identifier = operation_id or str(uuid4())
+        with self._transaction():
+            self._connection.execute(
+                "INSERT INTO review_bulk_publications "
+                "(id, session_id, summary_version, idempotency_key) "
+                "VALUES (?, ?, ?, ?)",
+                (identifier, session_id, summary_version, idempotency_key),
+            )
+            for candidate_id in candidate_ids:
+                self._connection.execute(
+                    "INSERT INTO review_bulk_publication_items "
+                    "(id, operation_id, candidate_id, idempotency_key) "
+                    "VALUES (?, ?, ?, ?)",
+                    (
+                        str(uuid4()),
+                        identifier,
+                        candidate_id,
+                        f"bulk-publish:{identifier}:{candidate_id}",
+                    ),
+                )
+        return self.get_bulk_publication(identifier), True
+
+    def get_bulk_publication(
+        self, operation_id: str
+    ) -> BulkPublicationRecord:
+        row = self._connection.execute(
+            "SELECT * FROM review_bulk_publications WHERE id = ?",
+            (operation_id,),
+        ).fetchone()
+        if row is None:
+            raise LookupError(operation_id)
+        return self._bulk_publication(row)
+
+    def reconcile_bulk_publication(
+        self, operation_id: str
+    ) -> BulkPublicationRecord:
+        operation = self.get_bulk_publication(operation_id)
+        if operation.status not in {"accepted", "running"}:
+            return operation
+        if operation.execution_id is None:
+            return operation
+        execution = self._connection.execute(
+            "SELECT status FROM agent_runs WHERE id = ?",
+            (operation.execution_id,),
+        ).fetchone()
+        if execution is None or execution["status"] in {
+            "running",
+            "waiting_for_input",
+            "waiting_for_approval",
+        }:
+            return operation
+        target = (
+            "cancelled"
+            if execution["status"] == "cancelled"
+            else "failed"
+            if execution["status"] == "failed"
+            else "interrupted"
+        )
+        return self.transition_bulk_publication(
+            operation.id,
+            expected=("accepted", "running"),
+            target=target,
+        )
+
+    def list_bulk_publication_items(
+        self, operation_id: str
+    ) -> tuple[BulkPublicationItemRecord, ...]:
+        rows = self._connection.execute(
+            "SELECT * FROM review_bulk_publication_items "
+            "WHERE operation_id = ? ORDER BY created_at, rowid",
+            (operation_id,),
+        ).fetchall()
+        return tuple(self._bulk_publication_item(row) for row in rows)
+
+    def attach_bulk_publication_execution(
+        self, operation_id: str, execution_id: str
+    ) -> BulkPublicationRecord:
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_bulk_publications SET execution_id = ? "
+                "WHERE id = ? AND execution_id IS NULL",
+                (execution_id, operation_id),
+            )
+            if cursor.rowcount != 1:
+                current = self.get_bulk_publication(operation_id)
+                if current.execution_id != execution_id:
+                    raise ReviewConflictError(
+                        "bulk publication already has an execution"
+                    )
+        return self.get_bulk_publication(operation_id)
+
+    def transition_bulk_publication(
+        self,
+        operation_id: str,
+        *,
+        expected: tuple[str, ...],
+        target: str,
+    ) -> BulkPublicationRecord:
+        placeholders = ",".join("?" for _item in expected)
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_bulk_publications SET status = ?, "
+                "completed_at = CASE WHEN ? IN "
+                "('completed', 'partial_failure', 'failed', 'cancelled') "
+                "THEN CURRENT_TIMESTAMP ELSE completed_at END "
+                "WHERE id = ? "
+                f"AND status IN ({placeholders})",
+                (target, target, operation_id, *expected),
+            )
+            if cursor.rowcount != 1:
+                current = self.get_bulk_publication(operation_id)
+                if current.status != target:
+                    raise ReviewConflictError(
+                        "bulk publication lifecycle changed"
+                    )
+        return self.get_bulk_publication(operation_id)
+
+    def transition_bulk_publication_item(
+        self,
+        item_id: str,
+        *,
+        expected: tuple[str, ...],
+        target: str,
+        error_code: str | None = None,
+    ) -> BulkPublicationItemRecord:
+        placeholders = ",".join("?" for _item in expected)
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_bulk_publication_items SET status = ?, "
+                "error_code = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? "
+                f"AND status IN ({placeholders})",
+                (target, error_code, item_id, *expected),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError(
+                    "bulk publication item lifecycle changed"
+                )
+        row = self._connection.execute(
+            "SELECT * FROM review_bulk_publication_items WHERE id = ?",
+            (item_id,),
+        ).fetchone()
+        if row is None:
+            raise LookupError(item_id)
+        return self._bulk_publication_item(row)
+
+    def complete_bulk_publication_from_items(
+        self, operation_id: str
+    ) -> BulkPublicationRecord:
+        items = self.list_bulk_publication_items(operation_id)
+        completed = sum(item.status == "completed" for item in items)
+        failed = sum(item.status == "failed" for item in items)
+        if failed and completed:
+            target = "partial_failure"
+        elif failed:
+            target = "failed"
+        else:
+            target = "completed"
+        return self.transition_bulk_publication(
+            operation_id, expected=("running",), target=target
+        )
+
+    def reset_running_bulk_publication_items(
+        self, operation_id: str
+    ) -> None:
+        with self._transaction():
+            self._connection.execute(
+                "UPDATE review_bulk_publication_items SET status = 'pending', "
+                "error_code = NULL, updated_at = CURRENT_TIMESTAMP "
+                "WHERE operation_id = ? AND status = 'running'",
+                (operation_id,),
+            )
+
+    def requeue_bulk_publication(
+        self,
+        operation_id: str,
+        *,
+        execution_id: str,
+        idempotency_key: str,
+    ) -> tuple[BulkPublicationRecord, bool]:
+        current = self.get_bulk_publication(operation_id)
+        if current.retry_idempotency_key == idempotency_key:
+            return current, False
+        if current.status not in {
+            "partial_failure",
+            "failed",
+            "cancelled",
+            "interrupted",
+        }:
+            raise ReviewConflictError("bulk publication cannot be retried")
+        with self._transaction():
+            self._connection.execute(
+                "UPDATE review_bulk_publication_items SET status = 'pending', "
+                "error_code = NULL, updated_at = CURRENT_TIMESTAMP "
+                "WHERE operation_id = ? AND status IN ('failed', 'running')",
+                (operation_id,),
+            )
+            self._connection.execute(
+                "UPDATE review_bulk_publications SET execution_id = ?, "
+                "retry_idempotency_key = ?, retry_count = retry_count + 1, "
+                "status = 'accepted', completed_at = NULL WHERE id = ?",
+                (execution_id, idempotency_key, operation_id),
+            )
+        return self.get_bulk_publication(operation_id), True
 
     def list_evaluating_attempts(self) -> tuple[ReviewAttemptRecord, ...]:
         rows = self._connection.execute(
@@ -1736,6 +1979,36 @@ class ReviewRepository:
             retry_count=row["retry_count"],
             created_at=row["created_at"],
             completed_at=row["completed_at"],
+        )
+
+    @staticmethod
+    def _bulk_publication(row: sqlite3.Row) -> BulkPublicationRecord:
+        return BulkPublicationRecord(
+            id=row["id"],
+            session_id=row["session_id"],
+            execution_id=row["execution_id"],
+            summary_version=row["summary_version"],
+            idempotency_key=row["idempotency_key"],
+            retry_idempotency_key=row["retry_idempotency_key"],
+            retry_count=row["retry_count"],
+            status=row["status"],
+            created_at=row["created_at"],
+            completed_at=row["completed_at"],
+        )
+
+    @staticmethod
+    def _bulk_publication_item(
+        row: sqlite3.Row,
+    ) -> BulkPublicationItemRecord:
+        return BulkPublicationItemRecord(
+            id=row["id"],
+            operation_id=row["operation_id"],
+            candidate_id=row["candidate_id"],
+            idempotency_key=row["idempotency_key"],
+            status=row["status"],
+            error_code=row["error_code"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
         )
 
     def _catalog_record(self, row: sqlite3.Row) -> QuestionCatalogRecord:

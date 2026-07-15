@@ -239,6 +239,42 @@ class CurationCommandReceiptRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class BulkPublicationPreflight:
+    session_id: str
+    summary_version: int
+    publishable: tuple[str, ...]
+    already_published: tuple[str, ...]
+    needs_review: tuple[str, ...]
+    blocked: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class BulkPublicationRecord:
+    id: str
+    session_id: str
+    execution_id: str | None
+    summary_version: int
+    idempotency_key: str
+    retry_idempotency_key: str | None
+    retry_count: int
+    status: str
+    created_at: str
+    completed_at: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class BulkPublicationItemRecord:
+    id: str
+    operation_id: str
+    candidate_id: str
+    idempotency_key: str
+    status: str
+    error_code: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
 class ReviewRoundRecord:
     id: str
     workspace_id: str

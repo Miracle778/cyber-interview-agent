@@ -41,7 +41,11 @@ from app.review.curation_context import (
     CurationCommandInterpreter,
     CurationContextAdapter,
 )
-from app.review.models import CurationSummary, ReviewRoundSettings
+from app.review.models import (
+    BulkPublicationPreflight,
+    CurationSummary,
+    ReviewRoundSettings,
+)
 from app.review.repository import ReviewRepository
 from app.review.selector import QuestionSelector
 from app.review.timeline import SessionTimelineProjector
@@ -374,6 +378,231 @@ class ReviewApplication:
                 )
             ]
         )
+
+    def preflight_bulk_publication(
+        self, session_id: str
+    ) -> BulkPublicationPreflight:
+        curation = self.repository.get_curation_session(session_id)
+        publishable: list[str] = []
+        already_published: list[str] = []
+        needs_review: list[str] = []
+        blocked: list[str] = []
+        for item in curation.summary.items:
+            candidate_id = str(item["candidateId"])
+            try:
+                candidate = self.repository.get_candidate(candidate_id)
+            except LookupError:
+                blocked.append(candidate_id)
+                continue
+            recommendation = str(item.get("recommendation") or "")
+            if candidate.status == "published":
+                already_published.append(candidate_id)
+            elif (
+                candidate.status == "review_pending"
+                and recommendation == "recommend_confirm"
+                and candidate.draft_id is not None
+            ):
+                publishable.append(candidate_id)
+            elif candidate.status == "rejected" or recommendation in {
+                "link_existing",
+                "suggest_reject",
+            }:
+                needs_review.append(candidate_id)
+            else:
+                blocked.append(candidate_id)
+        return BulkPublicationPreflight(
+            session_id=session_id,
+            summary_version=curation.summary_version,
+            publishable=tuple(publishable),
+            already_published=tuple(already_published),
+            needs_review=tuple(needs_review),
+            blocked=tuple(blocked),
+        )
+
+    async def start_bulk_publication(
+        self,
+        session_id: str,
+        *,
+        summary_version: int,
+        idempotency_key: str,
+        candidate_ids: tuple[str, ...],
+    ) -> dict[str, Any]:
+        preflight = self.preflight_bulk_publication(session_id)
+        if preflight.summary_version != summary_version:
+            raise ReviewConflictError(
+                "curation summary changed before bulk publication"
+            )
+        if candidate_ids != preflight.publishable:
+            raise ReviewConflictError(
+                "bulk publication eligibility changed"
+            )
+        operation, created = self.repository.create_bulk_publication(
+            session_id=session_id,
+            summary_version=summary_version,
+            idempotency_key=idempotency_key,
+            candidate_ids=candidate_ids,
+        )
+        if not created:
+            return self._accepted_bulk_publication_resource(operation)
+        session = self.sessions.get(session_id)
+        execution = await self.executions.prepare(
+            session,
+            input={
+                "operation": "curation.bulk_publish",
+                "operationId": operation.id,
+            },
+            project_input_message=False,
+        )
+        operation = self.repository.attach_bulk_publication_execution(
+            operation.id, execution.id
+        )
+        self._schedule_bulk_publication(operation)
+        return self._accepted_bulk_publication_resource(operation)
+
+    def _schedule_bulk_publication(self, operation) -> None:
+        if operation.execution_id is None:
+            raise ReviewConflictError("bulk publication has no execution")
+        execution = self.sessions.repository.get_execution(
+            operation.execution_id
+        )
+
+        async def handler(current, cancellation):
+            self.repository.transition_bulk_publication(
+                operation.id, expected=("accepted",), target="running"
+            )
+            try:
+                for item in self.repository.list_bulk_publication_items(
+                    operation.id
+                ):
+                    if item.status == "completed":
+                        continue
+                    cancellation.raise_if_requested()
+                    item = self.repository.transition_bulk_publication_item(
+                        item.id, expected=("pending",), target="running"
+                    )
+                    await self.events.publish(
+                        operation.session_id,
+                        current.id,
+                        "publication.changed",
+                        {
+                            "operationId": operation.id,
+                            "candidateId": item.candidate_id,
+                            "status": "running",
+                        },
+                    )
+                    try:
+                        with cancellation.critical_section():
+                            await self._publish_curation_candidate(
+                                item.candidate_id,
+                                idempotency_key=item.idempotency_key,
+                            )
+                            item = self.repository.transition_bulk_publication_item(
+                                item.id,
+                                expected=("running",),
+                                target="completed",
+                            )
+                    except Exception as error:
+                        item = self.repository.transition_bulk_publication_item(
+                            item.id,
+                            expected=("running",),
+                            target="failed",
+                            error_code=str(
+                                getattr(error, "code", "publication_failed")
+                            ),
+                        )
+                    await self.events.publish(
+                        operation.session_id,
+                        current.id,
+                        "publication.changed",
+                        {
+                            "operationId": operation.id,
+                            "candidateId": item.candidate_id,
+                            "status": item.status,
+                            "errorCode": item.error_code,
+                        },
+                    )
+                    cancellation.raise_if_requested()
+                self.repository.complete_bulk_publication_from_items(
+                    operation.id
+                )
+            except (ExecutionCancelled, asyncio.CancelledError):
+                latest = self.sessions.repository.get_execution(current.id)
+                self.repository.reset_running_bulk_publication_items(
+                    operation.id
+                )
+                self.repository.transition_bulk_publication(
+                    operation.id,
+                    expected=("running",),
+                    target=(
+                        "cancelled"
+                        if latest.cancellation_requested
+                        else "interrupted"
+                    ),
+                )
+                raise
+
+        self.executions.run_background(execution, handler)
+
+    async def retry_bulk_publication(
+        self, operation_id: str, *, idempotency_key: str
+    ) -> dict[str, Any]:
+        operation = self.repository.reconcile_bulk_publication(operation_id)
+        if operation.retry_idempotency_key == idempotency_key:
+            return self._accepted_bulk_publication_resource(operation)
+        if operation.status not in {
+            "partial_failure",
+            "failed",
+            "cancelled",
+            "interrupted",
+        }:
+            raise ReviewConflictError("bulk publication cannot be retried")
+        session = self.sessions.get(operation.session_id)
+        execution = await self.executions.prepare(
+            session,
+            input={
+                "operation": "curation.bulk_publish.retry",
+                "operationId": operation.id,
+            },
+            project_input_message=False,
+        )
+        operation, _created = self.repository.requeue_bulk_publication(
+            operation.id,
+            execution_id=execution.id,
+            idempotency_key=idempotency_key,
+        )
+        self._schedule_bulk_publication(operation)
+        return self._accepted_bulk_publication_resource(operation)
+
+    def bulk_publication_resource(
+        self, operation_id: str
+    ) -> dict[str, Any]:
+        operation = self.repository.reconcile_bulk_publication(operation_id)
+        return {
+            "id": operation.id,
+            "session_id": operation.session_id,
+            "execution_id": operation.execution_id,
+            "summary_version": operation.summary_version,
+            "status": operation.status,
+            "retry_count": operation.retry_count,
+            "items": [
+                asdict(item)
+                for item in self.repository.list_bulk_publication_items(
+                    operation.id
+                )
+            ],
+            "created_at": operation.created_at,
+            "completed_at": operation.completed_at,
+        }
+
+    @staticmethod
+    def _accepted_bulk_publication_resource(operation) -> dict[str, Any]:
+        if operation.execution_id is None:
+            raise ReviewConflictError("bulk publication has no execution")
+        return {
+            "operation_id": operation.id,
+            "execution_id": operation.execution_id,
+            "status": "accepted",
+        }
 
     async def submit_curation_command(
         self,

@@ -72,6 +72,16 @@ class SubmitCurationCommand(ReviewModel):
     reasoning_effort: ReasoningEffort = "none"
 
 
+class StartBulkPublicationCommand(ReviewModel):
+    summary_version: int = Field(ge=0)
+    idempotency_key: str = Field(min_length=8, max_length=200)
+    candidate_ids: list[str] = Field(min_length=1)
+
+
+class RetryBulkPublicationCommand(ReviewModel):
+    idempotency_key: str = Field(min_length=8, max_length=200)
+
+
 class UpdateQuestionCandidateCommand(ReviewModel):
     version: int = Field(ge=1)
     title: str | None = Field(default=None, min_length=1)
@@ -330,6 +340,44 @@ class AcceptedCurationCommandResource(ReviewModel):
     command_id: str
     execution_id: str
     status: Literal["accepted"] = "accepted"
+
+
+class BulkPublicationPreflightResource(ReviewModel):
+    session_id: str
+    summary_version: int
+    publishable: list[str]
+    already_published: list[str]
+    needs_review: list[str]
+    blocked: list[str]
+
+
+class AcceptedBulkPublicationResource(ReviewModel):
+    operation_id: str
+    execution_id: str
+    status: Literal["accepted"] = "accepted"
+
+
+class BulkPublicationItemResource(ReviewModel):
+    id: str
+    operation_id: str
+    candidate_id: str
+    idempotency_key: str
+    status: str
+    error_code: str | None
+    created_at: str
+    updated_at: str
+
+
+class BulkPublicationResource(ReviewModel):
+    id: str
+    session_id: str
+    execution_id: str | None
+    summary_version: int
+    status: str
+    retry_count: int
+    items: list[BulkPublicationItemResource]
+    created_at: str
+    completed_at: str | None
 
 
 class ReviewRoundResource(ReviewModel):

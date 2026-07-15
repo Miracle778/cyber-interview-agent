@@ -223,6 +223,88 @@ def test_curation_command_links_execution_and_tracks_lifecycle(
     connection.close()
 
 
+def test_bulk_publication_persists_item_progress_and_retries_only_failures(
+    tmp_path: Path,
+) -> None:
+    connection = _connection(tmp_path)
+    repository = ReviewRepository(connection)
+    repository.create_curation_session(
+        workspace_id="w1",
+        session_id="s1",
+        source_refs=("source-1",),
+    )
+    batch = repository.create_batch(
+        workspace_id="w1",
+        session_id="s1",
+        run_id="r1",
+        source_refs=("source-1",),
+    )
+    repository.save_candidate(
+        batch_id=batch.id,
+        question=_snapshot("a"),
+        draft_id=None,
+        candidate_id="candidate-a",
+    )
+    repository.save_candidate(
+        batch_id=batch.id,
+        question=_snapshot("b"),
+        draft_id=None,
+        candidate_id="candidate-b",
+    )
+    operation, created = repository.create_bulk_publication(
+        session_id="s1",
+        summary_version=1,
+        idempotency_key="bulk-operation-1",
+        candidate_ids=("candidate-a", "candidate-b"),
+        operation_id="bulk-1",
+    )
+    repository.attach_bulk_publication_execution(operation.id, "r1")
+    repository.transition_bulk_publication(
+        operation.id, expected=("accepted",), target="running"
+    )
+    first, second = repository.list_bulk_publication_items(operation.id)
+    repository.transition_bulk_publication_item(
+        first.id, expected=("pending",), target="running"
+    )
+    repository.transition_bulk_publication_item(
+        first.id, expected=("running",), target="completed"
+    )
+    repository.transition_bulk_publication_item(
+        second.id, expected=("pending",), target="running"
+    )
+    repository.transition_bulk_publication_item(
+        second.id,
+        expected=("running",),
+        target="failed",
+        error_code="publication_failed",
+    )
+    partial = repository.complete_bulk_publication_from_items(operation.id)
+
+    assert created is True
+    assert partial.status == "partial_failure"
+    assert first.idempotency_key == "bulk-publish:bulk-1:candidate-a"
+    connection.execute(
+        "UPDATE agent_runs SET status = 'completed' WHERE id = 'r1'"
+    )
+    connection.execute(
+        "INSERT INTO agent_runs (id, session_id, status) "
+        "VALUES ('r2', 's1', 'running')"
+    )
+    connection.commit()
+    retried, is_new_retry = repository.requeue_bulk_publication(
+        operation.id,
+        execution_id="r2",
+        idempotency_key="bulk-retry-1",
+    )
+    retried_items = repository.list_bulk_publication_items(operation.id)
+
+    assert is_new_retry is True
+    assert retried.retry_count == 1
+    assert [item.status for item in retried_items] == ["completed", "pending"]
+    assert retried_items[0].idempotency_key == first.idempotency_key
+    connection.close()
+
+
 def test_batch_candidate_and_catalog_activation_are_idempotent(
     tmp_path: Path,
 ) -> None:

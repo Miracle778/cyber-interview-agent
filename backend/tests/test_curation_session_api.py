@@ -12,6 +12,7 @@ from app.api.routes_review import router as review_router
 from app.application.workspace_runtime import AgentApplication
 from app.agents.context_assembly import ContextSummary
 from app.knowledge.source_registry import KnowledgeSourceService
+from app.knowledge.drafts import CreateDraftCommand
 from app.graphs.publication import create_publication_graph
 from tests.test_review_api_v2 import _graph_factory
 from app.review.curation_command_contracts import CurationCommandPlan
@@ -430,6 +431,223 @@ async def test_immediate_abandon_cancels_command_and_releases_session(
         assert (
             await app.wait_execution(next_command.json()["executionId"])
         ).status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_bulk_preflight_uses_server_candidate_state(
+    api, application
+) -> None:
+    app, source_ids = application
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = (
+            await client.post(
+                "/api/review/curation-sessions",
+                json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+            )
+        ).json()
+        await app.wait_execution(created["executionId"])
+        review = app.locate_review_session(created["id"])
+        curation = review.repository.get_curation_session(created["id"])
+        recommended = review.repository.get_candidate(
+            str(curation.summary.items[0]["candidateId"])
+        )
+        fixtures = (
+            ("duplicate", "review_pending", "link_existing"),
+            ("rejected", "rejected", "suggest_reject"),
+            ("published", "published", "recommend_confirm"),
+            ("blocked", "review_pending", "recommend_confirm"),
+        )
+        items = [dict(curation.summary.items[0])]
+        items[0]["recommendation"] = "recommend_confirm"
+        for index, (identifier, candidate_status, recommendation) in enumerate(
+            fixtures, start=1
+        ):
+            draft_id = None
+            if identifier != "blocked":
+                draft = await review.drafts.create(
+                    CreateDraftCommand(
+                        domain="review",
+                        document_type="question",
+                        title=identifier,
+                        markdown=f"# {identifier}",
+                        source_refs=(source_ids[0],),
+                        relation_refs=(),
+                        session_id=created["id"],
+                        document_id=f"doc-{identifier}",
+                    )
+                )
+                draft_id = draft.id
+            review.repository.save_candidate(
+                batch_id=recommended.batch_id,
+                question=replace(
+                    recommended.question,
+                    question_id=identifier,
+                    document_id=f"doc-{identifier}",
+                    content_hash=f"{index:064x}",
+                    title=identifier,
+                ),
+                draft_id=draft_id,
+                status=candidate_status,
+                candidate_id=identifier,
+            )
+            items.append(
+                {
+                    "ordinal": len(items) + 1,
+                    "candidateId": identifier,
+                    "title": identifier,
+                    "recommendation": recommendation,
+                }
+            )
+        review.repository.replace_curation_summary(
+            created["id"],
+            expected_version=curation.summary_version,
+            summary=type(curation.summary)(items=tuple(items)),
+        )
+
+        response = await client.get(
+            f"/api/review/curation-sessions/{created['id']}"
+            "/bulk-publication/preflight"
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["publishable"] == [recommended.id]
+        assert response.json()["alreadyPublished"] == ["published"]
+        assert set(response.json()["needsReview"]) == {
+            "duplicate",
+            "rejected",
+        }
+        assert response.json()["blocked"] == ["blocked"]
+
+
+@pytest.mark.asyncio
+async def test_bulk_publication_cancel_then_retry_skips_completed_item(
+    api, application
+) -> None:
+    app, source_ids = application
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = (
+            await client.post(
+                "/api/review/curation-sessions",
+                json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+            )
+        ).json()
+        await app.wait_execution(created["executionId"])
+        review = app.locate_review_session(created["id"])
+        curation = review.repository.get_curation_session(created["id"])
+        first = review.repository.get_candidate(
+            str(curation.summary.items[0]["candidateId"])
+        )
+        second_draft = await review.drafts.create(
+            CreateDraftCommand(
+                domain="review",
+                document_type="question",
+                title="bulk second",
+                markdown="# bulk second",
+                source_refs=(source_ids[0],),
+                relation_refs=(),
+                session_id=created["id"],
+                document_id="doc-bulk-second",
+            )
+        )
+        second = review.repository.save_candidate(
+            batch_id=first.batch_id,
+            question=replace(
+                first.question,
+                question_id="bulk-second",
+                document_id="doc-bulk-second",
+                content_hash="b" * 64,
+                title="bulk second",
+            ),
+            draft_id=second_draft.id,
+            status="review_pending",
+            candidate_id="bulk-second",
+        )
+        summary = type(curation.summary)(
+            items=(
+                dict(curation.summary.items[0])
+                | {"recommendation": "recommend_confirm"},
+                {
+                    "ordinal": 2,
+                    "candidateId": second.id,
+                    "title": second.question.title,
+                    "recommendation": "recommend_confirm",
+                },
+            )
+        )
+        updated = review.repository.replace_curation_summary(
+            created["id"],
+            expected_version=curation.summary_version,
+            summary=summary,
+        )
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        calls: list[tuple[str, str]] = []
+
+        async def fake_publish(candidate_id, *, idempotency_key):
+            calls.append((candidate_id, idempotency_key))
+            if candidate_id == first.id and not release.is_set():
+                entered.set()
+                await release.wait()
+            review.repository.update_candidate_status(
+                candidate_id, status="published"
+            )
+
+        review._publish_curation_candidate = fake_publish
+        accepted = (
+            await client.post(
+                f"/api/review/curation-sessions/{created['id']}"
+                "/bulk-publications",
+                json={
+                    "summaryVersion": updated.summary_version,
+                    "idempotencyKey": "bulk-start-1",
+                    "candidateIds": [first.id, second.id],
+                },
+            )
+        ).json()
+        await asyncio.wait_for(entered.wait(), timeout=0.2)
+        requested = await app.cancel_execution(accepted["executionId"])
+        assert requested.cancellation_requested is True
+        release.set()
+        assert (
+            await app.wait_execution(accepted["executionId"])
+        ).status == "cancelled"
+        cancelled = (
+            await client.get(
+                f"/api/review/bulk-publications/{accepted['operationId']}"
+            )
+        ).json()
+        assert [item["status"] for item in cancelled["items"]] == [
+            "completed",
+            "pending",
+        ]
+
+        retried = await client.post(
+            f"/api/review/bulk-publications/{accepted['operationId']}/retry",
+            json={"idempotencyKey": "bulk-retry-1"},
+        )
+        assert retried.status_code == 202, retried.text
+        await app.wait_execution(retried.json()["executionId"])
+        completed = (
+            await client.get(
+                f"/api/review/bulk-publications/{accepted['operationId']}"
+            )
+        ).json()
+
+        assert completed["status"] == "completed"
+        assert [candidate_id for candidate_id, _key in calls] == [
+            first.id,
+            second.id,
+        ]
+        assert all(
+            key.startswith(
+                f"bulk-publish:{accepted['operationId']}:"
+            )
+            for _candidate_id, key in calls
+        )
 
 
 @pytest.mark.asyncio

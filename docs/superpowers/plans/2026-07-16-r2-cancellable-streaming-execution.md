@@ -593,7 +593,7 @@ git commit -m "feat(review): run curation commands asynchronously"
 - Produces: `ReviewApplication.preflight_bulk_publication(session_id)` and `start_bulk_publication(session_id, idempotency_key, candidate_ids)`.
 - Produces: `retry_bulk_publication(operation_id, idempotency_key)` which targets failed/unprocessed items only.
 
-- [ ] **Step 1: Write failing preflight and partial-result tests**
+- [x] **Step 1: Write preflight and partial-result tests**
 
 Add a mixed summary fixture and assert only safe recommendations are selected:
 
@@ -618,7 +618,11 @@ Define `candidate_fixture(identifier, *, status, recommendation)` in this test m
 
 Add an async cancellation test where item one commits, cancellation is requested, and item two remains unprocessed. Add a retry test that does not republish item one and uses the same candidate-level idempotency key.
 
-- [ ] **Step 2: Run targeted publication tests and verify they fail**
+- [x] **Step 2: Confirm the baseline gap by static inspection**
+
+The bulk tables existed, but repository methods, application APIs and routes were
+absent. To honor the stage test budget, this mechanically certain missing-symbol
+baseline was not followed by a redundant failing suite run.
 
 Run:
 
@@ -629,7 +633,7 @@ cd backend
 
 Expected: bulk preflight/operation methods and routes are missing.
 
-- [ ] **Step 3: Implement typed preflight and operation persistence**
+- [x] **Step 3: Implement typed preflight and operation persistence**
 
 Classify every current summary item from server-owned candidate status and recommendation; never trust a client-provided “safe” flag:
 
@@ -646,7 +650,7 @@ class BulkPublicationPreflight:
 
 Persist one operation row and one immutable item row per selected candidate. Derive candidate idempotency keys as `bulk-publish:{operation_id}:{candidate_id}` and enforce unique operation/candidate pairs.
 
-- [ ] **Step 4: Execute items at cancellation-safe boundaries**
+- [x] **Step 4: Execute items at cancellation-safe boundaries**
 
 Use the runtime handler from Task 1:
 
@@ -672,7 +676,7 @@ async def _run_bulk_publication(execution, cancellation, operation_id):
 
 Publish item progress via `publication.changed` with operationId, candidateId and status. Retry constructs a new execution over only `failed` and `pending` items; completed items remain immutable.
 
-- [ ] **Step 5: Add preflight/start/retry routes**
+- [x] **Step 5: Add preflight/start/retry routes**
 
 Expose:
 
@@ -685,7 +689,7 @@ GET  /api/review/bulk-publications/{operationId}
 
 Start requests include `summaryVersion`, server-returned candidate IDs and an idempotency key. Re-run preflight inside POST and return `409` if the summary or eligibility changed between confirmation and execution.
 
-- [ ] **Step 6: Run targeted publication tests**
+- [x] **Step 6: Run targeted publication tests**
 
 Run:
 
@@ -696,7 +700,7 @@ cd backend
 
 Expected: all selected tests pass, including partial success, cancellation and retry idempotency.
 
-- [ ] **Step 7: Commit Task 3**
+- [x] **Step 7: Commit Task 3**
 
 ```bash
 git add backend/app/review/models.py backend/app/review/repository.py \

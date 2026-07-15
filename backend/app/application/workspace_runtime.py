@@ -515,6 +515,18 @@ class AgentApplication:
                 continue
         raise ProductRecordNotFoundError("题库整理命令不存在")
 
+    def locate_bulk_publication(
+        self, operation_id: str
+    ) -> ReviewApplication:
+        for workspace_id in self._workspace_ids():
+            context = self._context(workspace_id)
+            try:
+                context.review.repository.get_bulk_publication(operation_id)
+                return context.review
+            except LookupError:
+                continue
+        raise ProductRecordNotFoundError("批量发布操作不存在")
+
     async def recover(self) -> tuple[str, ...]:
         recovered = []
         for workspace_id in self._workspace_ids():
