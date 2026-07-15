@@ -139,19 +139,20 @@ def test_agent_factory_delegates_to_create_agent_without_invocation_wrapper(
     monkeypatch.setattr("app.agents.factory.create_agent", fake_create_agent)
     factory = AgentFactory(StubResolver())
     spec = AgentSpec(
-        role="answer_evaluation",
+        role="question_generation",
+        execution_name="curation_command_classifier",
         system_prompt="Evaluate the answer",
         response_format=AnswerEvaluation,
     )
 
     result = factory.create(
         spec,
-        model_bindings={"answer_evaluation": "provider-model-1"},
+        model_bindings={"question_generation": "provider-model-1"},
     )
 
     assert result is compiled
     assert captured["resolve"] == (
-        "answer_evaluation",
+        "question_generation",
         "provider-model-1",
     )
     assert isinstance(captured["create"].pop("response_format"), ToolStrategy)
@@ -161,7 +162,7 @@ def test_agent_factory_delegates_to_create_agent_without_invocation_wrapper(
         "system_prompt": "Evaluate the answer",
         "middleware": (),
         "context_schema": AgentContext,
-        "name": "answer_evaluation",
+        "name": "curation_command_classifier",
         "checkpointer": None,
     }
 

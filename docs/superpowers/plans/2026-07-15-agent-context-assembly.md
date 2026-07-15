@@ -35,7 +35,7 @@
 - Produces `model_token_counter(model) -> Callable[[str], int]`, preferring `model.get_num_tokens` and falling back to LangChain approximate counting when the provider counter fails.
 - Adds `AgentSpec.execution_name: str | None = None`; model resolution still uses `role`, while `create_agent(name=...)` uses `execution_name or role`.
 
-- [ ] **Step 1: Add RED tests**
+- [x] **Step 1: Add RED tests**
 
 `test_context_assembly.py` must prove that output/system/schema/tool reservations reduce the available input, required material fails closed when it cannot fit, turns are never split, recent turns remain chronological, optional resources follow `(priority, ref)`, and omitted turns are returned as `overflow_turns`.
 
@@ -66,7 +66,7 @@ def test_assembler_keeps_complete_recent_turns():
 
 Extend `test_agent_factory_delegates_to_create_agent_without_invocation_wrapper` with `AgentSpec(role="question_generation", execution_name="curation_command_classifier", ...)`; assert resolver receives `question_generation` and `create_agent` receives name `curation_command_classifier`.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run:
 
@@ -77,7 +77,7 @@ cd backend
 
 Expected: FAIL because the module and `execution_name` do not exist.
 
-- [ ] **Step 3: Implement the core**
+- [x] **Step 3: Implement the core**
 
 Use immutable dataclasses and this exact budget contract:
 
@@ -102,7 +102,7 @@ class ContextBudget:
 
 `ContextMaterial` contains `current_input`, `working_state`, `prior_summary`, `turns`, and `resources`. `AssembledContext` exposes `estimated_input_tokens`, `threshold_tokens`, `recent_turns`, `overflow_turns`, `selected_resources`, and deterministic `render()`. Count fixed required material first; raise `context_budget_exceeded` instead of truncating it. Select whole recent turns newest-to-oldest, restore chronological order, then select optional resources by priority. The curation caller uses `max_input_tokens=int(model_context_limit * 0.70)` before subtracting output/system/schema/tool reservations so the assembled prompt stays below the existing summarization middleware trigger instead of being summarized a second time.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run the Step 2 command. Expected: all selected tests PASS.
 

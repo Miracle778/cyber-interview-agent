@@ -19,6 +19,7 @@ from app.providers.base import ProviderErrorCode
 class AgentSpec:
     role: str
     system_prompt: str
+    execution_name: str | None = None
     tools: tuple[BaseTool, ...] = ()
     middleware: tuple[AgentMiddleware, ...] = ()
     response_format: type[BaseModel] | type[Any] | dict[str, Any] | None = None
@@ -74,7 +75,7 @@ class AgentFactory:
                 else ToolStrategy(spec.response_format)
             ),
             context_schema=AgentContext,
-            name=spec.role,
+            name=spec.execution_name or spec.role,
             checkpointer=checkpointer,
         )
 
