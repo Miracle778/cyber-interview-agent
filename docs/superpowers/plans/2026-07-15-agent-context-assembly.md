@@ -32,6 +32,7 @@
 **Interfaces:**
 - Produces `ContextBudget`, `ContextMessage`, `ContextTurn`, `ContextResource`, `ContextSummary`, `ContextMaterial`, `AssembledContext`, `ContextBudgetExceededError`.
 - Produces `ContextAssembler.assemble(material, budget, token_counter) -> AssembledContext`.
+- Produces `model_token_counter(model) -> Callable[[str], int]`, preferring `model.get_num_tokens` and falling back to LangChain approximate counting when the provider counter fails.
 - Adds `AgentSpec.execution_name: str | None = None`; model resolution still uses `role`, while `create_agent(name=...)` uses `execution_name or role`.
 
 - [ ] **Step 1: Add RED tests**
@@ -99,7 +100,7 @@ class ContextBudget:
         return value
 ```
 
-`ContextMaterial` contains `current_input`, `working_state`, `prior_summary`, `turns`, and `resources`. `AssembledContext` exposes `estimated_input_tokens`, `threshold_tokens`, `recent_turns`, `overflow_turns`, `selected_resources`, and deterministic `render()`. Count fixed required material first; raise `context_budget_exceeded` instead of truncating it. Select whole recent turns newest-to-oldest, restore chronological order, then select optional resources by priority.
+`ContextMaterial` contains `current_input`, `working_state`, `prior_summary`, `turns`, and `resources`. `AssembledContext` exposes `estimated_input_tokens`, `threshold_tokens`, `recent_turns`, `overflow_turns`, `selected_resources`, and deterministic `render()`. Count fixed required material first; raise `context_budget_exceeded` instead of truncating it. Select whole recent turns newest-to-oldest, restore chronological order, then select optional resources by priority. The curation caller uses `max_input_tokens=int(model_context_limit * 0.70)` before subtracting output/system/schema/tool reservations so the assembled prompt stays below the existing summarization middleware trigger instead of being summarized a second time.
 
 - [ ] **Step 4: Verify GREEN and commit**
 
@@ -124,11 +125,12 @@ git commit -m "feat(agent): add token-budget context assembly"
 **Interfaces:**
 - Produces `CurationContextRecord` with session ID, version, focused IDs, last intent, last-result IDs, summary dict, summary cursor, and timestamps.
 - Produces `get_or_create_curation_context(session_id)` and compare-and-swap `replace_curation_context(..., expected_version)`.
+- Produces `find_curation_command_receipt(session_id, idempotency_key, text, summary_version) -> CurationCommandReceiptRecord | None`; it validates the existing text hash/version before any context assembly or model call.
 - Stale updates raise `ReviewConflictError("curation context version changed")`.
 
 - [ ] **Step 1: Add RED migration/repository tests**
 
-Expect table `review_curation_context` and migration versions `[1,2,3,4,5,6,7,8,9]` for fresh and existing generation-two databases. Add a repository round-trip that stores focus `("candidate-6",)`, `last_intent="inspect"`, summary refs, cursor `message-8`, and proves a second write with the old version conflicts.
+Expect table `review_curation_context` and migration versions `[1,2,3,4,5,6,7,8,9]` for fresh and existing generation-two databases. Add a repository round-trip that stores focus `("candidate-6",)`, `last_intent="inspect"`, summary refs, cursor `message-8`, and proves a second write with the old version conflicts. Add a receipt lookup test that returns `None` before creation, returns the same receipt afterward, and raises `ReviewConflictError` when the same key is reused with different text or summary version.
 
 - [ ] **Step 2: Verify RED**
 
@@ -157,7 +159,7 @@ CREATE TABLE review_curation_context (
 );
 ```
 
-`get_or_create` uses `INSERT OR IGNORE` then `SELECT`. `replace` writes the complete projection, increments version, and uses `WHERE session_id = ? AND version = ?`.
+`get_or_create` uses `INSERT OR IGNORE` then `SELECT`. `replace` writes the complete projection, increments version, and uses `WHERE session_id = ? AND version = ?`. `find_curation_command_receipt` performs the existing `(session_id, idempotency_key)` query and hash/version validation without inserting a processing receipt; `begin_curation_command` reuses the same validator after interpretation to keep one idempotency rule.
 
 - [ ] **Step 4: Verify GREEN and commit**
 
@@ -303,7 +305,7 @@ Expected: FAIL on durable-focus, compaction, restart, and zero-call assertions.
 
 - [ ] **Step 3: Replace the eight-message application path**
 
-In `execute_curation_command`, return an existing receipt before interpretation; load/create/recover context; run deterministic parsing first; unresolved language uses adapter, assembler, optional structured summarization, then classifier. Resolve the plan against frozen summary version/current resources and execute existing domain branches. After a successful receipt, CAS-update focus and result IDs from actual results. Remove `visible_messages[-8:]` and `resolve_curation_intent`. Summary failure emits a warning without cursor advancement; hard budget failure returns stable `context_budget_exceeded`. Do not expose summary text or checkpoint state.
+In `execute_curation_command`, call `find_curation_command_receipt` and return an existing receipt before interpretation; load/create/recover context; run deterministic parsing first; unresolved language uses adapter, assembler, optional structured summarization, then classifier. Resolve the plan against frozen summary version/current resources and execute existing domain branches. After a successful receipt, CAS-update focus and result IDs from actual results. Remove `visible_messages[-8:]` and `resolve_curation_intent`. Summary failure emits a warning without cursor advancement; hard budget failure returns stable `context_budget_exceeded`. Do not expose summary text or checkpoint state.
 
 - [ ] **Step 4: Verify integration GREEN and targeted regression**
 
