@@ -4,6 +4,8 @@ import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
 from uuid import uuid4
@@ -39,6 +41,42 @@ logger = logging.getLogger(__name__)
 
 class UnsupportedInterruptError(ValueError):
     code = "unsupported_interrupt"
+
+
+class ExecutionCancelled(RuntimeError):
+    code = "execution_cancelled"
+
+
+@dataclass(slots=True)
+class ExecutionControl:
+    interruptible: bool = True
+    shutdown_requested: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionCancellation:
+    repository: ProductRepository
+    execution_id: str
+    control: ExecutionControl
+
+    def raise_if_requested(self) -> None:
+        if self.repository.get_execution(self.execution_id).cancellation_requested:
+            raise ExecutionCancelled()
+
+    @contextmanager
+    def critical_section(self):
+        self.control.interruptible = False
+        try:
+            yield
+        finally:
+            self.control.interruptible = True
+        if self.control.shutdown_requested:
+            raise asyncio.CancelledError()
+
+
+ExecutionHandler = Callable[
+    [ExecutionRecord, ExecutionCancellation], Awaitable[None]
+]
 
 
 def _classify_interrupt(value: Mapping[str, Any]) -> Literal["input", "approval"]:
@@ -82,6 +120,7 @@ class AgentExecutionService:
         self._get_draft = get_draft
         self._checkpointer = AgentCheckpointer(workspace_root)
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._controls: dict[str, ExecutionControl] = {}
 
     def execution(self, execution_id: str) -> ExecutionRecord:
         return self._repository.get_execution(execution_id)
@@ -110,12 +149,14 @@ class AgentExecutionService:
         *,
         input: dict[str, Any],
         project_input_message: bool = True,
+        configuration: dict[str, Any] | None = None,
     ) -> ExecutionRecord:
         bindings = dict(self._model_bindings())
         execution = self._repository.create_execution(
             session.id,
             input=input,
             model_bindings=bindings,
+            configuration=configuration,
         )
         if project_input_message:
             self._repository.append_message(
@@ -138,6 +179,24 @@ class AgentExecutionService:
         if execution.status != "running":
             raise ValueError("prepared execution must be running")
         self._spawn(execution.id, graph_input=graph_input)
+
+    def run_background(
+        self, execution: ExecutionRecord, handler: ExecutionHandler
+    ) -> None:
+        if execution.status != "running":
+            raise ValueError("prepared execution must be running")
+        if execution.id in self._tasks:
+            raise ValueError("execution already has a running task")
+        control = ExecutionControl()
+        cancellation = ExecutionCancellation(
+            repository=self._repository,
+            execution_id=execution.id,
+            control=control,
+        )
+        task = asyncio.create_task(
+            self._execute_background(execution.id, handler, cancellation)
+        )
+        self._register_task(execution.id, task, control)
 
     async def resume_approval(
         self, execution_id: str, decision: dict[str, Any], _receipt_id: str
@@ -327,27 +386,23 @@ class AgentExecutionService:
         current = self._repository.get_execution(execution_id)
         if current.status in {"completed", "failed", "cancelled"}:
             return current
+        first_request = not current.cancellation_requested
+        requested = self._repository.request_execution_cancel(execution_id)
+        if first_request:
+            await self._events.publish(
+                requested.session_id,
+                requested.id,
+                "execution.cancelling",
+                {"executionId": requested.id},
+            )
         task = self._tasks.get(execution_id)
-        if task is not None:
+        control = self._controls.get(execution_id)
+        if task is not None and (control is None or control.interruptible):
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-        cancelled = self._repository.transition_execution(
-            execution_id,
-            expected=(
-                "running",
-                "waiting_for_input",
-                "waiting_for_approval",
-                "interrupted",
-            ),
-            target="cancelled",
-        )
-        await self._events.publish(
-            cancelled.session_id,
-            cancelled.id,
-            "execution.cancelled",
-            {"executionId": cancelled.id},
-        )
-        return cancelled
+        elif task is not None:
+            return requested
+        return await self._finish_cancel(execution_id)
 
     async def wait(self, execution_id: str) -> ExecutionRecord:
         task = self._tasks.get(execution_id)
@@ -356,13 +411,21 @@ class AgentExecutionService:
         return self._repository.get_execution(execution_id)
 
     async def close(self) -> None:
-        tasks = tuple(self._tasks.values())
-        for task in tasks:
-            task.cancel()
+        tasks = tuple(self._tasks.items())
+        for execution_id, task in tasks:
+            control = self._controls.get(execution_id)
+            if control is not None and not control.interruptible:
+                control.shutdown_requested = True
+            else:
+                task.cancel()
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.gather(
+                *(task for _execution_id, task in tasks),
+                return_exceptions=True,
+            )
         self._repository.interrupt_running()
         self._tasks.clear()
+        self._controls.clear()
 
     def recover(self) -> tuple[str, ...]:
         return self._repository.interrupt_running()
@@ -452,13 +515,97 @@ class AgentExecutionService:
 
     def _spawn(self, execution_id: str, *, graph_input: object) -> None:
         task = asyncio.create_task(self._execute(execution_id, graph_input))
+        self._register_task(execution_id, task, ExecutionControl())
+
+    def _register_task(
+        self,
+        execution_id: str,
+        task: asyncio.Task[None],
+        control: ExecutionControl,
+    ) -> None:
         self._tasks[execution_id] = task
+        self._controls[execution_id] = control
 
         def discard(completed: asyncio.Task[None]) -> None:
             if self._tasks.get(execution_id) is completed:
                 self._tasks.pop(execution_id, None)
+                self._controls.pop(execution_id, None)
 
         task.add_done_callback(discard)
+
+    async def _execute_background(
+        self,
+        execution_id: str,
+        handler: ExecutionHandler,
+        cancellation: ExecutionCancellation,
+    ) -> None:
+        execution = self._repository.get_execution(execution_id)
+        try:
+            cancellation.raise_if_requested()
+            await handler(execution, cancellation)
+            cancellation.raise_if_requested()
+        except ExecutionCancelled:
+            await self._finish_cancel(execution_id)
+            return
+        except asyncio.CancelledError:
+            if self._repository.get_execution(execution_id).cancellation_requested:
+                await self._finish_cancel(execution_id)
+                return
+            raise
+        except Exception as error:
+            current = self._repository.get_execution(execution_id)
+            if current.status == "running":
+                failed = self._repository.transition_execution(
+                    execution_id,
+                    expected=("running",),
+                    target="failed",
+                    error_code=str(
+                        getattr(error, "code", "agent_execution_failed")
+                    ),
+                    error_message="Agent 执行失败",
+                )
+                await self._events.publish(
+                    failed.session_id,
+                    failed.id,
+                    "execution.failed",
+                    {"code": failed.error_code or "agent_execution_failed"},
+                )
+            return
+        current = self._repository.get_execution(execution_id)
+        if current.status == "running":
+            completed = self._repository.transition_execution(
+                execution_id,
+                expected=("running",),
+                target="completed",
+            )
+            await self._events.publish(
+                completed.session_id,
+                completed.id,
+                "execution.completed",
+                {"executionId": completed.id},
+            )
+
+    async def _finish_cancel(self, execution_id: str) -> ExecutionRecord:
+        current = self._repository.get_execution(execution_id)
+        if current.status in {"completed", "failed", "cancelled"}:
+            return current
+        cancelled = self._repository.transition_execution(
+            execution_id,
+            expected=(
+                "running",
+                "waiting_for_input",
+                "waiting_for_approval",
+                "interrupted",
+            ),
+            target="cancelled",
+        )
+        await self._events.publish(
+            cancelled.session_id,
+            cancelled.id,
+            "execution.cancelled",
+            {"executionId": cancelled.id},
+        )
+        return cancelled
 
     async def _execute(self, execution_id: str, graph_input: object) -> None:
         execution = self._repository.get_execution(execution_id)

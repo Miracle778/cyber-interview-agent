@@ -8,6 +8,9 @@
 - 选用统一 Execution Runtime，拒绝前端假取消与当前阶段整体 ReAct 重写。
 - 正式设计提交 `69c1d29`，架构选型提交 `9f2be5c`。
 - 四 Task 实施计划已完成自审；继续由一个 Agent 在现有 R2 worktree 端到端执行，不创建 subagent。
+- Task 1 完成：migration 10 增加 execution 配置、持久化取消请求、命令关联/偏好和批量发布表。
+- Runtime 新增通用 domain handler、cancelling 事件与关键区；用户停止和 graceful shutdown 均不会切断单题事务。
+- RED 为 7 个预期失败；GREEN 覆盖运行时、审批和复习恢复共 `29 passed`，仅保留既有 Starlette 弃用警告。
 
 ## 2026-07-15：Agent 上下文组装设计
 

@@ -25,6 +25,8 @@ R2_TABLES = {
 }
 
 R2_SESSION_EXPERIENCE_TABLES = {
+    "review_bulk_publication_items",
+    "review_bulk_publications",
     "review_curation_command_receipts",
     "review_curation_context",
     "review_curation_sessions",
@@ -51,7 +53,7 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9]
+        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     assert "agent_context_usage" in _tables(connection)
     connection.close()
 
@@ -91,7 +93,7 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9]
+        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     reopened.close()
 
 
@@ -133,6 +135,66 @@ def test_session_experience_migration_adds_structured_messages_and_attempt_state
         "evaluation_started_at",
         "evaluation_completed_at",
     } <= attempt_columns
+    connection.close()
+
+
+def test_cancellable_interaction_migration_adds_execution_state(
+    tmp_path: Path,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+
+    run_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(agent_runs)")
+    }
+    command_columns = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info(review_curation_command_receipts)"
+        )
+    }
+    session_columns = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info(review_curation_sessions)"
+        )
+    }
+
+    assert {"configuration_json", "cancel_requested_at"} <= run_columns
+    assert {"execution_id", "lifecycle_status"} <= command_columns
+    assert {
+        "preferred_model_id",
+        "preferred_reasoning_effort",
+    } <= session_columns
+    connection.close()
+
+
+def test_execution_configuration_and_cancel_request_round_trip(
+    tmp_path: Path,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+    repository = ProductRepository(connection)
+    session = repository.create_session(
+        workspace_id="w1",
+        kind="question.curate",
+        title="Cancellable command",
+    )
+    execution = repository.create_execution(
+        session.id,
+        input={"operation": "curation.command"},
+        model_bindings={},
+        configuration={
+            "providerModelId": "model-1",
+            "reasoningEffort": "medium",
+        },
+    )
+
+    first = repository.request_execution_cancel(execution.id)
+    repeated = repository.request_execution_cancel(execution.id)
+
+    assert first.configuration.provider_model_id == "model-1"
+    assert first.configuration.reasoning_effort == "medium"
+    assert first.cancel_requested_at is not None
+    assert repeated.cancel_requested_at == first.cancel_requested_at
     connection.close()
 
 

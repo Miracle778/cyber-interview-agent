@@ -79,10 +79,10 @@
 - Produces: `ExecutionConfiguration(provider_model_id: str | None, reasoning_effort: ReasoningEffort)`.
 - Produces: `ExecutionRecord.configuration`, `ExecutionRecord.cancel_requested_at`, and `ExecutionRecord.cancellation_requested`.
 - Produces: `ProductRepository.request_execution_cancel(execution_id) -> ExecutionRecord`, an atomic, idempotent cancel request.
-- Produces: `ExecutionCancellation.raise_if_requested() -> None` and `AgentExecutionService.run_background(execution, handler)`.
+- Produces: `ExecutionCancellation.raise_if_requested() -> None`, `ExecutionCancellation.critical_section()` and `AgentExecutionService.run_background(execution, handler)`.
 - Consumes later: Task 2 prepares a command execution and passes a domain handler to `run_background`; Task 3 uses the same primitive for bulk publication.
 
-- [ ] **Step 1: Add failing migration and repository tests**
+- [x] **Step 1: Add failing migration and repository tests**
 
 Add tests that require migration version 10 and round-trip explicit configuration/cancellation state:
 
@@ -114,7 +114,7 @@ def test_execution_configuration_and_cancel_request_round_trip(repository) -> No
     assert requested.configuration.provider_model_id == "model-1"
 ```
 
-- [ ] **Step 2: Run targeted tests and verify the expected failures**
+- [x] **Step 2: Run targeted tests and verify the expected failures**
 
 Run:
 
@@ -125,7 +125,7 @@ cd backend
 
 Expected: failures report missing migration version 10, missing execution columns, or missing repository methods.
 
-- [ ] **Step 3: Add migration 010 and typed execution configuration**
+- [x] **Step 3: Add migration 010 and typed execution configuration**
 
 Create the migration with additive columns and domain tables needed by Tasks 2–3. Keep the existing database status constraint; API `accepted` maps to queued/prepared work and API `cancelling` is derived from `status == running` plus `cancel_requested_at`:
 
@@ -179,7 +179,7 @@ class ExecutionRecord:
 
 Extend `create_execution(session_id: str, *, input: dict[str, Any], model_bindings: dict[str, str], configuration: dict[str, Any] | None = None, execution_id: str | None = None)` and `_execution(row)` to validate the stored JSON. Add `request_execution_cancel` as one conditional SQL update that preserves the first timestamp and returns terminal records unchanged.
 
-- [ ] **Step 4: Generalize the task registry for domain handlers**
+- [x] **Step 4: Generalize the task registry for domain handlers**
 
 Add a narrow runtime protocol without importing review-domain types:
 
@@ -191,19 +191,28 @@ class ExecutionCancelled(asyncio.CancelledError):
 class ExecutionCancellation:
     repository: ProductRepository
     execution_id: str
+    control: ExecutionControl
 
     def raise_if_requested(self) -> None:
         if self.repository.get_execution(self.execution_id).cancellation_requested:
             raise ExecutionCancelled()
 
+    @contextmanager
+    def critical_section(self):
+        self.control.interruptible = False
+        try:
+            yield
+        finally:
+            self.control.interruptible = True
+
 ExecutionHandler = Callable[[ExecutionRecord, ExecutionCancellation], Awaitable[None]]
 ```
 
-Implement `run_background(execution, handler)` by registering a task in the existing `_tasks` dictionary. The wrapper must call the handler, transition running to completed only when the handler has not already chosen a terminal state, map `ExecutionCancelled`/`asyncio.CancelledError` to cancelled, and map other exceptions to failed while preserving the current graph `_execute` behavior.
+Implement `run_background(execution, handler)` by registering an `ExecutionControl(task, interruptible=True)` in the existing task registry. The wrapper must call the handler, transition running to completed only when the handler has not already chosen a terminal state, map `ExecutionCancelled`/`asyncio.CancelledError` to cancelled, and map other exceptions to failed while preserving the current graph `_execute` behavior.
 
-Change `cancel()` so it first calls `request_execution_cancel`, publishes `execution.cancelling`, then cancels/awaits the local task. Publish `execution.cancelled` exactly once after the atomic terminal transition. Add `execution.cancelling` to the allowed event set.
+Change `cancel()` so it first calls `request_execution_cancel` and publishes `execution.cancelling`. If the registered control is interruptible (for example, currently awaiting a model stream), cancel and await the task immediately. If it is inside `critical_section` (for example, a single-question publication transaction), leave the task running; the handler exits the section, checks the persisted request and stops at the next safe point. Publish `execution.cancelled` exactly once after the atomic terminal transition. Add `execution.cancelling` to the allowed event set.
 
-- [ ] **Step 5: Cover cancellation races and restart recovery**
+- [x] **Step 5: Cover cancellation races and restart recovery**
 
 Add async tests using `asyncio.Event` barriers:
 
@@ -251,7 +260,7 @@ def test_restart_preserves_persisted_cancel_request(repository):
 
 Also assert a completed execution remains completed when cancel is called afterward, and `execution.cancelled` is not duplicated.
 
-- [ ] **Step 6: Run targeted runtime tests**
+- [x] **Step 6: Run targeted runtime tests**
 
 Run:
 
@@ -262,7 +271,7 @@ cd backend
 
 Expected: all selected tests pass.
 
-- [ ] **Step 7: Commit Task 1**
+- [x] **Step 7: Commit Task 1**
 
 ```bash
 git add backend/app/db/migrations/runtime/010_cancellable_interactions.sql \
@@ -647,10 +656,11 @@ async def _run_bulk_publication(execution, cancellation, operation_id):
         cancellation.raise_if_requested()
         repository.mark_bulk_item_running(item.id)
         try:
-            await self._publish_curation_candidate(
-                item.candidate_id,
-                idempotency_key=item.idempotency_key,
-            )
+            with cancellation.critical_section():
+                await self._publish_curation_candidate(
+                    item.candidate_id,
+                    idempotency_key=item.idempotency_key,
+                )
         except Exception as error:
             code = str(getattr(error, "code", "publication_failed"))
             repository.fail_bulk_item(item.id, code=code)

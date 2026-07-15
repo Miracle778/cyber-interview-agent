@@ -18,6 +18,7 @@ ExecutionStatus = Literal[
     "failed",
     "cancelled",
 ]
+ReasoningEffort = Literal["none", "low", "medium", "high"]
 MessageKind = Literal[
     "text",
     "stage",
@@ -70,17 +71,29 @@ class SessionRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class ExecutionConfiguration:
+    provider_model_id: str | None = None
+    reasoning_effort: ReasoningEffort = "none"
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutionRecord:
     id: str
     session_id: str
     status: ExecutionStatus
     input: dict[str, Any]
+    configuration: ExecutionConfiguration
+    cancel_requested_at: str | None
     resume_count: int
     error_code: str | None
     error_message: str | None
     created_at: str
     started_at: str | None
     finished_at: str | None
+
+    @property
+    def cancellation_requested(self) -> bool:
+        return self.cancel_requested_at is not None
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,19 +209,22 @@ class ProductRepository:
         *,
         input: dict[str, Any],
         model_bindings: dict[str, str],
+        configuration: dict[str, Any] | None = None,
         execution_id: str | None = None,
     ) -> ExecutionRecord:
         execution_id = execution_id or str(uuid4())
         try:
             self.connection.execute(
                 "INSERT INTO agent_runs "
-                "(id, session_id, status, input_json, model_bindings_json, started_at) "
-                "VALUES (?, ?, 'running', ?, ?, CURRENT_TIMESTAMP)",
+                "(id, session_id, status, input_json, model_bindings_json, "
+                "configuration_json, started_at) "
+                "VALUES (?, ?, 'running', ?, ?, ?, CURRENT_TIMESTAMP)",
                 (
                     execution_id,
                     session_id,
                     _json(input),
                     _json(model_bindings),
+                    _json(configuration or {}),
                 ),
             )
         except sqlite3.IntegrityError as error:
@@ -220,6 +236,18 @@ class ProductRepository:
             "UPDATE agent_sessions SET status = 'active', last_run_id = ?, "
             "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (execution_id, session_id),
+        )
+        self.connection.commit()
+        return self.get_execution(execution_id)
+
+    def request_execution_cancel(self, execution_id: str) -> ExecutionRecord:
+        current = self.get_execution(execution_id)
+        if current.status in {"completed", "failed", "cancelled"}:
+            return current
+        self.connection.execute(
+            "UPDATE agent_runs SET cancel_requested_at = "
+            "COALESCE(cancel_requested_at, CURRENT_TIMESTAMP) WHERE id = ?",
+            (execution_id,),
         )
         self.connection.commit()
         return self.get_execution(execution_id)
@@ -292,8 +320,11 @@ class ProductRepository:
         ).fetchall()
         ids = tuple(row[0] for row in rows)
         for execution_id in ids:
+            current = self.get_execution(execution_id)
             self.transition_execution(
-                execution_id, expected=("running",), target="interrupted"
+                execution_id,
+                expected=("running",),
+                target=("cancelled" if current.cancellation_requested else "interrupted"),
             )
         return ids
 
@@ -429,6 +460,7 @@ class ProductEventStream:
             "curation.summary.ready",
             "curation.command.resolved",
             "execution.started",
+            "execution.cancelling",
             "assistant.delta",
             "approval.required",
             "approval.resolved",
@@ -577,11 +609,25 @@ def _session(row) -> SessionRecord:
 
 
 def _execution(row) -> ExecutionRecord:
+    raw_configuration = json.loads(row["configuration_json"])
+    if not isinstance(raw_configuration, dict):
+        raise ValueError("stored execution configuration must be an object")
+    provider_model_id = raw_configuration.get("providerModelId")
+    if provider_model_id is not None and not isinstance(provider_model_id, str):
+        raise ValueError("stored provider model id must be a string")
+    reasoning_effort = raw_configuration.get("reasoningEffort", "none")
+    if reasoning_effort not in {"none", "low", "medium", "high"}:
+        raise ValueError("stored reasoning effort is invalid")
     return ExecutionRecord(
         id=row["id"],
         session_id=row["session_id"],
         status=row["status"],
         input=json.loads(row["input_json"]),
+        configuration=ExecutionConfiguration(
+            provider_model_id=provider_model_id,
+            reasoning_effort=reasoning_effort,
+        ),
+        cancel_requested_at=row["cancel_requested_at"],
         resume_count=row["resume_count"],
         error_code=row["error_code"],
         error_message=row["error_message"],

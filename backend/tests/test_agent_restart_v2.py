@@ -113,3 +113,37 @@ async def test_recovery_marks_orphaned_running_execution_interrupted(tmp_path: P
         assert detail["latest_execution"]["status"] == "interrupted"
     finally:
         await application.close()
+
+
+@pytest.mark.asyncio
+async def test_recovery_finishes_persisted_cancel_request_as_cancelled(
+    tmp_path: Path,
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    connection = connect_runtime_database(workspace)
+    repository = ProductRepository(connection)
+    session = repository.create_session(
+        workspace_id="w1", kind="diagnostic.echo", title="Echo"
+    )
+    execution = repository.create_execution(
+        session.id,
+        input={"text": "hello"},
+        model_bindings={},
+        configuration={},
+    )
+    repository.request_execution_cancel(execution.id)
+    connection.close()
+
+    application = AgentApplication(
+        workspace_resolver=lambda _workspace_id: workspace,
+        workspace_ids=lambda: ("w1",),
+        model_bindings=lambda _workspace_id: {},
+        graph_factory=lambda *_args, **_kwargs: None,
+    )
+    try:
+        assert await application.recover() == (execution.id,)
+        detail = await application.session_detail(session.id)
+        assert detail["latest_execution"]["status"] == "cancelled"
+    finally:
+        await application.close()

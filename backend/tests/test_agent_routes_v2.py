@@ -102,6 +102,12 @@ async def test_cancel_and_replay_cursor_are_product_level(api, application):
     cancelled = await application.cancel_execution(running.id)
     assert cancelled.status == "cancelled"
 
+    cancel_events = application.replay_events(slow.id, after_id=None)
+    assert [event.type for event in cancel_events][-2:] == [
+        "execution.cancelling",
+        "execution.cancelled",
+    ]
+
     session = await application.create_session(
         workspace_id="w1", kind="diagnostic.echo", title="Echo"
     )
@@ -118,6 +124,97 @@ async def test_cancel_and_replay_cursor_are_product_level(api, application):
         "execution.completed",
     ]
     assert [event.id for event in replayed] == [event.id for event in all_events[1:]]
+
+
+@pytest.mark.asyncio
+async def test_completed_execution_wins_race_with_late_cancel(application):
+    session = await application.create_session(
+        workspace_id="w1", kind="diagnostic.echo", title="Echo"
+    )
+    execution = await application.start_execution(session.id, input={"text": "done"})
+    completed = await application.wait_execution(execution.id)
+
+    repeated = await application.cancel_execution(execution.id)
+
+    assert completed.status == "completed"
+    assert repeated.status == "completed"
+    assert [
+        event.type
+        for event in application.replay_events(session.id, after_id=None)
+    ].count("execution.cancelled") == 0
+
+
+@pytest.mark.asyncio
+async def test_domain_handler_finishes_critical_section_before_cancel(application):
+    session = await application.create_session(
+        workspace_id="w1", kind="diagnostic.echo", title="Critical"
+    )
+    runtime = application._context("w1").executions
+    execution = await runtime.prepare(
+        session,
+        input={"operation": "test.critical"},
+        project_input_message=False,
+        configuration={},
+    )
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    committed: list[str] = []
+
+    async def handler(current, cancellation):
+        with cancellation.critical_section():
+            entered.set()
+            await release.wait()
+            committed.append(current.id)
+        cancellation.raise_if_requested()
+
+    runtime.run_background(execution, handler)
+    await entered.wait()
+    cancelling = await application.cancel_execution(execution.id)
+    assert cancelling.status == "running"
+    assert cancelling.cancel_requested_at is not None
+    assert committed == []
+
+    release.set()
+    terminal = await application.wait_execution(execution.id)
+
+    assert committed == [execution.id]
+    assert terminal.status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_graceful_close_waits_for_domain_critical_section(application):
+    session = await application.create_session(
+        workspace_id="w1", kind="diagnostic.echo", title="Graceful close"
+    )
+    runtime = application._context("w1").executions
+    execution = await runtime.prepare(
+        session,
+        input={"operation": "test.graceful-close"},
+        project_input_message=False,
+        configuration={},
+    )
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    committed: list[str] = []
+
+    async def handler(current, cancellation):
+        with cancellation.critical_section():
+            entered.set()
+            await release.wait()
+            committed.append(current.id)
+
+    runtime.run_background(execution, handler)
+    await entered.wait()
+    closing = asyncio.create_task(application.close())
+    await asyncio.sleep(0)
+
+    assert closing.done() is False
+    assert committed == []
+
+    release.set()
+    await closing
+
+    assert committed == [execution.id]
 
 
 @pytest.mark.asyncio

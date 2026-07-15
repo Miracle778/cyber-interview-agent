@@ -40,12 +40,19 @@ class ExecutionResource(AgentModel):
     id: str
     session_id: str
     status: str
+    configuration: "ExecutionConfigurationResource"
+    cancel_requested_at: str | None
     resume_count: int
     error_code: str | None
     error_message: str | None
     created_at: str
     started_at: str | None
     finished_at: str | None
+
+
+class ExecutionConfigurationResource(AgentModel):
+    provider_model_id: str | None = None
+    reasoning_effort: str = "none"
 
 
 class MessageResource(AgentModel):
