@@ -64,6 +64,7 @@ def test_model_resolver_returns_standard_chat_model_without_exposing_secret(
     assert isinstance(resolved, BaseChatModel)
     assert isinstance(resolved, expected_type)
     assert "test-secret" not in repr(resolved)
+    assert resolver.context_limit(model_record.id) == 128000
 
 
 def test_model_resolver_maps_missing_secret_to_stable_error(model_setup):
@@ -92,6 +93,7 @@ def test_model_resolver_rejects_disabled_model(model_setup):
         real_model_id=model_record.model_id,
         display_name=model_record.display_name,
         enabled=False,
+        max_input_tokens=model_record.max_input_tokens,
     )
     resolver = ChatModelResolver(repository, {"keyring": secrets})
 

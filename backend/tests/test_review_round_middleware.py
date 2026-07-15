@@ -34,6 +34,9 @@ class Projection:
     def mark_context_compacted(self, *_args):
         return True
 
+    def record_context_usage(self, *_args):
+        return True
+
 
 class Policy(AgentMiddleware):
     pass

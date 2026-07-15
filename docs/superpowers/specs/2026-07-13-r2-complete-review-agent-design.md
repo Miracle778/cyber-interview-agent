@@ -247,7 +247,8 @@ R2 允许按 role/round 配置预算 profile，但不创建新的 pipeline 或 m
 - thread limit 保护整轮和 role 历史；
 - round 还拥有题数、追问次数、总 token 和总耗时硬预算；
 - no-progress 指纹必须包含 round ID、current index 和 input request ID，避免不同题目的相似 prompt 被误判为循环；
-- summary 发生在 role thread 内，产品 session 只投影 `contextCompacted`；
+- 每个 Provider model 显式配置 `maxInputTokens`；summary 以该 Graph 涉及模型的最小输入窗口为安全边界，达到 70% Token 时触发并保留最近 20%，100 条消息只作为短消息无限增长的兜底；
+- summary 发生在 role thread 内，middleware 向产品 session 投影 `currentContextTokens`、`thresholdTokens` 和 `contextCompacted`，前端不得用产品 timeline 条数或累计 usage 冒充模型上下文；
 - exporter、标题和辅助投影 fail-open，路径/权限/预算/no-progress fail-closed。
 
 回答题目使用 Graph input interrupt，不配置成工具审批。只有真实危险工具才进入 `HumanInTheLoopMiddleware`。

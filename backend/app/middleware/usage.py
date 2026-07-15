@@ -19,6 +19,13 @@ class UsageProjection:
     estimated: bool
 
 
+@dataclass(frozen=True, slots=True)
+class ContextUsageProjection:
+    current_tokens: int
+    threshold_tokens: int
+    estimated: bool = True
+
+
 class MiddlewareProjection(Protocol):
     def record_usage(self, context: AgentContext, usage: UsageProjection) -> bool: ...
 
@@ -29,6 +36,10 @@ class MiddlewareProjection(Protocol):
     def warning(self, context: AgentContext, code: str) -> None: ...
 
     def mark_context_compacted(self, context: AgentContext) -> bool: ...
+
+    def record_context_usage(
+        self, context: AgentContext, usage: ContextUsageProjection
+    ) -> bool: ...
 
 
 class UsageProjectionMiddleware(AgentMiddleware):

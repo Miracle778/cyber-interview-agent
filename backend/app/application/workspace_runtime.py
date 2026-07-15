@@ -31,7 +31,7 @@ from app.knowledge.drafts import (
 )
 from app.knowledge.publication import PublicationService
 from app.knowledge.publication_handler import KnowledgePublishActionHandler
-from app.middleware.usage import UsageProjection
+from app.middleware.usage import ContextUsageProjection, UsageProjection
 from app.review.application import ReviewApplication
 from app.review.service import ReviewDomainService
 from app.review.selector import QuestionSelector
@@ -62,6 +62,27 @@ class SqliteMiddlewareProjection:
         )
         self._connection.commit()
         return cursor.rowcount == 1
+
+    def record_context_usage(
+        self, context, usage: ContextUsageProjection
+    ) -> bool:
+        self._connection.execute(
+            "INSERT INTO agent_context_usage "
+            "(session_id, run_id, current_tokens, threshold_tokens, estimated) "
+            "VALUES (?, ?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET "
+            "run_id = excluded.run_id, current_tokens = excluded.current_tokens, "
+            "threshold_tokens = excluded.threshold_tokens, estimated = excluded.estimated, "
+            "updated_at = CURRENT_TIMESTAMP",
+            (
+                context.session_id,
+                context.run_id,
+                usage.current_tokens,
+                usage.threshold_tokens,
+                int(usage.estimated),
+            ),
+        )
+        self._connection.commit()
+        return True
 
     def ensure_title(self, context, candidate: str) -> bool:
         cursor = self._connection.execute(

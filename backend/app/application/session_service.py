@@ -396,6 +396,20 @@ class ProductRepository:
             raise ProductRecordNotFoundError("Agent Session 不存在")
         return bool(row[0])
 
+    def context_usage(self, session_id: str) -> dict[str, int | bool]:
+        row = self.connection.execute(
+            "SELECT current_tokens, threshold_tokens, estimated "
+            "FROM agent_context_usage WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            return {"currentTokens": 0, "thresholdTokens": 0, "estimated": True}
+        return {
+            "currentTokens": int(row[0]),
+            "thresholdTokens": int(row[1]),
+            "estimated": bool(row[2]),
+        }
+
     def latest_warning(self, session_id: str) -> dict[str, str] | None:
         row = self.connection.execute(
             "SELECT code FROM runtime_warnings WHERE session_id = ? "

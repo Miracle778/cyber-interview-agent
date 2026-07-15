@@ -230,11 +230,13 @@ function ProviderCard({ provider, onUpdated, onRemoved }: ProviderCardProps) {
 
   const [modelId, setModelId] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [maxInputTokens, setMaxInputTokens] = useState("128000");
   const [addingModel, setAddingModel] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [editingModelId, setEditingModelId] = useState<string | null>(null);
   const [editModelId, setEditModelId] = useState("");
   const [editModelDisplay, setEditModelDisplay] = useState("");
+  const [editModelMaxInputTokens, setEditModelMaxInputTokens] = useState("");
 
   function updateModels(updater: (models: ProviderModelResource[]) => ProviderModelResource[]) {
     onUpdated({ ...provider, models: updater(provider.models) });
@@ -284,8 +286,9 @@ function ProviderCard({ provider, onUpdated, onRemoved }: ProviderCardProps) {
 
   async function handleAddModel() {
     setError(null);
-    if (!modelId.trim() || !displayName.trim()) {
-      setError(toActionableError(new Error("请填写 Model ID 和显示名称"), "添加模型失败"));
+    const contextWindow = Number(maxInputTokens);
+    if (!modelId.trim() || !displayName.trim() || !Number.isInteger(contextWindow) || contextWindow < 4096) {
+      setError(toActionableError(new Error("请填写模型信息，并将最大输入 Token 设为不小于 4096 的整数"), "添加模型失败"));
       return;
     }
     setAddingModel(true);
@@ -293,10 +296,12 @@ function ProviderCard({ provider, onUpdated, onRemoved }: ProviderCardProps) {
       const created = await createProviderModel(provider.id, {
         modelId: modelId.trim(),
         displayName: displayName.trim(),
+        maxInputTokens: contextWindow,
       });
       updateModels((models) => [...models, created]);
       setModelId("");
       setDisplayName("");
+      setMaxInputTokens("128000");
     } catch (caught) {
       setError(toActionableError(caught, "添加模型失败"));
     } finally {
@@ -336,14 +341,21 @@ function ProviderCard({ provider, onUpdated, onRemoved }: ProviderCardProps) {
     setEditingModelId(model.id);
     setEditModelId(model.modelId);
     setEditModelDisplay(model.displayName);
+    setEditModelMaxInputTokens(String(model.maxInputTokens));
   }
 
   async function handleSaveModel(model: ProviderModelResource) {
     setError(null);
+    const contextWindow = Number(editModelMaxInputTokens);
+    if (!editModelId.trim() || !editModelDisplay.trim() || !Number.isInteger(contextWindow) || contextWindow < 4096) {
+      setError(toActionableError(new Error("请填写模型信息，并将最大输入 Token 设为不小于 4096 的整数"), "保存模型失败"));
+      return;
+    }
     try {
       const command: UpdateProviderModelCommand = {
         modelId: editModelId.trim(),
         displayName: editModelDisplay.trim(),
+        maxInputTokens: contextWindow,
       };
       const updated = await updateProviderModel(model.id, command);
       updateModels((models) => models.map((m) => (m.id === updated.id ? updated : m)));
@@ -432,6 +444,7 @@ function ProviderCard({ provider, onUpdated, onRemoved }: ProviderCardProps) {
               <div className="field-group">
                 <Field label="Model ID" name={`edit-model-id-${model.id}`} value={editModelId} onChange={(e) => setEditModelId(e.target.value)} />
                 <Field label="显示名称" name={`edit-model-display-${model.id}`} value={editModelDisplay} onChange={(e) => setEditModelDisplay(e.target.value)} />
+                <Field label="最大输入 Token" name={`edit-model-context-${model.id}`} type="number" min={4096} max={2000000} step={1024} value={editModelMaxInputTokens} onChange={(e) => setEditModelMaxInputTokens(e.target.value)} />
                 <div className="btn-row">
                   <Button size="sm" onClick={() => handleSaveModel(model)}>保存</Button>
                   <Button size="sm" variant="ghost" onClick={() => setEditingModelId(null)}>取消</Button>
@@ -441,6 +454,7 @@ function ProviderCard({ provider, onUpdated, onRemoved }: ProviderCardProps) {
               <div className="model-row__main">
                 <span className="model-row__id">{model.modelId}</span>
                 <span className="muted-text">{model.displayName}</span>
+                <span className="muted-text">{(model.maxInputTokens / 1000).toFixed(model.maxInputTokens >= 100000 ? 0 : 1)}k 上下文</span>
                 <Badge tone={STATUS_TONE[model.connectivityStatus]} dot>
                   {STATUS_LABEL[model.connectivityStatus]}
                 </Badge>
@@ -472,6 +486,7 @@ function ProviderCard({ provider, onUpdated, onRemoved }: ProviderCardProps) {
         <div className="field-group model-row__add">
           <Field label="Model ID" name={`new-model-id-${provider.id}`} value={modelId} onChange={(e) => setModelId(e.target.value)} />
           <Field label="显示名称" name={`new-model-display-${provider.id}`} value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+          <Field label="最大输入 Token" name={`new-model-context-${provider.id}`} type="number" min={4096} max={2000000} step={1024} value={maxInputTokens} onChange={(e) => setMaxInputTokens(e.target.value)} helper="用于计算 70% 上下文压缩阈值" />
           <Button size="sm" onClick={handleAddModel} loading={addingModel}>
             <Plus size={14} aria-hidden="true" />
             添加模型

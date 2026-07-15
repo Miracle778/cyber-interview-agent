@@ -33,6 +33,7 @@ class FakeProjection:
         self.warnings = []
         self.progress: dict[tuple[str, str], int] = {}
         self.compacted = []
+        self.context_usage = []
 
     def record_usage(self, context, usage) -> bool:
         if self.fail:
@@ -56,6 +57,10 @@ class FakeProjection:
 
     def mark_context_compacted(self, context) -> bool:
         self.compacted.append(context)
+        return True
+
+    def record_context_usage(self, context, usage) -> bool:
+        self.context_usage.append((context, usage))
         return True
 
 
@@ -126,7 +131,7 @@ def test_default_stack_is_official_and_contains_only_four_project_middlewares():
 
 
 @pytest.mark.asyncio
-async def test_long_history_is_compacted_by_official_summarization_middleware():
+async def test_token_pressure_is_primary_and_message_count_is_fallback():
     projection = FakeProjection()
     model = GenericFakeChatModel(messages=iter([AIMessage(content="compact summary")]))
     stack = build_default_middleware(
@@ -135,16 +140,33 @@ async def test_long_history_is_compacted_by_official_summarization_middleware():
         policy=StubPolicyMiddleware(),
         observability=RecordingSink(),
         interrupt_on={},
+        context_limit_tokens=100,
     )
     summarizer = next(x for x in stack if isinstance(x, SummarizationMiddleware))
-    messages = [HumanMessage(content=f"message {index}") for index in range(31)]
+    messages = [HumanMessage(content="x" * 400) for _index in range(3)]
 
     update = await summarizer.abefore_model({"messages": messages}, _runtime())
 
     assert update is not None
-    assert len(update["messages"]) < len(messages)
     assert "compact summary" in update["messages"][1].text
     assert projection.compacted == [_context()]
+    assert projection.context_usage[-1][1].threshold_tokens == 70
+    assert projection.context_usage[-1][1].current_tokens >= 70
+
+    fallback_projection = FakeProjection()
+    fallback = build_default_middleware(
+        summary_model=GenericFakeChatModel(messages=iter([AIMessage(content="fallback summary")])),
+        projection=fallback_projection,
+        policy=StubPolicyMiddleware(),
+        observability=RecordingSink(),
+        interrupt_on={},
+        context_limit_tokens=100000,
+    )
+    fallback_summarizer = next(x for x in fallback if isinstance(x, SummarizationMiddleware))
+    fallback_update = await fallback_summarizer.abefore_model(
+        {"messages": [HumanMessage(content="x" * 2000) for _index in range(101)]}, _runtime()
+    )
+    assert fallback_update is not None
 
 
 @pytest.mark.asyncio

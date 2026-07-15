@@ -1,6 +1,11 @@
 import sqlite3
 from pathlib import Path
 
+from app.agents.context import AgentContext
+from app.application.session_service import ProductRepository
+from app.application.workspace_runtime import SqliteMiddlewareProjection
+from app.middleware.usage import ContextUsageProjection
+
 from app.infrastructure.runtime_database import (
     connect_runtime_database,
     runtime_database_path,
@@ -45,7 +50,8 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-    ] == [1, 2, 3, 4, 5, 6]
+    ] == [1, 2, 3, 4, 5, 6, 7]
+    assert "agent_context_usage" in _tables(connection)
     connection.close()
 
 
@@ -84,7 +90,7 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-    ] == [1, 2, 3, 4, 5, 6]
+    ] == [1, 2, 3, 4, 5, 6, 7]
     reopened.close()
 
 
@@ -126,6 +132,39 @@ def test_session_experience_migration_adds_structured_messages_and_attempt_state
         "evaluation_started_at",
         "evaluation_completed_at",
     } <= attempt_columns
+    connection.close()
+
+
+def test_context_usage_projection_round_trips_real_token_threshold(tmp_path: Path) -> None:
+    connection = connect_runtime_database(tmp_path)
+    connection.execute(
+        "INSERT INTO agent_sessions (id, workspace_id, graph_id, graph_version, title) "
+        "VALUES ('session', 'w1', 'question.curate', 1, 'Context')"
+    )
+    connection.execute(
+        "INSERT INTO agent_runs (id, session_id, status) VALUES ('run', 'session', 'running')"
+    )
+    connection.commit()
+    projection = SqliteMiddlewareProjection(connection)
+    context = AgentContext(
+        workspace_id="w1",
+        workspace_root=tmp_path,
+        session_id="session",
+        run_id="run",
+        allowed_tools=frozenset(),
+        allowed_scopes=frozenset(),
+    )
+
+    projection.record_context_usage(
+        context,
+        ContextUsageProjection(current_tokens=42000, threshold_tokens=89600),
+    )
+
+    assert ProductRepository(connection).context_usage("session") == {
+        "currentTokens": 42000,
+        "thresholdTokens": 89600,
+        "estimated": True,
+    }
     connection.close()
 
 

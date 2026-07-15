@@ -18,6 +18,7 @@ export interface ProviderModelResource {
   modelId: string;
   displayName: string;
   enabled: boolean;
+  maxInputTokens: number;
   connectivityStatus: ProviderConnectivityStatus;
   lastTestedAt: string | null;
   lastErrorCode: string | null;
@@ -57,12 +58,14 @@ export interface CreateProviderModelCommand {
   modelId: string;
   displayName: string;
   enabled?: boolean;
+  maxInputTokens?: number;
 }
 
 export interface UpdateProviderModelCommand {
   modelId?: string;
   displayName?: string;
   enabled?: boolean;
+  maxInputTokens?: number;
 }
 
 export type ModelRole =

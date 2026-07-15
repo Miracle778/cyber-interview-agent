@@ -81,3 +81,9 @@ class ChatModelResolver:
                 **options,
             )
         raise ModelResolutionError(ProviderErrorCode.PROTOCOL_ERROR)
+
+    def context_limit(self, provider_model_id: str) -> int:
+        model = self._providers.get_model(provider_model_id)
+        if model is None or not model.enabled:
+            raise ModelResolutionError(ProviderErrorCode.MODEL_NOT_FOUND)
+        return model.max_input_tokens

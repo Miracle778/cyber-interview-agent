@@ -116,12 +116,14 @@ class CreateProviderModelCommand(CamelModel):
     model_id: str
     display_name: str
     enabled: bool = True
+    max_input_tokens: int = Field(default=128000, ge=4096, le=2000000)
 
 
 class UpdateProviderModelCommand(CamelModel):
     model_id: str | None = None
     display_name: str | None = None
     enabled: bool | None = None
+    max_input_tokens: int | None = Field(default=None, ge=4096, le=2000000)
 
 
 class ProviderModelResource(CamelModel):
@@ -130,6 +132,7 @@ class ProviderModelResource(CamelModel):
     model_id: str
     display_name: str
     enabled: bool
+    max_input_tokens: int
     connectivity_status: ProviderConnectivityStatus
     last_tested_at: str | None
     last_error_code: str | None

@@ -10,6 +10,7 @@ class ProviderModelRecord:
     model_id: str
     display_name: str
     enabled: bool
+    max_input_tokens: int
     connectivity_status: str
     last_tested_at: str | None
     last_error_code: str | None
@@ -37,7 +38,7 @@ _PROVIDER_COLUMNS = (
     "enabled, created_at, updated_at"
 )
 _MODEL_COLUMNS = (
-    "id, provider_id, model_id, display_name, enabled, connectivity_status, "
+    "id, provider_id, model_id, display_name, enabled, max_input_tokens, connectivity_status, "
     "last_tested_at, last_error_code, last_latency_ms, created_at, updated_at"
 )
 
@@ -94,12 +95,13 @@ class ProviderRepository:
         model_id: str,
         display_name: str,
         enabled: bool = True,
+        max_input_tokens: int = 128000,
     ) -> ProviderModelRecord:
         model_pk = str(uuid.uuid4())
         self._connection.execute(
             "INSERT INTO provider_models (id, provider_id, model_id, "
-            "display_name, enabled) VALUES (?, ?, ?, ?, ?)",
-            (model_pk, provider_id, model_id, display_name, 1 if enabled else 0),
+            "display_name, enabled, max_input_tokens) VALUES (?, ?, ?, ?, ?, ?)",
+            (model_pk, provider_id, model_id, display_name, 1 if enabled else 0, max_input_tokens),
         )
         return self._require_model(model_pk)
 
@@ -207,11 +209,12 @@ class ProviderRepository:
         real_model_id: str,
         display_name: str,
         enabled: bool,
+        max_input_tokens: int,
     ) -> ProviderModelRecord:
         self._connection.execute(
             "UPDATE provider_models SET model_id = ?, display_name = ?, "
-            "enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (real_model_id, display_name, 1 if enabled else 0, model_id),
+            "enabled = ?, max_input_tokens = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (real_model_id, display_name, 1 if enabled else 0, max_input_tokens, model_id),
         )
         return self._require_model(model_id)
 
@@ -289,6 +292,7 @@ class ProviderRepository:
             model_id=row["model_id"],
             display_name=row["display_name"],
             enabled=bool(row["enabled"]),
+            max_input_tokens=int(row["max_input_tokens"]),
             connectivity_status=row["connectivity_status"],
             last_tested_at=row["last_tested_at"],
             last_error_code=row["last_error_code"],

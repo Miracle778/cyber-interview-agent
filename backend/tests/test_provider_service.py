@@ -69,6 +69,17 @@ def test_provider_repository_round_trips_multiple_models(app_connection):
     second = repository.create_model(provider.id, "model-b", "Model B")
     loaded = repository.get_provider(provider.id)
     assert [model.model_id for model in loaded.models] == [first.model_id, second.model_id]
+    assert [model.max_input_tokens for model in loaded.models] == [128000, 128000]
+
+
+def test_provider_model_context_window_is_persisted_and_validated(provider_service):
+    provider = provider_service.create_provider(CreateProviderCommand(name="P", api_format="openai-compatible", base_url="https://example.test/v1", api_key="sk-secret"))
+    created = provider_service.create_provider_model(provider.id, CreateProviderModelCommand(model_id="m", display_name="M", max_input_tokens=64000))
+    assert created.max_input_tokens == 64000
+    updated = provider_service.update_provider_model(created.id, UpdateProviderModelCommand(max_input_tokens=96000))
+    assert updated.max_input_tokens == 96000
+    with pytest.raises(ValidationError):
+        CreateProviderModelCommand(model_id="tiny", display_name="Tiny", max_input_tokens=2048)
 
 
 def test_provider_response_is_redacted(provider_service):

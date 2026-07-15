@@ -12,15 +12,14 @@ function tokenLabel(value: number) {
   return `${(value / 1000).toFixed(precision).replace(/\.0+$|(?<=\.[0-9])0+$/, "")}k`;
 }
 
-const CONTEXT_COMPACTION_THRESHOLD = 24;
-
 export function CurationRuntimePanel({ session, retrying = false, onRetry = () => undefined }: { session: CurationSession | null; retrying?: boolean; onRetry?: () => void }) {
   const [runtimeOpen, setRuntimeOpen] = useState(true);
   const [warningsOpen, setWarningsOpen] = useState(true);
   const total = session?.progress.total ?? 0;
   const percentage = total > 0 ? Math.min(100, Math.round(((session?.progress.completed ?? 0) / total) * 100)) : 0;
-  const contextMessages = Math.min(session?.messages.length ?? 0, CONTEXT_COMPACTION_THRESHOLD);
-  const contextPercentage = Math.round((contextMessages / CONTEXT_COMPACTION_THRESHOLD) * 100);
+  const currentContextTokens = session?.contextUsage?.currentTokens ?? 0;
+  const contextThresholdTokens = session?.contextUsage?.thresholdTokens ?? 0;
+  const contextPercentage = contextThresholdTokens > 0 ? Math.min(100, Math.round((currentContextTokens / contextThresholdTokens) * 100)) : 0;
   return (
     <aside className="curation-runtime-panel" aria-label="整理运行状态">
       <div className="review-pane-title curation-runtime-title"><Activity size={17} /><strong>运行状态</strong>{session ? <span className={`curation-runtime-badge curation-runtime-badge--${session.stage}`}>{stageLabels[session.stage] ?? session.stage}</span> : null}</div>
@@ -37,7 +36,7 @@ export function CurationRuntimePanel({ session, retrying = false, onRetry = () =
           <div><strong>{session.publishedCount}</strong><span>已发布</span></div>
         </div>
         {session.stage === "failed" ? <section className="curation-retry" role="alert"><TriangleAlert size={17} /><div><strong>Agent 执行失败</strong><p>{session.executionErrorMessage ?? session.executionErrorCode ?? "可以保留当前会话并重新执行。"}</p>{session.executionErrorCode ? <code>{session.executionErrorCode}</code> : null}</div><Button size="sm" loading={retrying} onClick={onRetry}><RefreshCw size={15} />重试整理</Button></section> : null}
-        <details className="curation-runtime-disclosure" open={runtimeOpen}><summary onClick={(event) => { event.preventDefault(); setRuntimeOpen((current) => !current); }}><span><Activity size={16} />运行详情</span><small>{session.usage.callCount} 次调用</small><ChevronDown size={16} /></summary><div className="curation-runtime-disclosure__body"><dl><div><dt>执行状态</dt><dd>{session.executionStatus ?? "尚未启动"}</dd></div><div><dt>Token</dt><dd>{tokenLabel(session.usage.totalTokens)}</dd></div></dl><div className="curation-context-compact"><div className="curation-context-ring" style={{ "--context-progress": `${contextPercentage * 3.6}deg` } as CSSProperties}><span>{contextPercentage}%</span></div><div><small>当前上下文 / 压缩阈值</small><strong>{contextMessages} / {CONTEXT_COMPACTION_THRESHOLD} 条消息</strong></div></div></div></details>
+        <details className="curation-runtime-disclosure" open={runtimeOpen}><summary onClick={(event) => { event.preventDefault(); setRuntimeOpen((current) => !current); }}><span><Activity size={16} />运行详情</span><small>{session.usage.callCount} 次调用</small><ChevronDown size={16} /></summary><div className="curation-runtime-disclosure__body"><dl><div><dt>执行状态</dt><dd>{session.executionStatus ?? "尚未启动"}</dd></div><div><dt>Token</dt><dd>{tokenLabel(session.usage.totalTokens)}</dd></div></dl><div className="curation-context-compact"><div className="curation-context-ring" style={{ "--context-progress": `${contextPercentage * 3.6}deg` } as CSSProperties}><span>{contextPercentage}%</span></div><div><small>当前上下文 / 压缩阈值</small><strong>{tokenLabel(currentContextTokens)} / {contextThresholdTokens > 0 ? tokenLabel(contextThresholdTokens) : "—"}</strong></div></div></div></details>
         {session.warnings.length > 0 ? <details className="curation-runtime-warning" open={warningsOpen}><summary onClick={(event) => { event.preventDefault(); setWarningsOpen((current) => !current); }}><TriangleAlert size={16} />提示 <span>{session.warnings.length}</span></summary><p>包含重复或正在整理的资料。题匠会保留全部来源，并在候选生成后合并高置信相似题。</p></details> : null}
       </>}
     </aside>

@@ -86,3 +86,12 @@ class AgentFactory:
         except KeyError as error:
             raise ModelResolutionError(ProviderErrorCode.MODEL_NOT_FOUND) from error
         return self._models.resolve(role=role, provider_model_id=provider_model_id)
+
+    def resolve_context_limit(
+        self, role: str, *, model_bindings: Mapping[str, str]
+    ) -> int:
+        try:
+            provider_model_id = model_bindings[role]
+        except KeyError as error:
+            raise ModelResolutionError(ProviderErrorCode.MODEL_NOT_FOUND) from error
+        return self._models.context_limit(provider_model_id)

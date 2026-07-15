@@ -34,6 +34,15 @@ class ProductionGraphFactory:
     def __call__(self, kind: str, **dependencies):
         if kind in {"question.curate", "review.round", "review.discussion"}:
             bindings = dependencies["model_bindings"]
+            roles = (
+                ("question_generation", "report_summarization")
+                if kind == "question.curate"
+                else ("answer_evaluation", "report_summarization", "agent_chat")
+            )
+            context_limit_tokens = min(
+                self._agents.resolve_context_limit(role, model_bindings=bindings)
+                for role in roles
+            )
             summary_model = self._agents.resolve_model(
                 "report_summarization", model_bindings=bindings
             )
@@ -46,6 +55,7 @@ class ProductionGraphFactory:
                 observability=dependencies["observability"],
                 interrupt_on={},
                 budget_profile=REVIEW_ROUND_BUDGET,
+                context_limit_tokens=context_limit_tokens,
             )
             if kind == "question.curate":
                 agent = QuestionCurationAgent.create(
@@ -81,6 +91,10 @@ class ProductionGraphFactory:
             )
         if kind == "review.single":
             bindings = dependencies["model_bindings"]
+            context_limit_tokens = min(
+                self._agents.resolve_context_limit(role, model_bindings=bindings)
+                for role in ("answer_evaluation", "report_summarization")
+            )
             summary_model = self._agents.resolve_model(
                 "report_summarization", model_bindings=bindings
             )
@@ -92,6 +106,7 @@ class ProductionGraphFactory:
                 ),
                 observability=dependencies["observability"],
                 interrupt_on={},
+                context_limit_tokens=context_limit_tokens,
             )
             review_agents = ReviewAgents.create(
                 self._agents,

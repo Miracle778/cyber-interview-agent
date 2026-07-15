@@ -262,6 +262,7 @@ class ReviewApplication:
             "context_compacted": self.sessions.repository.context_compacted(
                 session_id
             ),
+            "context_usage": self.sessions.repository.context_usage(session_id),
             "stage": record.stage,
             "progress": {
                 "completed": record.completed_units,

@@ -125,6 +125,7 @@ export interface CurationSession {
   executionErrorCode: string | null;
   executionErrorMessage: string | null;
   contextCompacted: boolean;
+  contextUsage: { currentTokens: number; thresholdTokens: number; estimated: boolean };
   stage: CurationStage;
   progress: { completed: number; total: number };
   summary: { items: CurationSummaryItem[] };

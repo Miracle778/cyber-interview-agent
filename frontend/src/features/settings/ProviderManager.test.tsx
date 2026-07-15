@@ -31,6 +31,7 @@ function modelResource(modelId: string, displayName: string, id: string, status 
     modelId,
     displayName,
     enabled: true,
+    maxInputTokens: 128000,
     connectivityStatus: status,
     lastTestedAt: null,
     lastErrorCode: null,

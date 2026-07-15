@@ -237,6 +237,12 @@ class UsageResource(ReviewModel):
     estimated_count: int
 
 
+class ContextUsageResource(ReviewModel):
+    current_tokens: int
+    threshold_tokens: int
+    estimated: bool
+
+
 class ReviewAnswerReceiptResource(ReviewModel):
     receipt_id: str
     round_id: str
@@ -270,6 +276,7 @@ class CurationSessionResource(ReviewModel):
     execution_error_code: str | None
     execution_error_message: str | None
     context_compacted: bool
+    context_usage: ContextUsageResource
     stage: str
     progress: dict[str, int]
     summary: dict[str, Any]

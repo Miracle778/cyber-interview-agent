@@ -53,7 +53,7 @@ def _create_provider(client: TestClient) -> dict:
 def _create_model(client: TestClient, provider_id: str) -> dict:
     response = client.post(
         f"/api/settings/providers/{provider_id}/models",
-        json={"modelId": "model-a", "displayName": "Model A"},
+        json={"modelId": "model-a", "displayName": "Model A", "maxInputTokens": 64000},
     )
     assert response.status_code == 201
     return response.json()
@@ -77,13 +77,15 @@ def test_create_provider_returns_redacted_camel_case_resource(client):
 def test_provider_model_resource_workflow_and_not_found(client):
     provider = _create_provider(client)
     model = _create_model(client, provider["id"])
+    assert model["maxInputTokens"] == 64000
 
     response = client.patch(
         f"/api/settings/provider-models/{model['id']}",
-        json={"displayName": "Renamed"},
+        json={"displayName": "Renamed", "maxInputTokens": 96000},
     )
     assert response.status_code == 200
     assert response.json()["displayName"] == "Renamed"
+    assert response.json()["maxInputTokens"] == 96000
 
     response = client.post(f"/api/settings/provider-models/{model['id']}/test")
     assert response.status_code == 200

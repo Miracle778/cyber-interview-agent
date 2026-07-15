@@ -20,8 +20,9 @@ from app.middleware.usage import MiddlewareProjection, UsageProjectionMiddleware
 
 @dataclass(frozen=True, slots=True)
 class MiddlewareBudgetProfile:
-    summary_trigger_messages: int = 30
-    summary_keep_messages: int = 12
+    summary_trigger_fraction: float = 0.70
+    summary_keep_fraction: float = 0.20
+    summary_fallback_messages: int = 100
     model_thread_limit: int = 40
     model_run_limit: int = 12
     tool_thread_limit: int = 80
@@ -33,8 +34,6 @@ class MiddlewareBudgetProfile:
 
 DEFAULT_BUDGET = MiddlewareBudgetProfile()
 REVIEW_ROUND_BUDGET = MiddlewareBudgetProfile(
-    summary_trigger_messages=24,
-    summary_keep_messages=10,
     model_thread_limit=160,
     model_run_limit=12,
     tool_thread_limit=160,
@@ -51,15 +50,26 @@ def build_default_middleware(
     observability: ObservabilitySink,
     interrupt_on: Mapping[str, bool | dict],
     budget_profile: MiddlewareBudgetProfile = DEFAULT_BUDGET,
+    context_limit_tokens: int = 128000,
 ):
     """Build the one explicit default stack using official middleware hooks."""
 
+    summary_threshold_tokens = int(
+        context_limit_tokens * budget_profile.summary_trigger_fraction
+    )
+    summary_keep_tokens = int(
+        context_limit_tokens * budget_profile.summary_keep_fraction
+    )
     return (
         ProjectingSummarizationMiddleware(
             model=summary_model,
-            trigger=("messages", budget_profile.summary_trigger_messages),
-            keep=("messages", budget_profile.summary_keep_messages),
+            trigger=[
+                ("tokens", summary_threshold_tokens),
+                ("messages", budget_profile.summary_fallback_messages),
+            ],
+            keep=("tokens", summary_keep_tokens),
             projection=projection,
+            threshold_tokens=summary_threshold_tokens,
         ),
         ContextEditingMiddleware(),
         ModelCallLimitMiddleware(

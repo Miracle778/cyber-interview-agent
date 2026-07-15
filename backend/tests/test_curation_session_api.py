@@ -92,6 +92,11 @@ async def test_curation_session_api_projects_progress_summary_and_timeline(
         assert detail["executionFinishedAt"] is not None
         assert detail["executionErrorCode"] is None
         assert detail["contextCompacted"] is False
+        assert detail["contextUsage"] == {
+            "currentTokens": 0,
+            "thresholdTokens": 0,
+            "estimated": True,
+        }
         assert detail["summaryVersion"] == 1
         assert detail["candidateCount"] == 1
         assert detail["pendingCount"] == 1

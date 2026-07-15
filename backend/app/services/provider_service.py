@@ -201,6 +201,7 @@ class ProviderService:
                 command.model_id,
                 command.display_name,
                 enabled=command.enabled,
+                max_input_tokens=command.max_input_tokens,
             )
         return self._to_model_resource(record)
 
@@ -217,6 +218,7 @@ class ProviderService:
             command.display_name if command.display_name is not None else current.display_name
         )
         new_enabled = command.enabled if command.enabled is not None else current.enabled
+        new_max_input_tokens = command.max_input_tokens if command.max_input_tokens is not None else current.max_input_tokens
         model_id_changed = (
             command.model_id is not None and command.model_id != current.model_id
         )
@@ -226,6 +228,7 @@ class ProviderService:
                 real_model_id=new_model_id,
                 display_name=new_display_name,
                 enabled=new_enabled,
+                max_input_tokens=new_max_input_tokens,
             )
             if model_id_changed:
                 self.providers.reset_model_status(model_id)
@@ -336,6 +339,7 @@ class ProviderService:
             model_id=record.model_id,
             display_name=record.display_name,
             enabled=record.enabled,
+            max_input_tokens=record.max_input_tokens,
             connectivity_status=record.connectivity_status,
             last_tested_at=record.last_tested_at,
             last_error_code=record.last_error_code,
