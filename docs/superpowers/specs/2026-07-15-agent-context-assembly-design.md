@@ -189,6 +189,10 @@ AssembledContext
 
 显式 inspect 成功后更新焦点。单题 publish/reject/regenerate 成功后保留该题为最近结果；多题操作保留多个焦点，后续“这题”必须澄清，不能任选其一。
 
+命令链路采用 `Plan -> Validate -> Execute`，不采用单次自由 ReAct 直接执行副作用。classifier 只生成计划；application service 在同一 summary version 上冻结 candidate IDs、校验状态和权限、确定执行顺序并记录幂等 receipt。部分成功必须由领域 execution/receipt 表达，不能依赖模型根据工具聊天记录猜测恢复点。
+
+ReAct 保留给需要根据中间结果继续探索的能力，例如按需读取来源片段、选择只读知识工具和深入讨论。未来统一对话主 Agent 即使使用 ReAct，也只能调用窄的 curation command application service，不能取得绕过领域校验的发布、拒绝或重写工具。
+
 ## 8. Token 预算与压缩
 
 模型调用可用输入预算按以下顺序计算：

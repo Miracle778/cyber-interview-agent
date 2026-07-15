@@ -5,6 +5,7 @@
 - 已提交上一批时区、耗时、Enter/Shift+Enter 与临时最近 8 条指代修复：`78e8eec`；针对性后端 10、前端 8 项测试和 build 通过。
 - 用户确认后续采用“通用 ContextAssembler + 领域记忆投影”，先迁移题库整理命令链路，不一次重写全部 R2 Agent。
 - 用户确认不建立长期 Intent Agent；命令解释收敛为确定性 parser 优先、一次性 structured classifier 兜底，副作用继续由领域服务执行。
+- 用户确认不采用单次自由 ReAct 直接执行题库副作用；命令链路固定为 `Plan -> Validate -> Execute`，ReAct 只保留给探索型只读或受限任务。
 - 正式设计、独立架构选型记录与后续 ADR 询问规则已起草，等待用户文档审阅后再编写 implementation plan。
 
 ## 2026-07-15：R2 题库与 Agent 可用性补强启动
