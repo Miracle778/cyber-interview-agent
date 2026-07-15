@@ -26,12 +26,13 @@ router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
 @router.get("/sources", response_model=list[KnowledgeSourceResource])
 async def list_sources(
     workspace_id: Annotated[str, Query(alias="workspaceId")],
+    deleted_only: Annotated[bool, Query(alias="deletedOnly")] = False,
     workspaces: WorkspaceService = Depends(get_workspace_service),
 ) -> list[KnowledgeSourceResource]:
     workspace = workspaces.resolve_root(workspace_id)
     records = await KnowledgeSourceService(
         workspace, workspace_id=workspace_id
-    ).list()
+    ).list(deleted_only=deleted_only)
     return [KnowledgeSourceResource.model_validate(item) for item in records]
 
 

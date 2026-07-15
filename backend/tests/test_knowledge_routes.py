@@ -113,6 +113,19 @@ def test_source_soft_delete_hides_record_but_keeps_file(knowledge_client) -> Non
         "/api/knowledge/sources", params={"workspaceId": workspace_id}
     ).json() == []
     assert (workspace / source["storedPath"]).exists()
+    trash = client.get(
+        "/api/knowledge/sources",
+        params={"workspaceId": workspace_id, "deletedOnly": "true"},
+    )
+    assert [item["id"] for item in trash.json()] == [source["id"]]
+    restored = client.post(
+        f"/api/knowledge/sources/{source['id']}/restore",
+        params={"workspaceId": workspace_id},
+    )
+    assert restored.status_code == 200
+    assert client.get(
+        "/api/knowledge/sources", params={"workspaceId": workspace_id}
+    ).json()[0]["id"] == source["id"]
 
 
 def test_unreferenced_source_can_be_permanently_deleted(knowledge_client) -> None:

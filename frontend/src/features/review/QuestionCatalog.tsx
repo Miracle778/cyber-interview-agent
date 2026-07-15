@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Library, MessagesSquare, Sparkles, Upload } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, Library, MessagesSquare, Sparkles, Trash2, Upload } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../shared/ui/Button";
 import { listSources, uploadSource } from "../knowledge/knowledgeApi";
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import { CurationConversation } from "./CurationConversation";
 import { CurationRuntimePanel } from "./CurationRuntimePanel";
+import { CurationRecycleBin } from "./CurationRecycleBin";
 import { CurationSessionList } from "./CurationSessionList";
 import { QuestionLibrary } from "./QuestionLibrary";
 import { SourceSelectionDialog } from "./SourceSelectionDialog";
@@ -22,19 +23,22 @@ export function QuestionCatalog({ workspace }: { workspace: WorkspaceConfig }) {
   const client = useQueryClient();
   const [view, setView] = useState<CatalogView>("sessions");
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [trashOpen, setTrashOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [focusedCandidateId, setFocusedCandidateId] = useState<string | null>(null);
   const [optimisticMessage, setOptimisticMessage] = useState<CurationMessage | null>(null);
+  const focusedWorkspaceRef = useRef<HTMLDivElement | null>(null);
   const sources = useQuery({ queryKey: ["knowledge-sources", workspace.id], queryFn: () => listSources(workspace.id) });
   const sessions = useQuery({
     queryKey: ["review-curation-sessions", workspace.id],
     queryFn: () => listCurationSessions(workspace.id),
     refetchInterval: (query) => query.state.data?.some((item) => !["waiting_for_command", "completed", "failed"].includes(item.stage)) ? 1200 : false,
   });
+  const selected = useMemo(() => sessions.data?.find((item) => item.id === selectedId) ?? null, [selectedId, sessions.data]);
   useEffect(() => {
-    if (!selectedId && sessions.data?.[0]) setSelectedId(sessions.data[0].id);
-  }, [selectedId, sessions.data]);
-  const selected = useMemo(() => sessions.data?.find((item) => item.id === selectedId) ?? sessions.data?.[0] ?? null, [selectedId, sessions.data]);
+    if (!selected) return;
+    focusedWorkspaceRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+  }, [selected?.id]);
   const sourceStates = useMemo(() => {
     const result: Record<string, "not_curated" | "in_progress" | "previously_curated"> = {};
     for (const source of sources.data ?? []) result[source.id] = "not_curated";
@@ -86,13 +90,14 @@ export function QuestionCatalog({ workspace }: { workspace: WorkspaceConfig }) {
 
   return (
     <section className="catalog-workbench" aria-label="题库整理工作台">
-      <header className="catalog-toolbar"><div><h2>题库整理</h2><p>每组资料对应一个可恢复的 Agent 会话；先查看总结，再用自然语言确认、拒绝或重写。</p></div><div className="btn-row"><label className="btn btn--secondary btn--md catalog-upload"><span className="btn__label"><Upload size={16} />导入文档</span><input type="file" aria-label="导入文档" onChange={(event) => void handleUpload(event.target.files?.[0])} /></label><Button onClick={() => setDialogOpen(true)}><Sparkles size={16} />AI 整理</Button></div></header>
+      <header className="catalog-toolbar"><div>{selected ? <button type="button" className="catalog-back" onClick={() => setSelectedId(null)}><ArrowLeft size={16} />返回会话历史</button> : null}<h2>{selected ? selected.title : "题库整理"}</h2><p>{selected ? "在同一会话中查看整理过程、候选总结并完成确认。" : "每组资料对应一个可恢复的 Agent 会话；先查看总结，再用自然语言确认、拒绝或重写。"}</p></div><div className="btn-row"><Button variant="ghost" onClick={() => setTrashOpen(true)}><Trash2 size={16} />回收站</Button><label className="btn btn--secondary btn--md catalog-upload"><span className="btn__label"><Upload size={16} />导入文档</span><input type="file" aria-label="导入文档" onChange={(event) => void handleUpload(event.target.files?.[0])} /></label><Button onClick={() => setDialogOpen(true)}><Sparkles size={16} />AI 整理</Button></div></header>
       <nav className="catalog-secondary-tabs" role="tablist" aria-label="题库整理视图">
         <button type="button" role="tab" aria-selected={view === "sessions"} onClick={() => setView("sessions")}><MessagesSquare size={16} />整理会话</button>
         <button type="button" role="tab" aria-selected={view === "library"} onClick={() => setView("library")}><Library size={16} />题目库</button>
       </nav>
-      {view === "sessions" ? <div className="curation-workbench"><CurationConversation session={selected} optimisticMessage={optimisticMessage} busy={command.isPending} onSubmit={sendCommand} onOpenCandidate={(candidateId) => { setFocusedCandidateId(candidateId); setView("library"); }} /><CurationSessionList sessions={sessions.data ?? []} selectedId={selected?.id ?? null} onSelect={setSelectedId} onCreate={() => setDialogOpen(true)} onDelete={handleDeleteSession} /><CurationRuntimePanel session={selected} retrying={retry.isPending} onRetry={() => selected && retry.mutate(selected.id)} /></div> : <QuestionLibrary workspace={workspace} sources={sources.data ?? []} initialCandidateId={focusedCandidateId} onOpenSession={(sessionId) => { setSelectedId(sessionId); setView("sessions"); void refresh(); }} />}
+      {view === "sessions" ? selected ? <section className="curation-session-workspace" aria-label="整理会话工作台"><div className="curation-source-stepper" aria-label="本次整理资料">{selected.sources.map((source, index) => <div key={source.id}><span>{index + 1}</span><p><small>资料 {index + 1}</small><strong title={source.filename}>{source.filename}</strong></p></div>)}</div><div ref={focusedWorkspaceRef} className="curation-focus-workspace"><CurationConversation session={selected} optimisticMessage={optimisticMessage} busy={command.isPending} onSubmit={sendCommand} onOpenCandidate={(candidateId) => { setFocusedCandidateId(candidateId); setView("library"); }} /><CurationRuntimePanel session={selected} retrying={retry.isPending} onRetry={() => retry.mutate(selected.id)} /></div></section> : <CurationSessionList sessions={sessions.data ?? []} onSelect={setSelectedId} onCreate={() => setDialogOpen(true)} onDelete={handleDeleteSession} /> : <QuestionLibrary workspace={workspace} sources={sources.data ?? []} initialCandidateId={focusedCandidateId} onOpenSession={(sessionId) => { setSelectedId(sessionId); setView("sessions"); void refresh(); }} />}
       <SourceSelectionDialog open={dialogOpen} sources={sources.data ?? []} sourceStates={sourceStates} busy={create.isPending} onClose={() => setDialogOpen(false)} onConfirm={(ids) => create.mutate(ids)} />
+      <CurationRecycleBin open={trashOpen} workspaceId={workspace.id} onClose={() => setTrashOpen(false)} />
     </section>
   );
 }

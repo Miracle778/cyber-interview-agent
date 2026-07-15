@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, ArrowLeft, MoreHorizontal, Pause, StopCircle } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "../../shared/ui/Button";
 import { toActionableError } from "../../shared/api/errorAdvice";
@@ -49,6 +49,7 @@ export function ReviewPage({ workspace }: ReviewPageProps) {
   const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [optimisticMessage, setOptimisticMessage] = useState<ReviewTimelineMessage | null>(null);
+  const focusedWorkspaceRef = useRef<HTMLElement | null>(null);
   const rounds = useQuery({ queryKey: ["review-rounds", workspaceId], queryFn: () => listReviewRounds(workspaceId), enabled: Boolean(workspace) });
   const questions = useQuery({ queryKey: ["active-review-questions", workspaceId], queryFn: () => listActiveQuestions(workspaceId), enabled: Boolean(workspace) });
   const round = useQuery({ queryKey: ["review-round", selectedRoundId], queryFn: () => getReviewRound(selectedRoundId!), enabled: Boolean(selectedRoundId) });
@@ -59,6 +60,10 @@ export function ReviewPage({ workspace }: ReviewPageProps) {
   useEffect(() => {
     if (eventCount > 0 && selectedRoundId) void invalidateRound(selectedRoundId);
   }, [eventCount, selectedRoundId]);
+  useEffect(() => {
+    if (!round.data || !["waiting_for_input", "running"].includes(round.data.status)) return;
+    focusedWorkspaceRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+  }, [round.data?.id]);
   const create = useMutation({ mutationFn: createReviewRound, onSuccess: async (value) => { setCreating(false); setSelectedRoundId(value.id); await invalidateRound(value.id); } });
   const answer = useMutation({
     mutationFn: ({ value, key }: { value: string; key: string }) => submitReviewAnswer(round.data!, value, key),
@@ -93,7 +98,7 @@ export function ReviewPage({ workspace }: ReviewPageProps) {
       <main className="review-workbench__main">
         {creating ? <ReviewSetup workspace={workspace} questions={questions.data ?? []} onCreate={(request) => create.mutate(request)} onCatalog={() => { setSection("catalog"); setCreating(false); }} busy={create.isPending} /> : null}
         {round.isPending && selectedRoundId ? <p className="status-note" role="status">正在恢复复习轮次…</p> : null}
-        {round.data && ["waiting_for_input", "running"].includes(round.data.status) ? <><ReviewQuestionStepper round={round.data} /><section className="review-focus-workspace"><ReviewConversation round={round.data} optimisticMessage={optimisticMessage} busy={busy} onSubmit={submitAnswer} onSkip={() => skip.mutate()} onRetry={() => retry.mutate()} /><div className="review-insight-column"><ReviewRuntimePanel round={round.data} />{round.data.executionStatus === "waiting_for_approval" ? <ActionCenter workspaceId={workspace.id} showDiagnostic={false} actionType="knowledge.publish" watchExecutionId={round.data.executionId} onResolved={() => void invalidateRound(round.data!.id)} /> : null}</div></section></> : null}
+        {round.data && ["waiting_for_input", "running"].includes(round.data.status) ? <><ReviewQuestionStepper round={round.data} /><section ref={focusedWorkspaceRef} className="review-focus-workspace"><ReviewConversation round={round.data} optimisticMessage={optimisticMessage} busy={busy} onSubmit={submitAnswer} onSkip={() => skip.mutate()} onRetry={() => retry.mutate()} /><div className="review-insight-column"><ReviewRuntimePanel round={round.data} />{round.data.executionStatus === "waiting_for_approval" ? <ActionCenter workspaceId={workspace.id} showDiagnostic={false} actionType="knowledge.publish" watchExecutionId={round.data.executionId} onResolved={() => void invalidateRound(round.data!.id)} /> : null}</div></section></> : null}
         {round.data && ["report_pending", "completed"].includes(round.data.status) ? <ReviewResults round={round.data} onDiscuss={(ordinal) => discuss.mutate(ordinal)} /> : null}
         {error || stream.executionError ? <div className="error-banner" role="alert"><AlertCircle size={16} /><span>错误：{error?.message ?? stream.executionError?.message}</span><span>{error?.advice ?? "刷新轮次后重试"}</span></div> : null}
       </main>

@@ -52,9 +52,12 @@ async def create_curation_session(
 )
 async def list_curation_sessions(
     workspace_id: Annotated[str, Query(alias="workspaceId")],
+    deleted_only: Annotated[bool, Query(alias="deletedOnly")] = False,
     application: AgentApplication = Depends(get_agent_application),
 ):
-    return await application.review(workspace_id).list_curation_resources()
+    return await application.review(workspace_id).list_curation_resources(
+        deleted_only=deleted_only
+    )
 
 
 @router.get(

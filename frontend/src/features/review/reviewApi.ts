@@ -10,8 +10,10 @@ import type {
   ReviewRound,
 } from "./reviewTypes";
 
-export function listCurationSessions(workspaceId: string): Promise<CurationSession[]> {
-  return apiGet(`/api/review/curation-sessions?${new URLSearchParams({ workspaceId })}`);
+export function listCurationSessions(workspaceId: string, deletedOnly = false): Promise<CurationSession[]> {
+  const query = new URLSearchParams({ workspaceId });
+  if (deletedOnly) query.set("deletedOnly", "true");
+  return apiGet(`/api/review/curation-sessions?${query}`);
 }
 
 export function getCurationSession(id: string): Promise<CurationSession> {
@@ -28,6 +30,10 @@ export function retryCurationSession(id: string): Promise<CurationSession> {
 
 export function deleteCurationSession(id: string, hard = false): Promise<void> {
   return apiDelete(`/api/agent/sessions/${id}${hard ? "?hard=true" : ""}`);
+}
+
+export function restoreCurationSession(id: string): Promise<unknown> {
+  return apiPost(`/api/agent/sessions/${id}/restore`, {});
 }
 
 export function submitCurationCommand(

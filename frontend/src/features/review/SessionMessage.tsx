@@ -12,17 +12,9 @@ export function SessionMessage({ message, pending = false }: { message: Curation
   const fromUser = message.role === "user";
   const detailLabel = cardLabel(message);
   return (
-    <article className={`curation-message curation-message--${fromUser ? "user" : "agent"}${pending ? " is-pending" : ""}`}>
-      <div className="curation-message__meta">
-        {fromUser ? <UserRound size={15} /> : <Bot size={15} />}
-        <strong>{fromUser ? "你" : "题匠"}</strong>
-        {pending ? <span>发送中…</span> : null}
-      </div>
-      {detailLabel ? (
-        <SourceFileCard filename={detailLabel} content={message.content} />
-      ) : (
-        <p>{message.content}</p>
-      )}
+    <article className={`review-chat-message review-chat-message--${fromUser ? "user" : "agent"}${pending ? " is-pending" : ""}`}>
+      <span className="review-chat-message__avatar" aria-hidden="true">{fromUser ? <UserRound size={17} /> : <Bot size={17} />}</span>
+      <div className="review-chat-message__content"><div className="review-chat-message__meta"><strong>{fromUser ? "你" : "题匠"}</strong>{pending ? <span>发送中…</span> : null}</div><div className="review-chat-message__bubble">{detailLabel ? <SourceFileCard filename={detailLabel} content={message.content} /> : <p>{message.content}</p>}</div></div>
     </article>
   );
 }

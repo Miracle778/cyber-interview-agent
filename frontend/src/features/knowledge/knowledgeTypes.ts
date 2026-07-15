@@ -19,4 +19,5 @@ export interface KnowledgeSource {
   sizeBytes: number;
   createdAt: string;
   draftId: string | null;
+  deletedAt?: string | null;
 }

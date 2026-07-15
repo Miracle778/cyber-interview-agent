@@ -41,7 +41,7 @@ export function CurationRuntimePanel({ session, retrying = false, onRetry = () =
         {stages.length > 0 ? <section className="curation-stage-history" aria-label="执行过程"><strong>执行过程</strong><ol>{stages.map((message) => <li key={message.id}><span /> <div><p>{message.content}</p><time>{message.createdAt}</time></div></li>)}</ol></section> : null}
         {session.stage === "failed" ? <section className="curation-retry" role="alert"><TriangleAlert size={17} /><div><strong>Agent 执行失败</strong><p>{session.executionErrorMessage ?? session.executionErrorCode ?? "可以保留当前会话并重新执行。"}</p>{session.executionErrorCode ? <code>{session.executionErrorCode}</code> : null}</div><Button size="sm" loading={retrying} onClick={onRetry}><RefreshCw size={15} />重试整理</Button></section> : null}
         {session.contextCompacted ? <div className="curation-context-note"><Sparkles size={15} />较早对话已压缩为摘要，后续重写会继续使用当前会话上下文。</div> : null}
-        {session.warnings.length > 0 ? <div className="curation-runtime-warning"><TriangleAlert size={16} /><span>包含重复或正在整理的资料，题匠会保留来源并合并相似题。</span></div> : null}
+        {session.warnings.length > 0 ? <details className="curation-runtime-warning"><summary><TriangleAlert size={16} />资料提示 <span>{session.warnings.length}</span></summary><p>包含重复或正在整理的资料。题匠会保留全部来源，并在候选生成后合并高置信相似题。</p></details> : null}
       </>}
     </aside>
   );

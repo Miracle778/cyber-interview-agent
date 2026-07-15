@@ -75,6 +75,18 @@
 - 最终回归：后端第二次/最终 `246 passed`；前端首次 `82 passed, 2 failed`（旧 App UI 断言），只修复失败文件后最终 `84 passed`；production build 通过并保留主 chunk 约 538 kB 警告。
 - verification 用户指南与 foundation learning 七件套已生成。浏览器交互仍因 browser client `Cannot redefine property: process` 未执行，文档门禁因此必须保持失败，R2 未关闭。
 
+## 2026-07-15：整理会话 UI 与回收站补强
+
+- 题库页工具栏新增显式“回收站”入口；后端会话/原材料列表支持 `deletedOnly`，前端可查看、恢复和尝试永久删除软删除资源。
+- 整理会话改为复习页一致的历史优先结构：默认展示概览与历史卡片，选择后进入对话/运行状态聚焦工作区，并可返回历史。
+- 重复或正在整理资料的提示移到运行状态底部并默认折叠，不再占据执行过程的首屏空间。
+- 针对性验证：后端知识与整理会话接口 `19 passed`；前端 `8 passed`；`tsc --noEmit`、production build 与 `git diff --check` 通过。
+- 未执行浏览器交互验收；当前改动保持未提交，等待用户实际页面复核或提交指令。
+- 后续真实浏览器复现聚焦会话重叠：对话区和运行面板均位于 `x=748`、宽约 `507px`。修复旧 `grid-area` 继承后，1280px 下对话区为 `x=265..935`、运行面板为 `x=935..1255`；1024px 下边界为 `265..679` 与 `679..999`，均无交叠。
+- 会话首屏继续优化：开始复习的反馈栏改为工作区内滚动，整行高度从约 799px 收敛到 520px；开始复习与题库整理在进入会话后自动定位聚焦工作区。真实浏览器中题库会话自动滚动约 255px 后，对话输入框底部为 675px、工作区底部为 696px，均在 720px 视口内完整可见。
+- 新鲜验证：`ReviewPage`/`QuestionCatalog` 共 10 项测试通过，`tsc --noEmit`、production build 和 `git diff --check` 通过；仅保留既有主 chunk 体积警告。
+- 聊天记录补齐自动定位：复习会话在切换/消息与评价状态更新后滚到最新记录；整理会话在切换/消息/总结版本/乐观消息更新后滚到最新记录，并在下一渲染帧再次校准动态卡片高度。真实浏览器测得两类消息列表距底部均约 0px。
+
 ## 2026-07-14：R2 Task 3 API 与 Web 闭环
 
 - 完成 question batch/candidate/active catalog 与 review round/answer/skip/cancel/discussion API；资源从 Runtime SQLite 恢复，不依赖 SSE 重建。

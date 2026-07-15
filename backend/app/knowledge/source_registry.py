@@ -81,12 +81,18 @@ class KnowledgeSourceService:
             await connection.commit()
         return self._record(row)
 
-    async def list(self) -> tuple[KnowledgeSourceRecord, ...]:
+    async def list(
+        self, *, deleted_only: bool = False
+    ) -> tuple[KnowledgeSourceRecord, ...]:
         async with self._connection() as connection:
             cursor = await connection.execute(
                 "SELECT * FROM knowledge_sources WHERE workspace_id = ? "
-                "AND deleted_at IS NULL "
-                "ORDER BY created_at DESC, id DESC",
+                + (
+                    "AND deleted_at IS NOT NULL "
+                    if deleted_only
+                    else "AND deleted_at IS NULL "
+                )
+                + "ORDER BY created_at DESC, id DESC",
                 (self._workspace_id,),
             )
             rows = await cursor.fetchall()

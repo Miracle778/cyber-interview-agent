@@ -114,6 +114,7 @@ export interface CurationSession {
   id: string;
   workspaceId: string;
   title: string;
+  deletedAt?: string | null;
   sourceRefs: string[];
   sources: CurationSource[];
   activeBatchId: string | null;

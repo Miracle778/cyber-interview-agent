@@ -35,8 +35,12 @@ export function ReviewConversation({ round, optimisticMessage, busy, onSubmit, o
   const messages = round.messages.length > 0 ? round.messages : round.currentInput ? [{ id: round.currentInput.id, executionId: round.executionId, role: "assistant", content: round.currentInput.prompt, messageKind: "review_prompt", payload: {}, createdAt: round.currentInput.createdAt }] : [];
   useEffect(() => {
     const log = logRef.current;
-    if (log) log.scrollTop = log.scrollHeight;
-  }, [messages.length, optimisticMessage?.id, evaluating, failed]);
+    if (!log) return;
+    const scrollToLatest = () => { log.scrollTop = log.scrollHeight; };
+    scrollToLatest();
+    const frame = globalThis.requestAnimationFrame?.(scrollToLatest);
+    return () => { if (frame !== undefined) globalThis.cancelAnimationFrame?.(frame); };
+  }, [round.id, messages.length, optimisticMessage?.id, evaluating, failed]);
   async function submit() {
     const value = answer.trim();
     if (!value) return;

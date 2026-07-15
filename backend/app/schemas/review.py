@@ -259,6 +259,7 @@ class CurationSessionResource(ReviewModel):
     id: str
     workspace_id: str
     title: str
+    deleted_at: str | None = None
     source_refs: list[str]
     sources: list[CurationSourceResource]
     active_batch_id: str | None

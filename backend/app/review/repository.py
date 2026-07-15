@@ -86,13 +86,19 @@ class ReviewRepository:
         return self._curation_session_record(row)
 
     def list_curation_sessions(
-        self, workspace_id: str, *, limit: int = 50, offset: int = 0
+        self,
+        workspace_id: str,
+        *,
+        deleted_only: bool = False,
+        limit: int = 50,
+        offset: int = 0,
     ) -> tuple[CurationSessionRecord, ...]:
         rows = self._connection.execute(
             "SELECT c.* FROM review_curation_sessions c "
             "JOIN agent_sessions s ON s.id = c.session_id "
-            "WHERE c.workspace_id = ? AND s.deleted_at IS NULL "
-            "ORDER BY c.updated_at DESC, c.rowid DESC LIMIT ? OFFSET ?",
+            "WHERE c.workspace_id = ? AND s.deleted_at IS "
+            + ("NOT NULL " if deleted_only else "NULL ")
+            + "ORDER BY c.updated_at DESC, c.rowid DESC LIMIT ? OFFSET ?",
             (workspace_id, limit, offset),
         ).fetchall()
         return tuple(self._curation_session_record(row) for row in rows)

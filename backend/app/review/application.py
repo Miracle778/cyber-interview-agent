@@ -204,7 +204,9 @@ class ReviewApplication:
         record = self.repository.get_curation_session(session_id)
         if record.workspace_id != self.workspace_id:
             raise LookupError(session_id)
-        session = self.sessions.get(session_id)
+        session = self.sessions.repository.get_session(
+            session_id, include_deleted=True
+        )
         source_service = KnowledgeSourceService(
             self.workspace_root, workspace_id=self.workspace_id
         )
@@ -247,6 +249,7 @@ class ReviewApplication:
             "id": record.session_id,
             "workspace_id": record.workspace_id,
             "title": session.title,
+            "deleted_at": session.deleted_at,
             "source_refs": record.source_refs,
             "sources": source_resources,
             "active_batch_id": record.active_batch_id,
@@ -311,12 +314,14 @@ class ReviewApplication:
         )
         return await self.curation_resource(session_id)
 
-    async def list_curation_resources(self) -> tuple[dict[str, Any], ...]:
+    async def list_curation_resources(
+        self, *, deleted_only: bool = False
+    ) -> tuple[dict[str, Any], ...]:
         return tuple(
             [
                 await self.curation_resource(record.session_id)
                 for record in self.repository.list_curation_sessions(
-                    self.workspace_id
+                    self.workspace_id, deleted_only=deleted_only
                 )
             ]
         )

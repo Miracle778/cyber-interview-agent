@@ -170,6 +170,33 @@ async def test_candidate_rewrite_resumes_its_original_curation_session(
 
 
 @pytest.mark.asyncio
+async def test_deleted_curation_session_is_listed_only_in_trash(
+    api, application
+) -> None:
+    app, source_ids = application
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = (await client.post(
+            "/api/review/curation-sessions",
+            json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+        )).json()
+        await app.wait_execution(created["executionId"])
+        app.delete_session(created["id"])
+
+        visible = await client.get(
+            "/api/review/curation-sessions?workspaceId=w1"
+        )
+        trash = await client.get(
+            "/api/review/curation-sessions?workspaceId=w1&deletedOnly=true"
+        )
+
+        assert visible.json() == []
+        assert [item["id"] for item in trash.json()] == [created["id"]]
+        assert trash.json()[0]["deletedAt"] is not None
+
+
+@pytest.mark.asyncio
 async def test_failed_curation_session_can_retry_in_the_same_session(
     api, application
 ) -> None:
