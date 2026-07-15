@@ -230,11 +230,19 @@ class WorkspaceRuntime:
         command_models_factory = getattr(
             graph_factory, "create_curation_command_models", None
         )
+        configured_model_bindings = model_bindings()
+        command_models_available = (
+            command_models_factory is not None
+            and {
+                "question_generation",
+                "report_summarization",
+            }.issubset(configured_model_bindings)
+        )
         command_models = (
             None
-            if command_models_factory is None
+            if not command_models_available
             else command_models_factory(
-                model_bindings=model_bindings(),
+                model_bindings=configured_model_bindings,
                 projection=projection,
                 audit=audit,
                 observability=observability,
