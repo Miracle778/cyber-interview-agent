@@ -4,7 +4,7 @@ import { QuestionDetailPanel } from "./QuestionDetailPanel";
 import type { QuestionCandidate } from "./reviewTypes";
 
 const candidate: QuestionCandidate = {
-  id: "c1", batchId: "b1", curationSessionId: "session-1", sourceRefs: ["s1"], correctionNote: "补齐异常场景", duplicateOfQuestionId: null, duplicateQuestion: null, status: "review_pending", createdAt: "now", updatedAt: "now",
+  id: "c1", batchId: "b1", curationSessionId: "session-1", sourceRefs: ["s1"], correctionNote: "补齐异常场景", reviewNote: "", reviewNoteUpdatedAt: null, duplicateOfQuestionId: null, duplicateQuestion: null, status: "review_pending", createdAt: "now", updatedAt: "now",
   question: { questionId: "q1", documentId: "d1", contentHash: "h", title: "MVCC", questionText: "什么是 MVCC？", referenceAnswer: "多版本并发控制", topics: ["database"], difficulty: "medium", keyPoints: ["版本链"], followUps: [] },
   draft: { id: "d1", title: "MVCC", markdown: "# MVCC\n\n**多版本并发控制**", status: "review_pending", version: 1, contentHash: "h", documentType: "question" },
 };

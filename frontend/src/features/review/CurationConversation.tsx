@@ -1,8 +1,8 @@
-import { Bot, ChevronDown, CornerDownLeft, ListChecks } from "lucide-react";
+import { Bot, Check, ChevronDown, CornerDownLeft, Eye, FileText, MessageSquareText, Send, ListChecks } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../shared/ui/Button";
 import { SessionMessage } from "./SessionMessage";
-import type { CurationMessage, CurationSession } from "./reviewTypes";
+import type { CurationMessage, CurationSession, QuestionCandidate } from "./reviewTypes";
 
 const recommendationText: Record<string, string> = {
   recommend_confirm: "建议确认",
@@ -55,19 +55,25 @@ function CurationProcessMessage({ messages, startedAt, finishedAt, active, faile
   return <article className="review-chat-message review-chat-message--agent curation-process-message"><span className="review-chat-message__avatar" aria-hidden="true"><Bot size={17} /></span><div className="review-chat-message__content"><div className="review-chat-message__meta"><strong>题匠</strong>{timeLabel(latest.createdAt) ? <span className="review-chat-message__timing"><time dateTime={latest.createdAt}>{timeLabel(latest.createdAt)}</time>{processDuration ? <span>· 耗时 {processDuration.slice(1)}</span> : null}</span> : null}</div><details className="curation-process-card" open={expanded}><summary onClick={(event) => { event.preventDefault(); setExpanded((value) => !value); }}><span>{active ? <i className="status-pulse" /> : null}<strong>{statusLabel}</strong><small>{latest.content}</small></span><em>{messages.length} 条</em><ChevronDown size={16} /></summary><ol ref={timelineRef}>{messages.map((message) => <li key={message.id}><span /><div><p>{message.content}</p><small>{timeLabel(message.createdAt)}{processElapsed(startedAt, message.createdAt) ? ` · ${processElapsed(startedAt, message.createdAt)}` : ""}</small></div></li>)}</ol></details></div></article>;
 }
 
-function CurationSummaryCard({ session, onOpenCandidate }: { session: CurationSession; onOpenCandidate: (candidateId: string) => void }) {
+function CurationSummaryCard({ session, candidates, busyId, onOpenCandidate, onPublish, onNote }: { session: CurationSession; candidates: Record<string, QuestionCandidate>; busyId: string | null; onOpenCandidate: (candidateId: string) => void; onPublish: (candidateId: string) => void; onNote: (candidateId: string, note: string) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const [notingId, setNotingId] = useState<string | null>(null);
+  const [note, setNote] = useState("");
   if (session.summary.items.length === 0) return null;
+  const visible = expanded ? session.summary.items : session.summary.items.slice(0, 3);
   return (
-    <section className="curation-summary" aria-label="候选题整理总结">
-      <header><div><ListChecks size={16} /><strong>候选题总结</strong></div><span>{session.summary.items.length} 题 · v{session.summaryVersion}</span></header>
-      <div className="curation-summary__list">
-        {session.summary.items.map((item) => <article key={item.candidateId}><b>{item.ordinal}</b><div><strong title={item.title}>{item.title}</strong><small>{item.topics.join(" / ")} · {item.difficulty} · {item.sourceCount} 个来源</small></div><span>{recommendationText[item.recommendation] ?? item.recommendation}</span><button type="button" onClick={() => onOpenCandidate(item.candidateId)}>查看编辑</button></article>)}
+    <section className="curation-artifacts" aria-label="已生成文件">
+      <header><div><FileText size={16} /><strong>已生成 {session.summary.items.length} 个 Markdown 文件</strong></div><span>草稿 v{session.summaryVersion}</span></header>
+      <div className={`curation-artifacts__list${expanded ? " is-expanded" : ""}`}>
+        {visible.map((item) => { const candidate = candidates[item.candidateId]; const published = candidate?.status === "published"; return <article key={item.candidateId} className={published ? "is-published" : ""}><span className="curation-artifacts__file"><FileText size={16} /></span><div><strong title={`${item.title}.md`}>{item.title}.md</strong><small>{recommendationText[item.recommendation] ?? item.recommendation}{candidate?.reviewNote ? " · 已备注" : ""}</small></div><em>{published ? <><Check size={13} />已发布</> : "草稿"}</em><div className="curation-artifacts__actions"><button type="button" onClick={() => onOpenCandidate(item.candidateId)}><Eye size={14} />查看</button><button type="button" disabled={published || busyId === item.candidateId} onClick={() => onPublish(item.candidateId)}><Send size={14} />{published ? "已发布" : "发布"}</button><button type="button" onClick={() => { setNotingId(item.candidateId); setNote(candidate?.reviewNote ?? ""); }}><MessageSquareText size={14} />备注</button></div></article>; })}
       </div>
+      {session.summary.items.length > 3 ? <button className="curation-artifacts__expand" type="button" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>{expanded ? "收起文件" : `展开其余 ${session.summary.items.length - 3} 个文件`}<ChevronDown size={15} /></button> : null}
+      {notingId ? <div className="curation-note-editor"><label htmlFor="candidate-note">修改备注</label><textarea id="candidate-note" autoFocus value={note} onChange={(event) => setNote(event.target.value)} placeholder="写下修改意见；保存后不会立即重新生成" /><small>保存备注只记录意见。稍后可在会话中让 Agent 按备注重新生成。</small><div><button type="button" onClick={() => setNotingId(null)}>取消</button><Button type="button" disabled={busyId === notingId} loading={busyId === notingId} onClick={() => { onNote(notingId, note); setNotingId(null); }}>保存备注</Button></div></div> : null}
     </section>
   );
 }
 
-export function CurationConversation({ session, optimisticMessage, busy, onSubmit, onOpenCandidate = () => undefined }: { session: CurationSession | null; optimisticMessage: CurationMessage | null; busy: boolean; onSubmit: (text: string) => void; onOpenCandidate?: (candidateId: string) => void }) {
+export function CurationConversation({ session, candidates = {}, optimisticMessage, busy, artifactBusyId = null, onSubmit, onOpenCandidate = () => undefined, onPublishCandidate = () => undefined, onSaveNote = () => undefined }: { session: CurationSession | null; candidates?: Record<string, QuestionCandidate>; optimisticMessage: CurationMessage | null; busy: boolean; artifactBusyId?: string | null; onSubmit: (text: string) => void; onOpenCandidate?: (candidateId: string) => void; onPublishCandidate?: (candidateId: string) => void; onSaveNote?: (candidateId: string, note: string) => void }) {
   const [text, setText] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
   const timeline = useMemo(() => groupTimeline(session?.messages ?? []), [session?.messages]);
@@ -99,13 +105,13 @@ export function CurationConversation({ session, optimisticMessage, busy, onSubmi
     <main className="curation-conversation review-conversation review-conversation--chat">
       <h2 className="review-conversation__sr-title">{session.title}</h2>
       <div ref={logRef} className="curation-conversation__messages review-chat-log" role="log" aria-label="整理对话" aria-live="polite">
-        {timeline.map((item, index) => <div className="curation-timeline-item" key={item.kind === "process" ? item.id : item.message.id}>{item.kind === "process" ? <CurationProcessMessage messages={item.messages} startedAt={session.executionStartedAt} finishedAt={session.executionFinishedAt} active={!['waiting_for_command', 'completed', 'failed'].includes(session.stage)} failed={session.stage === "failed"} /> : <SessionMessage message={item.message} startedAt={session.executionStartedAt} />}{index === summaryAnchor ? <CurationSummaryCard session={session} onOpenCandidate={onOpenCandidate} /> : null}</div>)}
-        {summaryAnchor < 0 ? <CurationSummaryCard session={session} onOpenCandidate={onOpenCandidate} /> : null}
+        {timeline.map((item, index) => <div className="curation-timeline-item" key={item.kind === "process" ? item.id : item.message.id}>{item.kind === "process" ? <CurationProcessMessage messages={item.messages} startedAt={session.executionStartedAt} finishedAt={session.executionFinishedAt} active={!['waiting_for_command', 'completed', 'failed'].includes(session.stage)} failed={session.stage === "failed"} /> : <SessionMessage message={item.message} startedAt={session.executionStartedAt} />}{index === summaryAnchor ? <CurationSummaryCard session={session} candidates={candidates} busyId={artifactBusyId} onOpenCandidate={onOpenCandidate} onPublish={onPublishCandidate} onNote={onSaveNote} /> : null}</div>)}
+        {summaryAnchor < 0 ? <CurationSummaryCard session={session} candidates={candidates} busyId={artifactBusyId} onOpenCandidate={onOpenCandidate} onPublish={onPublishCandidate} onNote={onSaveNote} /> : null}
         {optimisticMessage ? <SessionMessage message={optimisticMessage} pending startedAt={session.executionStartedAt} /> : null}
       </div>
       <form className="curation-composer review-chat-composer" onSubmit={submit}>
         <label htmlFor="curation-command">回复题匠</label>
-        <div className="review-chat-composer__field"><textarea id="curation-command" value={text} disabled={!canCommand || busy} onChange={(event) => setText(event.target.value)} placeholder={canCommand ? "例如：确认全部推荐题；拒绝第 2 题；重写第 4 题：补充边界条件" : "Agent 整理完成后可在这里确认或调整"} /><div className="review-chat-composer__actions"><small>明确题号指令</small><Button type="submit" disabled={!text.trim() || !canCommand || busy} loading={busy}><CornerDownLeft size={16} />发送</Button></div></div>
+        <div className="review-chat-composer__field"><textarea id="curation-command" value={text} disabled={!canCommand || busy} onChange={(event) => setText(event.target.value)} placeholder={canCommand ? "自由描述你的要求，例如：按备注重新生成，其他推荐题直接发布" : "Agent 整理完成后可在这里确认或调整"} /><div className="review-chat-composer__actions"><small>Agent 会识别发布、拒绝、备注重写等意图</small><Button type="submit" disabled={!text.trim() || !canCommand || busy} loading={busy}><CornerDownLeft size={16} />发送</Button></div></div>
       </form>
     </main>
   );

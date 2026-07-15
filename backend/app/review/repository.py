@@ -539,6 +539,20 @@ class ReviewRepository:
                 raise LookupError(candidate_id)
         return self.get_candidate(candidate_id)
 
+    def update_candidate_review_note(
+        self, candidate_id: str, *, review_note: str
+    ) -> QuestionCandidateRecord:
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_question_candidates SET review_note = ?, "
+                "review_note_updated_at = CURRENT_TIMESTAMP, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (review_note, candidate_id),
+            )
+            if cursor.rowcount != 1:
+                raise LookupError(candidate_id)
+        return self.get_candidate(candidate_id)
+
     def activate_question(
         self,
         *,
@@ -1446,6 +1460,8 @@ class ReviewRepository:
             question=self._snapshot(row["question_json"]),
             source_refs=tuple(json.loads(row["source_refs_json"])),
             correction_note=row["correction_note"],
+            review_note=row["review_note"],
+            review_note_updated_at=row["review_note_updated_at"],
             duplicate_of_question_id=row["duplicate_of_question_id"],
             status=row["status"],
             created_at=row["created_at"],

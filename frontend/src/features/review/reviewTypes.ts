@@ -50,6 +50,8 @@ export interface QuestionCandidate {
   question: CandidateQuestion;
   sourceRefs: string[];
   correctionNote: string;
+  reviewNote: string;
+  reviewNoteUpdatedAt: string | null;
   duplicateOfQuestionId: string | null;
   duplicateQuestion: CandidateQuestion | null;
   status: "draft" | "review_pending" | "rejected" | "published";

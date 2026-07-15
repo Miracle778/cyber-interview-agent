@@ -351,6 +351,18 @@ async def test_explicit_confirm_command_publishes_without_second_decision(
         detail = (
             await client.get(f"/api/review/curation-sessions/{session_id}")
         ).json()
+        candidate_id = detail["summary"]["items"][0]["candidateId"]
+        messages_before_note = len(detail["messages"])
+        noted = await client.put(
+            f"/api/review/question-candidates/{candidate_id}/note",
+            json={"note": "补充失败恢复场景"},
+        )
+        assert noted.status_code == 200, noted.text
+        assert noted.json()["reviewNote"] == "补充失败恢复场景"
+        unchanged = (
+            await client.get(f"/api/review/curation-sessions/{session_id}")
+        ).json()
+        assert len(unchanged["messages"]) == messages_before_note
 
         confirmed = await client.post(
             f"/api/review/curation-sessions/{session_id}/commands",
@@ -364,13 +376,18 @@ async def test_explicit_confirm_command_publishes_without_second_decision(
         assert confirmed.status_code == 202, confirmed.text
         assert confirmed.json()["status"] == "completed"
         assert confirmed.json()["result"]["publishedCount"] == 1
-        candidate_id = detail["summary"]["items"][0]["candidateId"]
         candidate = await client.get(
             f"/api/review/question-candidates/{candidate_id}"
         )
         assert candidate.json()["status"] == "published"
         questions = await client.get("/api/review/questions?workspaceId=w1")
         assert len(questions.json()) == 1
+        republished = await client.post(
+            f"/api/review/question-candidates/{candidate_id}/publish",
+            json={"idempotencyKey": "direct-publish-repeat-1"},
+        )
+        assert republished.status_code == 200, republished.text
+        assert republished.json()["status"] == "published"
 
 
 @pytest.mark.asyncio

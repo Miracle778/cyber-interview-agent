@@ -7,6 +7,7 @@ from langgraph.types import interrupt
 
 from app.agents.factory import AgentFactory
 from app.agents.question_curation import QuestionCurationAgent
+from app.agents.curation_intent import CurationIntentAgent
 from app.agents.review import ReviewAgents
 from app.agents.review_round import ReviewRoundAgents
 from app.graphs.publication import create_publication_graph
@@ -30,6 +31,20 @@ class ProductionGraphFactory:
 
     def __init__(self, agents: AgentFactory) -> None:
         self._agents = agents
+
+    def create_curation_intent_agent(self, *, model_bindings, projection, audit, observability):
+        context_limit_tokens = self._agents.resolve_context_limit("question_generation", model_bindings=model_bindings)
+        summary_model = self._agents.resolve_model("report_summarization", model_bindings=model_bindings)
+        middleware = build_default_middleware(
+            summary_model=summary_model,
+            projection=projection,
+            policy=ToolPolicyMiddleware(audit=audit, required_scopes={}),
+            observability=observability,
+            interrupt_on={},
+            budget_profile=REVIEW_ROUND_BUDGET,
+            context_limit_tokens=context_limit_tokens,
+        )
+        return CurationIntentAgent.create(self._agents, model_bindings=model_bindings, middleware=middleware)
 
     def __call__(self, kind: str, **dependencies):
         if kind in {"question.curate", "review.round", "review.discussion"}:

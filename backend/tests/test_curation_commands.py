@@ -5,6 +5,7 @@ from app.review.curation_commands import (
     StaleCurationSummaryError,
 )
 from app.review.models import CurationSummary
+from app.agents.curation_intent import CandidateSelector, CurationIntentPlan
 
 
 def _summary() -> CurationSummary:
@@ -125,3 +126,75 @@ def test_stale_summary_version_is_rejected_before_target_resolution() -> None:
             current_summary_version=4,
             expected_summary_version=3,
         )
+
+
+def test_free_intent_can_regenerate_noted_and_publish_the_rest() -> None:
+    command = CurationCommandService().resolve_intent(
+        intent=CurationIntentPlan(
+            publish=CandidateSelector(scope="unnoted"),
+            regenerate=CandidateSelector(scope="noted"),
+        ),
+        summary=_summary(),
+        candidates=(
+            {"id": "candidate-1", "review_note": "补充异常场景"},
+            {"id": "candidate-2", "review_note": ""},
+            {"id": "candidate-3", "review_note": ""},
+            {"id": "candidate-4", "review_note": ""},
+            {"id": "candidate-5", "review_note": ""},
+        ),
+        current_summary_version=3,
+        expected_summary_version=3,
+    )
+
+    assert command.kind == "mixed"
+    assert command.rewrite_candidate_ids == ("candidate-1",)
+    assert command.candidate_ids == (
+        "candidate-2",
+        "candidate-3",
+        "candidate-4",
+        "candidate-5",
+    )
+
+
+def test_free_intent_can_return_a_grounded_conversation_response() -> None:
+    command = CurationCommandService().resolve_intent(
+        intent=CurationIntentPlan(response="第 2 题讨论事务隔离级别。"),
+        summary=_summary(),
+        candidates=(),
+        current_summary_version=3,
+        expected_summary_version=3,
+    )
+
+    assert command.kind == "clarify"
+    assert command.clarification == "第 2 题讨论事务隔离级别。"
+
+
+def test_question_inspection_response_is_deterministic_and_includes_key_points() -> None:
+    command = CurationCommandService().resolve_intent(
+        intent=CurationIntentPlan(
+            inspect=CandidateSelector(scope="explicit", ordinals=[1])
+        ),
+        summary=_summary(),
+        candidates=(
+            {
+                "id": "candidate-1",
+                "ordinal": 1,
+                "title": "MVCC 可见性",
+                "question": {
+                    "question_text": "Read View 如何判断版本可见性？",
+                    "reference_answer": "比较事务 ID 与活跃事务集合。",
+                    "key_points": ["上下界", "活跃事务集合"],
+                    "follow_ups": ["当前读与快照读有什么区别？"],
+                },
+            },
+        ),
+        current_summary_version=3,
+        expected_summary_version=3,
+    )
+
+    assert command.kind == "clarify"
+    assert "题目：" in command.clarification
+    assert "参考答案：" in command.clarification
+    assert "关键点：" in command.clarification
+    assert "1. 上下界" in command.clarification
+    assert "必要追问：" in command.clarification

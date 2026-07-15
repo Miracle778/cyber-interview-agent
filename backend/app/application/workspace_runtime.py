@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from app.application.execution_service import AgentExecutionService, GraphFactory
 from app.application.session_service import (
@@ -37,6 +38,7 @@ from app.review.service import ReviewDomainService
 from app.review.selector import QuestionSelector
 from app.review.repository import ReviewRepository
 from app.tools.audit import ToolAuditRepository
+from app.agents.context import AgentContext
 
 
 class SqliteMiddlewareProjection:
@@ -122,6 +124,26 @@ class SqliteMiddlewareProjection:
         return cursor.rowcount == 1
 
 
+def build_curation_intent_context(
+    *,
+    workspace_id: str,
+    workspace_root: Path,
+    session_id: str,
+    run_id: str,
+    idempotency_key: str,
+    invocation_id: str,
+) -> AgentContext:
+    return AgentContext(
+        workspace_id=workspace_id,
+        workspace_root=workspace_root,
+        session_id=session_id,
+        run_id=run_id,
+        allowed_tools=frozenset(),
+        allowed_scopes=frozenset(),
+        progress_scope=("curation_intent", idempotency_key, invocation_id),
+    )
+
+
 @dataclass(slots=True)
 class WorkspaceRuntime:
     workspace_id: str
@@ -205,6 +227,32 @@ class WorkspaceRuntime:
             resume_action=executions.resume_approval,
         )
         holder["hitl"] = hitl
+        intent_factory = getattr(graph_factory, "create_curation_intent_agent", None)
+
+        async def resolve_curation_intent(*, text, session_id, idempotency_key, candidates):
+            if intent_factory is None:
+                raise RuntimeError("curation intent agent is unavailable")
+            intent_agent = intent_factory(
+                model_bindings=model_bindings(),
+                projection=projection,
+                audit=audit,
+                observability=observability,
+            )
+            latest_execution = repository.latest_execution(session_id)
+            if latest_execution is None:
+                raise RuntimeError("curation session has no execution")
+            return await intent_agent.resolve(
+                text=text,
+                candidates=candidates,
+                context=build_curation_intent_context(
+                    workspace_id=workspace_id,
+                    workspace_root=root,
+                    session_id=session_id,
+                    run_id=latest_execution.id,
+                    idempotency_key=idempotency_key,
+                    invocation_id=str(uuid4()),
+                ),
+            )
         review = ReviewApplication(
             workspace_id=workspace_id,
             workspace_root=root,
@@ -217,6 +265,9 @@ class WorkspaceRuntime:
             validate_model=validate_review_model,
             actions=actions,
             hitl=hitl,
+            resolve_curation_intent=(
+                resolve_curation_intent if intent_factory is not None else None
+            ),
         )
         return cls(
             workspace_id=workspace_id,

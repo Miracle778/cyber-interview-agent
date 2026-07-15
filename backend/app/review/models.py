@@ -163,6 +163,8 @@ class QuestionCandidateRecord:
     question: QuestionSnapshot
     source_refs: tuple[str, ...]
     correction_note: str
+    review_note: str
+    review_note_updated_at: str | None
     duplicate_of_question_id: str | None
     status: str
     created_at: str

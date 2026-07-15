@@ -27,6 +27,8 @@ from app.schemas.review import (
     RetryReviewEvaluationCommand,
     SubmitCurationCommand,
     UpdateQuestionCandidateCommand,
+    UpdateQuestionCandidateNoteCommand,
+    PublishQuestionCandidateCommand,
 )
 
 
@@ -211,6 +213,36 @@ async def rewrite_question_candidate(
     review = application.locate_review_candidate(candidate_id)
     return await review.rewrite_candidate_in_context(
         candidate_id, feedback=command.feedback
+    )
+
+
+@router.put(
+    "/question-candidates/{candidate_id}/note",
+    response_model=QuestionCandidateResource,
+)
+async def update_question_candidate_note(
+    candidate_id: str,
+    command: UpdateQuestionCandidateNoteCommand,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_review_candidate(candidate_id)
+    return await review.update_candidate_review_note(
+        candidate_id, note=command.note
+    )
+
+
+@router.post(
+    "/question-candidates/{candidate_id}/publish",
+    response_model=QuestionCandidateResource,
+)
+async def publish_question_candidate(
+    candidate_id: str,
+    command: PublishQuestionCandidateCommand,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_review_candidate(candidate_id)
+    return await review.publish_candidate(
+        candidate_id, idempotency_key=command.idempotency_key
     )
 
 

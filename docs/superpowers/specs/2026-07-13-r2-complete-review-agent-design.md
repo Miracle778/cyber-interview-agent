@@ -24,7 +24,7 @@ R2 不再建设 Runtime 基础设施。目标是利用现有 Agent Harness 实�
 
 - 从一份或多份 source 生成多个结构化题目候选；
 - 一次选择的 source 集合创建一个独立题库整理会话，允许但不推荐重复选择正在整理或曾整理的来源；
-- 在整理会话内查看读取、分片、生成、合并、总结和发布进度，并通过受约束的自然语言命令确认、拒绝或重写候选题；
+- 在整理会话内查看读取、分片、生成、合并、总结和发布进度，并通过自由自然语言让意图 Agent 生成结构化操作计划；
 - 接受、编辑、拒绝和要求重写题目草稿；
 - 按 topic、难度、模式和题量创建复习轮次；
 - 支持薄弱点优先、随机混合、单主题和最近错误复现；
@@ -78,7 +78,7 @@ Graph 在展示题目后通过 input interrupt 暂停。应用层把 interrupt �
 
 题库整理和复习继续复用现有产品 session、execution、message、event、checkpoint 与 HITL，不创建新的通用 Agent Runtime。领域表仍拥有题目、attempt、轮次和 publication 真相；会话消息是面向 Web 和未来 Channel 的持久投影，允许使用结构化 `message_kind` 与安全 metadata 表达题目、回答、评价、进度、总结和发布结果。
 
-不采用“只在前端把 batch/round 拼成聊天气泡”的方案，因为这种做法无法在刷新、重启和 SSE 断线后恢复真实进度。也不把题库和复习改造成自由聊天 Agent；自然语言只进入显式领域命令，确定性服务继续控制选题、合并边界、幂等、发布和状态推进。
+不采用“只在前端把 batch/round 拼成聊天气泡”的方案，因为这种做法无法在刷新、重启和 SSE 断线后恢复真实进度。题库整理输入允许自由表达，但模型只能返回严格结构化的 publish/reject/regenerate/resummarize 计划；领域服务再把序号和 noted/unnoted 等范围解析为当前 summary version 下的稳定 candidate IDs。模型不能直接发布，确定性服务继续控制选题、合并边界、幂等、发布和状态推进。
 
 题库整理 session 可以包含多个 execution：首次整理、重写和重新总结都在同一 session 留下消息，但每次执行遵守单 session 仅一个活动 execution 的约束。复习轮次继续使用一个长生命周期 execution。
 
@@ -92,7 +92,7 @@ Graph 在展示题目后通过 input interrupt 暂停。应用层把 interrupt �
 4. `question_generation` Agent 生成结构化候选，领域服务在本会话内合并高置信度重复题，并把来源取并集；
 5. 与 active catalog 的相似题不覆盖原题。会话总结标记“关联已有题目”，用户确认后增加来源关联；
 6. Agent 生成逐题摘要，包含 topic、难度、来源数量、重复风险以及“推荐确认/建议修改/建议拒绝”；
-7. 用户通过 `确认全部推荐题`、`确认第 1、3 题`、`拒绝第 2 题`、`重写第 4 题：...` 等受约束命令继续；
+7. 用户可自由输入“把推荐的发掉”“加了备注的重新生成，其他的发布”等表达；意图 Agent 输出结构化范围，服务端按当前 summary 和备注事实解析稳定 candidate IDs；
 8. 明确确认消息本身作为可审计 HITL 决定，通过现有 publication service/action receipt 发布，不再要求第二次点击；
 9. 只有已发布题目进入 active question catalog 和复习选择范围。
 
@@ -306,7 +306,8 @@ R2 使用 additive migration，不再次清空刚收敛的 Runtime generation。
 新增窄领域服务：
 
 - `QuestionCurationService`：整理 session、候选批次、进度、相似性合并、来源关联、总结和重写请求；
-- `CurationCommandService`：解析受约束命令、校验明确确认语义、生成幂等 receipt 并调用现有 publication/action 服务；
+- `CurationIntentAgent`：把自由文本解析为严格结构化操作计划，不持有发布权限；
+- `CurationCommandService`：按 summary version、candidate IDs、备注与状态解析操作计划，生成幂等 receipt 并调用现有 publication/action 服务；
 - `SessionTimelineProjector`：投影用户可见题目、回答、状态、评价、总结和发布消息，不接管领域状态；
 - `ReviewRoundService`：创建/查询轮次、冻结选题、提交输入、跳过、取消；
 - `ReviewAttemptRepository`：attempt 与 input request 幂等；
@@ -322,6 +323,8 @@ POST /api/review/curation-sessions/{id}/commands
 GET  /api/review/question-candidates
 GET  /api/review/question-candidates/{id}
 PATCH /api/review/question-candidates/{id}
+PUT   /api/review/question-candidates/{id}/note
+POST  /api/review/question-candidates/{id}/publish
 POST /api/review/question-candidates/{id}/rewrite
 GET  /api/review/questions
 
@@ -431,12 +434,12 @@ Cyber Interview Agent
 桌面端采用“会话列表 + Agent 对话 + 运行状态”三栏：
 
 1. **左栏**：按更新时间列出整理 session，展示来源摘要、stage、候选/待确认数量和状态。这里列 session，不再把所有候选扁平混在一个列表。
-2. **中栏**：展示 source 选择、读取、分片、生成、相似性合并、总结、用户命令和发布结果。底部输入框在生成期间只允许取消；进入 `waiting_for_command` 后提供快捷命令并接受受约束自然语言。
+2. **中栏**：展示 source 选择、读取、分片、生成、相似性合并、生成文件、用户命令和发布结果。每轮生成完成后显示“已生成 N 个 Markdown 文件”，默认展示 3 个，展开后限制高度并内部滚动。每个文件提供查看、发布、备注；备注只保存意见，不立即触发生成。底部输入框在 `waiting_for_command` 后接受自由自然语言。
 3. **右栏**：展示 stage/progress、来源文件、模型与思考强度、token/call、execution、候选/发布计数和可恢复错误。
 
-最终总结卡按稳定序号列出标题、topic、难度、来源数量、推荐结论与简短原因。推荐状态至少包含 `推荐确认`、`建议修改`、`建议拒绝`、`关联已有题目` 和 `疑似重复`。总结不展示完整正文；点击题目打开详情抽屉或跳转题目库定位。
+生成文件卡按稳定序号关联候选 draft。点击查看时右栏运行状态临时收起并替换为 Markdown 渲染详情，详情下方展示 AI 整理建议，并仅在命中相似题时展示相似题检测卡。单题发布成功后文件行显示已发布状态和稳定 elevation；返回后恢复运行状态栏。
 
-明确文字命令本身作为 HITL 决定。快捷命令在发送前显示题目范围；用户手动输入的 `确认全部推荐题`、`确认第 1、3 题` 等文本本身已经明确范围，不再追加第二次确认。服务端仍按 summary version/candidate IDs 解析和校验；含糊回复只生成 clarification message，不显示空的人工确认卡。
+用户消息或单题“发布”按钮都是显式 HITL 决定，不再追加第二次确认。意图 Agent 只负责结构化识别，服务端仍按 summary version/candidate IDs/状态解析和校验；含糊回复只生成 clarification message。备注保存不是执行决定，只有用户后续在会话中要求“按备注重新生成”时才启动新 execution。
 
 #### 11.3.2 题目库
 

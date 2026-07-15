@@ -190,6 +190,16 @@
 1. 用户审阅 R2 正式设计；确认后再编写 implementation plan。
 2. 用户并行完成本阶段 ownership 练习。
 
+## 2026-07-15：生成文件交互与自由意图
+
+- 候选题总结改为生成文件卡：默认 3 条，展开区限制高度并内部滚动；每个 draft 提供查看、发布、备注。
+- 查看在同一会话右栏渲染 Markdown、AI 建议和按需相似题卡；发布复用确定性 publication/HITL；备注通过 migration 008 持久化且不触发 execution。
+- 新增结构化 `CurationIntentAgent`，自由文本只生成 publish/reject/regenerate/resummarize 计划，稳定 candidate ID 解析和最终副作用仍由领域服务拥有。
+- 自动证据：后端定向 21 passed，前端定向 7 passed，TypeScript/Vite build 通过；真实浏览器验收待执行。
+- 修复候选题查看问答遗漏关键点：意图 Agent 只解析 inspect 目标，领域服务从候选结构化事实确定性生成题目、参考答案、关键点和必要追问；相关后端定向 18 passed。
+- 修复意图 Agent 复用原 execution 导致的 `NoProgressError`：每次命令调用使用独立 progress scope，同一调用内部仍保留无限循环检测；覆盖重复输出、独立命令和同幂等键重试，相关定向 20 passed。
+- 修复意图解析内部资源主键错配：真实 `candidate_resource` 使用 `id`，解析器不再假设外部 DTO 的 `candidateId`；改用稳定主键归一化并以真实内部资源形状回归，相关定向 19 passed。
+
 ## 2026-07-13：合入 main
 
 - `codex/agent-runtime-framework-convergence` 已 fast-forward 合入 `main@9116dff`。

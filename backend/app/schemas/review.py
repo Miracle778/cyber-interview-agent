@@ -84,6 +84,14 @@ class RewriteQuestionCandidateCommand(ReviewModel):
     feedback: str = Field(min_length=1, max_length=5000)
 
 
+class UpdateQuestionCandidateNoteCommand(ReviewModel):
+    note: str = Field(max_length=5000)
+
+
+class PublishQuestionCandidateCommand(ReviewModel):
+    idempotency_key: str = Field(min_length=8, max_length=200)
+
+
 class CreateReviewRoundCommand(ReviewRoundSettings):
     workspace_id: str = Field(min_length=1)
 
@@ -140,6 +148,8 @@ class QuestionCandidateResource(ReviewModel):
     question: QuestionSnapshotResource
     source_refs: list[str]
     correction_note: str
+    review_note: str
+    review_note_updated_at: str | None
     duplicate_of_question_id: str | None
     duplicate_question: QuestionSnapshotResource | None
     status: str

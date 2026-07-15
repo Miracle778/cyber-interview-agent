@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, replace
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 from uuid import uuid4
 
 from app.application.execution_service import AgentExecutionService
@@ -62,6 +62,7 @@ class ReviewApplication:
         validate_model: Callable[[str, str], None],
         actions: PendingActionRepository,
         hitl: HitlService,
+        resolve_curation_intent: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         self.workspace_id = workspace_id
         self.workspace_root = workspace_root
@@ -74,6 +75,7 @@ class ReviewApplication:
         self.validate_model = validate_model
         self.actions = actions
         self.hitl = hitl
+        self.resolve_curation_intent = resolve_curation_intent
         self.selector = QuestionSelector()
         self.curation_commands = CurationCommandService()
         self.timeline = SessionTimelineProjector(
@@ -336,17 +338,18 @@ class ReviewApplication:
         idempotency_key: str,
     ) -> dict[str, Any]:
         curation = self.repository.get_curation_session(session_id)
-        parsed = self.curation_commands.parse(
-            text=text,
-            summary=curation.summary,
-            current_summary_version=curation.summary_version,
-            expected_summary_version=summary_version,
-        )
+        if self.resolve_curation_intent is None:
+            parsed = self.curation_commands.parse(text=text, summary=curation.summary, current_summary_version=curation.summary_version, expected_summary_version=summary_version)
+        else:
+            candidate_resources = tuple([await self.candidate_resource(str(item["candidateId"])) | {"ordinal": item["ordinal"], "recommendation": item.get("recommendation"), "title": item.get("title", "")} for item in curation.summary.items])
+            intent = await self.resolve_curation_intent(text=text, session_id=session_id, idempotency_key=idempotency_key, candidates=candidate_resources)
+            parsed = self.curation_commands.resolve_intent(intent=intent, summary=curation.summary, candidates=candidate_resources, current_summary_version=curation.summary_version, expected_summary_version=summary_version)
         command_payload: dict[str, object] = {
             "kind": parsed.kind,
             "candidateIds": parsed.candidate_ids,
             "feedback": parsed.feedback,
             "clarification": parsed.clarification,
+            "rewriteCandidateIds": parsed.rewrite_candidate_ids,
         }
         receipt, created = self.repository.begin_curation_command(
             session_id=session_id,
@@ -401,7 +404,7 @@ class ReviewApplication:
                 )
                 rejected.append(candidate_id)
             result = {"rejectedIds": rejected, "rejectedCount": len(rejected)}
-        elif parsed.kind == "confirm":
+        elif parsed.kind in {"confirm", "mixed"}:
             published: list[str] = []
             failed: list[dict[str, str]] = []
             for candidate_id in parsed.candidate_ids:
@@ -426,12 +429,19 @@ class ReviewApplication:
                 "failures": failed,
             }
             terminal_status = "partial_failure" if failed else "completed"
+            if parsed.kind == "mixed" and parsed.rewrite_candidate_ids:
+                rewrite_feedback = self._candidate_notes_feedback(parsed.rewrite_candidate_ids, parsed.feedback)
+                candidate = self.repository.get_candidate(parsed.rewrite_candidate_ids[0])
+                rewrite_execution = await self._start_curation_execution(session_id=session_id, source_refs=curation.source_refs, rewrite_feedback=rewrite_feedback, rewrite_of_batch_id=candidate.batch_id)
+                result["rewriteExecutionId"] = rewrite_execution.id
+                result["rewriteCandidateIds"] = list(parsed.rewrite_candidate_ids)
         elif parsed.kind == "rewrite":
             candidate = self.repository.get_candidate(parsed.candidate_ids[0])
+            rewrite_feedback = self._candidate_notes_feedback(parsed.candidate_ids, parsed.feedback)
             execution = await self._start_curation_execution(
                 session_id=session_id,
                 source_refs=curation.source_refs,
-                rewrite_feedback=parsed.feedback,
+                rewrite_feedback=rewrite_feedback,
                 rewrite_of_batch_id=candidate.batch_id,
             )
             result = {"executionId": execution.id}
@@ -467,6 +477,15 @@ class ReviewApplication:
             },
         )
         return self._curation_command_resource(receipt)
+
+    def _candidate_notes_feedback(self, candidate_ids: tuple[str, ...], extra: str | None) -> str:
+        lines = ["请按以下候选题备注重新生成，并保留其余未指定题目："]
+        for candidate_id in candidate_ids:
+            candidate = self.repository.get_candidate(candidate_id)
+            lines.append(f"- {candidate.question.title}（{candidate_id}）：{candidate.review_note or extra or '重新整理'}")
+        if extra:
+            lines.append(f"补充要求：{extra}")
+        return "\n".join(lines)
 
     async def _publish_curation_candidate(
         self, candidate_id: str, *, idempotency_key: str
@@ -612,7 +631,9 @@ class ReviewApplication:
 
     @staticmethod
     def _command_result_text(kind: str, result: dict[str, object]) -> str:
-        if kind == "confirm":
+        if kind in {"confirm", "mixed"}:
+            if kind == "mixed":
+                return f"已发布 {result.get('publishedCount', 0)} 道题，并开始按备注重新生成。"
             return f"已发布 {result.get('publishedCount', 0)} 道题。"
         if kind == "reject":
             return f"已拒绝 {result.get('rejectedCount', 0)} 道题。"
@@ -734,6 +755,8 @@ class ReviewApplication:
             "question": asdict(candidate.question),
             "source_refs": candidate.source_refs,
             "correction_note": candidate.correction_note,
+            "review_note": candidate.review_note,
+            "review_note_updated_at": candidate.review_note_updated_at,
             "duplicate_of_question_id": candidate.duplicate_of_question_id,
             "duplicate_question": (
                 None if duplicate is None else asdict(duplicate)
@@ -755,6 +778,32 @@ class ReviewApplication:
             "created_at": candidate.created_at,
             "updated_at": candidate.updated_at,
         }
+
+    async def update_candidate_review_note(
+        self, candidate_id: str, *, note: str
+    ) -> dict[str, Any]:
+        candidate = self.repository.get_candidate(candidate_id)
+        batch = self.repository.get_batch(candidate.batch_id)
+        if batch.workspace_id != self.workspace_id:
+            raise LookupError(candidate_id)
+        self.repository.update_candidate_review_note(
+            candidate_id, review_note=note.strip()
+        )
+        return await self.candidate_resource(candidate_id)
+
+    async def publish_candidate(
+        self, candidate_id: str, *, idempotency_key: str
+    ) -> dict[str, Any]:
+        candidate = self.repository.get_candidate(candidate_id)
+        batch = self.repository.get_batch(candidate.batch_id)
+        if batch.workspace_id != self.workspace_id:
+            raise LookupError(candidate_id)
+        if candidate.status == "rejected":
+            raise ReviewConflictError("rejected candidate cannot be published")
+        await self._publish_curation_candidate(
+            candidate_id, idempotency_key=idempotency_key
+        )
+        return await self.candidate_resource(candidate_id)
 
     async def rewrite_candidate_in_context(
         self, candidate_id: str, *, feedback: str

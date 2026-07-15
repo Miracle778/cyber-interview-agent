@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPatch, apiPost } from "../../shared/api/client";
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "../../shared/api/client";
 import type {
   ActiveQuestion,
   CurationCommandReceipt,
@@ -78,6 +78,14 @@ export function updateQuestionCandidate(
 
 export function rewriteQuestionCandidate(id: string, feedback: string): Promise<CurationSession> {
   return apiPost(`/api/review/question-candidates/${id}/rewrite`, { feedback });
+}
+
+export function updateQuestionCandidateNote(id: string, note: string): Promise<QuestionCandidate> {
+  return apiPut(`/api/review/question-candidates/${id}/note`, { note });
+}
+
+export function publishQuestionCandidate(id: string, idempotencyKey: string): Promise<QuestionCandidate> {
+  return apiPost(`/api/review/question-candidates/${id}/publish`, { idempotencyKey });
 }
 
 export function listActiveQuestions(workspaceId: string): Promise<ActiveQuestion[]> {

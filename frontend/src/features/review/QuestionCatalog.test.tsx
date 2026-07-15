@@ -25,7 +25,7 @@ describe("QuestionCatalog", () => {
     expect(screen.getByRole("region", { name: "历史整理会话" })).toBeInTheDocument();
     fireEvent.click(session);
     expect(screen.getByRole("log", { name: "整理对话" })).toHaveTextContent("整理完成，请确认推荐题");
-    const summaryCard = screen.getByRole("region", { name: "候选题整理总结" });
+    const summaryCard = screen.getByRole("region", { name: "已生成文件" });
     const laterMessage = screen.getByText("确认第 1 题");
     expect(summaryCard.compareDocumentPosition(laterMessage) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole("complementary", { name: "整理运行状态" })).toHaveTextContent("等待确认");
