@@ -229,7 +229,9 @@ class WorkspaceRuntime:
         holder["hitl"] = hitl
         intent_factory = getattr(graph_factory, "create_curation_intent_agent", None)
 
-        async def resolve_curation_intent(*, text, session_id, idempotency_key, candidates):
+        async def resolve_curation_intent(
+            *, text, session_id, idempotency_key, candidates, conversation
+        ):
             if intent_factory is None:
                 raise RuntimeError("curation intent agent is unavailable")
             intent_agent = intent_factory(
@@ -244,6 +246,7 @@ class WorkspaceRuntime:
             return await intent_agent.resolve(
                 text=text,
                 candidates=candidates,
+                conversation=conversation,
                 context=build_curation_intent_context(
                     workspace_id=workspace_id,
                     workspace_root=root,

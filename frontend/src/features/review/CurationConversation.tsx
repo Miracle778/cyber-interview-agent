@@ -3,6 +3,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../shared/ui/Button";
 import { SessionMessage } from "./SessionMessage";
 import type { CurationMessage, CurationSession, QuestionCandidate } from "./reviewTypes";
+import { elapsedSeconds, formatBeijingTime } from "../../shared/time";
 
 const recommendationText: Record<string, string> = {
   recommend_confirm: "建议确认",
@@ -25,16 +26,13 @@ function groupTimeline(messages: CurationMessage[]): TimelineItem[] {
 }
 
 function timeLabel(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(date);
+  return formatBeijingTime(value);
 }
 
 function processElapsed(startedAt: string | null | undefined, createdAt: string) {
-  const start = new Date(startedAt ?? "").getTime();
-  const end = new Date(createdAt).getTime();
-  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
-  const seconds = Math.round((end - start) / 1000);
+  if (!startedAt) return null;
+  const seconds = elapsedSeconds(startedAt, createdAt);
+  if (seconds === null) return null;
   return seconds < 60 ? `+${seconds} 秒` : `+${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
 }
 
@@ -84,6 +82,25 @@ export function CurationConversation({ session, candidates = {}, optimisticMessa
     }
     return -1;
   }, [timeline]);
+  const commandStartedAt = useMemo(() => {
+    const result = new Map<string, string>();
+    let latestUserTimestamp: string | null = null;
+    for (const item of timeline) {
+      if (item.kind !== "message") continue;
+      const message = item.message;
+      if (message.role === "user") {
+        latestUserTimestamp = typeof message.payload.submittedAt === "string"
+          ? message.payload.submittedAt
+          : message.createdAt;
+      } else if (message.messageKind === "command_receipt") {
+        const startedAt = typeof message.payload.startedAt === "string"
+          ? message.payload.startedAt
+          : latestUserTimestamp;
+        if (startedAt) result.set(message.id, startedAt);
+      }
+    }
+    return result;
+  }, [timeline]);
   useEffect(() => {
     const log = logRef.current;
     if (!log || !session) return;
@@ -105,13 +122,13 @@ export function CurationConversation({ session, candidates = {}, optimisticMessa
     <main className="curation-conversation review-conversation review-conversation--chat">
       <h2 className="review-conversation__sr-title">{session.title}</h2>
       <div ref={logRef} className="curation-conversation__messages review-chat-log" role="log" aria-label="整理对话" aria-live="polite">
-        {timeline.map((item, index) => <div className="curation-timeline-item" key={item.kind === "process" ? item.id : item.message.id}>{item.kind === "process" ? <CurationProcessMessage messages={item.messages} startedAt={session.executionStartedAt} finishedAt={session.executionFinishedAt} active={!['waiting_for_command', 'completed', 'failed'].includes(session.stage)} failed={session.stage === "failed"} /> : <SessionMessage message={item.message} startedAt={session.executionStartedAt} />}{index === summaryAnchor ? <CurationSummaryCard session={session} candidates={candidates} busyId={artifactBusyId} onOpenCandidate={onOpenCandidate} onPublish={onPublishCandidate} onNote={onSaveNote} /> : null}</div>)}
+        {timeline.map((item, index) => <div className="curation-timeline-item" key={item.kind === "process" ? item.id : item.message.id}>{item.kind === "process" ? <CurationProcessMessage messages={item.messages} startedAt={session.executionStartedAt} finishedAt={session.executionFinishedAt} active={!['waiting_for_command', 'completed', 'failed'].includes(session.stage)} failed={session.stage === "failed"} /> : <SessionMessage message={item.message} startedAt={item.message.messageKind === "command_receipt" ? commandStartedAt.get(item.message.id) ?? null : session.executionStartedAt} />}{index === summaryAnchor ? <CurationSummaryCard session={session} candidates={candidates} busyId={artifactBusyId} onOpenCandidate={onOpenCandidate} onPublish={onPublishCandidate} onNote={onSaveNote} /> : null}</div>)}
         {summaryAnchor < 0 ? <CurationSummaryCard session={session} candidates={candidates} busyId={artifactBusyId} onOpenCandidate={onOpenCandidate} onPublish={onPublishCandidate} onNote={onSaveNote} /> : null}
         {optimisticMessage ? <SessionMessage message={optimisticMessage} pending startedAt={session.executionStartedAt} /> : null}
       </div>
       <form className="curation-composer review-chat-composer" onSubmit={submit}>
         <label htmlFor="curation-command">回复题匠</label>
-        <div className="review-chat-composer__field"><textarea id="curation-command" value={text} disabled={!canCommand || busy} onChange={(event) => setText(event.target.value)} placeholder={canCommand ? "自由描述你的要求，例如：按备注重新生成，其他推荐题直接发布" : "Agent 整理完成后可在这里确认或调整"} /><div className="review-chat-composer__actions"><small>Agent 会识别发布、拒绝、备注重写等意图</small><Button type="submit" disabled={!text.trim() || !canCommand || busy} loading={busy}><CornerDownLeft size={16} />发送</Button></div></div>
+        <div className="review-chat-composer__field"><textarea id="curation-command" value={text} disabled={!canCommand || busy} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={canCommand ? "自由描述你的要求，例如：按备注重新生成，其他推荐题直接发布" : "Agent 整理完成后可在这里确认或调整"} /><div className="review-chat-composer__actions"><small>Enter 发送 · Shift+Enter 换行</small><Button type="submit" disabled={!text.trim() || !canCommand || busy} loading={busy}><CornerDownLeft size={16} />发送</Button></div></div>
       </form>
     </main>
   );

@@ -2,11 +2,10 @@ import { AlertTriangle, Bot, RotateCcw, Send, SkipForward, UserRound } from "luc
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../../shared/ui/Button";
 import type { ReviewRound, ReviewTimelineMessage } from "./reviewTypes";
+import { formatBeijingTime } from "../../shared/time";
 
 function formatMessageTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
+  return formatBeijingTime(value, false);
 }
 
 function TimelineMessage({ message, pending = false }: { message: ReviewTimelineMessage; pending?: boolean }) {
@@ -50,6 +49,6 @@ export function ReviewConversation({ round, optimisticMessage, busy, onSubmit, o
   return <section className="review-conversation review-conversation--chat" aria-label="当前复习轮次">
     <h2 className="review-conversation__sr-title">{round.currentQuestion?.title ?? "当前复习轮次"}</h2>
     <div ref={logRef} className="review-chat-log" role="log" aria-label="复习对话" aria-live="polite">{messages.map((message) => <TimelineMessage key={message.id} message={message} />)}{optimisticMessage ? <TimelineMessage message={optimisticMessage} pending /> : null}{evaluating ? <div className="review-typing-row" role="status"><span className="review-chat-message__avatar" aria-hidden="true"><Bot size={17} /></span><div className="review-typing-indicator"><span className="status-pulse" />复习助手正在评价回答…</div></div> : null}{failed ? <div className="review-evaluation-error"><AlertTriangle size={17} /><div><strong>评价暂时失败</strong><p>你的回答已经保存，无需重新输入。</p></div><Button variant="secondary" size="sm" onClick={onRetry}><RotateCcw size={15} />重试评价</Button></div> : null}</div>
-    {round.currentInput ? <footer className="review-chat-composer"><label htmlFor="review-answer">{round.currentInput.kind === "follow_up" ? "补充回答" : "你的回答"}</label><div className="review-chat-composer__field"><textarea id="review-answer" value={answer} disabled={busy} onChange={(event) => setAnswer(event.target.value)} placeholder="输入回答…" /><div className="review-chat-composer__actions"><Button variant="ghost" disabled={busy} onClick={onSkip}><SkipForward size={16} />跳过</Button><Button disabled={!answer.trim() || busy} loading={busy} onClick={() => void submit().catch(() => undefined)}><Send size={16} />发送</Button></div></div></footer> : null}
+    {round.currentInput ? <footer className="review-chat-composer"><label htmlFor="review-answer">{round.currentInput.kind === "follow_up" ? "补充回答" : "你的回答"}</label><div className="review-chat-composer__field"><textarea id="review-answer" value={answer} disabled={busy} onChange={(event) => setAnswer(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit().catch(() => undefined); } }} placeholder="输入回答…" /><div className="review-chat-composer__actions"><small>Enter 发送 · Shift+Enter 换行</small><Button variant="ghost" disabled={busy} onClick={onSkip}><SkipForward size={16} />跳过</Button><Button disabled={!answer.trim() || busy} loading={busy} onClick={() => void submit().catch(() => undefined)}><Send size={16} />发送</Button></div></div></footer> : null}
   </section>;
 }

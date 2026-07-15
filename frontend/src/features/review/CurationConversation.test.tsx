@@ -26,4 +26,15 @@ describe("CurationConversation artifacts", () => {
     expect(onSaveNote).toHaveBeenCalledWith("c1", "补充失败恢复");
     expect(screen.getByLabelText("回复题匠")).toHaveAttribute("placeholder", expect.stringContaining("自由描述"));
   });
+
+  it("sends with Enter and keeps Shift+Enter for a newline", () => {
+    const onSubmit = vi.fn();
+    render(<CurationConversation session={session} optimisticMessage={null} busy={false} onSubmit={onSubmit} />);
+    const input = screen.getByLabelText("回复题匠");
+    fireEvent.change(input, { target: { value: "发布这题" } });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+    expect(onSubmit).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onSubmit).toHaveBeenCalledWith("发布这题");
+  });
 });

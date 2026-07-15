@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 from uuid import uuid4
@@ -337,12 +338,34 @@ class ReviewApplication:
         summary_version: int,
         idempotency_key: str,
     ) -> dict[str, Any]:
+        command_started_at = datetime.now(timezone.utc).isoformat()
         curation = self.repository.get_curation_session(session_id)
         if self.resolve_curation_intent is None:
             parsed = self.curation_commands.parse(text=text, summary=curation.summary, current_summary_version=curation.summary_version, expected_summary_version=summary_version)
         else:
             candidate_resources = tuple([await self.candidate_resource(str(item["candidateId"])) | {"ordinal": item["ordinal"], "recommendation": item.get("recommendation"), "title": item.get("title", "")} for item in curation.summary.items])
-            intent = await self.resolve_curation_intent(text=text, session_id=session_id, idempotency_key=idempotency_key, candidates=candidate_resources)
+            ordinal_by_id = {
+                str(item["candidateId"]): int(item["ordinal"])
+                for item in curation.summary.items
+            }
+            visible_messages = [
+                message
+                for message in self.sessions.repository.list_messages(session_id)
+                if message.message_kind in {"text", "command_receipt"}
+            ][-8:]
+            conversation = tuple(
+                {
+                    "role": message.role,
+                    "content": message.content,
+                    "candidateOrdinals": tuple(
+                        ordinal_by_id[candidate_id]
+                        for candidate_id in message.payload.get("candidateIds", ())
+                        if candidate_id in ordinal_by_id
+                    ),
+                }
+                for message in visible_messages
+            )
+            intent = await self.resolve_curation_intent(text=text, session_id=session_id, idempotency_key=idempotency_key, candidates=candidate_resources, conversation=conversation)
             parsed = self.curation_commands.resolve_intent(intent=intent, summary=curation.summary, candidates=candidate_resources, current_summary_version=curation.summary_version, expected_summary_version=summary_version)
         command_payload: dict[str, object] = {
             "kind": parsed.kind,
@@ -371,6 +394,7 @@ class ReviewApplication:
             payload={
                 "resourceId": receipt.id,
                 "version": summary_version,
+                "submittedAt": command_started_at,
             },
         )
         result: dict[str, object]
@@ -386,6 +410,8 @@ class ReviewApplication:
                 payload={
                     "resourceId": receipt.id,
                     "version": summary_version,
+                    "startedAt": command_started_at,
+                    "candidateIds": parsed.candidate_ids,
                 },
             )
         elif parsed.kind == "reject":
@@ -462,6 +488,8 @@ class ReviewApplication:
                 payload={
                     "resourceId": receipt.id,
                     "version": summary_version,
+                    "startedAt": command_started_at,
+                    "candidateIds": parsed.candidate_ids,
                 },
             )
         await self.events.publish(

@@ -52,8 +52,16 @@ async def test_question_content_context_includes_key_points_and_follow_ups(
             allowed_tools=frozenset(),
             allowed_scopes=frozenset(),
         ),
+        conversation=(
+            {
+                "role": "assistant",
+                "content": "第 6 题：事务隔离级别",
+                "candidateOrdinals": (6,),
+            },
+        ),
     )
 
     prompt = runnable.input["messages"][0].content
     assert "关键点=上下界、活跃事务集合" in prompt
     assert "必要追问=当前读与快照读有什么区别？" in prompt
+    assert "assistant [关联候选: 第6题]: 第 6 题：事务隔离级别" in prompt

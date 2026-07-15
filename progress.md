@@ -199,6 +199,7 @@
 - 修复候选题查看问答遗漏关键点：意图 Agent 只解析 inspect 目标，领域服务从候选结构化事实确定性生成题目、参考答案、关键点和必要追问；相关后端定向 18 passed。
 - 修复意图 Agent 复用原 execution 导致的 `NoProgressError`：每次命令调用使用独立 progress scope，同一调用内部仍保留无限循环检测；覆盖重复输出、独立命令和同幂等键重试，相关定向 20 passed。
 - 修复意图解析内部资源主键错配：真实 `candidate_resource` 使用 `id`，解析器不再假设外部 DTO 的 `candidateId`；改用稳定主键归一化并以真实内部资源形状回归，相关定向 19 passed。
+- 修复整理会话时间与连续指代：SQLite UTC 时间显式按 `Asia/Shanghai` 渲染；命令耗时从请求开始时间计算；Enter 发送、Shift+Enter 换行；最近 8 条用户/Agent 命令消息及关联候选序号进入意图上下文。后端定向 20 passed，前端定向 8 passed，build 通过；历史页面已从 14:39/108 分钟修正为 22:39/单条耗时。
 
 ## 2026-07-13：合入 main
 

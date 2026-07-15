@@ -48,4 +48,21 @@ describe("SessionMessage", () => {
     const timing = screen.getByText("· 耗时 2 分 3 秒").parentElement;
     expect(timing).toHaveTextContent(/\d{2}:\d{2}:\d{2}· 耗时 2 分 3 秒/);
   });
+
+  it("uses Beijing time and command-local elapsed time for a command receipt", () => {
+    render(
+      <SessionMessage
+        message={{
+          ...baseMessage,
+          messageKind: "command_receipt",
+          createdAt: "2026-07-15 14:39:06",
+          payload: { startedAt: "2026-07-15T14:39:00+00:00" },
+        }}
+        startedAt="2026-07-15T14:39:00+00:00"
+      />,
+    );
+
+    expect(screen.getByText("22:39:06")).toBeInTheDocument();
+    expect(screen.getByText("· 耗时 6 秒")).toBeInTheDocument();
+  });
 });

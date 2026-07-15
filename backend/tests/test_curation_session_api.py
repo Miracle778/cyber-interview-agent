@@ -11,6 +11,7 @@ from app.application.workspace_runtime import AgentApplication
 from app.knowledge.source_registry import KnowledgeSourceService
 from app.graphs.publication import create_publication_graph
 from tests.test_review_api_v2 import _graph_factory
+from app.agents.curation_intent import CandidateSelector, CurationIntentPlan
 
 
 def _session_graph_factory(kind, **dependencies):
@@ -388,6 +389,76 @@ async def test_explicit_confirm_command_publishes_without_second_decision(
         )
         assert republished.status_code == 200, republished.text
         assert republished.json()["status"] == "published"
+
+
+@pytest.mark.asyncio
+async def test_curation_intent_receives_recent_focus_and_projects_command_timing(
+    api, application
+) -> None:
+    app, source_ids = application
+    captured = []
+
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = await client.post(
+            "/api/review/curation-sessions",
+            json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+        )
+        await app.wait_execution(created.json()["executionId"])
+        session_id = created.json()["id"]
+        review = app.locate_review_session(session_id)
+
+        async def resolve(**kwargs):
+            captured.append(kwargs)
+            if len(captured) == 1:
+                return CurationIntentPlan(
+                    inspect=CandidateSelector(scope="explicit", ordinals=[1])
+                )
+            return CurationIntentPlan(response="已理解你指的是刚才查看的题目。")
+
+        review.resolve_curation_intent = resolve
+        detail = (
+            await client.get(f"/api/review/curation-sessions/{session_id}")
+        ).json()
+        version = detail["summaryVersion"]
+        first = await client.post(
+            f"/api/review/curation-sessions/{session_id}/commands",
+            json={
+                "text": "第 1 题是什么？",
+                "summaryVersion": version,
+                "idempotencyKey": "inspect-context-command-1",
+            },
+        )
+        second = await client.post(
+            f"/api/review/curation-sessions/{session_id}/commands",
+            json={
+                "text": "这题发布吧",
+                "summaryVersion": version,
+                "idempotencyKey": "inspect-context-command-2",
+            },
+        )
+
+        assert first.status_code == 202, first.text
+        assert second.status_code == 202, second.text
+        assert captured[1]["conversation"][-1]["content"].startswith(
+            "第 1 题："
+        )
+        assert captured[1]["conversation"][-1]["candidateOrdinals"] == (1,)
+        restored = (
+            await client.get(f"/api/review/curation-sessions/{session_id}")
+        ).json()
+        command_messages = [
+            item
+            for item in restored["messages"]
+            if item["messageKind"] in {"text", "command_receipt"}
+        ]
+        assert command_messages[-2]["payload"]["submittedAt"].endswith(
+            "+00:00"
+        )
+        assert command_messages[-1]["payload"]["startedAt"].endswith(
+            "+00:00"
+        )
 
 
 @pytest.mark.asyncio
