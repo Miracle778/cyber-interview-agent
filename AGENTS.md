@@ -17,6 +17,14 @@ Repository files and executable state are authoritative. Do not reconstruct proj
 
 Evaluate task complexity before choosing worktree, skill, planning, and documentation overhead.
 
+Treat the `superpowers:*` skill family as opt-in overhead. Do not invoke any
+`superpowers:*` skill for ordinary, simple, narrowly scoped, or targeted work
+unless the user explicitly asks for that skill or workflow. Superpowers skills
+may be selected for coarse-grained work such as a stage/slice implementation,
+cross-layer feature, critical state machine or security boundary, broad
+refactor, or similarly risky long-running task. Even then, invoke only the
+smallest directly applicable set; never load the family as a default bundle.
+
 Simple tasks may be done on a normal branch in the main repository worktree, without creating a separate worktree or loading planning/superpowers workflows. Simple tasks include:
 
 - answering a narrowly scoped question after reading the relevant files;
@@ -54,7 +62,7 @@ For simple implementation work, create or switch to a normal `codex/...` branch 
 - Use targeted tests during tasks. Run full backend/frontend regression at most twice per stage: once after cross-layer integration when needed and once before final acceptance.
 - Run one minimal browser happy path before final documentation, then one complete browser acceptance pass. Re-run only affected scenarios after fixes.
 - Default to one Agent owning a slice end-to-end. Do not hand off mid-task or create subagents unless work is genuinely independent and non-overlapping.
-- Use a skill only when installed and clearly applicable to the task's real risk. Do not invoke superpowers or planning workflows merely because the repository stores docs under `docs/superpowers/`, because a task touches code, or because a small bug needs a targeted fix. State the skill purpose, expected artifact, and exit condition when a skill is used; stop after two unchanged failures and diagnose instead of retrying.
+- Use a skill only when installed and clearly applicable to the task's real risk. For `superpowers:*`, both conditions are required unless the user explicitly requests it: the task is coarse-grained/complex under Task Complexity Routing, and that specific skill directly addresses the task's risk. Do not invoke superpowers or planning workflows merely because the repository stores docs under `docs/superpowers/`, because a task touches code, or because a small bug needs a targeted fix. State the skill purpose, expected artifact, and exit condition when a skill is used; stop after two unchanged failures and diagnose instead of retrying.
 - Keep tool output focused: locate with `rg`/`git diff --stat`, read only risk files, and default to quiet tests and approximately 4,000 output tokens.
 - Before stage closure, run `python3 scripts/check_stage_docs.py --verification docs/verification/<stage>.md --learning docs/learning/<stage>/ --plan <current-plan>`. Unchecked browser acceptance or inconsistent evidence blocks “ready for manual verification”.
 
