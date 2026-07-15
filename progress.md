@@ -7,6 +7,7 @@
 - 用户确认不建立长期 Intent Agent；命令解释收敛为确定性 parser 优先、一次性 structured classifier 兜底，副作用继续由领域服务执行。
 - 用户确认不采用单次自由 ReAct 直接执行题库副作用；命令链路固定为 `Plan -> Validate -> Execute`，ReAct 只保留给探索型只读或受限任务。
 - 正式设计、独立架构选型记录与后续 ADR 询问规则已起草，等待用户文档审阅后再编写 implementation plan。
+- 用户已通过书面设计；四 Task 实施计划已完成自检，采用当前会话 inline 执行，不创建新 worktree 或 subagent。
 
 ## 2026-07-15：R2 题库与 Agent 可用性补强启动
 
