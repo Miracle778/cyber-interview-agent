@@ -46,6 +46,7 @@ export interface CandidateDraft {
 export interface QuestionCandidate {
   id: string;
   batchId: string;
+  curationSessionId: string;
   question: CandidateQuestion;
   sourceRefs: string[];
   correctionNote: string;
@@ -118,6 +119,11 @@ export interface CurationSession {
   activeBatchId: string | null;
   executionId: string | null;
   executionStatus: string | null;
+  executionStartedAt: string | null;
+  executionFinishedAt: string | null;
+  executionErrorCode: string | null;
+  executionErrorMessage: string | null;
+  contextCompacted: boolean;
   stage: CurationStage;
   progress: { completed: number; total: number };
   summary: { items: CurationSummaryItem[] };

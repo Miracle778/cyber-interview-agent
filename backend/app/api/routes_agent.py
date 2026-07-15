@@ -1,12 +1,13 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from fastapi.responses import Response, StreamingResponse
 
 from app.api.dependencies import get_agent_application
 from app.application.session_service import (
     ExecutionRecord,
     ProductRecordNotFoundError,
+    SessionBusyError,
     SessionRecord,
 )
 from app.application.workspace_runtime import AgentApplication
@@ -43,6 +44,32 @@ async def list_sessions(
     application: AgentApplication = Depends(get_agent_application),
 ) -> tuple[SessionRecord, ...]:
     return application.list_sessions(workspace_id)
+
+
+@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_session(
+    session_id: str,
+    hard: bool = False,
+    application: AgentApplication = Depends(get_agent_application),
+) -> Response:
+    try:
+        application.delete_session(session_id, hard=hard)
+    except ProductRecordNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (SessionBusyError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/sessions/{session_id}/restore", response_model=SessionResource)
+async def restore_session(
+    session_id: str,
+    application: AgentApplication = Depends(get_agent_application),
+) -> SessionRecord:
+    try:
+        return application.restore_session(session_id)
+    except ProductRecordNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @router.get("/sessions/{session_id}", response_model=SessionDetailResource)

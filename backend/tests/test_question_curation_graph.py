@@ -240,6 +240,43 @@ async def test_duplicate_candidates_merge_source_evidence_instead_of_dropping_it
 
 
 @pytest.mark.asyncio
+async def test_high_confidence_paraphrases_merge_but_keep_all_evidence() -> None:
+    def candidate(text: str, source_ref: str, key_point: str) -> QuestionCandidate:
+        return QuestionCandidate(
+            title="缓存穿透",
+            question_text=text,
+            reference_answer="查询不存在的数据导致缓存无法命中。",
+            topics=["cache"],
+            difficulty="medium",
+            key_points=[key_point],
+            follow_ups=[],
+            source_refs=[source_ref],
+            correction_note="补齐治理方式",
+        )
+
+    runnable = SequencedAgent([
+        QuestionCandidateBatch(candidates=[candidate("什么是缓存穿透？", "source-1", "空值缓存")]),
+        QuestionCandidateBatch(candidates=[candidate("请解释一下缓存穿透是什么", "source-2", "布隆过滤器")]),
+    ])
+    agent = QuestionCurationAgent(runnable)
+    source = "source-1:questions.md\n" + "\n".join(
+        f"{number}. 问题 {number}？答：答案 {number}。" for number in range(1, 13)
+    )
+
+    result = await agent.generate(
+        source_excerpts=(source,),
+        similar_questions=(),
+        rewrite_feedback=None,
+        context=_context(),
+        config={"configurable": {"thread_id": "s1"}},
+    )
+
+    assert len(result.candidates) == 1
+    assert result.candidates[0].source_refs == ["source-1", "source-2"]
+    assert result.candidates[0].key_points == ["空值缓存", "布隆过滤器"]
+
+
+@pytest.mark.asyncio
 async def test_question_curation_graph_returns_only_structured_candidates() -> None:
     batch = QuestionCandidateBatch(
         candidates=[

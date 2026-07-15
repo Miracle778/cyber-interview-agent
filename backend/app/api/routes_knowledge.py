@@ -2,7 +2,7 @@ from pathlib import Path
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 
 from app.api.dependencies import get_workspace_service
 from app.db.connection import connect_index
@@ -58,6 +58,43 @@ async def upload_source(
     return UploadSourceResource(
         source=KnowledgeSourceResource.model_validate(source),
     )
+
+
+@router.delete("/sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_source(
+    source_id: str,
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    hard: bool = False,
+    workspaces: WorkspaceService = Depends(get_workspace_service),
+) -> Response:
+    workspace = workspaces.resolve_root(workspace_id)
+    try:
+        await KnowledgeSourceService(workspace, workspace_id=workspace_id).delete(
+            source_id, hard=hard
+        )
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/sources/{source_id}/restore", response_model=KnowledgeSourceResource
+)
+async def restore_source(
+    source_id: str,
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    workspaces: WorkspaceService = Depends(get_workspace_service),
+) -> KnowledgeSourceResource:
+    workspace = workspaces.resolve_root(workspace_id)
+    try:
+        source = await KnowledgeSourceService(
+            workspace, workspace_id=workspace_id
+        ).restore(source_id)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return KnowledgeSourceResource.model_validate(source)
 
 
 @router.post("/rescan")

@@ -89,8 +89,10 @@ class ReviewRepository:
         self, workspace_id: str, *, limit: int = 50, offset: int = 0
     ) -> tuple[CurationSessionRecord, ...]:
         rows = self._connection.execute(
-            "SELECT * FROM review_curation_sessions WHERE workspace_id = ? "
-            "ORDER BY updated_at DESC, rowid DESC LIMIT ? OFFSET ?",
+            "SELECT c.* FROM review_curation_sessions c "
+            "JOIN agent_sessions s ON s.id = c.session_id "
+            "WHERE c.workspace_id = ? AND s.deleted_at IS NULL "
+            "ORDER BY c.updated_at DESC, c.rowid DESC LIMIT ? OFFSET ?",
             (workspace_id, limit, offset),
         ).fetchall()
         return tuple(self._curation_session_record(row) for row in rows)

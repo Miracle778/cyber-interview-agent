@@ -130,6 +130,29 @@ async def test_missing_session_event_stream_stops_browser_reconnects(api):
 
 
 @pytest.mark.asyncio
+async def test_session_soft_delete_hides_history_and_stops_event_stream(api):
+    async with AsyncClient(transport=ASGITransport(app=api), base_url="http://test") as client:
+        session = (await client.post(
+            "/api/agent/sessions",
+            json={"workspaceId": "w1", "kind": "diagnostic.echo", "title": "Echo"},
+        )).json()
+
+        deleted = await client.delete(f"/api/agent/sessions/{session['id']}")
+
+        assert deleted.status_code == 204
+        assert (await client.get(
+            "/api/agent/sessions", params={"workspaceId": "w1"}
+        )).json() == []
+        assert (await client.get(
+            f"/api/agent/sessions/{session['id']}/events"
+        )).status_code == 204
+
+        restored = await client.post(f"/api/agent/sessions/{session['id']}/restore")
+        assert restored.status_code == 200
+        assert restored.json()["id"] == session["id"]
+
+
+@pytest.mark.asyncio
 async def test_review_draft_is_pending_as_soon_as_execution_requests_approval(application):
     session = await application.create_session(
         workspace_id="w1", kind="diagnostic.draft", title="Draft"

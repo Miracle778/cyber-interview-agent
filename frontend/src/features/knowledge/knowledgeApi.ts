@@ -1,4 +1,4 @@
-import { ApiError, apiGet } from "../../shared/api/client";
+import { ApiError, apiDelete, apiGet } from "../../shared/api/client";
 import type { KnowledgeSource } from "./knowledgeTypes";
 
 export interface RescanVaultResponse {
@@ -28,6 +28,12 @@ export interface UploadSourceResponse {
 export function listSources(workspaceId: string): Promise<KnowledgeSource[]> {
   const query = new URLSearchParams({ workspaceId });
   return apiGet<KnowledgeSource[]>(`/api/knowledge/sources?${query.toString()}`);
+}
+
+export function deleteSource(workspaceId: string, sourceId: string, hard = false): Promise<void> {
+  const query = new URLSearchParams({ workspaceId });
+  if (hard) query.set("hard", "true");
+  return apiDelete(`/api/knowledge/sources/${sourceId}?${query.toString()}`);
 }
 
 export async function uploadSource(workspaceId: string, file: File): Promise<UploadSourceResponse> {

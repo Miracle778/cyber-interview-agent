@@ -11,6 +11,7 @@ from langchain_core.messages import HumanMessage
 from app.agents.context import AgentContext
 from app.agents.factory import AgentFactory, AgentSpec
 from app.agents.question_curation_contracts import QuestionCandidateBatch
+from app.review.question_similarity import same_question
 
 
 class AgentRunnable(Protocol):
@@ -71,7 +72,6 @@ class QuestionCurationAgent:
     ) -> QuestionCandidateBatch:
         units = _generation_units(source_excerpts)
         candidates = []
-        candidate_index: dict[str, int] = {}
         known_questions = list(similar_questions)
         for source_unit in units:
             body = ["来源：", *source_unit]
@@ -90,24 +90,29 @@ class QuestionCurationAgent:
                 result["structured_response"]
             )
             for candidate in batch.candidates:
-                key = candidate.question_text.strip().casefold()
-                existing_index = candidate_index.get(key)
+                existing_index = next(
+                    (
+                        index
+                        for index, existing in enumerate(candidates)
+                        if same_question(
+                            existing.question_text,
+                            candidate.question_text,
+                            left_topics=existing.topics,
+                            right_topics=candidate.topics,
+                        )
+                    ),
+                    None,
+                )
                 if existing_index is not None:
                     existing = candidates[existing_index]
                     candidates[existing_index] = existing.model_copy(
                         update={
-                            "source_refs": list(
-                                dict.fromkeys(
-                                    [
-                                        *existing.source_refs,
-                                        *candidate.source_refs,
-                                    ]
-                                )
-                            )
+                            "source_refs": list(dict.fromkeys([*existing.source_refs, *candidate.source_refs])),
+                            "key_points": list(dict.fromkeys([*existing.key_points, *candidate.key_points])),
+                            "follow_ups": list(dict.fromkeys([*existing.follow_ups, *candidate.follow_ups])),
                         }
                     )
                     continue
-                candidate_index[key] = len(candidates)
                 candidates.append(candidate)
                 known_questions.append(candidate.question_text)
                 if len(candidates) == 50:

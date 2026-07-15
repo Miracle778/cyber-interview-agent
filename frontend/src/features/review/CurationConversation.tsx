@@ -10,7 +10,7 @@ const recommendationText: Record<string, string> = {
   link_existing: "建议合并",
 };
 
-export function CurationConversation({ session, optimisticMessage, busy, onSubmit }: { session: CurationSession | null; optimisticMessage: CurationMessage | null; busy: boolean; onSubmit: (text: string) => void }) {
+export function CurationConversation({ session, optimisticMessage, busy, onSubmit, onOpenCandidate = () => undefined }: { session: CurationSession | null; optimisticMessage: CurationMessage | null; busy: boolean; onSubmit: (text: string) => void; onOpenCandidate?: (candidateId: string) => void }) {
   const [text, setText] = useState("");
   if (!session) return <main className="curation-conversation curation-conversation--empty"><ListChecks size={28} /><h3>选择或新建整理会话</h3><p>每次整理会保留资料、运行过程、候选题总结和你的确认记录。</p></main>;
   const canCommand = session.stage === "waiting_for_command" || session.stage === "completed";
@@ -31,7 +31,7 @@ export function CurationConversation({ session, optimisticMessage, busy, onSubmi
         {session.summary.items.length > 0 ? (
           <section className="curation-summary" aria-label="候选题整理总结">
             <div className="review-pane-title"><ListChecks size={17} /><strong>候选题总结</strong><span>v{session.summaryVersion}</span></div>
-            {session.summary.items.map((item) => <article key={item.candidateId}><b>{item.ordinal}</b><div><strong>{item.title}</strong><small>{item.topics.join(" / ")} · {item.difficulty} · {item.sourceCount} 个来源</small></div><span>{recommendationText[item.recommendation] ?? item.recommendation}</span></article>)}
+            {session.summary.items.map((item) => <article key={item.candidateId}><b>{item.ordinal}</b><div><strong>{item.title}</strong><small>{item.topics.join(" / ")} · {item.difficulty} · {item.sourceCount} 个来源</small></div><span>{recommendationText[item.recommendation] ?? item.recommendation}</span><button type="button" onClick={() => onOpenCandidate(item.candidateId)}>查看与编辑</button></article>)}
           </section>
         ) : null}
         {optimisticMessage ? <SessionMessage message={optimisticMessage} pending /> : null}

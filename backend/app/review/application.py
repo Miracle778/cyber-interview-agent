@@ -89,7 +89,10 @@ class ReviewApplication:
         source_service = KnowledgeSourceService(
             self.workspace_root, workspace_id=self.workspace_id
         )
-        sources = [await source_service.get(source_id) for source_id in selected]
+        sources = [
+            await source_service.get(source_id, include_deleted=False)
+            for source_id in selected
+        ]
         existing = self.repository.list_curation_sessions(self.workspace_id)
         warnings: list[dict[str, object]] = []
         for source_id in selected:
@@ -249,6 +252,13 @@ class ReviewApplication:
             "active_batch_id": record.active_batch_id,
             "execution_id": None if latest is None else latest.id,
             "execution_status": None if latest is None else latest.status,
+            "execution_started_at": None if latest is None else latest.started_at,
+            "execution_finished_at": None if latest is None else latest.finished_at,
+            "execution_error_code": None if latest is None else latest.error_code,
+            "execution_error_message": None if latest is None else latest.error_message,
+            "context_compacted": self.sessions.repository.context_compacted(
+                session_id
+            ),
             "stage": record.stage,
             "progress": {
                 "completed": record.completed_units,
@@ -273,6 +283,33 @@ class ReviewApplication:
             "created_at": record.created_at,
             "updated_at": record.updated_at,
         }
+
+    async def retry_curation_session(self, session_id: str) -> dict[str, Any]:
+        curation = self.repository.get_curation_session(session_id)
+        latest = self.sessions.repository.latest_execution(session_id)
+        if curation.workspace_id != self.workspace_id:
+            raise LookupError(session_id)
+        if curation.stage != "failed" or latest is None or latest.status != "failed":
+            raise ReviewConflictError("only failed curation sessions can retry")
+        await self.timeline.append(
+            session_id=session_id,
+            execution_id=latest.id,
+            role="assistant",
+            message_kind="stage",
+            content="正在重试失败的整理任务",
+            payload={
+                "resourceId": session_id,
+                "version": curation.summary_version,
+                "stage": "queued",
+            },
+        )
+        await self._start_curation_execution(
+            session_id=session_id,
+            source_refs=curation.source_refs,
+            rewrite_feedback=None,
+            rewrite_of_batch_id=curation.active_batch_id,
+        )
+        return await self.curation_resource(session_id)
 
     async def list_curation_resources(self) -> tuple[dict[str, Any], ...]:
         return tuple(
@@ -687,6 +724,7 @@ class ReviewApplication:
         return {
             "id": candidate.id,
             "batch_id": candidate.batch_id,
+            "curation_session_id": batch.session_id,
             "question": asdict(candidate.question),
             "source_refs": candidate.source_refs,
             "correction_note": candidate.correction_note,
@@ -711,6 +749,45 @@ class ReviewApplication:
             "created_at": candidate.created_at,
             "updated_at": candidate.updated_at,
         }
+
+    async def rewrite_candidate_in_context(
+        self, candidate_id: str, *, feedback: str
+    ) -> dict[str, Any]:
+        candidate = self.repository.get_candidate(candidate_id)
+        batch = self.repository.get_batch(candidate.batch_id)
+        if batch.workspace_id != self.workspace_id:
+            raise LookupError(candidate_id)
+        try:
+            curation = self.repository.get_curation_session(batch.session_id)
+        except LookupError:
+            self.repository.create_curation_session(
+                workspace_id=self.workspace_id,
+                session_id=batch.session_id,
+                source_refs=batch.source_refs,
+            )
+            curation = self.repository.get_curation_session(batch.session_id)
+        clean_feedback = feedback.strip()
+        if not clean_feedback:
+            raise ValueError("feedback must not be empty")
+        await self.timeline.append(
+            session_id=batch.session_id,
+            execution_id=None,
+            role="user",
+            message_kind="text",
+            content=f"重写题目「{candidate.question.title}」：{clean_feedback}",
+            payload={
+                "resourceId": candidate.id,
+                "version": curation.summary_version,
+                "action": "rewrite_candidate",
+            },
+        )
+        await self._start_curation_execution(
+            session_id=batch.session_id,
+            source_refs=curation.source_refs,
+            rewrite_feedback=clean_feedback,
+            rewrite_of_batch_id=candidate.batch_id,
+        )
+        return await self.curation_resource(batch.session_id)
 
     async def update_candidate(
         self,

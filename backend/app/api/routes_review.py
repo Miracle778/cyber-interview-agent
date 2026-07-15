@@ -70,6 +70,19 @@ async def get_curation_session(
 
 
 @router.post(
+    "/curation-sessions/{session_id}/retry",
+    response_model=CurationSessionResource,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_curation_session(
+    session_id: str,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_review_session(session_id)
+    return await review.retry_curation_session(session_id)
+
+
+@router.post(
     "/curation-sessions/{session_id}/commands",
     response_model=CurationCommandReceiptResource,
     status_code=status.HTTP_202_ACCEPTED,
@@ -184,7 +197,7 @@ async def update_question_candidate(
 
 @router.post(
     "/question-candidates/{candidate_id}/rewrite",
-    response_model=QuestionBatchResource,
+    response_model=CurationSessionResource,
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def rewrite_question_candidate(
@@ -193,13 +206,9 @@ async def rewrite_question_candidate(
     application: AgentApplication = Depends(get_agent_application),
 ):
     review = application.locate_review_candidate(candidate_id)
-    candidate = review.repository.get_candidate(candidate_id)
-    batch = await review.create_question_batch(
-        source_refs=candidate.source_refs,
-        rewrite_feedback=command.feedback,
-        rewrite_of_batch_id=candidate.batch_id,
+    return await review.rewrite_candidate_in_context(
+        candidate_id, feedback=command.feedback
     )
-    return await review.batch_resource(batch.id)
 
 
 @router.get("/questions", response_model=list[ActiveQuestionResource])

@@ -1,5 +1,25 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-07-15：R2 题库与 Agent 可用性补强启动
+
+- 用户提出 7 项新增要求：失败重试与运行证据、整理上下文压缩、候选查看编辑、会话/原材料删除、题库分层、重写恢复原会话、相似题合并与 subagent 边界。
+- 继续使用 `codex/r2-complete-review-agent` worktree，不切分支、不创建开发 subagent。
+- 采用四个纵向阶段：运行恢复、候选与题库、生命周期与续写、合并与验收。
+- 初步安全边界：只展示可公开阶段而非 Chain of Thought；默认软删；硬删受活动 execution 和引用完整性约束；并行合并 worker 只产出结构化建议，由单一 reducer 提交。
+- 第一轮代码扫描确认候选详情/编辑能力已存在，但页面信息架构和 session-bound rewrite 未接通；删除生命周期尚无持久字段。
+- 第二轮确认整理 Agent 已接官方上下文压缩（24→10），但未投影到 UI；execution 已有计时/错误事实，可直接扩展资源并实现 retry。
+- 确认现有“合并”仅为同批题干完全相等去重，不满足跨来源语义合并，需新增 merge contract/reducer。
+- RED：curation 运行证据与 retry API 测试按预期 2 failed，缺少 `executionStartedAt`/`executionErrorCode` 字段和 retry 路由。
+- 环境诊断：当前 worktree 没有 `backend/.venv`，改用主仓库锁定依赖的 `.venv/bin/python` 并保持 cwd 在当前 worktree；不重复尝试缺失路径。
+- 阶段 5 完成：curation resource 投影 execution 起止时间、错误码/消息和 context compacted；failed 会话可在原 session/thread 重试，前端显示公开阶段历史、耗时与重试入口，不暴露 Chain of Thought。
+- 阶段 6 完成：会话总结可直达候选详情；候选继续支持渲染、原文、编辑与保存；题目列表改为 topic→难度→题目层级。
+- 阶段 7 完成：migration 006 增加 session/source `deleted_at`；默认软删保留历史、文件和证据，硬删拒绝活动 execution 或题目/整理引用；候选重写追加到原 curation session 并复用稳定 role thread。
+- 阶段 8 核心完成：相似题先做 Unicode/标点/问句套话规范化，再在 topic 相交约束下计算序列/二元组相似度；会话内高置信候选由单 reducer 合并来源、关键点、追问，active catalog 只建立疑似关联。可选 subagent 仅作为只读结构化判断 worker，不获数据库写权限。
+- 新鲜针对性证据：后端 37 passed；前端 14 passed；`tsc --noEmit` 与 `git diff --check` 通过。尚未运行本次最终全量回归、build 或浏览器验收。
+- 最终全量第一次：后端 `276 passed`；前端 `101 passed, 1 failed`，失败是旧测试仍查找已改名的“发送回答”按钮。只修改失败测试并单文件 `1 passed`。
+- 第二次/最终前端全量 `102 passed`；production build 成功，保留约 `566 kB` 主 chunk 警告。浏览器 skill 已读取，但本次会话缺少其必需的控制接口，未执行也未宣称新增浏览器验收通过。
+
+
 ## 2026-07-15：R2 Claude 修复审阅问题修正
 
 - 阻止 R2 内部 Graph input 自动写成用户 text；curation resource 同时过滤旧数据库中无 typed payload 的内部 JSON，真实用户命令仍按 `resourceId` 保留。

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, BookOpen, File, FileText, FolderLock, RefreshCw, Upload } from "lucide-react";
+import { AlertCircle, BookOpen, File, FileText, FolderLock, RefreshCw, Trash2, Upload } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
@@ -11,7 +11,7 @@ import type { WorkspaceConfig } from "../settings/settingsApi";
 import { DraftReview } from "./DraftReview";
 import { listDrafts } from "./draftApi";
 import type { KnowledgeDraftStatus } from "./draftTypes";
-import { listSources, rescanVault, uploadSource } from "./knowledgeApi";
+import { deleteSource, listSources, rescanVault, uploadSource } from "./knowledgeApi";
 
 interface KnowledgePageProps {
   workspace: WorkspaceConfig | null;
@@ -142,6 +142,22 @@ export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanne
     }
   }
 
+  async function handleDeleteSource(hard: boolean) {
+    if (!workspace || !selectedSource) return;
+    const message = hard
+      ? "永久删除原始文件？此操作不可恢复，且存在题目证据引用时会被阻止。"
+      : "将原材料移到回收站？已生成题目和来源证据不会受影响。";
+    if (!globalThis.confirm(message)) return;
+    setError(null);
+    try {
+      await deleteSource(workspace.id, selectedSource.id, hard);
+      setSelection(null);
+      await queryClient.invalidateQueries({ queryKey: ["knowledge-sources", workspace.id] });
+    } catch (caught) {
+      setError(toActionableError(caught, "删除资料失败"));
+    }
+  }
+
   function handlePublicationResolved() {
     if (!workspace) return;
     queryClient.invalidateQueries({ queryKey: ["knowledge-drafts", workspace.id] });
@@ -269,6 +285,10 @@ export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanne
                     查看关联草稿
                   </Button>
                 ) : null}
+                <div className="source-delete-actions">
+                  <Button variant="secondary" onClick={() => void handleDeleteSource(false)}><Trash2 size={16} />移到回收站</Button>
+                  <Button variant="danger" onClick={() => void handleDeleteSource(true)}>永久删除</Button>
+                </div>
               </Card>
             ) : null}
             {!selection && !draftsQuery.isLoading && !sourcesQuery.isLoading ? (

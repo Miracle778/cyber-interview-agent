@@ -250,6 +250,14 @@ class AgentApplication:
     def list_sessions(self, workspace_id: str) -> tuple[SessionRecord, ...]:
         return self._context(workspace_id).sessions.list(workspace_id)
 
+    def delete_session(self, session_id: str, *, hard: bool = False) -> None:
+        context, session = self._locate_session_including_deleted(session_id)
+        context.sessions.delete(session.id, hard=hard)
+
+    def restore_session(self, session_id: str) -> SessionRecord:
+        context, session = self._locate_session_including_deleted(session_id)
+        return context.sessions.restore(session.id)
+
     async def session_detail(self, session_id: str) -> dict[str, Any]:
         context, session = self._locate_session(session_id)
         pending = await context.actions.list_pending(
@@ -441,6 +449,19 @@ class AgentApplication:
             context = self._context(workspace_id)
             try:
                 return context, context.repository.get_session(session_id)
+            except ProductRecordNotFoundError:
+                continue
+        raise ProductRecordNotFoundError("Agent Session 不存在")
+
+    def _locate_session_including_deleted(
+        self, session_id: str
+    ) -> tuple[WorkspaceRuntime, SessionRecord]:
+        for workspace_id in self._workspace_ids():
+            context = self._context(workspace_id)
+            try:
+                return context, context.repository.get_session(
+                    session_id, include_deleted=True
+                )
             except ProductRecordNotFoundError:
                 continue
         raise ProductRecordNotFoundError("Agent Session 不存在")

@@ -136,6 +136,7 @@ class DraftSummaryResource(ReviewModel):
 class QuestionCandidateResource(ReviewModel):
     id: str
     batch_id: str
+    curation_session_id: str
     question: QuestionSnapshotResource
     source_refs: list[str]
     correction_note: str
@@ -263,6 +264,11 @@ class CurationSessionResource(ReviewModel):
     active_batch_id: str | None
     execution_id: str | None
     execution_status: str | None
+    execution_started_at: str | None
+    execution_finished_at: str | None
+    execution_error_code: str | None
+    execution_error_message: str | None
+    context_compacted: bool
     stage: str
     progress: dict[str, int]
     summary: dict[str, Any]

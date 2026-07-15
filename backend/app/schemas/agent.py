@@ -33,6 +33,7 @@ class SessionResource(AgentModel):
     created_at: str
     updated_at: str
     latest_execution_id: str | None
+    deleted_at: str | None = None
 
 
 class ExecutionResource(AgentModel):

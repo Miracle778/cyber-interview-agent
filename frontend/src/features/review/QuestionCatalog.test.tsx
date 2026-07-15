@@ -72,6 +72,30 @@ describe("QuestionCatalog", () => {
     expect(await screen.findByText("暂无候选题。选择资料后点击“AI 整理”。")).toBeInTheDocument();
   });
 
+  it("shows public execution evidence and retries a failed curation session", async () => {
+    const failedSession = {
+      id: "cs-failed", workspaceId: "w1", title: "failed.md", sourceRefs: ["s1"], sources: [{ id: "s1", filename: "failed.md", organizationState: "previously_curated" }], activeBatchId: "b1", executionId: "e1", executionStatus: "failed", executionStartedAt: "2026-07-15T10:00:00Z", executionFinishedAt: "2026-07-15T10:00:12Z", executionErrorCode: "provider_error", executionErrorMessage: "Agent 执行失败", contextCompacted: true, stage: "failed", progress: { completed: 1, total: 2 }, summary: { items: [] }, summaryVersion: 0, warnings: [], candidateCount: 0, pendingCount: 0, publishedCount: 0, messages: [{ id: "stage-1", executionId: "e1", role: "assistant", content: "正在读取所选资料", messageKind: "stage", payload: {}, createdAt: "2026-07-15T10:00:00Z" }], usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20, callCount: 1, estimatedCount: 0 }, createdAt: "now", updatedAt: "now",
+    };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/api/knowledge/sources")) return Response.json([]);
+      if (url.endsWith("/retry") && init?.method === "POST") return Response.json({ ...failedSession, executionId: "e2", executionStatus: "running", stage: "generating" }, { status: 202 });
+      if (url.includes("/api/review/curation-sessions")) return Response.json([failedSession]);
+      throw new Error(`unexpected ${url}`);
+    });
+    render(<QuestionCatalog workspace={workspace} />, { wrapper });
+    const runtime = await screen.findByRole("complementary", { name: "整理运行状态" });
+    await waitFor(() => expect(runtime).toHaveTextContent("Agent 执行失败"));
+    expect(runtime).toHaveTextContent("12 秒");
+    expect(runtime).toHaveTextContent("上下文已压缩");
+    expect(within(runtime).getByRole("region", { name: "执行过程" })).toHaveTextContent("正在读取所选资料");
+    fireEvent.click(within(runtime).getByRole("button", { name: "重试整理" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/review/curation-sessions/cs-failed/retry",
+      expect.objectContaining({ method: "POST" }),
+    ));
+  });
+
   it("renders a command optimistically and reconciles the durable timeline", async () => {
     let finishCommand: (() => void) | undefined;
     let commandDone = false;

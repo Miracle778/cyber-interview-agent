@@ -23,6 +23,7 @@ class KnowledgeSourceRecord:
     size_bytes: int
     draft_id: str | None
     created_at: str
+    deleted_at: str | None
 
 
 class KnowledgeSourceService:
@@ -84,20 +85,38 @@ class KnowledgeSourceService:
         async with self._connection() as connection:
             cursor = await connection.execute(
                 "SELECT * FROM knowledge_sources WHERE workspace_id = ? "
+                "AND deleted_at IS NULL "
                 "ORDER BY created_at DESC, id DESC",
                 (self._workspace_id,),
             )
             rows = await cursor.fetchall()
         return tuple(self._record(row) for row in rows)
 
-    async def get(self, source_id: str) -> KnowledgeSourceRecord:
+    async def get(
+        self, source_id: str, *, include_deleted: bool = True
+    ) -> KnowledgeSourceRecord:
         async with self._connection() as connection:
             row = await self._require_row(connection, source_id)
+            if not include_deleted and row["deleted_at"] is not None:
+                raise LookupError(f"source {source_id!r} not found")
         return self._record(row)
 
-    async def delete(self, source_id: str) -> None:
+    async def delete(self, source_id: str, *, hard: bool = False) -> None:
         async with self._connection() as connection:
             row = await self._require_row(connection, source_id)
+            if not hard:
+                await connection.execute(
+                    "UPDATE knowledge_sources SET deleted_at = CURRENT_TIMESTAMP "
+                    "WHERE id = ? AND workspace_id = ?",
+                    (source_id, self._workspace_id),
+                )
+                await connection.commit()
+                return
+            references = await self._reference_count(connection, source_id)
+            if references:
+                raise ValueError(
+                    f"资料仍被 {references} 条整理或题目证据引用，请使用软删除"
+                )
             await connection.execute(
                 "DELETE FROM knowledge_sources WHERE id = ? AND workspace_id = ?",
                 (source_id, self._workspace_id),
@@ -105,12 +124,38 @@ class KnowledgeSourceService:
             await connection.commit()
         self._unlink(row["stored_path"])
 
+    async def restore(self, source_id: str) -> KnowledgeSourceRecord:
+        async with self._connection() as connection:
+            await self._require_row(connection, source_id)
+            await connection.execute(
+                "UPDATE knowledge_sources SET deleted_at = NULL "
+                "WHERE id = ? AND workspace_id = ?",
+                (source_id, self._workspace_id),
+            )
+            row = await self._require_row(connection, source_id)
+            await connection.commit()
+        return self._record(row)
+
+    @staticmethod
+    async def _reference_count(
+        connection: aiosqlite.Connection, source_id: str
+    ) -> int:
+        cursor = await connection.execute(
+            "SELECT "
+            "(SELECT COUNT(*) FROM review_question_source_links WHERE source_id = ?) + "
+            "(SELECT COUNT(*) FROM review_curation_sessions "
+            " WHERE EXISTS (SELECT 1 FROM json_each(source_refs_json) WHERE value = ?))",
+            (source_id, source_id),
+        )
+        row = await cursor.fetchone()
+        return int(row[0])
+
     def _unlink(self, stored_path: str) -> None:
         filename = Path(stored_path).name
         target = WorkspacePathPolicy(self._workspace_root).resolve_for_read(
             "review.sources", filename
         )
-        target.unlink()
+        target.unlink(missing_ok=True)
 
     @asynccontextmanager
     async def _connection(self) -> AsyncIterator[aiosqlite.Connection]:
@@ -143,4 +188,5 @@ class KnowledgeSourceService:
             size_bytes=row["size_bytes"],
             draft_id=row["draft_id"],
             created_at=row["created_at"],
+            deleted_at=row["deleted_at"],
         )

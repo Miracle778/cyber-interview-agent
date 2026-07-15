@@ -95,6 +95,43 @@ def test_list_sources_persists_original_filename_and_isolates_workspace(
     assert isolated.json() == []
 
 
+def test_source_soft_delete_hides_record_but_keeps_file(knowledge_client) -> None:
+    client, workspace, workspace_id = knowledge_client
+    source = client.post(
+        "/api/knowledge/sources",
+        data={"workspaceId": workspace_id},
+        files={"file": ("notes.md", b"notes", "text/markdown")},
+    ).json()["source"]
+
+    response = client.delete(
+        f"/api/knowledge/sources/{source['id']}",
+        params={"workspaceId": workspace_id},
+    )
+
+    assert response.status_code == 204
+    assert client.get(
+        "/api/knowledge/sources", params={"workspaceId": workspace_id}
+    ).json() == []
+    assert (workspace / source["storedPath"]).exists()
+
+
+def test_unreferenced_source_can_be_permanently_deleted(knowledge_client) -> None:
+    client, workspace, workspace_id = knowledge_client
+    source = client.post(
+        "/api/knowledge/sources",
+        data={"workspaceId": workspace_id},
+        files={"file": ("notes.md", b"notes", "text/markdown")},
+    ).json()["source"]
+
+    response = client.delete(
+        f"/api/knowledge/sources/{source['id']}",
+        params={"workspaceId": workspace_id, "hard": "true"},
+    )
+
+    assert response.status_code == 204
+    assert not (workspace / source["storedPath"]).exists()
+
+
 def test_upload_accepts_unicode_filename(knowledge_client) -> None:
     client, workspace, workspace_id = knowledge_client
 

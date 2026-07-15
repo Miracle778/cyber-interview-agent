@@ -683,10 +683,19 @@ class AgentExecutionService:
             active = self._review_repository.list_active_questions(
                 self._workspace_id
             )
-            by_text = {
-                item.snapshot.question_text.strip().casefold(): item.snapshot.question_id
-                for item in active
-            }
+            from app.review.question_similarity import same_question
+
+            def similar_active(raw: dict[str, Any]) -> str | None:
+                for item in active:
+                    if same_question(
+                        str(raw["question_text"]),
+                        item.snapshot.question_text,
+                        left_topics=raw["topics"],
+                        right_topics=item.snapshot.topics,
+                        threshold=0.78,
+                    ):
+                        return item.snapshot.question_id
+                return None
             persisted = []
             for index, raw in enumerate(raw_candidates, start=1):
                 question_id = str(uuid4())
@@ -733,9 +742,7 @@ class AgentExecutionService:
                     draft_id=draft.id,
                     source_refs=source_refs,
                     correction_note=raw["correction_note"],
-                    duplicate_of_question_id=by_text.get(
-                        snapshot.question_text.strip().casefold()
-                    ),
+                    duplicate_of_question_id=similar_active(raw),
                     status="review_pending",
                 )
                 persisted.append(candidate)
@@ -1185,6 +1192,15 @@ class AgentExecutionService:
                 ):
                     self._review_repository.update_batch_status(
                         str(execution.input["batchId"]), "failed"
+                    )
+                    curation = self._review_repository.get_curation_session(
+                        session.id
+                    )
+                    self._review_repository.update_curation_progress(
+                        session.id,
+                        stage="failed",
+                        completed_units=curation.completed_units,
+                        total_units=curation.total_units,
                     )
                 current = self._repository.get_execution(execution.id)
                 if current.status == "running":

@@ -4,7 +4,7 @@ import { Button } from "../../shared/ui/Button";
 import { MarkdownView } from "../knowledge/MarkdownView";
 import type { QuestionCandidate } from "./reviewTypes";
 
-export function QuestionDetailPanel({ candidate, sourceLabels, busy, onSave, onRewrite, onConfirm }: { candidate: QuestionCandidate | null; sourceLabels: Record<string, string>; busy: boolean; onSave: (values: { version: number; title: string; questionText: string; referenceAnswer: string }) => void; onRewrite: (feedback: string) => void; onConfirm: () => void }) {
+export function QuestionDetailPanel({ candidate, sourceLabels, busy, onSave, onRewrite, onConfirm, onOpenSession }: { candidate: QuestionCandidate | null; sourceLabels: Record<string, string>; busy: boolean; onSave: (values: { version: number; title: string; questionText: string; referenceAnswer: string }) => void; onRewrite: (feedback: string) => void; onConfirm: () => void; onOpenSession: (sessionId: string) => void }) {
   const [mode, setMode] = useState<"preview" | "source" | "edit">("preview");
   const [feedback, setFeedback] = useState("");
   const [title, setTitle] = useState(candidate?.question.title ?? "");
@@ -21,7 +21,7 @@ export function QuestionDetailPanel({ candidate, sourceLabels, busy, onSave, onR
       <section className="source-evidence" aria-label="来源证据"><strong>来源证据</strong><ul>{candidate.sourceRefs.map((ref) => { const sourceId = Object.keys(sourceLabels).find((id) => ref === id || ref.startsWith(`${id}#`)); return <li key={ref}>{sourceId ? sourceLabels[sourceId] : ref}{ref.includes("#") ? ` · ${ref.slice(ref.indexOf("#") + 1)}` : ""}</li>; })}</ul></section>
       <aside className="ai-suggestion"><Bot size={18} /><div><strong>AI 整理建议</strong><p>{candidate.correctionNote || "题目结构完整，建议核对参考答案后入库。"}</p></div></aside>
       {candidate.duplicateOfQuestionId ? <aside className="duplicate-warning"><AlertTriangle size={18} /><div><strong>发现相似已发布题目</strong>{candidate.duplicateQuestion ? <><p><b>{candidate.duplicateQuestion.title}</b></p><p>{candidate.duplicateQuestion.questionText}</p></> : <p>题目 ID：{candidate.duplicateOfQuestionId}</p>}<small>确认前请比较题目与答案差异。</small></div></aside> : null}
-      <div className="rewrite-row"><label className="field"><span className="field__label">让 AI 重写</span><input className="field__input" value={feedback} onChange={(event) => setFeedback(event.target.value)} placeholder="例如：增加故障排查场景" /></label><Button variant="secondary" disabled={!feedback.trim() || busy} onClick={() => onRewrite(feedback.trim())}><RefreshCw size={15} />重新整理</Button></div>
+      <div className="rewrite-row"><label className="field"><span className="field__label">让 AI 在原会话中重写</span><input className="field__input" value={feedback} onChange={(event) => setFeedback(event.target.value)} placeholder="例如：增加故障排查场景" /></label><Button variant="secondary" disabled={!feedback.trim() || busy} onClick={() => onRewrite(feedback.trim())}><RefreshCw size={15} />重新整理</Button><button type="button" className="text-link" onClick={() => onOpenSession(candidate.curationSessionId)}>查看生成会话</button></div>
       {candidate.status === "review_pending" ? <section className="candidate-confirm"><CheckCircle2 size={18} /><div><strong>需要人工确认</strong><p>确认后创建发布审批；批准之前不会进入可复习题库。</p></div><Button loading={busy} onClick={onConfirm}>确认入库</Button></section> : null}
     </section>
   );

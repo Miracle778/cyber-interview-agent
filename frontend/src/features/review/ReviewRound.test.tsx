@@ -18,7 +18,7 @@ describe("ReviewRound", () => {
     const submit = vi.fn().mockRejectedValue(new Error("network"));
     render(<ReviewRound round={round} onSubmit={submit} onSkip={vi.fn()} onCancel={vi.fn()} busy={false} />);
     fireEvent.change(screen.getByLabelText("你的回答"), { target: { value: "缓存空值" } });
-    fireEvent.click(screen.getByRole("button", { name: "发送回答" }));
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
     await waitFor(() => expect(submit).toHaveBeenCalledWith("缓存空值"));
     expect(screen.getByLabelText("你的回答")).toHaveValue("缓存空值");
   });

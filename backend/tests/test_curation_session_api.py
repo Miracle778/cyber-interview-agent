@@ -88,6 +88,10 @@ async def test_curation_session_api_projects_progress_summary_and_timeline(
         assert restored.status_code == 200, restored.text
         detail = restored.json()
         assert detail["stage"] == "waiting_for_command"
+        assert detail["executionStartedAt"] is not None
+        assert detail["executionFinishedAt"] is not None
+        assert detail["executionErrorCode"] is None
+        assert detail["contextCompacted"] is False
         assert detail["summaryVersion"] == 1
         assert detail["candidateCount"] == 1
         assert detail["pendingCount"] == 1
@@ -127,6 +131,90 @@ async def test_curation_session_api_projects_progress_summary_and_timeline(
         )
         assert listed.status_code == 200
         assert [item["id"] for item in listed.json()] == [resource["id"]]
+
+
+@pytest.mark.asyncio
+async def test_candidate_rewrite_resumes_its_original_curation_session(
+    api, application
+) -> None:
+    app, source_ids = application
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = (await client.post(
+            "/api/review/curation-sessions",
+            json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+        )).json()
+        await app.wait_execution(created["executionId"])
+        detail = (await client.get(
+            f"/api/review/curation-sessions/{created['id']}"
+        )).json()
+        candidate_id = detail["summary"]["items"][0]["candidateId"]
+
+        rewritten = await client.post(
+            f"/api/review/question-candidates/{candidate_id}/rewrite",
+            json={"feedback": "增加线上排障场景"},
+        )
+
+        assert rewritten.status_code == 202, rewritten.text
+        assert rewritten.json()["id"] == created["id"]
+        assert rewritten.json()["executionId"] != created["executionId"]
+        assert any(
+            message["role"] == "user" and "线上排障场景" in message["content"]
+            for message in rewritten.json()["messages"]
+        )
+        candidate = (await client.get(
+            f"/api/review/question-candidates/{candidate_id}"
+        )).json()
+        assert candidate["curationSessionId"] == created["id"]
+
+
+@pytest.mark.asyncio
+async def test_failed_curation_session_can_retry_in_the_same_session(
+    api, application
+) -> None:
+    app, source_ids = application
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = await client.post(
+            "/api/review/curation-sessions",
+            json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+        )
+        session_id = created.json()["id"]
+        first_execution_id = created.json()["executionId"]
+        await app.wait_execution(first_execution_id)
+
+        review = app.locate_review_session(session_id)
+        connection = review.sessions.repository.connection
+        connection.execute(
+            "UPDATE agent_runs SET status = 'failed', error_code = 'provider_error', "
+            "error_message = 'Agent 执行失败', finished_at = CURRENT_TIMESTAMP "
+            "WHERE id = ?",
+            (first_execution_id,),
+        )
+        connection.commit()
+        current = review.repository.get_curation_session(session_id)
+        review.repository.update_curation_progress(
+            session_id,
+            stage="failed",
+            completed_units=current.completed_units,
+            total_units=current.total_units,
+        )
+
+        failed = (
+            await client.get(f"/api/review/curation-sessions/{session_id}")
+        ).json()
+        assert failed["executionErrorCode"] == "provider_error"
+
+        retried = await client.post(
+            f"/api/review/curation-sessions/{session_id}/retry"
+        )
+
+        assert retried.status_code == 202, retried.text
+        assert retried.json()["id"] == session_id
+        assert retried.json()["executionId"] != first_execution_id
+        assert retried.json()["stage"] in {"generating", "waiting_for_command"}
 
 
 @pytest.mark.asyncio

@@ -53,6 +53,7 @@ class KnowledgeSourceResource(DraftModel):
     size_bytes: int
     created_at: str
     draft_id: str | None
+    deleted_at: str | None = None
 
 
 class UploadSourceResource(DraftModel):

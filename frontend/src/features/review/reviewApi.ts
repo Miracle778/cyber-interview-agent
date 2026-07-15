@@ -1,4 +1,4 @@
-import { apiGet, apiPatch, apiPost } from "../../shared/api/client";
+import { apiDelete, apiGet, apiPatch, apiPost } from "../../shared/api/client";
 import type {
   ActiveQuestion,
   CurationCommandReceipt,
@@ -20,6 +20,14 @@ export function getCurationSession(id: string): Promise<CurationSession> {
 
 export function createCurationSession(workspaceId: string, sourceRefs: string[]): Promise<CurationSession> {
   return apiPost("/api/review/curation-sessions", { workspaceId, sourceRefs });
+}
+
+export function retryCurationSession(id: string): Promise<CurationSession> {
+  return apiPost(`/api/review/curation-sessions/${id}/retry`, {});
+}
+
+export function deleteCurationSession(id: string, hard = false): Promise<void> {
+  return apiDelete(`/api/agent/sessions/${id}${hard ? "?hard=true" : ""}`);
 }
 
 export function submitCurationCommand(
@@ -62,7 +70,7 @@ export function updateQuestionCandidate(
   return apiPatch(`/api/review/question-candidates/${id}`, command);
 }
 
-export function rewriteQuestionCandidate(id: string, feedback: string): Promise<QuestionBatch> {
+export function rewriteQuestionCandidate(id: string, feedback: string): Promise<CurationSession> {
   return apiPost(`/api/review/question-candidates/${id}/rewrite`, { feedback });
 }
 

@@ -66,6 +66,7 @@ class SessionRecord:
     created_at: str
     updated_at: str
     latest_execution_id: str | None
+    deleted_at: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,21 +135,60 @@ class ProductRepository:
         self.connection.commit()
         return self.get_session(session_id)
 
-    def get_session(self, session_id: str) -> SessionRecord:
+    def get_session(
+        self, session_id: str, *, include_deleted: bool = False
+    ) -> SessionRecord:
         row = self.connection.execute(
             "SELECT * FROM agent_sessions WHERE id = ?", (session_id,)
         ).fetchone()
-        if row is None:
+        if row is None or (row["deleted_at"] is not None and not include_deleted):
             raise ProductRecordNotFoundError("Agent Session 不存在")
         return _session(row)
 
     def list_sessions(self, workspace_id: str) -> tuple[SessionRecord, ...]:
         rows = self.connection.execute(
             "SELECT * FROM agent_sessions WHERE workspace_id = ? "
+            "AND deleted_at IS NULL "
             "ORDER BY updated_at DESC, rowid DESC",
             (workspace_id,),
         ).fetchall()
         return tuple(_session(row) for row in rows)
+
+    def delete_session(self, session_id: str, *, hard: bool = False) -> None:
+        self.get_session(session_id, include_deleted=True)
+        active = self.connection.execute(
+            "SELECT COUNT(*) FROM agent_runs WHERE session_id = ? "
+            "AND status IN ('queued', 'running', 'waiting_for_input', 'waiting_for_approval')",
+            (session_id,),
+        ).fetchone()[0]
+        if active:
+            raise SessionBusyError("会话仍在运行，请先结束任务")
+        if not hard:
+            self.connection.execute(
+                "UPDATE agent_sessions SET deleted_at = CURRENT_TIMESTAMP, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (session_id,),
+            )
+            self.connection.commit()
+            return
+        evidence = self.connection.execute(
+            "SELECT COUNT(*) FROM review_question_source_links WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()[0]
+        if evidence:
+            raise ValueError("会话仍被题目来源证据引用，请使用软删除")
+        self.connection.execute("DELETE FROM agent_sessions WHERE id = ?", (session_id,))
+        self.connection.commit()
+
+    def restore_session(self, session_id: str) -> SessionRecord:
+        self.get_session(session_id, include_deleted=True)
+        self.connection.execute(
+            "UPDATE agent_sessions SET deleted_at = NULL, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ?",
+            (session_id,),
+        )
+        self.connection.commit()
+        return self.get_session(session_id)
 
     def create_execution(
         self,
@@ -482,6 +522,12 @@ class AgentSessionService:
     def get(self, session_id: str) -> SessionRecord:
         return self.repository.get_session(session_id)
 
+    def delete(self, session_id: str, *, hard: bool = False) -> None:
+        self.repository.delete_session(session_id, hard=hard)
+
+    def restore(self, session_id: str) -> SessionRecord:
+        return self.repository.restore_session(session_id)
+
 
 def encode_sse_event(event: EventRecord) -> str:
     envelope = {
@@ -512,6 +558,7 @@ def _session(row) -> SessionRecord:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         latest_execution_id=row["last_run_id"],
+        deleted_at=row["deleted_at"],
     )
 
 

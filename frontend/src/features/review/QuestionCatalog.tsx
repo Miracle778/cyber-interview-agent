@@ -9,7 +9,7 @@ import { CurationRuntimePanel } from "./CurationRuntimePanel";
 import { CurationSessionList } from "./CurationSessionList";
 import { QuestionLibrary } from "./QuestionLibrary";
 import { SourceSelectionDialog } from "./SourceSelectionDialog";
-import { createCurationSession, listCurationSessions, submitCurationCommand } from "./reviewApi";
+import { createCurationSession, deleteCurationSession, listCurationSessions, retryCurationSession, submitCurationCommand } from "./reviewApi";
 import type { CurationMessage, CurationSession } from "./reviewTypes";
 
 type CatalogView = "sessions" | "library";
@@ -23,6 +23,7 @@ export function QuestionCatalog({ workspace }: { workspace: WorkspaceConfig }) {
   const [view, setView] = useState<CatalogView>("sessions");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [focusedCandidateId, setFocusedCandidateId] = useState<string | null>(null);
   const [optimisticMessage, setOptimisticMessage] = useState<CurationMessage | null>(null);
   const sources = useQuery({ queryKey: ["knowledge-sources", workspace.id], queryFn: () => listSources(workspace.id) });
   const sessions = useQuery({
@@ -54,6 +55,21 @@ export function QuestionCatalog({ workspace }: { workspace: WorkspaceConfig }) {
     mutationFn: ({ session, text, idempotencyKey }: { session: CurationSession; text: string; idempotencyKey: string }) => submitCurationCommand(session, text, idempotencyKey),
     onSettled: async () => { setOptimisticMessage(null); await refresh(); },
   });
+  const retry = useMutation({
+    mutationFn: (sessionId: string) => retryCurationSession(sessionId),
+    onSuccess: async (session) => { setSelectedId(session.id); await refresh(); },
+  });
+  const removeSession = useMutation({
+    mutationFn: ({ id, hard }: { id: string; hard: boolean }) => deleteCurationSession(id, hard),
+    onSuccess: async (_data, variables) => { if (selectedId === variables.id) setSelectedId(null); await refresh(); },
+  });
+
+  function handleDeleteSession(id: string, hard: boolean) {
+    const message = hard
+      ? "永久删除会话及运行历史？此操作不可恢复。"
+      : "将会话移到回收站？题目及来源证据会保留。";
+    if (globalThis.confirm(message)) removeSession.mutate({ id, hard });
+  }
 
   function sendCommand(text: string) {
     if (!selected) return;
@@ -75,7 +91,7 @@ export function QuestionCatalog({ workspace }: { workspace: WorkspaceConfig }) {
         <button type="button" role="tab" aria-selected={view === "sessions"} onClick={() => setView("sessions")}><MessagesSquare size={16} />整理会话</button>
         <button type="button" role="tab" aria-selected={view === "library"} onClick={() => setView("library")}><Library size={16} />题目库</button>
       </nav>
-      {view === "sessions" ? <div className="curation-workbench"><CurationConversation session={selected} optimisticMessage={optimisticMessage} busy={command.isPending} onSubmit={sendCommand} /><CurationSessionList sessions={sessions.data ?? []} selectedId={selected?.id ?? null} onSelect={setSelectedId} onCreate={() => setDialogOpen(true)} /><CurationRuntimePanel session={selected} /></div> : <QuestionLibrary workspace={workspace} sources={sources.data ?? []} />}
+      {view === "sessions" ? <div className="curation-workbench"><CurationConversation session={selected} optimisticMessage={optimisticMessage} busy={command.isPending} onSubmit={sendCommand} onOpenCandidate={(candidateId) => { setFocusedCandidateId(candidateId); setView("library"); }} /><CurationSessionList sessions={sessions.data ?? []} selectedId={selected?.id ?? null} onSelect={setSelectedId} onCreate={() => setDialogOpen(true)} onDelete={handleDeleteSession} /><CurationRuntimePanel session={selected} retrying={retry.isPending} onRetry={() => selected && retry.mutate(selected.id)} /></div> : <QuestionLibrary workspace={workspace} sources={sources.data ?? []} initialCandidateId={focusedCandidateId} onOpenSession={(sessionId) => { setSelectedId(sessionId); setView("sessions"); void refresh(); }} />}
       <SourceSelectionDialog open={dialogOpen} sources={sources.data ?? []} sourceStates={sourceStates} busy={create.isPending} onClose={() => setDialogOpen(false)} onConfirm={(ids) => create.mutate(ids)} />
     </section>
   );
