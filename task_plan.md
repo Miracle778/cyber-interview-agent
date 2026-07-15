@@ -17,6 +17,7 @@
 | 9. 整理会话 UI 与回收站补强 | 自动验证完成，浏览器待验收 | 历史优先会话页、聚焦 Agent 工作区、折叠资料提示、会话/原材料回收站与恢复入口 |
 | 10. 生成文件交互与自由意图 | 实现完成，浏览器待验收 | 文件卡默认 3 条/有界展开、右栏 Markdown 详情、单题发布、持久备注、结构化意图 Agent |
 | 11. Agent 上下文组装与命令解释收敛 | 已完成 | 通用 token-budget ContextAssembler、持久领域焦点、确定性命令优先、一次性结构化 classifier；301/109/build 与浏览器/重启验收通过 |
+| 12. 可取消流式执行、模型切换与批量发布 | 设计与计划已完成，待实施 | 整理命令接统一 Execution Runtime、服务端停止/恢复、execution 模型快照、真实 SSE、候选题安全一键发布 |
 
 ## 工作位置
 
@@ -25,6 +26,9 @@
 - 基线：`codex/r2-ui-design-guidance@e3d64b3`
 - R2 设计：`docs/superpowers/specs/2026-07-13-r2-complete-review-agent-design.md`
 - 补充实施计划：`docs/superpowers/plans/2026-07-14-r2-agent-session-interaction-redesign.md`
+- 当前补强设计：`docs/superpowers/specs/2026-07-16-r2-cancellable-streaming-execution-design.md`
+- 当前补强计划：`docs/superpowers/plans/2026-07-16-r2-cancellable-streaming-execution.md`
+- 架构选型：`docs/superpowers/architecture-decisions/2026-07-16-unified-cancellable-execution-runtime.md`
 - 总路线：`docs/superpowers/specs/2026-07-10-product-development-roadmap-design.md`
 
 ## 范围与约束
@@ -49,11 +53,12 @@
 
 ## 下一步
 
-当前先完成阶段 11，不使用旧的最终证据关闭 R2；实现稳定后接回阶段 8–10 的浏览器与最终验收。执行顺序：
+当前先完成阶段 12，不使用旧的最终证据关闭 R2；实现稳定后接回阶段 8–10 的浏览器与最终验收。执行顺序：
 
-1. 接回阶段 8–10 尚未关闭的完整 R2 浏览器场景。
-2. 刷新 verification/learning 七件套并运行文档门禁。
-3. 关闭 R2 后进入下一产品阶段；用户 ownership 练习继续非阻塞进行。
+1. 执行通用可取消 execution、异步整理命令、安全批量发布和前端闭环四个纵向 Task。
+2. 完成发送→流式→停止→刷新/重启→重试，以及批量发布停止/重试的浏览器验收。
+3. 接回阶段 8–10 尚未关闭的完整 R2 浏览器场景，刷新 verification/learning 七件套并运行文档门禁。
+4. 关闭 R2 后进入下一产品阶段；用户 ownership 练习继续非阻塞进行。
 
 ## 所有权状态
 
