@@ -1,5 +1,6 @@
 from pathlib import Path
 from dataclasses import replace
+import asyncio
 
 import pytest
 import pytest_asyncio
@@ -35,6 +36,25 @@ class RecordingClassifier:
         return self.plan
 
 
+class BlockingClassifier(RecordingClassifier):
+    def __init__(
+        self,
+        plan: CurationCommandPlan,
+        *,
+        entered: asyncio.Event,
+        release: asyncio.Event,
+    ) -> None:
+        super().__init__(plan)
+        self.entered = entered
+        self.release = release
+
+    async def classify(self, assembled, *, context):
+        self.calls.append((assembled, context))
+        self.entered.set()
+        await self.release.wait()
+        return self.plan
+
+
 class RecordingSummarizer:
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
@@ -53,14 +73,91 @@ class RecordingSummarizer:
         )
 
 
+class RecordingResponder:
+    def __init__(self, chunks=("真实", "回复")) -> None:
+        self.chunks = chunks
+        self.calls = []
+
+    async def astream(self, rendered_context, *, context):
+        self.calls.append((rendered_context, context))
+        for chunk in self.chunks:
+            yield chunk
+
+
 class RecordingCurationModels:
     def __init__(
         self, plan: CurationCommandPlan, *, fail_summary: bool = False
     ) -> None:
         self.classifier = RecordingClassifier(plan)
         self.summarizer = RecordingSummarizer(fail=fail_summary)
+        self.responder = RecordingResponder()
         self.context_limit_tokens = 180
         self.token_counter = lambda text: max(1, len(text) // 12)
+
+
+async def completed_command(app, session_id: str, response) -> dict:
+    payload = response.json()
+    await app.wait_execution(payload["executionId"])
+    review = app.locate_review_session(session_id)
+    receipt = review.repository.get_curation_command_receipt(
+        payload["commandId"]
+    )
+    return review._curation_command_resource(receipt)
+
+
+@pytest.mark.asyncio
+async def test_free_form_response_streams_real_chunks_and_persists_joined_text(
+    api, application
+) -> None:
+    app, source_ids = application
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = (
+            await client.post(
+                "/api/review/curation-sessions",
+                json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+            )
+        ).json()
+        await app.wait_execution(created["executionId"])
+        session_id = created["id"]
+        detail = (
+            await client.get(f"/api/review/curation-sessions/{session_id}")
+        ).json()
+        models = RecordingCurationModels(
+            CurationCommandPlan(response="分类器占位文本")
+        )
+        app.locate_review_session(session_id).curation_command_models = models
+
+        accepted = await client.post(
+            f"/api/review/curation-sessions/{session_id}/commands",
+            json={
+                "text": "请给我建议",
+                "summaryVersion": detail["summaryVersion"],
+                "idempotencyKey": "stream-command-1",
+            },
+        )
+        result = await completed_command(app, session_id, accepted)
+        events = app.replay_events(session_id, after_id=None)
+        deltas = [
+            item.payload["text"]
+            for item in events
+            if item.type == "assistant.delta"
+            and item.execution_id == accepted.json()["executionId"]
+        ]
+
+        assert deltas == ["真实", "回复"]
+        assert result["result"]["clarification"] == "真实回复"
+        detail = (
+            await client.get(f"/api/review/curation-sessions/{session_id}")
+        ).json()
+        assert any(
+            message["role"] == "assistant"
+            and message["executionId"] == accepted.json()["executionId"]
+            and message["content"] == "真实回复"
+            for message in detail["messages"]
+        )
+        assert models.responder.calls
 
 
 @pytest_asyncio.fixture
@@ -97,6 +194,242 @@ def api(application):
     api.include_router(review_router)
     api.dependency_overrides[get_agent_application] = lambda: app
     return api
+
+
+@pytest.mark.asyncio
+async def test_curation_command_returns_accepted_before_classifier_finishes(
+    api, application
+) -> None:
+    app, source_ids = application
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = (
+            await client.post(
+                "/api/review/curation-sessions",
+                json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+            )
+        ).json()
+        await app.wait_execution(created["executionId"])
+        session_id = created["id"]
+        detail = (
+            await client.get(f"/api/review/curation-sessions/{session_id}")
+        ).json()
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        models = RecordingCurationModels(CurationCommandPlan())
+        models.classifier = BlockingClassifier(
+            CurationCommandPlan(response="已理解"),
+            entered=entered,
+            release=release,
+        )
+        app.locate_review_session(session_id).curation_command_models = models
+
+        response = await asyncio.wait_for(
+            client.post(
+                f"/api/review/curation-sessions/{session_id}/commands",
+                json={
+                    "text": "请结合刚才的上下文给出建议",
+                    "summaryVersion": detail["summaryVersion"],
+                    "idempotencyKey": "async-command-1",
+                    "providerModelId": "model-1",
+                    "reasoningEffort": "medium",
+                },
+            ),
+            timeout=0.2,
+        )
+
+        assert response.status_code == 202, response.text
+        assert response.json()["status"] == "accepted"
+        assert response.json()["commandId"]
+        assert response.json()["executionId"]
+        await asyncio.wait_for(entered.wait(), timeout=0.2)
+        release.set()
+        terminal = await app.wait_execution(response.json()["executionId"])
+        assert terminal.status == "completed"
+        assert terminal.configuration.provider_model_id == "model-1"
+        assert terminal.configuration.reasoning_effort == "medium"
+        restored = (
+            await client.get(f"/api/review/curation-sessions/{session_id}")
+        ).json()
+        assert restored["preferredModelId"] == "model-1"
+        assert restored["preferredReasoningEffort"] == "medium"
+        assert restored["latestCommand"] == {
+            "commandId": response.json()["commandId"],
+            "executionId": response.json()["executionId"],
+            "lifecycleStatus": "completed",
+            "retryCount": 0,
+        }
+
+
+@pytest.mark.asyncio
+async def test_curation_command_cancel_keeps_user_message_without_final_reply(
+    api, application
+) -> None:
+    app, source_ids = application
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = (
+            await client.post(
+                "/api/review/curation-sessions",
+                json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+            )
+        ).json()
+        await app.wait_execution(created["executionId"])
+        session_id = created["id"]
+        detail = (
+            await client.get(f"/api/review/curation-sessions/{session_id}")
+        ).json()
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        models = RecordingCurationModels(CurationCommandPlan())
+        models.classifier = BlockingClassifier(
+            CurationCommandPlan(response="不应完成"),
+            entered=entered,
+            release=release,
+        )
+        review = app.locate_review_session(session_id)
+        review.curation_command_models = models
+
+        response = await client.post(
+            f"/api/review/curation-sessions/{session_id}/commands",
+            json={
+                "text": "请分析这批候选题",
+                "summaryVersion": detail["summaryVersion"],
+                "idempotencyKey": "cancel-command-1",
+                "providerModelId": "model-1",
+                "reasoningEffort": "low",
+            },
+        )
+        accepted = response.json()
+        await asyncio.wait_for(entered.wait(), timeout=0.2)
+
+        cancelled = await app.cancel_execution(accepted["executionId"])
+        receipt = review.repository.get_curation_command_receipt(
+            accepted["commandId"]
+        )
+        restored = (
+            await client.get(f"/api/review/curation-sessions/{session_id}")
+        ).json()
+
+        assert cancelled.status == "cancelled"
+        assert receipt.lifecycle_status == "cancelled"
+        assert any(
+            message["role"] == "user"
+            and message["content"] == "请分析这批候选题"
+            for message in restored["messages"]
+        )
+        assert not any(
+            message["role"] == "assistant"
+            and message["executionId"] == accepted["executionId"]
+            for message in restored["messages"]
+        )
+        assert [
+            event.type
+            for event in app.replay_events(session_id, after_id=None)
+        ][-3:] == [
+            "curation.command.interpreting",
+            "execution.cancelling",
+            "execution.cancelled",
+        ]
+
+
+@pytest.mark.asyncio
+async def test_async_rewrite_finishes_command_before_starting_child_execution(
+    api, application
+) -> None:
+    app, source_ids = application
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = (
+            await client.post(
+                "/api/review/curation-sessions",
+                json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+            )
+        ).json()
+        await app.wait_execution(created["executionId"])
+        detail = (
+            await client.get(f"/api/review/curation-sessions/{created['id']}")
+        ).json()
+
+        accepted = await client.post(
+            f"/api/review/curation-sessions/{created['id']}/commands",
+            json={
+                "text": "重写第 1 题：补充边界条件",
+                "summaryVersion": detail["summaryVersion"],
+                "idempotencyKey": "rewrite-command-1",
+            },
+        )
+        receipt = await completed_command(app, created["id"], accepted)
+        child_execution_id = receipt["result"]["executionId"]
+
+        assert receipt["status"] == "completed"
+        assert child_execution_id != accepted.json()["executionId"]
+        await app.wait_execution(child_execution_id)
+
+
+@pytest.mark.asyncio
+async def test_immediate_abandon_cancels_command_and_releases_session(
+    api, application
+) -> None:
+    app, source_ids = application
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = (
+            await client.post(
+                "/api/review/curation-sessions",
+                json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+            )
+        ).json()
+        await app.wait_execution(created["executionId"])
+        session_id = created["id"]
+        detail = (
+            await client.get(f"/api/review/curation-sessions/{session_id}")
+        ).json()
+        entered = asyncio.Event()
+        review = app.locate_review_session(session_id)
+        models = RecordingCurationModels(CurationCommandPlan())
+        models.classifier = BlockingClassifier(
+            CurationCommandPlan(response="不应完成"),
+            entered=entered,
+            release=asyncio.Event(),
+        )
+        review.curation_command_models = models
+        accepted = (
+            await client.post(
+                f"/api/review/curation-sessions/{session_id}/commands",
+                json={
+                    "text": "分析所有候选题",
+                    "summaryVersion": detail["summaryVersion"],
+                    "idempotencyKey": "abandon-command-1",
+                },
+            )
+        ).json()
+
+        abandoned = await client.post(
+            f"/api/review/curation-commands/{accepted['commandId']}/abandon"
+        )
+        receipt = review.repository.get_curation_command_receipt(
+            accepted["commandId"]
+        )
+        assert abandoned.status_code == 204
+        assert receipt.lifecycle_status == "cancelled"
+
+        next_command = await client.post(
+            f"/api/review/curation-sessions/{session_id}/commands",
+            json={
+                "text": "重新总结",
+                "summaryVersion": detail["summaryVersion"],
+                "idempotencyKey": "after-abandon-1",
+            },
+        )
+        assert next_command.status_code == 202, next_command.text
+        assert (
+            await app.wait_execution(next_command.json()["executionId"])
+        ).status == "completed"
 
 
 @pytest.mark.asyncio
@@ -351,9 +684,10 @@ async def test_ambiguous_and_reject_commands_are_durable_and_idempotent(
         )
 
         assert first.status_code == 202, first.text
-        assert second.json()["id"] == first.json()["id"]
-        assert first.json()["kind"] == "clarify"
-        assert first.json()["status"] == "completed"
+        assert second.json()["commandId"] == first.json()["commandId"]
+        result = await completed_command(app, session_id, first)
+        assert result["kind"] == "clarify"
+        assert result["status"] == "completed"
         messages = (
             await client.get(f"/api/review/curation-sessions/{session_id}")
         ).json()["messages"]
@@ -368,6 +702,7 @@ async def test_ambiguous_and_reject_commands_are_durable_and_idempotent(
             },
         )
         assert rejected.status_code == 202, rejected.text
+        await completed_command(app, session_id, rejected)
         candidate_id = detail["summary"]["items"][0]["candidateId"]
         candidate = await client.get(
             f"/api/review/question-candidates/{candidate_id}"
@@ -423,8 +758,9 @@ async def test_explicit_confirm_command_publishes_without_second_decision(
         )
 
         assert confirmed.status_code == 202, confirmed.text
-        assert confirmed.json()["status"] == "completed"
-        assert confirmed.json()["result"]["publishedCount"] == 1
+        confirmed_result = await completed_command(app, session_id, confirmed)
+        assert confirmed_result["status"] == "completed"
+        assert confirmed_result["result"]["publishedCount"] == 1
         context_after = review.repository.get_or_create_curation_context(
             session_id
         )
@@ -439,7 +775,7 @@ async def test_explicit_confirm_command_publishes_without_second_decision(
         context_repeated = review.repository.get_or_create_curation_context(
             session_id
         )
-        assert repeated.json()["id"] == confirmed.json()["id"]
+        assert repeated.json()["commandId"] == confirmed.json()["commandId"]
         assert models.classifier.calls == []
         assert models.summarizer.calls == []
         assert context_after.version == context_before.version + 1
@@ -485,6 +821,7 @@ async def test_curation_focus_survives_more_than_eight_messages_and_projects_tim
                 "idempotencyKey": "inspect-context-command-1",
             },
         )
+        await completed_command(app, session_id, first)
         latest = review.sessions.repository.latest_execution(session_id)
         for index in range(10):
             review.sessions.repository.append_message(
@@ -505,8 +842,9 @@ async def test_curation_focus_survives_more_than_eight_messages_and_projects_tim
 
         assert first.status_code == 202, first.text
         assert second.status_code == 202, second.text
-        assert second.json()["kind"] == "confirm"
-        assert second.json()["result"]["publishedCount"] == 1
+        second_result = await completed_command(app, session_id, second)
+        assert second_result["kind"] == "confirm"
+        assert second_result["result"]["publishedCount"] == 1
         candidate_id = detail["summary"]["items"][0]["candidateId"]
         assert (
             await client.get(f"/api/review/question-candidates/{candidate_id}")
@@ -597,8 +935,9 @@ async def test_multi_focus_pronoun_requires_clarification_without_mutation(
         )
 
         assert response.status_code == 202, response.text
-        assert response.json()["kind"] == "clarify"
-        assert "多道题" in response.json()["result"]["clarification"]
+        result = await completed_command(app, session_id, response)
+        assert result["kind"] == "clarify"
+        assert "多道题" in result["result"]["clarification"]
         assert review.repository.get_candidate(first_id).status == "review_pending"
         assert review.repository.get_candidate(second.id).status == "review_pending"
 
@@ -649,6 +988,7 @@ async def test_budget_overflow_compacts_or_safely_degrades(
         )
 
         assert response.status_code == 202, response.text
+        await completed_command(app, session_id, response)
         assert len(models.summarizer.calls) == 1
         assert len(models.classifier.calls) == 1
         assembled = models.classifier.calls[0][0]

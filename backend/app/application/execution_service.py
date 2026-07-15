@@ -410,6 +410,25 @@ class AgentExecutionService:
             await task
         return self._repository.get_execution(execution_id)
 
+    async def complete_background_execution(
+        self, execution_id: str
+    ) -> ExecutionRecord:
+        current = self._repository.get_execution(execution_id)
+        if current.status != "running":
+            return current
+        completed = self._repository.transition_execution(
+            execution_id,
+            expected=("running",),
+            target="completed",
+        )
+        await self._events.publish(
+            completed.session_id,
+            completed.id,
+            "execution.completed",
+            {"executionId": completed.id},
+        )
+        return completed
+
     async def close(self) -> None:
         tasks = tuple(self._tasks.items())
         for execution_id, task in tasks:

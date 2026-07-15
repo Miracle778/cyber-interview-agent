@@ -80,19 +80,42 @@ class AgentFactory:
         )
 
     def resolve_model(
-        self, role: str, *, model_bindings: Mapping[str, str]
+        self,
+        role: str,
+        *,
+        model_bindings: Mapping[str, str],
+        model_override: ModelOverride | None = None,
     ):
+        if model_override is not None:
+            return self._models.resolve(
+                role=role,
+                provider_model_id=model_override.provider_model_id,
+                reasoning_effort=model_override.reasoning_effort,
+            )
         try:
             provider_model_id = model_bindings[role]
         except KeyError as error:
-            raise ModelResolutionError(ProviderErrorCode.MODEL_NOT_FOUND) from error
-        return self._models.resolve(role=role, provider_model_id=provider_model_id)
+            raise ModelResolutionError(
+                ProviderErrorCode.MODEL_NOT_FOUND
+            ) from error
+        return self._models.resolve(
+            role=role, provider_model_id=provider_model_id
+        )
 
     def resolve_context_limit(
-        self, role: str, *, model_bindings: Mapping[str, str]
+        self,
+        role: str,
+        *,
+        model_bindings: Mapping[str, str],
+        model_override: ModelOverride | None = None,
     ) -> int:
-        try:
-            provider_model_id = model_bindings[role]
-        except KeyError as error:
-            raise ModelResolutionError(ProviderErrorCode.MODEL_NOT_FOUND) from error
+        if model_override is not None:
+            provider_model_id = model_override.provider_model_id
+        else:
+            try:
+                provider_model_id = model_bindings[role]
+            except KeyError as error:
+                raise ModelResolutionError(
+                    ProviderErrorCode.MODEL_NOT_FOUND
+                ) from error
         return self._models.context_limit(provider_model_id)

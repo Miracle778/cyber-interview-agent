@@ -5,7 +5,7 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
-from app.agents.factory import AgentFactory
+from app.agents.factory import AgentFactory, ModelOverride
 from app.agents.question_curation import QuestionCurationAgent
 from app.agents.curation_command import CurationCommandModels
 from app.agents.context_assembly import model_token_counter
@@ -33,14 +33,30 @@ class ProductionGraphFactory:
     def __init__(self, agents: AgentFactory) -> None:
         self._agents = agents
 
-    def create_curation_command_models(self, *, model_bindings, projection, audit, observability):
+    def create_curation_command_models(
+        self,
+        *,
+        model_bindings,
+        projection,
+        audit,
+        observability,
+        interaction_override: ModelOverride | None = None,
+    ):
         context_limit_tokens = min(
-            self._agents.resolve_context_limit(role, model_bindings=model_bindings)
-            for role in ("question_generation", "report_summarization")
+            self._agents.resolve_context_limit(
+                "question_generation",
+                model_bindings=model_bindings,
+                model_override=interaction_override,
+            ),
+            self._agents.resolve_context_limit(
+                "report_summarization", model_bindings=model_bindings
+            ),
         )
         summary_model = self._agents.resolve_model("report_summarization", model_bindings=model_bindings)
         classifier_model = self._agents.resolve_model(
-            "question_generation", model_bindings=model_bindings
+            "question_generation",
+            model_bindings=model_bindings,
+            model_override=interaction_override,
         )
         middleware = build_default_middleware(
             summary_model=summary_model,
@@ -54,6 +70,7 @@ class ProductionGraphFactory:
         return CurationCommandModels.create(
             self._agents,
             model_bindings=model_bindings,
+            interaction_override=interaction_override,
             middleware=middleware,
             context_limit_tokens=context_limit_tokens,
             token_counter=model_token_counter(classifier_model),

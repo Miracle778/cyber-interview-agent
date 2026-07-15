@@ -1,10 +1,43 @@
 from pathlib import Path
+from types import SimpleNamespace
+import asyncio
 
 import pytest
 
 from app.application.workspace_runtime import AgentApplication
+from app.knowledge.source_registry import KnowledgeSourceService
+from app.review.curation_command_contracts import CurationCommandPlan
 from app.review.models import MasteryProjection, QuestionSnapshot, ReviewRoundSettings
 from tests.test_review_api_v2 import _graph_factory
+
+
+class _BlockingClassifier:
+    def __init__(self, entered: asyncio.Event) -> None:
+        self.entered = entered
+
+    async def classify(self, assembled, *, context):
+        self.entered.set()
+        await asyncio.Event().wait()
+
+
+class _ResolvedClassifier:
+    async def classify(self, assembled, *, context):
+        return CurationCommandPlan(response="恢复后完成")
+
+
+class _Responder:
+    async def astream(self, rendered_context, *, context):
+        yield "恢复后完成"
+
+
+def _command_models(classifier):
+    return SimpleNamespace(
+        classifier=classifier,
+        summarizer=SimpleNamespace(),
+        responder=_Responder(),
+        context_limit_tokens=16_000,
+        token_counter=len,
+    )
 
 
 @pytest.mark.asyncio
@@ -129,6 +162,90 @@ async def test_restart_reconciles_abandoned_generating_batch(
         await second.recover()
         restored = second.review("w1").repository.get_batch(batch.id)
         assert restored.status == "failed"
+    finally:
+        await second.close()
+
+
+@pytest.mark.asyncio
+async def test_interrupted_curation_command_requires_explicit_retry(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace-command-retry"
+    workspace.mkdir()
+
+    def build() -> AgentApplication:
+        return AgentApplication(
+            workspace_resolver=lambda _workspace_id: workspace,
+            workspace_ids=lambda: ("w1",),
+            model_bindings=lambda _workspace_id: {},
+            graph_factory=_graph_factory,
+        )
+
+    source = await KnowledgeSourceService(
+        workspace, workspace_id="w1"
+    ).create(
+        original_filename="retry.md",
+        content_type="text/markdown",
+        content=b"# Retry\n\nExplain durable retries.",
+    )
+    first = build()
+    created = await first.review("w1").create_curation_session(
+        source_refs=(source.id,)
+    )
+    await first.wait_execution(created["execution_id"])
+    session_id = created["id"]
+    detail = await first.locate_review_session(session_id).curation_resource(
+        session_id
+    )
+    entered = asyncio.Event()
+    review = first.locate_review_session(session_id)
+    review.curation_command_models = _command_models(
+        _BlockingClassifier(entered)
+    )
+    accepted = await review.submit_curation_command(
+        session_id,
+        text="继续分析这一批",
+        summary_version=detail["summary_version"],
+        idempotency_key="restart-command-1",
+        provider_model_id=None,
+        reasoning_effort="none",
+    )
+    await asyncio.wait_for(entered.wait(), timeout=0.2)
+    await first.close()
+
+    second = build()
+    try:
+        restored_review = second.locate_curation_command(
+            accepted["command_id"]
+        )
+        interrupted = restored_review.repository.get_curation_command_receipt(
+            accepted["command_id"]
+        )
+        assert interrupted.lifecycle_status == "interrupted"
+        assert interrupted.retry_count == 0
+        assert second.replay_events(session_id, after_id=None)[-1].type != (
+            "execution.completed"
+        )
+
+        restored_review.curation_command_models = _command_models(
+            _ResolvedClassifier()
+        )
+        retried = await restored_review.retry_curation_command(
+            accepted["command_id"]
+        )
+        assert retried["execution_id"] != accepted["execution_id"]
+        await second.wait_execution(retried["execution_id"])
+        completed = restored_review.repository.get_curation_command_receipt(
+            accepted["command_id"]
+        )
+        messages = (await second.session_detail(session_id))["messages"]
+
+        assert completed.lifecycle_status == "completed"
+        assert completed.retry_count == 1
+        assert sum(
+            message["content"] == "继续分析这一批"
+            for message in messages
+        ) == 1
     finally:
         await second.close()
 

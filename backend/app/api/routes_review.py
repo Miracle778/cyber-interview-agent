@@ -16,6 +16,7 @@ from app.schemas.review import (
     CreateReviewRoundCommand,
     CurationSessionResource,
     CurationCommandReceiptResource,
+    AcceptedCurationCommandResource,
     DiscussionSessionResource,
     QuestionBatchResource,
     QuestionCandidateResource,
@@ -89,7 +90,7 @@ async def retry_curation_session(
 
 @router.post(
     "/curation-sessions/{session_id}/commands",
-    response_model=CurationCommandReceiptResource,
+    response_model=AcceptedCurationCommandResource,
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def submit_curation_command(
@@ -98,12 +99,39 @@ async def submit_curation_command(
     application: AgentApplication = Depends(get_agent_application),
 ):
     review = application.locate_review_session(session_id)
-    return await review.execute_curation_command(
+    return await review.submit_curation_command(
         session_id,
         text=command.text,
         summary_version=command.summary_version,
         idempotency_key=command.idempotency_key,
+        provider_model_id=command.provider_model_id,
+        reasoning_effort=command.reasoning_effort,
     )
+
+
+@router.post(
+    "/curation-commands/{command_id}/retry",
+    response_model=AcceptedCurationCommandResource,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_curation_command(
+    command_id: str,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_curation_command(command_id)
+    return await review.retry_curation_command(command_id)
+
+
+@router.post(
+    "/curation-commands/{command_id}/abandon",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def abandon_curation_command(
+    command_id: str,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_curation_command(command_id)
+    await review.abandon_curation_command(command_id)
 
 
 @router.post(

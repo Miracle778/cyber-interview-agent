@@ -86,6 +86,24 @@ class ReviewRepository:
             raise LookupError(session_id)
         return self._curation_session_record(row)
 
+    def save_curation_preference(
+        self,
+        session_id: str,
+        *,
+        provider_model_id: str,
+        reasoning_effort: ReasoningEffort,
+    ) -> CurationSessionRecord:
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_curation_sessions "
+                "SET preferred_model_id = ?, preferred_reasoning_effort = ?, "
+                "updated_at = CURRENT_TIMESTAMP WHERE session_id = ?",
+                (provider_model_id, reasoning_effort, session_id),
+            )
+            if cursor.rowcount != 1:
+                raise LookupError(session_id)
+        return self.get_curation_session(session_id)
+
     def list_curation_sessions(
         self,
         workspace_id: str,
@@ -309,13 +327,14 @@ class ReviewRepository:
         with self._transaction():
             self._connection.execute(
                 "INSERT INTO review_curation_command_receipts "
-                "(id, session_id, idempotency_key, text_hash, "
-                "summary_version, command_json) VALUES (?, ?, ?, ?, ?, ?)",
+                "(id, session_id, idempotency_key, text_hash, original_text, "
+                "summary_version, command_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     identifier,
                     session_id,
                     idempotency_key,
                     text_hash,
+                    text,
                     summary_version,
                     _canonical_json(command),
                 ),
@@ -333,6 +352,99 @@ class ReviewRepository:
             raise LookupError(receipt_id)
         return self._curation_command_receipt(row)
 
+    def latest_curation_command_receipt(
+        self, session_id: str
+    ) -> CurationCommandReceiptRecord | None:
+        row = self._connection.execute(
+            "SELECT * FROM review_curation_command_receipts "
+            "WHERE session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        return None if row is None else self._curation_command_receipt(row)
+
+    def attach_curation_command_execution(
+        self, receipt_id: str, execution_id: str
+    ) -> CurationCommandReceiptRecord:
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_curation_command_receipts SET execution_id = ? "
+                "WHERE id = ? AND execution_id IS NULL",
+                (execution_id, receipt_id),
+            )
+            if cursor.rowcount != 1:
+                current = self.get_curation_command_receipt(receipt_id)
+                if current.execution_id != execution_id:
+                    raise ReviewConflictError(
+                        "curation command already has an execution"
+                    )
+        return self.get_curation_command_receipt(receipt_id)
+
+    def requeue_curation_command(
+        self, receipt_id: str, execution_id: str
+    ) -> CurationCommandReceiptRecord:
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_curation_command_receipts "
+                "SET execution_id = ?, lifecycle_status = 'accepted', "
+                "retry_count = retry_count + 1, completed_at = NULL "
+                "WHERE id = ? AND lifecycle_status IN ('interrupted', 'failed')",
+                (execution_id, receipt_id),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError(
+                    "curation command cannot be retried"
+                )
+        return self.get_curation_command_receipt(receipt_id)
+
+    def replace_curation_command_plan(
+        self, receipt_id: str, command: dict[str, object]
+    ) -> CurationCommandReceiptRecord:
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_curation_command_receipts SET command_json = ? "
+                "WHERE id = ? AND lifecycle_status IN ('accepted', 'running')",
+                (_canonical_json(command), receipt_id),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError(
+                    "curation command plan can no longer change"
+                )
+        return self.get_curation_command_receipt(receipt_id)
+
+    def transition_curation_command_lifecycle(
+        self,
+        receipt_id: str,
+        *,
+        expected: tuple[str, ...],
+        target: str,
+    ) -> CurationCommandReceiptRecord:
+        supported = {
+            "accepted",
+            "running",
+            "completed",
+            "partial_failure",
+            "failed",
+            "cancelled",
+            "interrupted",
+        }
+        if target not in supported:
+            raise ValueError("unsupported curation command lifecycle status")
+        placeholders = ",".join("?" for _item in expected)
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_curation_command_receipts "
+                "SET lifecycle_status = ? WHERE id = ? "
+                f"AND lifecycle_status IN ({placeholders})",
+                (target, receipt_id, *expected),
+            )
+            if cursor.rowcount != 1:
+                current = self.get_curation_command_receipt(receipt_id)
+                if current.lifecycle_status != target:
+                    raise ReviewConflictError(
+                        "curation command lifecycle changed"
+                    )
+        return self.get_curation_command_receipt(receipt_id)
+
     def complete_curation_command(
         self,
         receipt_id: str,
@@ -345,9 +457,10 @@ class ReviewRepository:
         with self._transaction():
             cursor = self._connection.execute(
                 "UPDATE review_curation_command_receipts SET result_json = ?, "
-                "status = ?, completed_at = CURRENT_TIMESTAMP "
+                "status = ?, lifecycle_status = ?, "
+                "completed_at = CURRENT_TIMESTAMP "
                 "WHERE id = ? AND status = 'processing'",
-                (_canonical_json(result), status, receipt_id),
+                (_canonical_json(result), status, status, receipt_id),
             )
             if cursor.rowcount != 1:
                 current = self.get_curation_command_receipt(receipt_id)
@@ -452,6 +565,15 @@ class ReviewRepository:
                 "WHERE attempt.round_id = review_rounds.id "
                 "AND attempt.status IN ('evaluating', 'evaluation_failed'))"
             ).rowcount
+            self._connection.execute(
+                "UPDATE review_curation_command_receipts SET lifecycle_status = "
+                "CASE (SELECT status FROM agent_runs WHERE id = execution_id) "
+                "WHEN 'cancelled' THEN 'cancelled' "
+                "WHEN 'failed' THEN 'failed' ELSE 'interrupted' END "
+                "WHERE lifecycle_status IN ('accepted', 'running') "
+                "AND execution_id IN (SELECT id FROM agent_runs WHERE status IN "
+                "('interrupted', 'failed', 'cancelled', 'completed'))"
+            )
         return batches, rounds
 
     def list_evaluating_attempts(self) -> tuple[ReviewAttemptRecord, ...]:
@@ -1551,6 +1673,10 @@ class ReviewRepository:
             summary=CurationSummary(items=tuple(summary.get("items", ()))),
             summary_version=row["summary_version"],
             warnings=tuple(json.loads(row["warning_json"])),
+            preferred_model_id=row["preferred_model_id"],
+            preferred_reasoning_effort=cast(
+                ReasoningEffort, row["preferred_reasoning_effort"]
+            ),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -1600,10 +1726,14 @@ class ReviewRepository:
             session_id=row["session_id"],
             idempotency_key=row["idempotency_key"],
             text_hash=row["text_hash"],
+            original_text=row["original_text"],
             summary_version=row["summary_version"],
             command=json.loads(row["command_json"]),
             result=json.loads(row["result_json"]),
             status=row["status"],
+            execution_id=row["execution_id"],
+            lifecycle_status=row["lifecycle_status"],
+            retry_count=row["retry_count"],
             created_at=row["created_at"],
             completed_at=row["completed_at"],
         )

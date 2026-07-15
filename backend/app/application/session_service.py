@@ -459,6 +459,7 @@ class ProductEventStream:
             "curation.progress.changed",
             "curation.summary.ready",
             "curation.command.resolved",
+            "curation.command.interpreting",
             "execution.started",
             "execution.cancelling",
             "assistant.delta",

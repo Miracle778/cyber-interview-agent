@@ -188,6 +188,8 @@ class CurationSessionRecord:
     summary: CurationSummary
     summary_version: int
     warnings: tuple[dict[str, object], ...]
+    preferred_model_id: str | None
+    preferred_reasoning_effort: ReasoningEffort
     created_at: str
     updated_at: str
 
@@ -224,10 +226,14 @@ class CurationCommandReceiptRecord:
     session_id: str
     idempotency_key: str
     text_hash: str
+    original_text: str
     summary_version: int
     command: dict[str, object]
     result: dict[str, object]
     status: str
+    execution_id: str | None
+    lifecycle_status: str
+    retry_count: int
     created_at: str
     completed_at: str | None
 

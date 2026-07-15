@@ -8,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from app.application.execution_service import AgentExecutionService, GraphFactory
+from app.agents.factory import ModelOverride
 from app.application.session_service import (
     AgentSessionService,
     EventRecord,
@@ -249,6 +250,19 @@ class WorkspaceRuntime:
             )
         )
 
+        def create_command_models(
+            override: ModelOverride,
+        ):
+            if command_models_factory is None:
+                raise RuntimeError("curation command models are not configured")
+            return command_models_factory(
+                model_bindings=configured_model_bindings,
+                projection=projection,
+                audit=audit,
+                observability=observability,
+                interaction_override=override,
+            )
+
         def curation_context_factory(**values):
             return build_curation_command_context(
                 workspace_id=workspace_id,
@@ -268,6 +282,12 @@ class WorkspaceRuntime:
             actions=actions,
             hitl=hitl,
             curation_command_models=command_models,
+            curation_command_models_factory=(
+                create_command_models
+                if command_models_factory is not None
+                and "report_summarization" in configured_model_bindings
+                else None
+            ),
             curation_context_projection=projection,
             curation_context_factory=curation_context_factory,
         )
@@ -482,6 +502,18 @@ class AgentApplication:
             except LookupError:
                 continue
         raise ProductRecordNotFoundError("题库整理会话不存在")
+
+    def locate_curation_command(self, command_id: str) -> ReviewApplication:
+        for workspace_id in self._workspace_ids():
+            context = self._context(workspace_id)
+            try:
+                context.review.repository.get_curation_command_receipt(
+                    command_id
+                )
+                return context.review
+            except LookupError:
+                continue
+        raise ProductRecordNotFoundError("题库整理命令不存在")
 
     async def recover(self) -> tuple[str, ...]:
         recovered = []

@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import asyncio
+from contextlib import nullcontext
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
 
-from app.application.execution_service import AgentExecutionService
+from app.application.execution_service import (
+    AgentExecutionService,
+    ExecutionCancellation,
+    ExecutionCancelled,
+)
 from app.agents.context import AgentContext
 from app.agents.context_assembly import (
     ContextAssembler,
@@ -15,10 +21,12 @@ from app.agents.context_assembly import (
     ContextSummary,
 )
 from app.agents.curation_command import CurationCommandModels
+from app.agents.factory import ModelOverride
 from app.application.session_service import (
     AgentSessionService,
     MessageRecord,
     ProductEventStream,
+    ReasoningEffort,
 )
 from app.hitl.models import ResolveActionCommand
 from app.hitl.repository import PendingActionRepository
@@ -78,6 +86,9 @@ class ReviewApplication:
         actions: PendingActionRepository,
         hitl: HitlService,
         curation_command_models: CurationCommandModels | None = None,
+        curation_command_models_factory: (
+            Callable[[ModelOverride], CurationCommandModels] | None
+        ) = None,
         curation_context_projection=None,
         curation_context_factory: Callable[..., AgentContext] | None = None,
     ) -> None:
@@ -93,6 +104,7 @@ class ReviewApplication:
         self.actions = actions
         self.hitl = hitl
         self.curation_command_models = curation_command_models
+        self.curation_command_models_factory = curation_command_models_factory
         self.curation_context_projection = curation_context_projection
         self.curation_context_factory = curation_context_factory
         self.selector = QuestionSelector()
@@ -244,6 +256,9 @@ class ReviewApplication:
             for candidate in self.repository.list_candidates(self.workspace_id)
             if any(candidate.batch_id == batch.id for batch in batches)
         ]
+        latest_command = self.repository.latest_curation_command_receipt(
+            session_id
+        )
         latest = self.sessions.repository.latest_execution(session_id)
         warnings_by_source = {
             str(item["sourceId"]): str(item["code"])
@@ -292,6 +307,18 @@ class ReviewApplication:
             "summary": asdict(record.summary),
             "summary_version": record.summary_version,
             "warnings": record.warnings,
+            "preferred_model_id": record.preferred_model_id,
+            "preferred_reasoning_effort": record.preferred_reasoning_effort,
+            "latest_command": (
+                None
+                if latest_command is None
+                else {
+                    "command_id": latest_command.id,
+                    "execution_id": latest_command.execution_id,
+                    "lifecycle_status": latest_command.lifecycle_status,
+                    "retry_count": latest_command.retry_count,
+                }
+            ),
             "candidate_count": len(candidates),
             "pending_count": sum(
                 item.status == "review_pending" for item in candidates
@@ -348,15 +375,16 @@ class ReviewApplication:
             ]
         )
 
-    async def execute_curation_command(
+    async def submit_curation_command(
         self,
         session_id: str,
         *,
         text: str,
         summary_version: int,
         idempotency_key: str,
+        provider_model_id: str | None,
+        reasoning_effort: ReasoningEffort,
     ) -> dict[str, Any]:
-        command_started_at = datetime.now(timezone.utc).isoformat()
         existing = self.repository.find_curation_command_receipt(
             session_id=session_id,
             idempotency_key=idempotency_key,
@@ -364,7 +392,222 @@ class ReviewApplication:
             summary_version=summary_version,
         )
         if existing is not None:
-            return self._curation_command_resource(existing)
+            if existing.execution_id is None:
+                raise ReviewConflictError(
+                    "curation command has no execution"
+                )
+            return self._accepted_curation_command_resource(existing)
+        curation = self.repository.get_curation_session(session_id)
+        if curation.summary_version != summary_version:
+            raise ReviewConflictError(
+                "curation summary changed before command submission"
+            )
+        if provider_model_id is not None:
+            self.validate_model(provider_model_id, reasoning_effort)
+        command_models = self.curation_command_models
+        if (
+            provider_model_id is not None
+            and self.curation_command_models_factory is not None
+        ):
+            command_models = self.curation_command_models_factory(
+                ModelOverride(
+                    provider_model_id=provider_model_id,
+                    reasoning_effort=reasoning_effort,
+                )
+            )
+        submitted_at = datetime.now(timezone.utc).isoformat()
+        receipt, created = self.repository.begin_curation_command(
+            session_id=session_id,
+            idempotency_key=idempotency_key,
+            text=text,
+            summary_version=summary_version,
+            command={"kind": "pending", "candidateIds": []},
+        )
+        if not created:
+            if receipt.execution_id is None:
+                raise ReviewConflictError(
+                    "curation command has no execution"
+                )
+            return self._accepted_curation_command_resource(receipt)
+        session = self.sessions.get(session_id)
+        execution = await self.executions.prepare(
+            session,
+            input={"operation": "curation.command", "commandId": receipt.id},
+            project_input_message=False,
+            configuration={
+                "providerModelId": provider_model_id,
+                "reasoningEffort": reasoning_effort,
+            },
+        )
+        receipt = self.repository.attach_curation_command_execution(
+            receipt.id, execution.id
+        )
+        if provider_model_id is not None:
+            self.repository.save_curation_preference(
+                session_id,
+                provider_model_id=provider_model_id,
+                reasoning_effort=reasoning_effort,
+            )
+        await self.timeline.append(
+            session_id=session_id,
+            execution_id=execution.id,
+            role="user",
+            message_kind="text",
+            content=text,
+            payload={
+                "resourceId": receipt.id,
+                "version": summary_version,
+                "submittedAt": submitted_at,
+            },
+        )
+
+        self._schedule_curation_command(
+            receipt=receipt,
+            text=text,
+            command_models=command_models,
+            submitted_at=submitted_at,
+        )
+        return self._accepted_curation_command_resource(receipt)
+
+    def _schedule_curation_command(
+        self,
+        *,
+        receipt,
+        text: str,
+        command_models: CurationCommandModels | None,
+        submitted_at: str,
+    ) -> None:
+        if receipt.execution_id is None:
+            raise ReviewConflictError("curation command has no execution")
+        execution = self.sessions.repository.get_execution(receipt.execution_id)
+
+        async def handler(current, cancellation):
+            self.repository.transition_curation_command_lifecycle(
+                receipt.id, expected=("accepted",), target="running"
+            )
+            try:
+                await self.execute_curation_command(
+                    receipt.session_id,
+                    text=text,
+                    summary_version=receipt.summary_version,
+                    idempotency_key=receipt.idempotency_key,
+                    _prepared_receipt_id=receipt.id,
+                    _execution_id=current.id,
+                    _cancellation=cancellation,
+                    _submitted_at=submitted_at,
+                    _command_models=command_models,
+                )
+            except (ExecutionCancelled, asyncio.CancelledError):
+                latest = self.sessions.repository.get_execution(current.id)
+                target = (
+                    "cancelled"
+                    if latest.cancellation_requested
+                    else "interrupted"
+                )
+                self.repository.transition_curation_command_lifecycle(
+                    receipt.id,
+                    expected=("running",),
+                    target=target,
+                )
+                raise
+            except Exception:
+                self.repository.transition_curation_command_lifecycle(
+                    receipt.id,
+                    expected=("running",),
+                    target="failed",
+                )
+                raise
+
+        self.executions.run_background(execution, handler)
+
+    async def retry_curation_command(
+        self, command_id: str
+    ) -> dict[str, Any]:
+        receipt = self.repository.get_curation_command_receipt(command_id)
+        if receipt.lifecycle_status not in {"interrupted", "failed"}:
+            raise ReviewConflictError("curation command cannot be retried")
+        curation = self.repository.get_curation_session(receipt.session_id)
+        command_models = self.curation_command_models
+        if (
+            curation.preferred_model_id is not None
+            and self.curation_command_models_factory is not None
+        ):
+            command_models = self.curation_command_models_factory(
+                ModelOverride(
+                    provider_model_id=curation.preferred_model_id,
+                    reasoning_effort=curation.preferred_reasoning_effort,
+                )
+            )
+        session = self.sessions.get(receipt.session_id)
+        execution = await self.executions.prepare(
+            session,
+            input={"operation": "curation.command", "commandId": receipt.id},
+            project_input_message=False,
+            configuration={
+                "providerModelId": curation.preferred_model_id,
+                "reasoningEffort": curation.preferred_reasoning_effort,
+            },
+        )
+        receipt = self.repository.requeue_curation_command(
+            receipt.id, execution.id
+        )
+        self._schedule_curation_command(
+            receipt=receipt,
+            text=receipt.original_text,
+            command_models=command_models,
+            submitted_at=receipt.created_at,
+        )
+        return self._accepted_curation_command_resource(receipt)
+
+    async def abandon_curation_command(self, command_id: str) -> None:
+        receipt = self.repository.get_curation_command_receipt(command_id)
+        if receipt.lifecycle_status in {"completed", "partial_failure", "cancelled"}:
+            return
+        if receipt.lifecycle_status in {"accepted", "running"}:
+            if receipt.execution_id is None:
+                raise ReviewConflictError("curation command has no execution")
+            await self.executions.cancel(receipt.execution_id)
+            latest = self.repository.get_curation_command_receipt(receipt.id)
+            if latest.lifecycle_status in {"accepted", "running"}:
+                self.repository.transition_curation_command_lifecycle(
+                    receipt.id,
+                    expected=("accepted", "running"),
+                    target="cancelled",
+                )
+            return
+        self.repository.transition_curation_command_lifecycle(
+            receipt.id,
+            expected=("interrupted", "failed"),
+            target="cancelled",
+        )
+
+    async def execute_curation_command(
+        self,
+        session_id: str,
+        *,
+        text: str,
+        summary_version: int,
+        idempotency_key: str,
+        _prepared_receipt_id: str | None = None,
+        _execution_id: str | None = None,
+        _cancellation: ExecutionCancellation | None = None,
+        _submitted_at: str | None = None,
+        _command_models: CurationCommandModels | None = None,
+    ) -> dict[str, Any]:
+        command_started_at = (
+            _submitted_at or datetime.now(timezone.utc).isoformat()
+        )
+        if _prepared_receipt_id is None:
+            existing = self.repository.find_curation_command_receipt(
+                session_id=session_id,
+                idempotency_key=idempotency_key,
+                text=text,
+                summary_version=summary_version,
+            )
+            if existing is not None:
+                return self._curation_command_resource(existing)
+        else:
+            existing = None
         curation = self.repository.get_curation_session(session_id)
         if curation.summary_version != summary_version:
             raise ReviewConflictError("curation summary changed before command resolution")
@@ -395,10 +638,11 @@ class ReviewApplication:
         deterministic = self.curation_commands.try_parse(
             text, curation.summary, focused_candidate_ids
         )
+        command_models = _command_models or self.curation_command_models
         plan: CurationCommandPlan
         if deterministic is not None:
             plan = deterministic
-        elif self.curation_command_models is None:
+        elif command_models is None:
             plan = CurationCommandPlan(
                 clarification=(
                     "我还不能安全确定要处理哪些题目，请明确题号和要执行的操作。"
@@ -407,11 +651,13 @@ class ReviewApplication:
         else:
             interpreter = CurationCommandInterpreter(
                 self.curation_commands,
-                self.curation_command_models.classifier,
+                command_models.classifier,
             )
+            response_context = None
+            response_invocation_context = None
 
             async def context_provider():
-                nonlocal context_record
+                nonlocal context_record, response_context, response_invocation_context
                 latest_execution = self.sessions.repository.latest_execution(
                     session_id
                 )
@@ -438,19 +684,19 @@ class ReviewApplication:
                 )
                 assembler = ContextAssembler()
                 budget = self._curation_context_budget(
-                    self.curation_command_models.context_limit_tokens
+                    command_models.context_limit_tokens
                 )
                 try:
                     assembled = assembler.assemble(
                         material,
                         budget,
-                        self.curation_command_models.token_counter,
+                        command_models.token_counter,
                     )
                 except ContextBudgetExceededError as error:
                     raise ReviewConflictError(error.code) from error
                 if assembled.overflow_turns:
                     try:
-                        compacted = await self.curation_command_models.summarizer.summarize(
+                        compacted = await command_models.summarizer.summarize(
                             prior_summary=prior_summary,
                             overflow_turns=assembled.overflow_turns,
                             context=invocation_context,
@@ -482,7 +728,7 @@ class ReviewApplication:
                         assembled = assembler.assemble(
                             material,
                             budget,
-                            self.curation_command_models.token_counter,
+                            command_models.token_counter,
                         )
                         if self.curation_context_projection is not None:
                             self.curation_context_projection.mark_context_compacted(
@@ -503,14 +749,50 @@ class ReviewApplication:
                             estimated=True,
                         ),
                     )
+                response_context = assembled
+                response_invocation_context = invocation_context
                 return assembled, invocation_context
 
+            if _cancellation is not None:
+                _cancellation.raise_if_requested()
+            await self.events.publish(
+                session_id,
+                _execution_id,
+                "curation.command.interpreting",
+                {"resourceId": _prepared_receipt_id or idempotency_key},
+            )
             plan = await interpreter.interpret(
                 text=text,
                 summary=curation.summary,
                 focused_candidate_ids=focused_candidate_ids,
                 context_provider=context_provider,
             )
+            if _cancellation is not None:
+                _cancellation.raise_if_requested()
+            if (
+                plan.response.strip()
+                and response_context is not None
+                and response_invocation_context is not None
+                and hasattr(command_models, "responder")
+            ):
+                response_chunks: list[str] = []
+                async for chunk in command_models.responder.astream(
+                    response_context.render(),
+                    context=response_invocation_context,
+                ):
+                    if _cancellation is not None:
+                        _cancellation.raise_if_requested()
+                    response_chunks.append(chunk)
+                    await self.events.publish(
+                        session_id,
+                        _execution_id,
+                        "assistant.delta",
+                        {"text": chunk},
+                    )
+                if response_chunks:
+                    plan = plan.model_copy(
+                        update={"response": "".join(response_chunks)}
+                    )
         parsed = self.curation_commands.resolve_plan(
             plan=plan,
             summary=curation.summary,
@@ -525,29 +807,35 @@ class ReviewApplication:
             "clarification": parsed.clarification,
             "rewriteCandidateIds": parsed.rewrite_candidate_ids,
         }
-        receipt, created = self.repository.begin_curation_command(
-            session_id=session_id,
-            idempotency_key=idempotency_key,
-            text=text,
-            summary_version=summary_version,
-            command=command_payload,
-        )
-        if not created:
-            return self._curation_command_resource(receipt)
-        latest = self.sessions.repository.latest_execution(session_id)
-        execution_id = None if latest is None else latest.id
-        await self.timeline.append(
-            session_id=session_id,
-            execution_id=execution_id,
-            role="user",
-            message_kind="text",
-            content=text,
-            payload={
-                "resourceId": receipt.id,
-                "version": summary_version,
-                "submittedAt": command_started_at,
-            },
-        )
+        if _prepared_receipt_id is None:
+            receipt, created = self.repository.begin_curation_command(
+                session_id=session_id,
+                idempotency_key=idempotency_key,
+                text=text,
+                summary_version=summary_version,
+                command=command_payload,
+            )
+            if not created:
+                return self._curation_command_resource(receipt)
+            latest = self.sessions.repository.latest_execution(session_id)
+            execution_id = None if latest is None else latest.id
+            await self.timeline.append(
+                session_id=session_id,
+                execution_id=execution_id,
+                role="user",
+                message_kind="text",
+                content=text,
+                payload={
+                    "resourceId": receipt.id,
+                    "version": summary_version,
+                    "submittedAt": command_started_at,
+                },
+            )
+        else:
+            receipt = self.repository.replace_curation_command_plan(
+                _prepared_receipt_id, command_payload
+            )
+            execution_id = _execution_id
         result: dict[str, object]
         terminal_status = "completed"
         if parsed.kind == "clarify":
@@ -568,30 +856,48 @@ class ReviewApplication:
         elif parsed.kind == "reject":
             rejected = []
             for candidate_id in parsed.candidate_ids:
-                candidate = self.repository.get_candidate(candidate_id)
-                if candidate.draft_id is not None:
-                    draft = await self.drafts.get(candidate.draft_id)
-                    await self.drafts.mark_rejected(
-                        draft.id,
-                        expected_version=draft.version,
-                        expected_hash=draft.content_hash,
-                    )
-                self.repository.update_candidate_status(
-                    candidate_id, status="rejected"
+                if _cancellation is not None:
+                    _cancellation.raise_if_requested()
+                critical = (
+                    _cancellation.critical_section()
+                    if _cancellation is not None
+                    else nullcontext()
                 )
+                with critical:
+                    candidate = self.repository.get_candidate(candidate_id)
+                    if candidate.draft_id is not None:
+                        draft = await self.drafts.get(candidate.draft_id)
+                        await self.drafts.mark_rejected(
+                            draft.id,
+                            expected_version=draft.version,
+                            expected_hash=draft.content_hash,
+                        )
+                    self.repository.update_candidate_status(
+                        candidate_id, status="rejected"
+                    )
                 rejected.append(candidate_id)
+                if _cancellation is not None:
+                    _cancellation.raise_if_requested()
             result = {"rejectedIds": rejected, "rejectedCount": len(rejected)}
         elif parsed.kind in {"confirm", "mixed"}:
             published: list[str] = []
             failed: list[dict[str, str]] = []
             for candidate_id in parsed.candidate_ids:
+                if _cancellation is not None:
+                    _cancellation.raise_if_requested()
                 try:
-                    await self._publish_curation_candidate(
-                        candidate_id,
-                        idempotency_key=(
-                            f"{idempotency_key}:{candidate_id}"
-                        ),
+                    critical = (
+                        _cancellation.critical_section()
+                        if _cancellation is not None
+                        else nullcontext()
                     )
+                    with critical:
+                        await self._publish_curation_candidate(
+                            candidate_id,
+                            idempotency_key=(
+                                f"{idempotency_key}:{candidate_id}"
+                            ),
+                        )
                     published.append(candidate_id)
                 except Exception:
                     failed.append(
@@ -600,6 +906,8 @@ class ReviewApplication:
                             "code": "publication_failed",
                         }
                     )
+                if _cancellation is not None:
+                    _cancellation.raise_if_requested()
             result = {
                 "publishedIds": published,
                 "publishedCount": len(published),
@@ -607,14 +915,26 @@ class ReviewApplication:
             }
             terminal_status = "partial_failure" if failed else "completed"
             if parsed.kind == "mixed" and parsed.rewrite_candidate_ids:
+                if _cancellation is not None:
+                    _cancellation.raise_if_requested()
                 rewrite_feedback = self._candidate_notes_feedback(parsed.rewrite_candidate_ids, parsed.feedback)
                 candidate = self.repository.get_candidate(parsed.rewrite_candidate_ids[0])
+                if execution_id is not None:
+                    await self.executions.complete_background_execution(
+                        execution_id
+                    )
                 rewrite_execution = await self._start_curation_execution(session_id=session_id, source_refs=curation.source_refs, rewrite_feedback=rewrite_feedback, rewrite_of_batch_id=candidate.batch_id)
                 result["rewriteExecutionId"] = rewrite_execution.id
                 result["rewriteCandidateIds"] = list(parsed.rewrite_candidate_ids)
         elif parsed.kind == "rewrite":
+            if _cancellation is not None:
+                _cancellation.raise_if_requested()
             candidate = self.repository.get_candidate(parsed.candidate_ids[0])
             rewrite_feedback = self._candidate_notes_feedback(parsed.candidate_ids, parsed.feedback)
+            if execution_id is not None:
+                await self.executions.complete_background_execution(
+                    execution_id
+                )
             execution = await self._start_curation_execution(
                 session_id=session_id,
                 source_refs=curation.source_refs,
@@ -928,6 +1248,16 @@ class ReviewApplication:
             "result": receipt.result,
             "created_at": receipt.created_at,
             "completed_at": receipt.completed_at,
+        }
+
+    @staticmethod
+    def _accepted_curation_command_resource(receipt) -> dict[str, Any]:
+        if receipt.execution_id is None:
+            raise ReviewConflictError("curation command has no execution")
+        return {
+            "command_id": receipt.id,
+            "execution_id": receipt.execution_id,
+            "status": "accepted",
         }
 
     async def create_question_batch(

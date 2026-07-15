@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from langchain_core.messages import AIMessageChunk
 
 from app.agents.context import AgentContext
 from app.agents.context_assembly import (
@@ -15,8 +16,10 @@ from app.agents.context_assembly import (
 from app.agents.curation_command import (
     CurationCommandClassifier,
     CurationCommandModels,
+    CurationCommandResponder,
     CurationContextSummarizer,
 )
+from app.agents.factory import ModelOverride
 from app.review.curation_command_contracts import (
     CurationCommandPlan,
     CurationDialogueSummary,
@@ -28,8 +31,17 @@ class RecordingFactory:
         self.runnables = iter(runnables)
         self.calls = []
 
-    def create(self, spec, *, model_bindings, checkpointer=None):
-        self.calls.append((spec, model_bindings, checkpointer))
+    def create(
+        self,
+        spec,
+        *,
+        model_bindings,
+        model_override=None,
+        checkpointer=None,
+    ):
+        self.calls.append(
+            (spec, model_bindings, model_override, checkpointer)
+        )
         return next(self.runnables)
 
 
@@ -41,6 +53,13 @@ class RecordingRunnable:
     async def ainvoke(self, input, config=None, *, context=None):
         self.inputs.append((input, config, context))
         return {"structured_response": self.structured_response}
+
+
+class StreamingRunnable:
+    async def astream(self, input, config=None, *, context=None, **kwargs):
+        assert input["messages"][0].content == "rendered context"
+        yield {"type": "messages", "data": (AIMessageChunk(content="你"), {})}
+        yield {"type": "messages", "data": (AIMessageChunk(content="好"), {})}
 
 
 def _context(tmp_path: Path) -> AgentContext:
@@ -92,7 +111,8 @@ def _assembled() -> AssembledContext:
 def test_models_use_explicit_roles_names_and_no_tools_or_checkpoint() -> None:
     classifier = RecordingRunnable(CurationCommandPlan())
     summarizer = RecordingRunnable(CurationDialogueSummary())
-    factory = RecordingFactory((classifier, summarizer))
+    responder = StreamingRunnable()
+    factory = RecordingFactory((classifier, summarizer, responder))
 
     models = CurationCommandModels.create(
         factory,
@@ -104,17 +124,63 @@ def test_models_use_explicit_roles_names_and_no_tools_or_checkpoint() -> None:
         context_limit_tokens=16_000,
     )
 
-    classifier_spec, _, classifier_checkpoint = factory.calls[0]
-    summarizer_spec, _, summarizer_checkpoint = factory.calls[1]
+    classifier_spec, _, classifier_override, classifier_checkpoint = factory.calls[0]
+    summarizer_spec, _, summarizer_override, summarizer_checkpoint = factory.calls[1]
+    responder_spec, _, responder_override, responder_checkpoint = factory.calls[2]
     assert classifier_spec.role == "question_generation"
     assert classifier_spec.execution_name == "curation_command_classifier"
     assert classifier_spec.tools == ()
     assert summarizer_spec.role == "report_summarization"
     assert summarizer_spec.execution_name == "curation_context_summarizer"
     assert summarizer_spec.tools == ()
+    assert responder_spec.execution_name == "curation_command_responder"
+    assert responder_spec.tools == ()
     assert classifier_checkpoint is None
     assert summarizer_checkpoint is None
+    assert classifier_override is None
+    assert summarizer_override is None
+    assert responder_override is None
+    assert responder_checkpoint is None
     assert models.context_limit_tokens == 16_000
+
+
+def test_interaction_override_only_changes_classifier_model() -> None:
+    classifier = RecordingRunnable(CurationCommandPlan())
+    summarizer = RecordingRunnable(CurationDialogueSummary())
+    responder = StreamingRunnable()
+    factory = RecordingFactory((classifier, summarizer, responder))
+    override = ModelOverride(
+        provider_model_id="chosen-model",
+        reasoning_effort="high",
+    )
+
+    CurationCommandModels.create(
+        factory,
+        model_bindings={
+            "question_generation": "default-model",
+            "report_summarization": "summary-model",
+        },
+        interaction_override=override,
+        context_limit_tokens=16_000,
+    )
+
+    assert factory.calls[0][2] == override
+    assert factory.calls[1][2] is None
+    assert factory.calls[2][2] == override
+
+
+@pytest.mark.asyncio
+async def test_responder_streams_only_real_assistant_text(tmp_path) -> None:
+    responder = CurationCommandResponder(StreamingRunnable())
+
+    chunks = [
+        chunk
+        async for chunk in responder.astream(
+            "rendered context", context=_context(tmp_path)
+        )
+    ]
+
+    assert chunks == ["你", "好"]
 
 
 @pytest.mark.asyncio

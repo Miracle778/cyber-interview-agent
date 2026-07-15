@@ -192,6 +192,37 @@ def test_curation_command_receipt_can_be_found_before_interpretation(
     connection.close()
 
 
+def test_curation_command_links_execution_and_tracks_lifecycle(
+    tmp_path: Path,
+) -> None:
+    connection = _connection(tmp_path)
+    repository = ReviewRepository(connection)
+    repository.create_curation_session(
+        workspace_id="w1",
+        session_id="s1",
+        source_refs=("source-1",),
+    )
+    receipt, created = repository.begin_curation_command(
+        session_id="s1",
+        idempotency_key="command-async-1",
+        text="给出建议",
+        summary_version=0,
+        command={"kind": "pending", "candidateIds": []},
+    )
+
+    attached = repository.attach_curation_command_execution(
+        receipt.id, "r1"
+    )
+    running = repository.transition_curation_command_lifecycle(
+        receipt.id, expected=("accepted",), target="running"
+    )
+
+    assert created is True
+    assert attached.execution_id == "r1"
+    assert running.lifecycle_status == "running"
+    connection.close()
+
+
 def test_batch_candidate_and_catalog_activation_are_idempotent(
     tmp_path: Path,
 ) -> None:

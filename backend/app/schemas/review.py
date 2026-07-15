@@ -26,6 +26,7 @@ ReviewMode = Literal[
 ]
 MasteryState = Literal["unknown", "weak", "partial", "stable", "strong"]
 Difficulty = Literal["easy", "medium", "hard"]
+ReasoningEffort = Literal["none", "low", "medium", "high"]
 
 
 class ReviewQuestion(ReviewModel):
@@ -67,6 +68,8 @@ class SubmitCurationCommand(ReviewModel):
     text: str = Field(min_length=1, max_length=5000)
     summary_version: int = Field(ge=0)
     idempotency_key: str = Field(min_length=8, max_length=200)
+    provider_model_id: str | None = Field(default=None, min_length=1)
+    reasoning_effort: ReasoningEffort = "none"
 
 
 class UpdateQuestionCandidateCommand(ReviewModel):
@@ -271,6 +274,13 @@ class CurationSourceResource(ReviewModel):
     ]
 
 
+class LatestCurationCommandResource(ReviewModel):
+    command_id: str
+    execution_id: str | None
+    lifecycle_status: str
+    retry_count: int
+
+
 class CurationSessionResource(ReviewModel):
     id: str
     workspace_id: str
@@ -292,6 +302,9 @@ class CurationSessionResource(ReviewModel):
     summary: dict[str, Any]
     summary_version: int
     warnings: list[dict[str, Any]]
+    preferred_model_id: str | None = None
+    preferred_reasoning_effort: ReasoningEffort = "none"
+    latest_command: LatestCurationCommandResource | None = None
     candidate_count: int
     pending_count: int
     published_count: int
@@ -311,6 +324,12 @@ class CurationCommandReceiptResource(ReviewModel):
     result: dict[str, Any]
     created_at: str
     completed_at: str | None
+
+
+class AcceptedCurationCommandResource(ReviewModel):
+    command_id: str
+    execution_id: str
+    status: Literal["accepted"] = "accepted"
 
 
 class ReviewRoundResource(ReviewModel):

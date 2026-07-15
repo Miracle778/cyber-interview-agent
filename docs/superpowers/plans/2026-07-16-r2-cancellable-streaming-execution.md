@@ -312,7 +312,7 @@ git commit -m "feat(runtime): add cancellable domain executions"
 - Produces: `CurationCommandResponder.astream(text: str, assembled: AssembledContext, *, context: AgentContext) -> AsyncIterator[AIMessageChunk]` for genuinely generated user-facing responses.
 - Produces: session resource fields `preferredModelId`, `preferredReasoningEffort`, and latest command execution state.
 
-- [ ] **Step 1: Write failing asynchronous API and idempotency tests**
+- [x] **Step 1: Write failing asynchronous API and idempotency tests**
 
 Replace assumptions that POST waits for a completed receipt. The route must return before a blocking classifier is released:
 
@@ -371,7 +371,7 @@ async def test_repeated_command_key_returns_same_execution(client):
 
 Add repository assertions that command lifecycle and execution ID survive reconnect/restart.
 
-- [ ] **Step 2: Run the focused command tests and verify they fail**
+- [x] **Step 2: Run the focused command tests and verify they fail**
 
 Run:
 
@@ -382,7 +382,7 @@ cd backend
 
 Expected: current POST blocks until interpretation completes and the accepted resource fields do not exist.
 
-- [ ] **Step 3: Split command prepare from background execution**
+- [x] **Step 3: Split command prepare from background execution**
 
 Rename the public synchronous entry point to `submit_curation_command` and move current interpretation/business logic into `_run_curation_command`. The prepare path must:
 
@@ -435,7 +435,7 @@ async def submit_curation_command(
 
 The background handler reloads every record by ID, transitions command lifecycle to running, performs the existing frozen-summary `Plan -> Validate -> Execute`, checks cancellation before model work and each side effect, writes the formal assistant message only after a complete result, and transitions the command lifecycle to the execution terminal outcome.
 
-- [ ] **Step 4: Build command models from the execution snapshot**
+- [x] **Step 4: Build command models from the execution snapshot**
 
 Change `CurationCommandModels.create` and `ProductionGraphFactory.create_curation_command_models` to accept `interaction_override: ModelOverride`. Apply it to the classifier and a new unstructured responder, while keeping the summarizer on its system binding:
 
@@ -472,7 +472,7 @@ responder = factory.create(
 
 Keep the summarizer on `report_summarization`. Inject a callable model factory into `ReviewApplication` so each execution receives its immutable override; do not mutate workspace bindings.
 
-- [ ] **Step 5: Project genuine model output without exposing structured JSON**
+- [x] **Step 5: Project genuine model output without exposing structured JSON**
 
 Keep `AgentEventProjector` limited to actual `AIMessageChunk` text. For the structured classifier, publish `curation.command.interpreting` before invocation and `curation.command.resolved` afterward; do not publish classifier tool/JSON chunks as assistant text.
 
@@ -500,7 +500,7 @@ def test_projector_ignores_structured_tool_chunks():
     assert projector.project({"type": "messages", "data": (chunk, {})}) == ()
 ```
 
-- [ ] **Step 6: Add cancel, retry and restart API coverage**
+- [x] **Step 6: Add cancel, retry and restart API coverage**
 
 Test the full lifecycle:
 
@@ -540,7 +540,7 @@ assert not any(
 
 Add restart coverage asserting an unfinished command becomes interrupted, is not automatically executed, and retry creates a new execution linked to the original command/idempotency scope. Add abandon coverage that makes the session immediately usable.
 
-- [ ] **Step 7: Run targeted backend command/SSE tests**
+- [x] **Step 7: Run targeted backend command/SSE tests**
 
 Run:
 
@@ -556,7 +556,7 @@ cd backend
 
 Expected: all selected tests pass; no test waits on an HTTP request for model completion.
 
-- [ ] **Step 8: Commit Task 2**
+- [x] **Step 8: Commit Task 2**
 
 ```bash
 git add backend/app/agents/curation_command.py \
