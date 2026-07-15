@@ -52,6 +52,7 @@ For simple implementation work, create or switch to a normal `codex/...` branch 
 - Record unfinished learning as understanding debt.
 - Generate or update the local `docs/learning/<stage>/` ownership pack after each major stage.
 - Batch product and architecture questions when possible and provide recommended defaults.
+- When work exposes a material architecture choice that is costly to reverse, affects multiple stages or Agents, or changes state ownership, security boundaries, technology choices, or long-term extension points, ask the user whether to record it under `docs/superpowers/architecture-decisions/` unless the user already requested a record. Do not interrupt for local, reversible implementation details.
 - Codex owns complex cross-layer work, critical state machines, security boundaries, review, and acceptance.
 - Claude may implement ordinary bounded tasks with minimal required context; Codex reviews and verifies the result.
 - Keep frontend behavior evolving with backend capabilities.
