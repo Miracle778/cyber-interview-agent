@@ -1,7 +1,10 @@
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "../../shared/api/client";
 import type {
   ActiveQuestion,
-  CurationCommandReceipt,
+  AcceptedBulkPublication,
+  AcceptedCurationCommand,
+  BulkPublication,
+  BulkPublicationPreflight,
   CurationSession,
   CreateReviewRoundRequest,
   QuestionBatch,
@@ -40,12 +43,49 @@ export function submitCurationCommand(
   session: CurationSession,
   text: string,
   idempotencyKey: string,
-): Promise<CurationCommandReceipt> {
+  providerModelId: string | null = null,
+  reasoningEffort: "none" | "low" | "medium" | "high" = "none",
+): Promise<AcceptedCurationCommand> {
   return apiPost(`/api/review/curation-sessions/${session.id}/commands`, {
     text,
     summaryVersion: session.summaryVersion,
     idempotencyKey,
+    providerModelId,
+    reasoningEffort,
   });
+}
+
+export function retryCurationCommand(commandId: string): Promise<AcceptedCurationCommand> {
+  return apiPost(`/api/review/curation-commands/${commandId}/retry`, {});
+}
+
+export function abandonCurationCommand(commandId: string): Promise<void> {
+  return apiPost(`/api/review/curation-commands/${commandId}/abandon`, {});
+}
+
+export function getBulkPublicationPreflight(sessionId: string): Promise<BulkPublicationPreflight> {
+  return apiGet(`/api/review/curation-sessions/${sessionId}/bulk-publication/preflight`);
+}
+
+export function startBulkPublication(
+  sessionId: string,
+  summaryVersion: number,
+  candidateIds: string[],
+  idempotencyKey: string,
+): Promise<AcceptedBulkPublication> {
+  return apiPost(`/api/review/curation-sessions/${sessionId}/bulk-publications`, {
+    summaryVersion,
+    candidateIds,
+    idempotencyKey,
+  });
+}
+
+export function retryBulkPublication(operationId: string, idempotencyKey: string): Promise<AcceptedBulkPublication> {
+  return apiPost(`/api/review/bulk-publications/${operationId}/retry`, { idempotencyKey });
+}
+
+export function getBulkPublication(operationId: string): Promise<BulkPublication> {
+  return apiGet(`/api/review/bulk-publications/${operationId}`);
 }
 
 export function listQuestionBatches(workspaceId: string): Promise<QuestionBatch[]> {

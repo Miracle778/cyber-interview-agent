@@ -37,4 +37,44 @@ describe("CurationConversation artifacts", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onSubmit).toHaveBeenCalledWith("发布这题");
   });
+
+  it("shows execution-scoped streaming output and swaps send for stop", () => {
+    const onStop = vi.fn();
+    render(
+      <CurationConversation
+        session={session}
+        optimisticMessage={null}
+        busy
+        activeExecutionId="run-1"
+        streamingState={{ text: "正在给出建议", status: "running" }}
+        models={[{ id: "model-1", label: "Model 1" }]}
+        selectedModelId="model-1"
+        reasoningEffort="medium"
+        onModelChange={vi.fn()}
+        onReasoningEffortChange={vi.fn()}
+        onStop={onStop}
+        onSubmit={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("正在给出建议")).toBeInTheDocument();
+    expect(screen.getByText("Agent 处理中")).toBeInTheDocument();
+    expect(screen.getByLabelText("本次执行模型")).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "停止" }));
+    expect(onStop).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers one-click publication from the generated files header", () => {
+    const onBulkPublish = vi.fn();
+    render(
+      <CurationConversation
+        session={session}
+        optimisticMessage={null}
+        busy={false}
+        onSubmit={vi.fn()}
+        onBulkPublish={onBulkPublish}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "一键发布" }));
+    expect(onBulkPublish).toHaveBeenCalledTimes(1);
+  });
 });

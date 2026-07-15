@@ -142,6 +142,44 @@ describe("useAgentEvents", () => {
     expect(result.current.executionError).toBeNull();
   });
 
+  it("buffers deltas by execution and ignores replayed event ids", () => {
+    const { result } = renderHook(() =>
+      useAgentEvents("s1", {
+        createEventSource: (url) => new FakeEventSource(url),
+      }),
+    );
+    const source = FakeEventSource.instances[0];
+    act(() => {
+      source.emit({ id: 10, type: "assistant.delta", sessionId: "s1", executionId: "r1", timestamp: "now", payload: { text: "你" } });
+      source.emit({ id: 10, type: "assistant.delta", sessionId: "s1", executionId: "r1", timestamp: "now", payload: { text: "你" } });
+      source.emit({ id: 11, type: "assistant.delta", sessionId: "s1", executionId: "r1", timestamp: "now", payload: { text: "好" } });
+    });
+    expect(result.current.streamingByExecution.r1).toEqual({
+      text: "你好",
+      status: "running",
+    });
+    expect(result.current.executionStateById.r1).toBe("running");
+  });
+
+  it("keeps partial output as cancelled temporary state", () => {
+    const { result } = renderHook(() =>
+      useAgentEvents("s1", {
+        createEventSource: (url) => new FakeEventSource(url),
+      }),
+    );
+    const source = FakeEventSource.instances[0];
+    act(() => {
+      source.emit({ id: 1, type: "assistant.delta", sessionId: "s1", executionId: "r1", timestamp: "now", payload: { text: "部分" } });
+      source.emit({ id: 2, type: "execution.cancelling", sessionId: "s1", executionId: "r1", timestamp: "now", payload: {} });
+      source.emit({ id: 3, type: "execution.cancelled", sessionId: "s1", executionId: "r1", timestamp: "now", payload: {} });
+    });
+    expect(result.current.streamingByExecution.r1).toEqual({
+      text: "部分",
+      status: "cancelled",
+    });
+    expect(result.current.events).toHaveLength(3);
+  });
+
   it("does not open or retry an event stream for a missing session", async () => {
     vi.useFakeTimers();
     const onMissingSession = vi.fn();

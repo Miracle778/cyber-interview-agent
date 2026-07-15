@@ -5,6 +5,9 @@ import {
   submitCurationCommand,
   submitReviewAnswer,
   retryReviewEvaluation,
+  getBulkPublicationPreflight,
+  startBulkPublication,
+  retryBulkPublication,
 } from "./reviewApi";
 import type { CurationSession, ReviewRound } from "./reviewTypes";
 
@@ -48,7 +51,13 @@ describe("reviewApi", () => {
       sourceRefs: ["source-1", "source-2"],
     });
 
-    await submitCurationCommand(session, "确认全部推荐题", "curation-command-1");
+    await submitCurationCommand(
+      session,
+      "确认全部推荐题",
+      "curation-command-1",
+      "provider-model-1",
+      "high",
+    );
     expect(fetchMock).toHaveBeenLastCalledWith(
       "/api/review/curation-sessions/curation-1/commands",
       expect.objectContaining({ method: "POST" }),
@@ -57,6 +66,33 @@ describe("reviewApi", () => {
       text: "确认全部推荐题",
       summaryVersion: 4,
       idempotencyKey: "curation-command-1",
+      providerModelId: "provider-model-1",
+      reasoningEffort: "high",
     });
+
+    await getBulkPublicationPreflight("curation-1");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/review/curation-sessions/curation-1/bulk-publication/preflight",
+      expect.objectContaining({ method: "GET" }),
+    );
+    await startBulkPublication(
+      "curation-1",
+      4,
+      ["candidate-1"],
+      "bulk-start-1",
+    );
+    expect(JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1]?.body))).toEqual({
+      summaryVersion: 4,
+      candidateIds: ["candidate-1"],
+      idempotencyKey: "bulk-start-1",
+    });
+    await retryBulkPublication("bulk-1", "bulk-retry-1");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/review/bulk-publications/bulk-1/retry",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ idempotencyKey: "bulk-retry-1" }),
+      }),
+    );
   });
 });

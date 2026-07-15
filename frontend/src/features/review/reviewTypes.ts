@@ -133,6 +133,14 @@ export interface CurationSession {
   summary: { items: CurationSummaryItem[] };
   summaryVersion: number;
   warnings: { sourceId: string; code: string }[];
+  preferredModelId: string | null;
+  preferredReasoningEffort: "none" | "low" | "medium" | "high";
+  latestCommand: {
+    commandId: string;
+    executionId: string | null;
+    lifecycleStatus: string;
+    retryCount: number;
+  } | null;
   candidateCount: number;
   pendingCount: number;
   publishedCount: number;
@@ -150,6 +158,48 @@ export interface CurationCommandReceipt {
   targetIds: string[];
   status: string;
   result: Record<string, unknown>;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface AcceptedCurationCommand {
+  commandId: string;
+  executionId: string;
+  status: "accepted";
+}
+
+export interface BulkPublicationPreflight {
+  sessionId: string;
+  summaryVersion: number;
+  publishable: string[];
+  alreadyPublished: string[];
+  needsReview: string[];
+  blocked: string[];
+}
+
+export interface AcceptedBulkPublication {
+  operationId: string;
+  executionId: string;
+  status: "accepted";
+}
+
+export interface BulkPublication {
+  id: string;
+  sessionId: string;
+  executionId: string | null;
+  summaryVersion: number;
+  status: string;
+  retryCount: number;
+  items: {
+    id: string;
+    operationId: string;
+    candidateId: string;
+    idempotencyKey: string;
+    status: string;
+    errorCode: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }[];
   createdAt: string;
   completedAt: string | null;
 }

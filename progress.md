@@ -259,3 +259,14 @@
 - 真实浏览器会话 `611cb0d3-c287-46f0-bbe5-0753fd6c5370`：5 轮 inspect 形成超过 8 条消息后，“这题发布吧”准确发布第 1 题；后端真实重启后发布回执与 3/2/1 统计恢复。
 - 真实 structured classifier 将“请同时查看第 2、3 题”投影为两个 candidate ID；随后“这题发布吧”返回多焦点澄清，发布数不变，模型调用数保持 4。页面与 API 均显示实际 context `3160 / 89600` tokens；另一个真实会话为 `contextCompacted=true`。
 - 375px 检查 `clientWidth=scrollWidth=375`，无横向溢出；浏览器 console error 为 0；本次后端未启动或依赖 Langfuse。产品实现基线为 `97529b7`。
+
+## 2026-07-16：可取消流式执行 Task 4
+
+- 前端按 execution ID 聚合 replay-safe SSE 临时消息；发送态切换为停止，支持模型/思考强度快照、interrupted 重试与放弃。
+- 候选文件卡新增服务端预检的一键发布、共享停止、部分成功保留和仅重试失败/未处理项。
+- `ui-ux-pro-max` 仅调用一次，落实紧凑 composer、危险操作层级、可访问确认框、有界流式内容与移动端折叠约束。
+- TDD RED 后，前端定向 `22 passed`，后端跨层定向 `41 passed`；`git diff --check` 通过。
+- 最终全量：后端 `319 passed`（1 条第三方弃用 warning）、前端 `113 passed`、production build 通过（保留 >500 kB chunk 提示）。
+- 浏览器隔离工作区：桌面与 390px 可进入失败会话，模型/思考强度、失败恢复和运行详情可用且未见重叠。
+- 环境未配置 Provider，执行真实进入 `MODEL_NOT_FOUND`；未伪造流式停止、重启恢复或批量部分成功的浏览器结论。
+- 文档门禁已执行但因本地 `docs/learning/r2/` 尚未生成而失败；完整浏览器验收和 learning 七件套未完成前不关闭 R2。

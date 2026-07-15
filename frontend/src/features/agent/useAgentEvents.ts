@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { AgentEvent } from "./agentTypes";
+import type { AgentEvent, AgentExecutionStatus, StreamingAssistantState } from "./agentTypes";
 
 export type AgentEventConnectionStatus =
   | "disconnected"
@@ -31,7 +31,9 @@ const EVENT_TYPES = [
   "curation.progress.changed",
   "curation.summary.ready",
   "curation.command.resolved",
+  "curation.command.interpreting",
   "execution.started",
+  "execution.cancelling",
   "assistant.delta",
   "approval.required",
   "approval.resolved",
@@ -78,6 +80,8 @@ export function useAgentEvents(
   const [status, setStatus] = useState<AgentEventConnectionStatus>("disconnected");
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [executionError, setExecutionError] = useState<{ code: string; message: string } | null>(null);
+  const [streamingByExecution, setStreamingByExecution] = useState<Record<string, StreamingAssistantState>>({});
+  const [executionStateById, setExecutionStateById] = useState<Record<string, AgentExecutionStatus>>({});
   const cursorRef = useRef(0);
   const eventIdsRef = useRef(new Set<number>());
   const createEventSourceRef = useRef(
@@ -96,6 +100,8 @@ export function useAgentEvents(
     eventIdsRef.current = new Set();
     setEvents([]);
     setExecutionError(null);
+    setStreamingByExecution({});
+    setExecutionStateById({});
     if (!sessionId) {
       setStatus("disconnected");
       return;
@@ -136,6 +142,47 @@ export function useAgentEvents(
         eventIdsRef.current.add(event.id);
         cursorRef.current = Math.max(cursorRef.current, event.id);
         setEvents((current) => [...current, event].slice(-100));
+        const executionId = event.executionId;
+        if (executionId) {
+          if (event.type === "assistant.delta") {
+            const payload = event.payload as { text?: string };
+            if (payload.text) {
+              setStreamingByExecution((current) => ({
+                ...current,
+                [executionId]: {
+                  text: `${current[executionId]?.text ?? ""}${payload.text}`,
+                  status: "running",
+                },
+              }));
+              setExecutionStateById((current) => ({ ...current, [executionId]: "running" }));
+            }
+          } else {
+            const statusByEvent: Partial<Record<string, AgentExecutionStatus>> = {
+              "execution.started": "running",
+              "curation.command.interpreting": "running",
+              "execution.cancelling": "cancelling",
+              "execution.cancelled": "cancelled",
+              "execution.interrupted": "interrupted",
+              "execution.failed": "failed",
+              "execution.completed": "completed",
+            };
+            const nextStatus = statusByEvent[event.type];
+            if (nextStatus) {
+              setExecutionStateById((current) => ({ ...current, [executionId]: nextStatus }));
+              setStreamingByExecution((current) => {
+                const existing = current[executionId];
+                if (!existing && !["running", "cancelling"].includes(nextStatus)) return current;
+                return {
+                  ...current,
+                  [executionId]: {
+                    text: existing?.text ?? "",
+                    status: nextStatus as StreamingAssistantState["status"],
+                  },
+                };
+              });
+            }
+          }
+        }
         if (event.type === "execution.started") {
           setExecutionError(null);
         } else if (event.type === "execution.failed") {
@@ -166,5 +213,5 @@ export function useAgentEvents(
     };
   }, [sessionId]);
 
-  return { status, events, executionError };
+  return { status, events, executionError, streamingByExecution, executionStateById };
 }

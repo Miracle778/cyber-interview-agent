@@ -1,5 +1,7 @@
 export type AgentExecutionStatus =
   | "running"
+  | "cancelling"
+  | "waiting_for_input"
   | "waiting_for_approval"
   | "interrupted"
   | "completed"
@@ -27,6 +29,11 @@ export interface AgentExecution {
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
+}
+
+export interface StreamingAssistantState {
+  text: string;
+  status: "running" | "cancelling" | "cancelled" | "completed" | "failed" | "interrupted";
 }
 
 export interface AgentMessage {

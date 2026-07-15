@@ -121,9 +121,9 @@ describe("QuestionCatalog", () => {
       if (url.includes("/api/knowledge/sources")) return Response.json([]);
       if (url.endsWith("/commands") && init?.method === "POST") {
         await new Promise<void>((resolve) => { finishCommand = () => { commandDone = true; resolve(); }; });
-        return Response.json({ id: "receipt-1", sessionId: "cs1", summaryVersion: 1, kind: "confirm", targetIds: [], status: "completed", result: {}, createdAt: "now", completedAt: "now" }, { status: 202 });
+        return Response.json({ commandId: "command-1", executionId: "command-execution-1", status: "accepted" }, { status: 202 });
       }
-      if (url.includes("/api/review/curation-sessions")) return Response.json([{ ...baseSession, messages: commandDone ? [{ id: "m-user", executionId: "e1", role: "user", content: "确认全部推荐题", messageKind: "text", payload: {}, createdAt: "now" }, { id: "m-receipt", executionId: "e1", role: "assistant", content: "已发布 1 道题。", messageKind: "command_receipt", payload: {}, createdAt: "now" }] : [] }]);
+      if (url.includes("/api/review/curation-sessions")) return Response.json([{ ...baseSession, messages: commandDone ? [{ id: "m-user", executionId: "command-execution-1", role: "user", content: "确认全部推荐题", messageKind: "text", payload: { resourceId: "command-1" }, createdAt: "now" }, { id: "m-receipt", executionId: "command-execution-1", role: "assistant", content: "已发布 1 道题。", messageKind: "command_receipt", payload: { resourceId: "command-1" }, createdAt: "now" }] : [] }]);
       throw new Error(`unexpected ${url}`);
     });
     render(<QuestionCatalog workspace={workspace} />, { wrapper });

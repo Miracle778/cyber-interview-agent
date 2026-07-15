@@ -740,11 +740,11 @@ git commit -m "feat(review): add safe bulk candidate publication"
 - Produces: a composer that sends the selected model snapshot, swaps Send for Stop, recovers after refresh, and renders partial/final messages correctly.
 - Produces: bulk preflight confirmation and per-file progress/retry UI.
 
-- [ ] **Step 1: Invoke `ui-ux-pro-max` once and record actionable constraints**
+- [x] **Step 1: Invoke `ui-ux-pro-max` once and record actionable constraints**
 
 Read `/Users/miracle778/.codex/skills/ui-ux-pro-max/SKILL.md` completely, use its repository search script for a desktop three-column Agent workspace with compact composer controls, destructive stop action, accessible progress, and bounded artifact lists. Record only the chosen recommendations in `findings.md` under “R2 cancellable streaming UI”; exit the skill after deciding spacing, control hierarchy, responsive behavior and status copy.
 
-- [ ] **Step 2: Write failing event-buffer and API tests**
+- [x] **Step 2: Write failing event-buffer and API tests**
 
 Cover replay deduplication and terminal replacement:
 
@@ -768,7 +768,7 @@ it("marks partial output cancelled without promoting it to a formal message", as
 
 Update `reviewApi.test.ts` to assert command POST includes `providerModelId` and `reasoningEffort` and returns the accepted resource. Test preflight, start, retry and generic cancel URLs.
 
-- [ ] **Step 3: Run targeted frontend tests and verify they fail**
+- [x] **Step 3: Run targeted frontend tests and verify they fail**
 
 Run:
 
@@ -784,7 +784,7 @@ npm test -- --run \
 
 Expected: accepted execution types, streaming buffers, model controls and bulk actions are missing.
 
-- [ ] **Step 4: Implement replay-safe execution-scoped streaming state**
+- [x] **Step 4: Implement replay-safe execution-scoped streaming state**
 
 Extend the hook with a reducer keyed by execution ID:
 
@@ -807,7 +807,7 @@ Append only unseen `assistant.delta` events. Set cancelling/cancelled/interrupte
 
 Extend `EVENT_TYPES` with `curation.command.interpreting` and `execution.cancelling`; keep the existing EventSource URL/cursor behavior rather than opening a second stream.
 
-- [ ] **Step 5: Implement the model-selectable stop-aware composer**
+- [x] **Step 5: Implement the model-selectable stop-aware composer**
 
 In `QuestionCatalog`, subscribe to the selected session with `useAgentEvents`, refetch session/candidates on relevant completion events, and keep `activeExecutionId` from the accepted response rather than treating the HTTP mutation as the running period.
 
@@ -832,13 +832,13 @@ Composer behavior must be explicit:
 
 Render enabled/healthy Provider Models in a compact selector and reasoning strengths beside it. Initialize from session preference, disable both while running, and show the actual execution model in the streamed message metadata/runtime panel. Preserve Enter-to-send and Shift+Enter-to-newline.
 
-- [ ] **Step 6: Render temporary, stopped and interrupted messages**
+- [x] **Step 6: Render temporary, stopped and interrupted messages**
 
 Insert the execution-scoped temporary assistant message after its associated optimistic user message. While empty show “题匠正在理解你的指令”; while chunks arrive show the accumulated Markdown. Status copy is “Agent 处理中”, “正在停止”, “已停止”, “运行中断”, “处理失败” or “处理完成”. Bound expanded process content with an internal scrollbar so the page layout does not grow without limit.
 
 For interrupted runs, display two actions: retry calls the command retry endpoint; abandon marks the command cancelled/abandoned and returns the composer to idle. Do not place partial text in `CurationMessage[]` or the formal context query cache.
 
-- [ ] **Step 7: Add one-click publication with preflight confirmation**
+- [x] **Step 7: Add one-click publication with preflight confirmation**
 
 Add an “一键发布” action to the generated-files card header. On click, request preflight and show an accessible confirmation dialog containing exact counts. Start only after confirmation. Project `publication.changed` events onto file rows; apply the existing published shadow only after server confirmation. When the operation is partial failure, show “仅重试失败项”; when active, the shared stop button cancels its execution.
 
@@ -848,7 +848,7 @@ The confirmation copy must follow the accepted boundary:
 将发布 8 道推荐题；2 道需复核题会被跳过。已发布题目不会重复处理。
 ```
 
-- [ ] **Step 8: Run targeted frontend and backend integration tests**
+- [x] **Step 8: Run targeted frontend and backend integration tests**
 
 Run:
 
@@ -880,7 +880,7 @@ Expected: all selected tests pass.
 
 With backend on `127.0.0.1:8000` and frontend on `127.0.0.1:5174`, verify one existing curation session: choose a model, send a model-backed command, observe real incremental text or interpreting progress, stop it, and send a deterministic command afterward. Record actual event IDs, execution IDs and screenshots in `docs/verification/r2.md`; do not claim streaming if the selected scenario produced only structured classification.
 
-- [ ] **Step 10: Run the final regression only once**
+- [x] **Step 10: Run the final regression only once**
 
 Backend:
 
@@ -926,7 +926,7 @@ python3 scripts/check_stage_docs.py \
 
 Expected: exit 0. If the formal R2 plan still contains unchecked unrelated acceptance, report the exact gate result and do not label R2 ready for manual verification.
 
-- [ ] **Step 13: Commit Task 4**
+- [x] **Step 13: Commit Task 4**
 
 ```bash
 git add frontend/src/features/agent/agentTypes.ts \
