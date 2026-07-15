@@ -97,6 +97,7 @@ export function AppShell() {
                   description="围绕题库持续练习，形成可追踪的掌握度。"
                   health={health}
                   workspace={workspace}
+                  workspaceMode={Boolean(workspace)}
                 >
                   <ReviewPage workspace={workspace} draftQuestion={draftQuestion} />
                 </PageFrame>
@@ -156,18 +157,19 @@ interface PageFrameProps {
   health: HealthState;
   workspace: WorkspaceConfig | null;
   children: ReactNode;
+  workspaceMode?: boolean;
 }
 
-function PageFrame({ title, description, health, workspace, children }: PageFrameProps) {
+function PageFrame({ title, description, health, workspace, children, workspaceMode = false }: PageFrameProps) {
   return (
-    <div className="page-shell">
-      <PageHeader
-        title={title}
-        description={description}
-        healthStatus={health.status}
-        healthMessage={health.message}
-        workspace={workspace}
-      />
+    <div className={workspaceMode ? "page-shell page-shell--workspace" : "page-shell"}>
+      {workspaceMode ? null : <PageHeader
+          title={title}
+          description={description}
+          healthStatus={health.status}
+          healthMessage={health.message}
+          workspace={workspace}
+        />}
       <div className="page-content">{children}</div>
     </div>
   );

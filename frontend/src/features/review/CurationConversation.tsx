@@ -1,4 +1,4 @@
-import { CornerDownLeft, FileText, ListChecks } from "lucide-react";
+import { CornerDownLeft, ListChecks } from "lucide-react";
 import { FormEvent, useState } from "react";
 import { Button } from "../../shared/ui/Button";
 import { SessionMessage } from "./SessionMessage";
@@ -25,14 +25,6 @@ export function CurationConversation({ session, optimisticMessage, busy, onSubmi
     <main className="curation-conversation">
       <header className="curation-conversation__header">
         <div><span>题匠</span><h3>{session.title}</h3></div>
-        <div className="curation-source-chips">
-          {session.sources.map((source) => (
-            <span key={source.id} className="curation-source-chip" title={source.filename}>
-              <FileText size={13} />
-              {source.filename}
-            </span>
-          ))}
-        </div>
       </header>
       <div className="curation-conversation__messages" role="log" aria-label="整理对话" aria-live="polite">
         {session.messages.map((message) => <SessionMessage key={message.id} message={message} />)}

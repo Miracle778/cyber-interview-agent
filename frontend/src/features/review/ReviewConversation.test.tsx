@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ReviewConversation } from "./ReviewConversation";
 import type { ReviewRound } from "./reviewTypes";
@@ -19,8 +19,22 @@ describe("ReviewConversation", () => {
     const log = screen.getByRole("log", { name: "复习对话" });
     expect(log).toHaveTextContent("Explain MVCC");
     expect(log).toHaveTextContent("multiple versions");
+    expect(log).toHaveTextContent("复习助手");
+    expect(log).not.toHaveTextContent("面试官");
     expect(log).toHaveTextContent("正在评价回答");
     expect(log).not.toHaveTextContent("思维链");
+    expect(screen.getByText("multiple versions").closest("article")).toHaveClass("review-chat-message--user");
+    expect(screen.getByText("Explain MVCC").closest("article")).toHaveClass("review-chat-message--agent");
+  });
+
+  it("keeps the answer composer after the scrollable conversation", () => {
+    const waiting = { ...round, currentInput: { id: "i1", roundId: "r1", ordinal: 1, kind: "follow_up", prompt: "补充一下", version: 1, status: "pending", createdAt: "now", resolvedAt: null } } as ReviewRound;
+    const view = render(<ReviewConversation round={waiting} optimisticMessage={null} busy={false} onSubmit={vi.fn()} onSkip={vi.fn()} onCancel={vi.fn()} onRetry={vi.fn()} />);
+    const scoped = within(view.container);
+    const log = scoped.getByRole("log", { name: "复习对话" });
+    const input = scoped.getByRole("textbox", { name: "补充回答" });
+    expect(log.compareDocumentPosition(input.closest("footer")!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(scoped.getByRole("button", { name: "发送" })).toBeDisabled();
   });
 
   it("offers retry for a failed evaluation without asking for the answer again", () => {

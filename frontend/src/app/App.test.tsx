@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
@@ -71,7 +71,8 @@ describe("App", () => {
       const url = String(input);
       if (url.endsWith("/api/health")) return Response.json({ status: "ok" });
       if (url.endsWith("/api/settings/workspace")) return Response.json({ id: "w1", workspacePath: "/tmp/cyber-demo", vaultPath: "/tmp/cyber-demo/knowledge-vault" });
-      if (url.includes("/api/review/rounds?") || url.includes("/api/review/questions?") || url.endsWith("/api/settings/providers")) return Response.json([]);
+      if (url.includes("/api/review/rounds?") || url.endsWith("/api/settings/providers")) return Response.json([]);
+      if (url.includes("/api/review/questions?")) return Response.json(Array.from({ length: 10 }, (_, index) => ({ id: `q-${index}`, draftId: `d-${index}`, publicationId: `p-${index}`, publishedAt: "now", title: `Question ${index + 1}`, questionText: "Question body", referenceAnswer: "Reference answer", topics: ["database"], difficulty: "medium", keyPoints: ["point"], followUps: [] })));
       if (url.includes("/model-bindings")) return Response.json({ workspaceId: "w1", bindings: {} });
       throw new Error(`unexpected ${url}`);
     });
@@ -84,10 +85,13 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: /题库整理/ })).toBeInTheDocument();
     expect(screen.getByText("还没有复习记录")).toBeInTheDocument();
 
-    // explicit create reveals the setup form with empty-question guidance
-    fireEvent.click(screen.getByRole("button", { name: /创建复习/ }));
+    // explicit create reveals the setup form with the available question count
+    const createButton = screen.getByRole("button", { name: /创建复习/ });
+    await waitFor(() => expect(createButton).toBeEnabled());
+    fireEvent.click(createButton);
     expect(await screen.findByRole("heading", { name: "创建复习轮次" })).toBeInTheDocument();
-    expect(screen.getByText(/当前筛选题量不足/)).toBeInTheDocument();
+    expect(screen.getByText("匹配题目 10 道")).toBeInTheDocument();
+    expect(screen.queryByText(/当前筛选题量不足/)).not.toBeInTheDocument();
   });
 
   it("guides knowledge users without a workspace to settings", async () => {
@@ -101,32 +105,21 @@ describe("App", () => {
     expect(screen.queryByLabelText("流程状态")).not.toBeInTheDocument();
   });
 
-  it("shows backend connected and restores workspace", async () => {
-    vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ status: "ok" }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            id: "w1",
-            workspacePath: "/tmp/cyber-demo",
-            vaultPath: "/tmp/cyber-demo/knowledge-vault",
-          }),
-          {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          },
-        ),
-      );
+  it("restores the compact review workspace after the backend connects", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/health")) return Response.json({ status: "ok" });
+      if (url.endsWith("/api/settings/workspace")) return Response.json({ id: "w1", workspacePath: "/tmp/cyber-demo", vaultPath: "/tmp/cyber-demo/knowledge-vault" });
+      if (url.includes("/api/review/rounds?") || url.endsWith("/api/settings/providers") || url.includes("/api/review/questions?")) return Response.json([]);
+      if (url.includes("/model-bindings")) return Response.json({ workspaceId: "w1", bindings: {} });
+      throw new Error(`unexpected ${url}`);
+    });
 
     render(<App />);
 
-    expect(await screen.findByText("后端已连接")).toBeInTheDocument();
-    expect(await screen.findByText("Workspace：/tmp/cyber-demo")).toBeInTheDocument();
+    expect(await screen.findByRole("navigation", { name: "复习工作台入口" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "复习" })).toBeInTheDocument();
+    expect(screen.queryByText("Workspace：/tmp/cyber-demo")).not.toBeInTheDocument();
   });
 
   it("shows backend disconnected advice when health fails", async () => {

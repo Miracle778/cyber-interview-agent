@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QuestionCatalog } from "./QuestionCatalog";
@@ -19,7 +19,7 @@ describe("QuestionCatalog", () => {
       throw new Error(`unexpected ${url}`);
     });
     render(<QuestionCatalog workspace={workspace} />, { wrapper });
-    expect(await screen.findByRole("button", { name: /mysql\.md/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /mysql\.md/ })).toHaveAttribute("title", "mysql.md");
     expect(screen.getByRole("tab", { name: "整理会话" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("complementary", { name: "整理会话列表" })).toBeInTheDocument();
     expect(screen.getByRole("log", { name: "整理对话" })).toHaveTextContent("整理完成，请确认推荐题");
@@ -27,6 +27,7 @@ describe("QuestionCatalog", () => {
     expect(screen.getByLabelText("回复题匠")).toBeEnabled();
     const conversation = screen.getByRole("main");
     const sessionList = screen.getByRole("complementary", { name: "整理会话列表" });
+    expect(within(conversation).getAllByText("mysql.md")).toHaveLength(1);
     expect(conversation.compareDocumentPosition(sessionList) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 

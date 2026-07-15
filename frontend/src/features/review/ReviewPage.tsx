@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, ArrowLeft } from "lucide-react";
+import { AlertCircle, ArrowLeft, MoreHorizontal, Pause, StopCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "../../shared/ui/Button";
@@ -10,18 +10,36 @@ import type { WorkspaceConfig } from "../settings/settingsApi";
 import { cancelReviewRound, createReviewDiscussion, createReviewRound, getReviewRound, listActiveQuestions, listReviewRounds, retryReviewEvaluation, skipReviewQuestion, submitReviewAnswer } from "./reviewApi";
 import { QuestionCatalog } from "./QuestionCatalog";
 import { ReviewConversation } from "./ReviewConversation";
-import { ReviewHistory } from "./ReviewHistory";
 import { ReviewLanding } from "./ReviewLanding";
 import { ReviewResults } from "./ReviewResults";
 import { ReviewRuntimePanel } from "./ReviewRuntimePanel";
 import { ReviewSetup } from "./ReviewSetup";
 import { ReviewShell, type ReviewSection } from "./ReviewShell";
-import type { ReviewQuestion, ReviewTimelineMessage } from "./reviewTypes";
+import type { ReviewQuestion, ReviewRound, ReviewTimelineMessage } from "./reviewTypes";
 
 interface ReviewPageProps { workspace: WorkspaceConfig | null; draftQuestion?: ReviewQuestion | null; }
 
 function commandId(prefix: string) {
   return `${prefix}-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
+}
+
+function ReviewQuestionStepper({ round }: { round: ReviewRound }) {
+  const current = Math.min(round.currentIndex, Math.max(0, round.questionCount - 1));
+  const all = Array.from({ length: round.questionCount }, (_, index) => index);
+  const indexes = round.questionCount <= 5 ? all : [...new Set([0, Math.max(0, current - 1), current, Math.min(round.questionCount - 1, current + 1), round.questionCount - 1])].sort((left, right) => left - right);
+  const attemptTitle = (index: number) => round.attempts.find((item) => item.ordinal === index + 1)?.questionSnapshot.title;
+  return <nav className="review-question-stepper" aria-label="本轮题目进度">
+    <ol>{indexes.map((index, position) => {
+      const title = index === current ? round.currentQuestion?.title : attemptTitle(index);
+      const completed = index < current || round.status === "completed";
+      return <li key={index} aria-current={index === current ? "step" : undefined} data-completed={completed || undefined}>
+        {position > 0 && indexes[position - 1] !== index - 1 ? <span className="review-question-stepper__ellipsis" aria-hidden="true">…</span> : null}
+        <span className="review-question-stepper__number">{index + 1}</span>
+        <span><small>{index === current ? `第 ${index + 1} / ${round.questionCount} 题` : `第 ${index + 1} 题`}</small><strong>{title ?? "待开始"}</strong></span>
+      </li>;
+    })}</ol>
+    <div className="review-question-stepper__track" aria-hidden="true"><span style={{ width: `${Math.max(4, ((current + 1) / round.questionCount) * 100)}%` }} /></div>
+  </nav>;
 }
 
 export function ReviewPage({ workspace }: ReviewPageProps) {
@@ -64,17 +82,21 @@ export function ReviewPage({ workspace }: ReviewPageProps) {
     await answer.mutateAsync({ value, key });
   }
 
-  return <ReviewShell section={section} onSectionChange={(value) => { setSection(value); setSelectedRoundId(null); setCreating(false); }}>
-    {section === "catalog" ? <QuestionCatalog workspace={workspace} /> : !selectedRoundId && !creating ? <ReviewLanding rounds={rounds.data ?? []} onCreate={() => setCreating(true)} onOpen={setSelectedRoundId} /> : <section className="review-workbench" aria-label="复习工作台">
-      <ReviewHistory rounds={rounds.data ?? []} selectedId={selectedRoundId} onSelect={(id) => { setCreating(false); setSelectedRoundId(id); }} />
+  const showRoundMenu = round.data && !["completed", "cancelled", "failed"].includes(round.data.status);
+  const toolbarActions = selectedRoundId || creating ? <>
+    <Button variant="ghost" className="review-back" onClick={() => { setSelectedRoundId(null); setCreating(false); }}><ArrowLeft size={16} />返回历史</Button>
+    {showRoundMenu ? <details className="review-round-menu"><summary aria-label="更多轮次操作"><MoreHorizontal size={19} /></summary><div><button type="button" onClick={() => setSelectedRoundId(null)}><Pause size={16} />稍后继续</button><button type="button" className="is-danger" disabled={busy} onClick={() => cancel.mutate()}><StopCircle size={16} />结束本轮</button></div></details> : null}
+  </> : null;
+
+  return <ReviewShell section={section} actions={toolbarActions} onSectionChange={(value) => { setSection(value); setSelectedRoundId(null); setCreating(false); }}>
+    {section === "catalog" ? <QuestionCatalog workspace={workspace} /> : !selectedRoundId && !creating ? <ReviewLanding rounds={rounds.data ?? []} questionCount={questions.isPending ? null : questions.data?.length ?? 0} onCreate={() => setCreating(true)} onOpen={setSelectedRoundId} onCatalog={() => setSection("catalog")} /> : <section className="review-workbench" aria-label="复习工作台">
       <main className="review-workbench__main">
-        <Button variant="ghost" className="review-back" onClick={() => { setSelectedRoundId(null); setCreating(false); }}><ArrowLeft size={16} />返回历史</Button>
-        {creating ? <ReviewSetup workspace={workspace} questions={questions.data ?? []} onCreate={(request) => create.mutate(request)} busy={create.isPending} /> : null}
-        {round.data && ["waiting_for_input", "running"].includes(round.data.status) ? <ReviewConversation round={round.data} optimisticMessage={optimisticMessage} busy={busy} onSubmit={submitAnswer} onSkip={() => skip.mutate()} onCancel={() => cancel.mutate()} onRetry={() => retry.mutate()} /> : null}
+        {creating ? <ReviewSetup workspace={workspace} questions={questions.data ?? []} onCreate={(request) => create.mutate(request)} onCatalog={() => { setSection("catalog"); setCreating(false); }} busy={create.isPending} /> : null}
+        {round.isPending && selectedRoundId ? <p className="status-note" role="status">正在恢复复习轮次…</p> : null}
+        {round.data && ["waiting_for_input", "running"].includes(round.data.status) ? <><ReviewQuestionStepper round={round.data} /><section className="review-focus-workspace"><ReviewConversation round={round.data} optimisticMessage={optimisticMessage} busy={busy} onSubmit={submitAnswer} onSkip={() => skip.mutate()} onRetry={() => retry.mutate()} /><div className="review-insight-column"><ReviewRuntimePanel round={round.data} />{round.data.executionStatus === "waiting_for_approval" ? <ActionCenter workspaceId={workspace.id} showDiagnostic={false} actionType="knowledge.publish" watchExecutionId={round.data.executionId} onResolved={() => void invalidateRound(round.data!.id)} /> : null}</div></section></> : null}
         {round.data && ["report_pending", "completed"].includes(round.data.status) ? <ReviewResults round={round.data} onDiscuss={(ordinal) => discuss.mutate(ordinal)} /> : null}
         {error || stream.executionError ? <div className="error-banner" role="alert"><AlertCircle size={16} /><span>错误：{error?.message ?? stream.executionError?.message}</span><span>{error?.advice ?? "刷新轮次后重试"}</span></div> : null}
       </main>
-      <div><ReviewRuntimePanel round={round.data ?? null} />{round.data?.executionStatus === "waiting_for_approval" ? <ActionCenter workspaceId={workspace.id} showDiagnostic={false} actionType="knowledge.publish" watchExecutionId={round.data.executionId} onResolved={() => void invalidateRound(round.data!.id)} /> : null}</div>
     </section>}
   </ReviewShell>;
 }

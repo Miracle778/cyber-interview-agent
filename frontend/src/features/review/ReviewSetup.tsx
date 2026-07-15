@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Play, SlidersHorizontal } from "lucide-react";
+import { BookOpenCheck, Play, SlidersHorizontal, TriangleAlert } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
@@ -7,7 +7,7 @@ import { getWorkspaceModelBindings, listProviders } from "../settings/settingsAp
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import type { ActiveQuestion, CreateReviewRoundRequest, Difficulty, ReviewMode } from "./reviewTypes";
 
-export function ReviewSetup({ workspace, questions, onCreate, busy }: { workspace: WorkspaceConfig; questions: ActiveQuestion[]; onCreate: (request: CreateReviewRoundRequest) => void; busy: boolean }) {
+export function ReviewSetup({ workspace, questions, onCreate, onCatalog, busy }: { workspace: WorkspaceConfig; questions: ActiveQuestion[]; onCreate: (request: CreateReviewRoundRequest) => void; onCatalog: () => void; busy: boolean }) {
   const providers = useQuery({ queryKey: ["providers"], queryFn: listProviders });
   const bindings = useQuery({ queryKey: ["model-bindings", workspace.id], queryFn: () => getWorkspaceModelBindings(workspace.id) });
   const models = useMemo(() => (providers.data ?? []).flatMap((provider) => provider.enabled ? provider.models.filter((model) => model.enabled).map((model) => ({ id: model.id, label: `${provider.name} / ${model.displayName}` })) : []), [providers.data]);
@@ -34,7 +34,7 @@ export function ReviewSetup({ workspace, questions, onCreate, busy }: { workspac
       <fieldset className="topic-picker"><legend>Topic（不选则全部）</legend>{topics.map((topic) => <label key={topic}><input type="checkbox" checked={selectedTopics.includes(topic)} onChange={() => setSelectedTopics((current) => current.includes(topic) ? current.filter((item) => item !== topic) : [...current, topic])} />{topic}</label>)}</fieldset>
       <div className="review-setup-summary"><span>匹配题目 {available} 道</span><span>本轮计划 {count} 道</span></div>
       <Button loading={busy} disabled={!effectiveModel || available < count || count < 1 || count > 50} onClick={() => onCreate({ workspaceId: workspace.id, selectedTopics, difficulties: [difficulty], mode, questionCount: count, allowFollowUp: true, answerModelId: effectiveModel, reasoningEffort: reasoning })}><Play size={16} />开始复习</Button>
-      {available < count ? <p className="status-note" role="status">当前筛选题量不足，请减少题量或先去“题库整理”确认更多题目。</p> : null}
+      {available < count ? <section className="review-readiness review-readiness--low review-readiness--compact" role="status"><span className="review-readiness__icon"><TriangleAlert size={20} /></span><div><h3>当前筛选题量不足</h3><p>可调整难度或题量，也可以先确认更多题目后再创建轮次。</p></div><Button variant="secondary" onClick={onCatalog}><BookOpenCheck size={16} />去题库整理</Button></section> : null}
     </Card>
   );
 }

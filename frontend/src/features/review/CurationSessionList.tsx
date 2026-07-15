@@ -23,7 +23,7 @@ export function CurationSessionList({ sessions, selectedId, onSelect, onCreate }
         {sessions.map((session) => {
           const meta = stageMeta[session.stage] ?? { label: session.stage, tone: "neutral" };
           return (
-            <button type="button" key={session.id} className="curation-session-item" aria-current={session.id === selectedId} onClick={() => onSelect(session.id)}>
+            <button type="button" key={session.id} className="curation-session-item" title={session.title} aria-current={session.id === selectedId} onClick={() => onSelect(session.id)}>
               <div className="curation-session-item__head"><strong>{session.title}</strong><span className={`badge badge--${meta.tone}`}>{meta.label}</span></div>
               <div className="curation-session-item__meta"><span>{session.sources.length} 份资料</span><span>{session.candidateCount} 道题</span>{session.pendingCount > 0 ? <span className="curation-session-item__pending">待确认 {session.pendingCount}</span> : null}</div>
             </button>
