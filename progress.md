@@ -9,6 +9,7 @@
 - 正式设计、独立架构选型记录与后续 ADR 询问规则已起草，等待用户文档审阅后再编写 implementation plan。
 - 用户已通过书面设计；四 Task 实施计划已完成自检，采用当前会话 inline 执行，不创建新 worktree 或 subagent。
 - Task 1：新增通用 token-budget ContextAssembler，并分离 Agent execution name/model role；RED 后 GREEN，`test_context_assembly.py + test_agent_factory.py` 共 13 passed。
+- Task 2：新增 migration 9、`review_curation_context` CAS 投影和解析前 receipt lookup；RED 4 failed 后 GREEN，migration/repository 共 18 passed。
 
 ## 2026-07-15：R2 题库与 Agent 可用性补强启动
 

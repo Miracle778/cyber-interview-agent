@@ -128,11 +128,11 @@ git commit -m "feat(agent): add token-budget context assembly"
 - Produces `find_curation_command_receipt(session_id, idempotency_key, text, summary_version) -> CurationCommandReceiptRecord | None`; it validates the existing text hash/version before any context assembly or model call.
 - Stale updates raise `ReviewConflictError("curation context version changed")`.
 
-- [ ] **Step 1: Add RED migration/repository tests**
+- [x] **Step 1: Add RED migration/repository tests**
 
 Expect table `review_curation_context` and migration versions `[1,2,3,4,5,6,7,8,9]` for fresh and existing generation-two databases. Add a repository round-trip that stores focus `("candidate-6",)`, `last_intent="inspect"`, summary refs, cursor `message-8`, and proves a second write with the old version conflicts. Add a receipt lookup test that returns `None` before creation, returns the same receipt afterward, and raises `ReviewConflictError` when the same key is reused with different text or summary version.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 ```bash
 cd backend
@@ -141,7 +141,7 @@ cd backend
 
 Expected: FAIL because migration 9 and repository APIs do not exist.
 
-- [ ] **Step 3: Add the migration and typed CAS repository**
+- [x] **Step 3: Add the migration and typed CAS repository**
 
 Create this additive table:
 
@@ -161,7 +161,7 @@ CREATE TABLE review_curation_context (
 
 `get_or_create` uses `INSERT OR IGNORE` then `SELECT`. `replace` writes the complete projection, increments version, and uses `WHERE session_id = ? AND version = ?`. `find_curation_command_receipt` performs the existing `(session_id, idempotency_key)` query and hash/version validation without inserting a processing receipt; `begin_curation_command` reuses the same validator after interpretation to keep one idempotency rule.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run the Step 2 command. Expected: all selected tests PASS.
 

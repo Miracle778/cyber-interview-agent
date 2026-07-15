@@ -94,6 +94,104 @@ def _seed_publication(connection) -> None:
     connection.commit()
 
 
+def test_curation_context_round_trips_with_compare_and_swap(
+    tmp_path: Path,
+) -> None:
+    connection = _connection(tmp_path)
+    repository = ReviewRepository(connection)
+    repository.create_curation_session(
+        workspace_id="w1",
+        session_id="s1",
+        source_refs=("source-1",),
+    )
+
+    initial = repository.get_or_create_curation_context("s1")
+    saved = repository.replace_curation_context(
+        "s1",
+        expected_version=initial.version,
+        focused_candidate_ids=("candidate-6",),
+        last_intent="inspect",
+        last_result_candidate_ids=("candidate-6",),
+        dialogue_summary={
+            "text": "用户正在查看第 6 题",
+            "resourceRefs": ["candidate:candidate-6"],
+            "decisions": [],
+            "openItems": ["等待用户确认"],
+        },
+        summarized_through_message_id="message-8",
+    )
+
+    assert saved.version == 1
+    assert saved.focused_candidate_ids == ("candidate-6",)
+    assert saved.last_intent == "inspect"
+    assert saved.dialogue_summary["resourceRefs"] == [
+        "candidate:candidate-6"
+    ]
+    assert saved.summarized_through_message_id == "message-8"
+    assert repository.get_or_create_curation_context("s1") == saved
+
+    with pytest.raises(
+        ReviewConflictError, match="curation context version changed"
+    ):
+        repository.replace_curation_context(
+            "s1",
+            expected_version=initial.version,
+            focused_candidate_ids=(),
+            last_intent=None,
+            last_result_candidate_ids=(),
+            dialogue_summary={},
+            summarized_through_message_id=None,
+        )
+    connection.close()
+
+
+def test_curation_command_receipt_can_be_found_before_interpretation(
+    tmp_path: Path,
+) -> None:
+    connection = _connection(tmp_path)
+    repository = ReviewRepository(connection)
+    repository.create_curation_session(
+        workspace_id="w1",
+        session_id="s1",
+        source_refs=("source-1",),
+    )
+
+    assert (
+        repository.find_curation_command_receipt(
+            session_id="s1",
+            idempotency_key="command-1",
+            text="发布第 1 题",
+            summary_version=0,
+        )
+        is None
+    )
+    created, is_new = repository.begin_curation_command(
+        session_id="s1",
+        idempotency_key="command-1",
+        text="发布第 1 题",
+        summary_version=0,
+        command={"kind": "confirm", "candidateIds": ["candidate-1"]},
+    )
+
+    assert is_new is True
+    assert repository.find_curation_command_receipt(
+        session_id="s1",
+        idempotency_key="command-1",
+        text="发布第 1 题",
+        summary_version=0,
+    ) == created
+    with pytest.raises(
+        ReviewConflictError, match="curation command idempotency key changed"
+    ):
+        repository.find_curation_command_receipt(
+            session_id="s1",
+            idempotency_key="command-1",
+            text="拒绝第 1 题",
+            summary_version=0,
+        )
+    connection.close()
+
+
 def test_batch_candidate_and_catalog_activation_are_idempotent(
     tmp_path: Path,
 ) -> None:

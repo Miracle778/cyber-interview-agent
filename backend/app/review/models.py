@@ -193,6 +193,19 @@ class CurationSessionRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class CurationContextRecord:
+    session_id: str
+    version: int
+    focused_candidate_ids: tuple[str, ...]
+    last_intent: str | None
+    last_result_candidate_ids: tuple[str, ...]
+    dialogue_summary: dict[str, object]
+    summarized_through_message_id: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
 class QuestionSourceLinkRecord:
     id: str
     question_id: str

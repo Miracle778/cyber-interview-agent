@@ -15,6 +15,7 @@ from app.review.errors import (
 )
 from app.review.models import (
     AttemptStatus,
+    CurationContextRecord,
     CurationSessionRecord,
     CurationStage,
     CurationSummary,
@@ -210,6 +211,81 @@ class ReviewRepository:
         ).fetchall()
         return tuple(self._question_source_link_record(row) for row in rows)
 
+    def get_or_create_curation_context(
+        self, session_id: str
+    ) -> CurationContextRecord:
+        with self._transaction():
+            self._connection.execute(
+                "INSERT OR IGNORE INTO review_curation_context(session_id) "
+                "VALUES (?)",
+                (session_id,),
+            )
+        row = self._connection.execute(
+            "SELECT * FROM review_curation_context WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            raise LookupError(session_id)
+        return self._curation_context_record(row)
+
+    def replace_curation_context(
+        self,
+        session_id: str,
+        *,
+        expected_version: int,
+        focused_candidate_ids: tuple[str, ...],
+        last_intent: str | None,
+        last_result_candidate_ids: tuple[str, ...],
+        dialogue_summary: dict[str, object],
+        summarized_through_message_id: str | None,
+    ) -> CurationContextRecord:
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_curation_context SET version = version + 1, "
+                "focused_candidate_ids_json = ?, last_intent = ?, "
+                "last_result_candidate_ids_json = ?, dialogue_summary_json = ?, "
+                "summarized_through_message_id = ?, "
+                "updated_at = CURRENT_TIMESTAMP "
+                "WHERE session_id = ? AND version = ?",
+                (
+                    _canonical_json(focused_candidate_ids),
+                    last_intent,
+                    _canonical_json(last_result_candidate_ids),
+                    _canonical_json(dialogue_summary),
+                    summarized_through_message_id,
+                    session_id,
+                    expected_version,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError("curation context version changed")
+        return self.get_or_create_curation_context(session_id)
+
+    def find_curation_command_receipt(
+        self,
+        *,
+        session_id: str,
+        idempotency_key: str,
+        text: str,
+        summary_version: int,
+    ) -> CurationCommandReceiptRecord | None:
+        row = self._connection.execute(
+            "SELECT * FROM review_curation_command_receipts "
+            "WHERE session_id = ? AND idempotency_key = ?",
+            (session_id, idempotency_key),
+        ).fetchone()
+        if row is None:
+            return None
+        record = self._curation_command_receipt(row)
+        if (
+            record.text_hash != sha256(text.encode("utf-8")).hexdigest()
+            or record.summary_version != summary_version
+        ):
+            raise ReviewConflictError(
+                "curation command idempotency key changed"
+            )
+        return record
+
     def begin_curation_command(
         self,
         *,
@@ -221,21 +297,14 @@ class ReviewRepository:
         receipt_id: str | None = None,
     ) -> tuple[CurationCommandReceiptRecord, bool]:
         text_hash = sha256(text.encode("utf-8")).hexdigest()
-        existing = self._connection.execute(
-            "SELECT * FROM review_curation_command_receipts "
-            "WHERE session_id = ? AND idempotency_key = ?",
-            (session_id, idempotency_key),
-        ).fetchone()
+        existing = self.find_curation_command_receipt(
+            session_id=session_id,
+            idempotency_key=idempotency_key,
+            text=text,
+            summary_version=summary_version,
+        )
         if existing is not None:
-            record = self._curation_command_receipt(existing)
-            if (
-                record.text_hash != text_hash
-                or record.summary_version != summary_version
-            ):
-                raise ReviewConflictError(
-                    "curation command idempotency key changed"
-                )
-            return record, False
+            return existing, False
         identifier = receipt_id or str(uuid4())
         with self._transaction():
             self._connection.execute(
@@ -1482,6 +1551,26 @@ class ReviewRepository:
             summary=CurationSummary(items=tuple(summary.get("items", ()))),
             summary_version=row["summary_version"],
             warnings=tuple(json.loads(row["warning_json"])),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    @staticmethod
+    def _curation_context_record(row: sqlite3.Row) -> CurationContextRecord:
+        return CurationContextRecord(
+            session_id=row["session_id"],
+            version=row["version"],
+            focused_candidate_ids=tuple(
+                json.loads(row["focused_candidate_ids_json"])
+            ),
+            last_intent=row["last_intent"],
+            last_result_candidate_ids=tuple(
+                json.loads(row["last_result_candidate_ids_json"])
+            ),
+            dialogue_summary=json.loads(row["dialogue_summary_json"]),
+            summarized_through_message_id=row[
+                "summarized_through_message_id"
+            ],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
