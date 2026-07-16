@@ -878,14 +878,10 @@ class ReviewApplication:
                 )
             )
         else:
-            interpreter = CurationCommandInterpreter(
-                self.curation_commands,
-                command_models.classifier,
-            )
             response_context = None
             response_invocation_context = None
 
-            async def context_provider():
+            async def context_provider(*, compact_overflow: bool = True):
                 nonlocal context_record, response_context, response_invocation_context
                 latest_execution = self.sessions.repository.latest_execution(
                     session_id
@@ -923,7 +919,7 @@ class ReviewApplication:
                     )
                 except ContextBudgetExceededError as error:
                     raise ReviewConflictError(error.code) from error
-                if assembled.overflow_turns:
+                if assembled.overflow_turns and compact_overflow:
                     try:
                         compacted = await command_models.summarizer.summarize(
                             prior_summary=prior_summary,
@@ -990,20 +986,10 @@ class ReviewApplication:
                 "curation.command.interpreting",
                 {"resourceId": _prepared_receipt_id or idempotency_key},
             )
-            plan = await interpreter.interpret(
-                text=text,
-                summary=curation.summary,
-                focused_candidate_ids=focused_candidate_ids,
-                context_provider=context_provider,
-            )
-            if _cancellation is not None:
-                _cancellation.raise_if_requested()
-            if (
-                plan.response.strip()
-                and response_context is not None
-                and response_invocation_context is not None
-                and hasattr(command_models, "responder")
-            ):
+            if self.curation_commands.route_input(text) == "conversation":
+                response_context, response_invocation_context = (
+                    await context_provider(compact_overflow=False)
+                )
                 response_chunks: list[str] = []
                 async for chunk in command_models.responder.astream(
                     response_context.render(),
@@ -1018,10 +1004,27 @@ class ReviewApplication:
                         "assistant.delta",
                         {"text": chunk},
                     )
-                if response_chunks:
-                    plan = plan.model_copy(
-                        update={"response": "".join(response_chunks)}
+                plan = CurationCommandPlan(
+                    clarification=(
+                        "".join(response_chunks).strip()
+                        or "我暂时没有生成有效回复，请换一种方式提问。"
                     )
+                )
+                if response_context.overflow_turns:
+                    await context_provider()
+            else:
+                interpreter = CurationCommandInterpreter(
+                    self.curation_commands,
+                    command_models.classifier,
+                )
+                plan = await interpreter.interpret(
+                    text=text,
+                    summary=curation.summary,
+                    focused_candidate_ids=focused_candidate_ids,
+                    context_provider=context_provider,
+                )
+            if _cancellation is not None:
+                _cancellation.raise_if_requested()
         parsed = self.curation_commands.resolve_plan(
             plan=plan,
             summary=curation.summary,

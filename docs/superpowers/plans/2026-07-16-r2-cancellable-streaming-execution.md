@@ -14,7 +14,7 @@
 - Preserve the accepted `Plan -> Validate -> Execute` command boundary; models never execute publication side effects directly.
 - Keep `GET /api/agent/sessions/{sessionId}/events` as the only product SSE channel.
 - Do not fake streaming by slicing complete text; only real natural-language model chunks may produce `assistant.delta`.
-- Structured classifier JSON remains internal; expose progress and the resolved business response, not raw JSON tokens.
+- Structured classifier JSON remains internal and contains no ordinary user-facing response; safe conversation goes directly to the streaming responder, while only ambiguous side effects are classified.
 - A stop request cancels only the current execution. Persisted user input remains visible; partial assistant output never enters formal context.
 - A started single-question publication transaction completes; cancellation prevents later items and never rolls back successful items.
 - Model and reasoning selection are immutable execution snapshots; UI changes affect only the next execution.
@@ -478,7 +478,7 @@ Keep `AgentEventProjector` limited to actual `AIMessageChunk` text. For the stru
 
 Add `curation.command.interpreting` to `ProductEventStream._allowed` and to the frontend `EVENT_TYPES` list in Task 4. Every event must retain the execution ID. Reconnection continues from the last accepted numeric cursor through `after`/`Last-Event-ID`, and tests must replay the last delta once to prove client deduplication.
 
-When a plan contains a user-facing free-form `response`, call `CurationCommandResponder.astream`, forward only its `AIMessageChunk` values through the existing projector, accumulate the same chunks, and persist their exact joined text as the formal message after successful completion. Deterministic command results remain templated formal messages and produce no fake deltas. Add tests:
+Route input before model invocation: deterministic commands use the parser; input with no side-effect vocabulary calls `CurationCommandResponder.astream` directly; ambiguous side-effect input calls the structured classifier. The classifier contract contains no free-form `response`. Forward only responder `AIMessageChunk` values through the existing projector, accumulate the same chunks, and persist their exact joined text as the formal message after successful completion. When context overflows on a safe conversation, start the responder first and compact early turns after the visible stream so summarization is outside first-token latency. Deterministic command results remain templated formal messages and produce no fake deltas. Add tests:
 
 ```python
 def test_projector_emits_only_real_ai_text_chunks():
@@ -499,6 +499,15 @@ def test_projector_ignores_structured_tool_chunks():
     )
     assert projector.project({"type": "messages", "data": (chunk, {})}) == ()
 ```
+
+### Task 4 follow-up: remove classifier and compaction from conversation TTFT
+
+- [x] Safe conversation defaults to the responder and never calls the structured classifier.
+- [x] Ambiguous side-effect vocabulary remains behind classifier → validate → execute.
+- [x] `CurationCommandPlan` no longer contains a user-facing `response` field.
+- [x] Overflow summarization starts after responder streaming, while classification retains synchronous safety context.
+- [x] RED evidence: missing router/contract/direct delta produced 3 failures; blocked summarizer prevented responder and produced 1 failure.
+- [x] GREEN evidence: focused command/context/restart/runtime regression `58 passed`.
 
 - [x] **Step 6: Add cancel, retry and restart API coverage**
 

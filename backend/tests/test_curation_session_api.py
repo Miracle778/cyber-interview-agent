@@ -85,6 +85,38 @@ class RecordingResponder:
             yield chunk
 
 
+class BlockingSummarizer(RecordingSummarizer):
+    def __init__(self, *, entered: asyncio.Event, release: asyncio.Event, order) -> None:
+        super().__init__()
+        self.entered = entered
+        self.release = release
+        self.order = order
+
+    async def summarize(self, *, prior_summary, overflow_turns, context):
+        self.order.append("summary")
+        self.entered.set()
+        await self.release.wait()
+        return await super().summarize(
+            prior_summary=prior_summary,
+            overflow_turns=overflow_turns,
+            context=context,
+        )
+
+
+class SignallingResponder(RecordingResponder):
+    def __init__(self, *, entered: asyncio.Event, order) -> None:
+        super().__init__()
+        self.entered = entered
+        self.order = order
+
+    async def astream(self, rendered_context, *, context):
+        self.calls.append((rendered_context, context))
+        self.order.append("responder")
+        self.entered.set()
+        for chunk in self.chunks:
+            yield chunk
+
+
 class RecordingCurationModels:
     def __init__(
         self, plan: CurationCommandPlan, *, fail_summary: bool = False
@@ -126,14 +158,14 @@ async def test_free_form_response_streams_real_chunks_and_persists_joined_text(
             await client.get(f"/api/review/curation-sessions/{session_id}")
         ).json()
         models = RecordingCurationModels(
-            CurationCommandPlan(response="分类器占位文本")
+            CurationCommandPlan()
         )
         app.locate_review_session(session_id).curation_command_models = models
 
         accepted = await client.post(
             f"/api/review/curation-sessions/{session_id}/commands",
             json={
-                "text": "请给我建议",
+                "text": "为什么推荐这道题？请给我一些分析建议",
                 "summaryVersion": detail["summaryVersion"],
                 "idempotencyKey": "stream-command-1",
             },
@@ -149,6 +181,7 @@ async def test_free_form_response_streams_real_chunks_and_persists_joined_text(
 
         assert deltas == ["真实", "回复"]
         assert result["result"]["clarification"] == "真实回复"
+        assert models.classifier.calls == []
         detail = (
             await client.get(f"/api/review/curation-sessions/{session_id}")
         ).json()
@@ -159,6 +192,104 @@ async def test_free_form_response_streams_real_chunks_and_persists_joined_text(
             for message in detail["messages"]
         )
         assert models.responder.calls
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_side_effect_still_uses_classifier_without_streaming_reply(
+    api, application
+) -> None:
+    app, source_ids = application
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = (
+            await client.post(
+                "/api/review/curation-sessions",
+                json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+            )
+        ).json()
+        await app.wait_execution(created["executionId"])
+        session_id = created["id"]
+        detail = (
+            await client.get(f"/api/review/curation-sessions/{session_id}")
+        ).json()
+        models = RecordingCurationModels(
+            CurationCommandPlan(clarification="请明确要处理的题号")
+        )
+        app.locate_review_session(session_id).curation_command_models = models
+
+        accepted = await client.post(
+            f"/api/review/curation-sessions/{session_id}/commands",
+            json={
+                "text": "把合适的处理一下",
+                "summaryVersion": detail["summaryVersion"],
+                "idempotencyKey": "classified-side-effect-1",
+            },
+        )
+        result = await completed_command(app, session_id, accepted)
+
+        assert result["result"]["clarification"] == "请明确要处理的题号"
+        assert len(models.classifier.calls) == 1
+        assert models.responder.calls == []
+
+
+@pytest.mark.asyncio
+async def test_conversation_stream_starts_before_overflow_summary_finishes(
+    api, application
+) -> None:
+    app, source_ids = application
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = (
+            await client.post(
+                "/api/review/curation-sessions",
+                json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+            )
+        ).json()
+        await app.wait_execution(created["executionId"])
+        session_id = created["id"]
+        review = app.locate_review_session(session_id)
+        latest = review.sessions.repository.latest_execution(session_id)
+        for index in range(16):
+            review.sessions.repository.append_message(
+                session_id,
+                execution_id=None if latest is None else latest.id,
+                role="user" if index % 2 == 0 else "assistant",
+                content=(f"第 {index} 条早期历史 " + "上下文 " * 20),
+                message_kind="text" if index % 2 == 0 else "command_receipt",
+            )
+        summary_entered = asyncio.Event()
+        summary_release = asyncio.Event()
+        responder_entered = asyncio.Event()
+        call_order = []
+        models = RecordingCurationModels(CurationCommandPlan())
+        models.summarizer = BlockingSummarizer(
+            entered=summary_entered, release=summary_release, order=call_order
+        )
+        models.responder = SignallingResponder(
+            entered=responder_entered, order=call_order
+        )
+        review.curation_command_models = models
+        detail = (
+            await client.get(f"/api/review/curation-sessions/{session_id}")
+        ).json()
+
+        accepted = await client.post(
+            f"/api/review/curation-sessions/{session_id}/commands",
+            json={
+                "text": "为什么推荐这些题？",
+                "summaryVersion": detail["summaryVersion"],
+                "idempotencyKey": "stream-before-summary-1",
+            },
+        )
+        try:
+            await asyncio.wait_for(responder_entered.wait(), timeout=0.2)
+            assert call_order[0] == "responder"
+        finally:
+            summary_release.set()
+        await app.wait_execution(accepted.json()["executionId"])
+        assert len(models.summarizer.calls) == 1
 
 
 @pytest_asyncio.fixture
@@ -220,7 +351,7 @@ async def test_curation_command_returns_accepted_before_classifier_finishes(
         release = asyncio.Event()
         models = RecordingCurationModels(CurationCommandPlan())
         models.classifier = BlockingClassifier(
-            CurationCommandPlan(response="已理解"),
+            CurationCommandPlan(clarification="请明确要处理的题号"),
             entered=entered,
             release=release,
         )
@@ -230,7 +361,7 @@ async def test_curation_command_returns_accepted_before_classifier_finishes(
             client.post(
                 f"/api/review/curation-sessions/{session_id}/commands",
                 json={
-                    "text": "请结合刚才的上下文给出建议",
+                    "text": "把合适的按刚才方式处理一下",
                     "summaryVersion": detail["summaryVersion"],
                     "idempotencyKey": "async-command-1",
                     "providerModelId": "model-1",
@@ -286,7 +417,7 @@ async def test_curation_command_cancel_keeps_user_message_without_final_reply(
         release = asyncio.Event()
         models = RecordingCurationModels(CurationCommandPlan())
         models.classifier = BlockingClassifier(
-            CurationCommandPlan(response="不应完成"),
+            CurationCommandPlan(clarification="不应完成"),
             entered=entered,
             release=release,
         )
@@ -296,7 +427,7 @@ async def test_curation_command_cancel_keeps_user_message_without_final_reply(
         response = await client.post(
             f"/api/review/curation-sessions/{session_id}/commands",
             json={
-                "text": "请分析这批候选题",
+                "text": "把这批候选题按之前方式处理一下",
                 "summaryVersion": detail["summaryVersion"],
                 "idempotencyKey": "cancel-command-1",
                 "providerModelId": "model-1",
@@ -318,7 +449,7 @@ async def test_curation_command_cancel_keeps_user_message_without_final_reply(
         assert receipt.lifecycle_status == "cancelled"
         assert any(
             message["role"] == "user"
-            and message["content"] == "请分析这批候选题"
+            and message["content"] == "把这批候选题按之前方式处理一下"
             for message in restored["messages"]
         )
         assert not any(
@@ -394,7 +525,7 @@ async def test_immediate_abandon_cancels_command_and_releases_session(
         review = app.locate_review_session(session_id)
         models = RecordingCurationModels(CurationCommandPlan())
         models.classifier = BlockingClassifier(
-            CurationCommandPlan(response="不应完成"),
+            CurationCommandPlan(clarification="不应完成"),
             entered=entered,
             release=asyncio.Event(),
         )
@@ -403,7 +534,7 @@ async def test_immediate_abandon_cancels_command_and_releases_session(
             await client.post(
                 f"/api/review/curation-sessions/{session_id}/commands",
                 json={
-                    "text": "分析所有候选题",
+                    "text": "把所有候选题处理一下",
                     "summaryVersion": detail["summaryVersion"],
                     "idempotencyKey": "abandon-command-1",
                 },
@@ -947,7 +1078,7 @@ async def test_explicit_confirm_command_publishes_without_second_decision(
         ).json()
         review = app.locate_review_session(session_id)
         models = RecordingCurationModels(
-            CurationCommandPlan(response="不应调用模型")
+            CurationCommandPlan(clarification="不应调用模型")
         )
         review.curation_command_models = models
         context_before = review.repository.get_or_create_curation_context(
@@ -1179,7 +1310,7 @@ async def test_budget_overflow_compacts_or_safely_degrades(
         session_id = created["id"]
         review = app.locate_review_session(session_id)
         models = RecordingCurationModels(
-            CurationCommandPlan(response="已识别复杂命令"),
+            CurationCommandPlan(clarification="已识别复杂命令"),
             fail_summary=summary_fails,
         )
         review.curation_command_models = models

@@ -9,6 +9,9 @@
 - 单题发布事务一旦开始就完成当前题，停止只阻止后续题；批量重试只处理失败/未完成项并复用题目级幂等键。
 - `task.cancel()` 不能无条件用于领域任务：模型等待阶段可立即取消，单题发布关键区必须只记录请求并在退出安全点后终止。
 - graceful shutdown 与用户停止共享关键区边界，但终态不同：用户停止落 cancelled；无用户取消请求的进程关闭落 interrupted，供显式恢复。
+- 首字等待的根因不是 SSE 人工切片，而是普通问答先同步完成 structured classifier，长上下文还可能先同步完成 summarizer；随后才启动第二次 responder 流。
+- 安全路由应默认把不含副作用词的输入交给无工具 responder；漏识别的动作同义词最多得到解释，不可能绕过领域服务产生副作用。发布、拒绝、重写、生成、修改、删除、合并等词仍进入 classifier。
+- classifier 只保留结构化 selector/feedback/clarification，删除重复生成普通回答的 `response`；普通问答的 overflow 摘要在 responder 首个 chunk 之后完成。
 
 ## 2026-07-15 Agent 上下文组装设计
 

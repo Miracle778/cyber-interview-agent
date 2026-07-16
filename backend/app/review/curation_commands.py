@@ -15,6 +15,35 @@ from app.review.models import CurationSummary
 CommandKind = Literal[
     "confirm", "reject", "rewrite", "mixed", "resummarize", "clarify"
 ]
+InputRoute = Literal["conversation", "classification"]
+
+
+_SIDE_EFFECT_TERMS = (
+    "发布",
+    "确认",
+    "拒绝",
+    "删除",
+    "重写",
+    "改写",
+    "重新生成",
+    "再生成",
+    "生成",
+    "重做",
+    "润色",
+    "合并",
+    "备注",
+    "修改",
+    "调整",
+    "优化",
+    "更新",
+    "通过",
+    "撤回",
+    "采纳",
+    "废弃",
+    "丢弃",
+    "下架",
+    "处理",
+)
 
 
 class StaleCurationSummaryError(RuntimeError):
@@ -53,10 +82,6 @@ class CurationCommandService:
                     inspect, candidates
                 ),
             )
-        if plan.response.strip():
-            return ParsedCurationCommand(
-                kind="clarify", clarification=plan.response.strip()
-            )
         publish = self._resolve_selector(plan.publish, summary, candidates)
         reject = self._resolve_selector(plan.reject, summary, candidates)
         rewrite = self._resolve_selector(plan.regenerate, summary, candidates)
@@ -71,6 +96,13 @@ class CurationCommandService:
         if plan.resummarize:
             return ParsedCurationCommand(kind="resummarize")
         return ParsedCurationCommand(kind="clarify", clarification="我还不能确定要处理哪些题目，请再说明要发布、拒绝还是按备注重新生成。")
+
+    @staticmethod
+    def route_input(text: str) -> InputRoute:
+        clean = text.strip()
+        if any(term in clean for term in _SIDE_EFFECT_TERMS):
+            return "classification"
+        return "conversation"
 
     @staticmethod
     def _candidate_detail_response(

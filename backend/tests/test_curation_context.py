@@ -99,7 +99,7 @@ class RecordingClassifier:
 
     async def classify(self, assembled, *, context):
         self.calls.append((assembled, context))
-        return CurationCommandPlan(response="模型解释结果")
+        return CurationCommandPlan(clarification="模型解释结果")
 
 
 def _summary() -> CurationSummary:
@@ -159,6 +159,6 @@ async def test_interpreter_loads_context_once_for_free_language() -> None:
         context_provider=context_provider,
     )
 
-    assert plan.response == "模型解释结果"
+    assert plan.clarification == "模型解释结果"
     assert loaded == 1
     assert classifier.calls == [(assembled, invocation_context)]

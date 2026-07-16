@@ -185,9 +185,7 @@ async def test_responder_streams_only_real_assistant_text(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_classifier_receives_only_rendered_assembled_context(tmp_path) -> None:
-    runnable = RecordingRunnable(
-        CurationCommandPlan(response="已理解用户指令")
-    )
+    runnable = RecordingRunnable(CurationCommandPlan(clarification="请明确题号"))
     classifier = CurationCommandClassifier(runnable)
     assembled = _assembled()
 
@@ -195,7 +193,11 @@ async def test_classifier_receives_only_rendered_assembled_context(tmp_path) -> 
 
     prompt = runnable.inputs[0][0]["messages"][0].content
     assert prompt == assembled.render()
-    assert plan.response == "已理解用户指令"
+    assert plan.clarification == "请明确题号"
+
+
+def test_classifier_contract_contains_no_user_facing_response() -> None:
+    assert "response" not in CurationCommandPlan.model_fields
 
 
 @pytest.mark.asyncio

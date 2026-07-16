@@ -270,3 +270,12 @@
 - 浏览器隔离工作区：桌面与 390px 可进入失败会话，模型/思考强度、失败恢复和运行详情可用且未见重叠。
 - 环境未配置 Provider，执行真实进入 `MODEL_NOT_FOUND`；未伪造流式停止、重启恢复或批量部分成功的浏览器结论。
 - 文档门禁已执行但因本地 `docs/learning/r2/` 尚未生成而失败；完整浏览器验收和 learning 七件套未完成前不关闭 R2。
+
+## 2026-07-16：题库会话首 token 路径优化
+
+- 普通问答不再先等待 structured classifier，默认直接调用无工具 responder 并发布真实 `assistant.delta`。
+- 潜在副作用词仍走 classifier → validate → execute；明确题号命令继续走确定性 parser，模型不能直接写库。
+- `CurationCommandPlan.response` 已删除，消除分类器完整生成回答后 responder 再生成一次的双调用。
+- 长上下文普通问答先流式回答，再持久化 overflow 摘要；模糊副作用分类仍保留同步压缩以保证决策上下文安全。
+- TDD RED 为 3 个路由/契约/delta 失败及 1 个摘要阻塞失败；GREEN 受影响命令、上下文、重启和 Runtime 回归 `58 passed`。
+- 未消耗新的全量回归或浏览器验收预算；下一步仍是在健康 Provider 环境测真实 TTFT、停止、重启和批量部分成功。

@@ -28,10 +28,10 @@ class AgentRunnable(Protocol):
     def astream(self, input: dict[str, Any], config=None, *, context=None, **kwargs): ...
 
 
-_CLASSIFIER_PROMPT = """你是题库整理命令分类器，只负责把用户表达转换为结构化计划。
+_CLASSIFIER_PROMPT = """你是题库整理命令分类器，只负责把可能涉及副作用的用户表达转换为结构化计划。
 不得执行发布、拒绝或重写，不得调用工具，不得编造候选题序号。
 结合输入中的工作状态、历史摘要、完整对话轮次和焦点资源解析指代。
-无法安全确定时填写 clarification；普通问答可填写 response。
+无法安全确定时填写 clarification；不要生成普通问答内容。
 “加了备注的重新生成，其他的发布”应映射为 regenerate=noted、publish=unnoted。"""
 
 

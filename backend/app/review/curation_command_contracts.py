@@ -20,7 +20,6 @@ class CurationCommandPlan(BaseModel):
     feedback: str = ""
     resummarize: bool = False
     clarification: str = ""
-    response: str = ""
 
 
 class CurationDialogueSummary(BaseModel):

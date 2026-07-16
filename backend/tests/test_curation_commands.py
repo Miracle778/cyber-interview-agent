@@ -159,17 +159,14 @@ def test_free_intent_can_regenerate_noted_and_publish_the_rest() -> None:
     )
 
 
-def test_free_intent_can_return_a_grounded_conversation_response() -> None:
-    command = CurationCommandService().resolve_plan(
-        plan=CurationCommandPlan(response="第 2 题讨论事务隔离级别。"),
-        summary=_summary(),
-        candidates=(),
-        current_summary_version=3,
-        expected_summary_version=3,
-    )
+def test_input_router_separates_safe_questions_from_ambiguous_side_effects() -> None:
+    service = CurationCommandService()
 
-    assert command.kind == "clarify"
-    assert command.clarification == "第 2 题讨论事务隔离级别。"
+    assert service.route_input("为什么推荐这道题？") == "conversation"
+    assert service.route_input("请分析这些候选题的优缺点") == "conversation"
+    assert service.route_input("给我讲讲这批题") == "conversation"
+    assert service.route_input("把合适的处理一下") == "classification"
+    assert service.route_input("帮我优化这道题") == "classification"
 
 
 def test_question_inspection_response_is_deterministic_and_includes_key_points() -> None:

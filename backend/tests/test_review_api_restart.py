@@ -22,7 +22,7 @@ class _BlockingClassifier:
 
 class _ResolvedClassifier:
     async def classify(self, assembled, *, context):
-        return CurationCommandPlan(response="恢复后完成")
+        return CurationCommandPlan(clarification="恢复后完成")
 
 
 class _Responder:
@@ -204,7 +204,7 @@ async def test_interrupted_curation_command_requires_explicit_retry(
     )
     accepted = await review.submit_curation_command(
         session_id,
-        text="继续分析这一批",
+        text="把这一批按之前方式处理一下",
         summary_version=detail["summary_version"],
         idempotency_key="restart-command-1",
         provider_model_id=None,
@@ -243,7 +243,7 @@ async def test_interrupted_curation_command_requires_explicit_retry(
         assert completed.lifecycle_status == "completed"
         assert completed.retry_count == 1
         assert sum(
-            message["content"] == "继续分析这一批"
+            message["content"] == "把这一批按之前方式处理一下"
             for message in messages
         ) == 1
     finally:
