@@ -24,18 +24,43 @@ describe("CurationConversation artifacts", () => {
     expect(onOpen).toHaveBeenCalledWith("c1");
     expect(onPublish).toHaveBeenCalledWith("c1");
     expect(onSaveNote).toHaveBeenCalledWith("c1", "补充失败恢复");
-    expect(screen.getByLabelText("回复题匠")).toHaveAttribute("placeholder", expect.stringContaining("自由描述"));
+    expect(screen.getByLabelText("回复题匠")).toHaveAttribute("placeholder", expect.stringContaining("输入要求"));
   });
 
   it("sends with Enter and keeps Shift+Enter for a newline", () => {
     const onSubmit = vi.fn();
     render(<CurationConversation session={session} optimisticMessage={null} busy={false} onSubmit={onSubmit} />);
     const input = screen.getByLabelText("回复题匠");
+    expect(input).toHaveAttribute("rows", "1");
     fireEvent.change(input, { target: { value: "发布这题" } });
     fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     expect(onSubmit).not.toHaveBeenCalled();
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onSubmit).toHaveBeenCalledWith("发布这题");
+  });
+
+  it("keeps execution settings compact without hiding their controls", () => {
+    const onModelChange = vi.fn();
+    const onReasoningEffortChange = vi.fn();
+    render(
+      <CurationConversation
+        session={session}
+        optimisticMessage={null}
+        busy={false}
+        models={[{ id: "model-1", label: "火山 / glm" }]}
+        selectedModelId="model-1"
+        reasoningEffort="medium"
+        onModelChange={onModelChange}
+        onReasoningEffortChange={onReasoningEffortChange}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("火山 / glm · 中等")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("本次执行模型"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("思考强度"), { target: { value: "high" } });
+    expect(onModelChange).toHaveBeenCalledWith("");
+    expect(onReasoningEffortChange).toHaveBeenCalledWith("high");
   });
 
   it("shows execution-scoped streaming output and swaps send for stop", () => {

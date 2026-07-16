@@ -1,5 +1,20 @@
 # Agent Runtime 框架收敛关键发现
 
+## 2026-07-16 题匠输入 Dock 视觉收敛
+
+- 原输入区把模型、思考强度和回复框并列成表单，实际 textarea 只获得约一半横向空间，且 4px select 圆角与 16px 聊天框圆角形成两套视觉语言。
+- 用户从三张效果图中选择紧凑聊天 Dock：textarea 成为主层级；模型与思考强度合并为一个渐进披露胶囊；发送为 44px 圆形主操作；停止态仍保留明确文字。
+- `ui-ux-pro-max` 的营销紫色和夸张极简建议不适用于现有工作台；本次只采用渐进披露、统一圆角、44px 目标、可见 focus 和 390px 无横向溢出规则。
+- 首轮 1280×720 局部复核不足：旧 `.curation-composer > div` 规则残留的 `align-items:center` 与 `justify-content:space-between` 让新 Grid 子项按内容宽度收缩；用户 Retina 截图对应的 903×689 视口因此出现发送按钮悬在中间的明显错误。
+- 修正后 textarea 与 toolbar 显式横向 stretch，工具栏采用 `auto / 1fr / auto` 三列，空态提示缩短并以一行 textarea 起步。903×689 下输入 Dock 为 456.9×110px、发送按钮距右边 9px；1440px 保持同一边距，390px 无横向溢出，设置面板完整处于视口内，控制台 warning/error 为 0。
+
+## 2026-07-16 整理右栏候选状态
+
+- `session.stage=waiting_for_command` 是执行状态，不是用户可理解的“当前任务”；资料处理单元完成率也不等于候选题确认或发布进度，二者不应继续作为右栏主信息。
+- 右栏改为消费选中会话的真实 candidate 资源，展示 draft/review_pending/published/rejected 汇总和最近更新题目；完整逐题文件操作仍由会话 timeline 的现有 artifact card 承担，避免两个区域重复承载同一任务。
+- 原事件 effect 只读取最后一条 SSE，连续到达的 `publication.changed → execution.completed` 可能漏掉候选刷新；现改为一次消费全部未处理事件，并在 summary/command/publication/completion 后刷新 candidates，生成期间另有 1200ms fallback。
+- 1280×720 实页下，候选卡、默认展开运行详情和提示同时显示时右栏 `clientHeight=scrollHeight=558px`，无右栏滚动、组件重叠或页面横向溢出。
+
 ## 2026-07-16 R2 可取消流式执行设计
 
 - 通用 Agent Runtime 已有 execution、服务端 cancel、可重放 SSE 和 `assistant.delta`；缺口不是从零实现，而是整理命令同步 HTTP 链路绕过了这些能力。

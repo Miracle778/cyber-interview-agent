@@ -13,6 +13,7 @@ describe("QuestionCatalog", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.includes("/api/knowledge/sources")) return Response.json([{ id: "s1", workspaceId: "w1", originalFilename: "mysql.md", storedPath: "sources/mysql.md", contentType: "text/markdown", sizeBytes: 20, createdAt: "now", draftId: null }]);
+      if (url.includes("/api/review/question-candidates")) return Response.json([{ id: "c1", batchId: "b1", curationSessionId: "cs1", sourceRefs: ["s1"], correctionNote: "", reviewNote: "", reviewNoteUpdatedAt: null, duplicateOfQuestionId: null, duplicateQuestion: null, status: "review_pending", draft: null, createdAt: "now", updatedAt: "now", question: { questionId: "q1", documentId: "d1", contentHash: "h1", title: "MVCC 可见性", questionText: "什么是 MVCC？", referenceAnswer: "版本可见性", topics: ["database"], difficulty: "medium", keyPoints: [], followUps: [] } }]);
       if (url.includes("/api/review/curation-sessions")) return Response.json([{
         id: "cs1", workspaceId: "w1", title: "mysql.md", sourceRefs: ["s1"], sources: [{ id: "s1", filename: "mysql.md", organizationState: "previously_curated" }], activeBatchId: "b1", executionId: "e1", executionStatus: "completed", stage: "waiting_for_command", progress: { completed: 1, total: 1 }, summary: { items: [{ ordinal: 1, candidateId: "c1", title: "MVCC 可见性", topics: ["database"], difficulty: "medium", sourceCount: 1, recommendation: "recommend_confirm" }] }, summaryVersion: 1, warnings: [{ sourceId: "s1", state: "previously_curated" }], candidateCount: 1, pendingCount: 1, publishedCount: 0, messages: [{ id: "m0", executionId: "e1", role: "assistant", content: "正在生成候选题", messageKind: "stage", payload: {}, createdAt: "now" }, { id: "m1", executionId: "e1", role: "assistant", content: "整理完成，请确认推荐题。", messageKind: "curation_summary", payload: {}, createdAt: "now" }, { id: "m2", executionId: "e1", role: "user", content: "确认第 1 题", messageKind: "text", payload: {}, createdAt: "now" }], usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20, callCount: 1, estimatedCount: 0 }, contextUsage: { currentTokens: 32000, thresholdTokens: 89600, estimated: true }, createdAt: "now", updatedAt: "now",
       }]);
@@ -28,7 +29,10 @@ describe("QuestionCatalog", () => {
     const summaryCard = screen.getByRole("region", { name: "已生成文件" });
     const laterMessage = screen.getByText("确认第 1 题");
     expect(summaryCard.compareDocumentPosition(laterMessage) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByRole("complementary", { name: "整理运行状态" })).toHaveTextContent("等待确认");
+    const runtimePanel = screen.getByRole("complementary", { name: "整理运行状态" });
+    expect(runtimePanel).toHaveTextContent("候选状态");
+    expect(runtimePanel).toHaveTextContent("MVCC 可见性");
+    expect(runtimePanel).not.toHaveTextContent("整体进度");
     expect(screen.getByText("提示").closest("details")).toHaveAttribute("open");
     const runtimeDetails = screen.getByText("运行详情").closest("details");
     expect(runtimeDetails).toHaveAttribute("open");

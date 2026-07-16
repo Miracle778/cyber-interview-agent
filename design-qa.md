@@ -47,3 +47,67 @@
 Browser console capture is not exposed by the selected in-app browser runtime. The fallback checks were a clean TypeScript compile, passing targeted tests, a successful live DOM interaction pass, and absence of the product error banner.
 
 Final result: passed.
+
+---
+
+# Design QA — Curation Composer Option 2
+
+- Source visual truth: `/Users/miracle778/.codex/generated_images/019f52f0-5368-7361-806d-3cfe8bd36e9d/exec-c473e3af-e010-41ab-b68e-8a17b082b11f.png`
+- User rejection evidence: `/var/folders/km/c32d85192md4hfr8087jlggw0000gn/T/codex-clipboard-cadcb447-08b6-4b49-9e3f-ccc69f1adf17.png`
+- Desktop implementation: `/private/tmp/cyber-interview-agent-r2-ui-design/.design-qa/curation-composer-option-2-implementation.png`
+- Mobile implementation: `/private/tmp/cyber-interview-agent-r2-ui-design/.design-qa/curation-composer-option-2-mobile.png`
+- Desktop viewport: 1280 × 720
+- Mobile viewport: 390 × 844
+- State: existing curation session, empty composer focused; settings disclosure also inspected open
+
+## Full-view comparison evidence
+
+The selected generated reference and the browser-rendered implementation were opened together and compared. The generated source was emitted at a larger pixel size than requested, so the comparison uses proportional structure rather than pretending pixel-exact dimensions. The implementation preserves the product shell, transcript, source strip, runtime panel, existing indigo tokens and content density while replacing only the composer.
+
+## Focused-region comparison evidence
+
+The composer was inspected in three states: empty/focused, text entered with enabled send, and execution settings expanded. It was also inspected at 390px, the user's Retina-equivalent 903×689 viewport, and 1440px. The textarea remains the dominant surface; model and reasoning controls are represented by one compact disclosure; the 44px circular send target stays aligned without horizontal overflow; the settings panel opens upward and does not resize the conversation.
+
+## Findings
+
+- No P0, P1 or P2 fidelity issues remain.
+- Fonts and typography: existing application font stack, weights and muted helper text are preserved; the placeholder retains readable size and wrapping.
+- Spacing and layout rhythm: 8px-derived spacing, 15px dock radius, 44px action target and compact toolbar match the selected direction. At 390px the desktop-only keyboard helper is hidden so primary controls remain compact.
+- Colors and tokens: existing semantic surface, border, primary, focus and danger tokens are reused; no unrelated purple/pink redesign or gradients were introduced.
+- Image and icon fidelity: no new raster assets were required. Existing Lucide outline icons are used consistently for settings, chevron, send and stop.
+- Copy and content: the free-form prompt is shortened to avoid an empty two-line textarea at the user's breakpoint; selected model, reasoning level and desktop Shift+Enter guidance remain visible; accessible labels for both underlying selects and the send button remain intact.
+- Interaction evidence: model/reasoning controls open and remain editable, input and send states render correctly, 11 targeted tests pass, production build passes, and the inspected browser tab reported no console warnings or errors.
+
+## Comparison history
+
+- Initial browser pass found the intended compact dock, but the textarea was still focused and contained temporary QA text.
+- The temporary text was cleared with keyboard interaction, and the empty focused state was recaptured.
+- The 390px pass confirmed that the settings chip and send button fit without horizontal overflow; the desktop keyboard helper is intentionally hidden.
+- User review invalidated the first pass: an inherited `align-items:center` and `justify-content:space-between` rule made the Grid children shrink to content width, leaving the send action near the middle of the composer.
+- The corrected pass explicitly resets Grid alignment and gives the toolbar three columns. At 903×689 the field is 456.9×110px, textarea and toolbar are both 454.9px wide, and the send action is 9px from the right edge. At 1440px the same right gap is preserved; at 390px there is no horizontal overflow.
+
+## Follow-up polish
+
+- P3: the generated mock uses a slightly larger circular send control than the implementation. The implementation intentionally keeps the project-wide 44px target rather than introducing a one-off oversized action.
+- P3: the desktop evidence includes the visible focus ring because the composer was focused for state verification; this is an intentional accessible state, not visual drift.
+
+final result: passed
+
+---
+
+# Design QA — Curation Candidate Runtime Status
+
+- Live viewport: 1280 × 720
+- State: existing curation session with 14 candidates, runtime details and warning both expanded
+- User boundary: keep the candidate-file cards inside the conversation unchanged
+
+## Findings
+
+- Replaced the misleading stage task and source-unit percentage with candidate facts from the selected session: draft, pending, published and rejected.
+- The compact card shows the most recently changed candidate while the existing conversation artifact card remains the complete per-file surface.
+- Candidate data refreshes on summary, command resolution, publication and execution completion events; active generation also retains a 1200ms fallback refresh.
+- Batched SSE events are consumed together, so a `publication.changed` event is not skipped when a terminal execution event immediately follows it.
+- At 1280×720, the fully expanded right rail has `clientHeight=scrollHeight=558px`; there is no right-rail scroll, overlap or horizontal page overflow.
+- Targeted component/catalog/conversation tests pass and the browser console reports no warning or error.
+
+final result: passed

@@ -1,4 +1,4 @@
-import { Bot, Check, ChevronDown, CornerDownLeft, Eye, FileText, MessageSquareText, Send, ListChecks, Square, RotateCcw, XCircle, Rocket } from "lucide-react";
+import { Bot, Check, ChevronDown, Eye, FileText, MessageSquareText, Send, ListChecks, SlidersHorizontal, Square, RotateCcw, XCircle, Rocket } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../shared/ui/Button";
 import { SessionMessage } from "./SessionMessage";
@@ -12,6 +12,13 @@ const recommendationText: Record<string, string> = {
   suggest_reject: "建议拒绝",
   link_existing: "建议合并",
 };
+
+const reasoningEffortLabel = {
+  none: "标准",
+  low: "较低",
+  medium: "中等",
+  high: "较高",
+} as const;
 
 type TimelineItem = { kind: "message"; message: CurationMessage } | { kind: "process"; id: string; messages: CurationMessage[] };
 
@@ -151,6 +158,7 @@ export function CurationConversation({ session, candidates = {}, optimisticMessa
   }, [session?.id, session?.messages.length, session?.summaryVersion, optimisticMessage?.id, streamingState?.text]);
   if (!session) return <main className="curation-conversation curation-conversation--empty"><ListChecks size={28} /><h3>选择或新建整理会话</h3><p>每次整理会保留资料、运行过程、候选题总结和你的确认记录。</p></main>;
   const canCommand = session.stage === "waiting_for_command" || session.stage === "completed";
+  const selectedModelLabel = models.find((model) => model.id === selectedModelId)?.label ?? "默认模型";
   function submit(event: FormEvent) {
     event.preventDefault();
     const value = text.trim();
@@ -168,9 +176,29 @@ export function CurationConversation({ session, candidates = {}, optimisticMessa
         {streamingState && activeExecutionId ? <StreamingMessage state={streamingState} modelLabel={models.find((item) => item.id === selectedModelId)?.label} onRetry={onRetryCommand} onAbandon={onAbandonCommand} /> : null}
       </div>
       <form className="curation-composer review-chat-composer" onSubmit={submit}>
-        <label htmlFor="curation-command">回复题匠</label>
-        <div className="curation-composer__settings"><label>本次执行模型<select aria-label="本次执行模型" value={selectedModelId} disabled={busy} onChange={(event) => onModelChange(event.target.value)}><option value="">使用工作区默认模型</option>{models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select></label><label>思考强度<select aria-label="思考强度" value={reasoningEffort} disabled={busy} onChange={(event) => onReasoningEffortChange(event.target.value as "none" | "low" | "medium" | "high")}><option value="none">标准</option><option value="low">较低</option><option value="medium">中等</option><option value="high">较高</option></select></label></div>
-        <div className="review-chat-composer__field"><textarea id="curation-command" value={text} disabled={!canCommand || busy} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={canCommand ? "自由描述你的要求，例如：按备注重新生成，其他推荐题直接发布" : "Agent 整理完成后可在这里确认或调整"} /><div className="review-chat-composer__actions"><small>Enter 发送 · Shift+Enter 换行</small>{busy ? <Button type="button" variant="danger" disabled={streamingState?.status === "cancelling"} onClick={onStop}><Square size={15} />{streamingState?.status === "cancelling" ? "正在停止…" : "停止"}</Button> : <Button type="submit" disabled={!text.trim() || !canCommand}><CornerDownLeft size={16} />发送</Button>}</div></div>
+        <label className="review-conversation__sr-title" htmlFor="curation-command">回复题匠</label>
+        <div className="review-chat-composer__field">
+          <textarea id="curation-command" rows={1} value={text} disabled={!canCommand || busy} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={canCommand ? "输入要求，或直接确认、发布、重写候选题…" : "Agent 整理完成后可在这里确认或调整"} />
+          <div className="curation-composer__toolbar">
+            <details className="curation-composer__settings">
+              <summary aria-disabled={busy} onClick={(event) => { if (busy) event.preventDefault(); }}>
+                <SlidersHorizontal size={17} aria-hidden="true" />
+                <span>{selectedModelLabel} · {reasoningEffortLabel[reasoningEffort]}</span>
+                <ChevronDown size={15} aria-hidden="true" />
+              </summary>
+              <div className="curation-composer__settings-panel" aria-label="模型与思考强度">
+                <label htmlFor="curation-model">本次执行模型</label>
+                <select id="curation-model" aria-label="本次执行模型" value={selectedModelId} disabled={busy} onChange={(event) => onModelChange(event.target.value)}><option value="">使用工作区默认模型</option>{models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select>
+                <label htmlFor="curation-reasoning">思考强度</label>
+                <select id="curation-reasoning" aria-label="思考强度" value={reasoningEffort} disabled={busy} onChange={(event) => onReasoningEffortChange(event.target.value as "none" | "low" | "medium" | "high")}><option value="none">标准</option><option value="low">较低</option><option value="medium">中等</option><option value="high">较高</option></select>
+              </div>
+            </details>
+            <small>Shift+Enter 换行</small>
+            <div className="review-chat-composer__actions">
+              {busy ? <Button type="button" variant="danger" disabled={streamingState?.status === "cancelling"} onClick={onStop}><Square size={15} />{streamingState?.status === "cancelling" ? "正在停止…" : "停止"}</Button> : <Button className="curation-composer__send" type="submit" aria-label="发送" title="发送" disabled={!text.trim() || !canCommand}><Send size={18} /></Button>}
+            </div>
+          </div>
+        </div>
       </form>
     </main>
   );
