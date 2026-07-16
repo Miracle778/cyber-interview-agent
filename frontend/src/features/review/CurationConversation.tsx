@@ -1,4 +1,4 @@
-import { Bot, Check, ChevronDown, Eye, FileText, MessageSquareText, Send, ListChecks, SlidersHorizontal, Square, RotateCcw, XCircle, Rocket } from "lucide-react";
+import { Bot, ChevronDown, FileText, ListChecks, SlidersHorizontal, Square, RotateCcw, XCircle, Rocket, Send } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../shared/ui/Button";
 import { SessionMessage } from "./SessionMessage";
@@ -6,6 +6,7 @@ import type { CurationMessage, CurationSession, QuestionCandidate } from "./revi
 import { elapsedSeconds, formatBeijingTime } from "../../shared/time";
 import { MarkdownView } from "../knowledge/MarkdownView";
 import type { StreamingAssistantState } from "../agent/agentTypes";
+import { CurationArtifactCard } from "./CurationArtifactCard";
 
 const recommendationText: Record<string, string> = {
   recommend_confirm: "建议确认",
@@ -64,18 +65,15 @@ function CurationProcessMessage({ messages, startedAt, finishedAt, active, faile
 
 function CurationSummaryCard({ session, candidates, busyId, bulkBusy, bulkRetryAvailable, onBulkPublish, onOpenCandidate, onPublish, onNote }: { session: CurationSession; candidates: Record<string, QuestionCandidate>; busyId: string | null; bulkBusy: boolean; bulkRetryAvailable: boolean; onBulkPublish: () => void; onOpenCandidate: (candidateId: string) => void; onPublish: (candidateId: string) => void; onNote: (candidateId: string, note: string) => void }) {
   const [expanded, setExpanded] = useState(false);
-  const [notingId, setNotingId] = useState<string | null>(null);
-  const [note, setNote] = useState("");
   if (session.summary.items.length === 0) return null;
   const visible = expanded ? session.summary.items : session.summary.items.slice(0, 3);
   return (
     <section className="curation-artifacts" aria-label="已生成文件">
       <header><div><FileText size={16} /><strong>已生成 {session.summary.items.length} 个 Markdown 文件</strong></div><div className="curation-artifacts__header-actions"><span>草稿 v{session.summaryVersion}</span><button type="button" disabled={bulkBusy || (!bulkRetryAvailable && session.pendingCount === 0)} onClick={onBulkPublish}><Rocket size={14} />{bulkRetryAvailable ? "仅重试失败项" : "一键发布"}</button></div></header>
       <div className={`curation-artifacts__list${expanded ? " is-expanded" : ""}`}>
-        {visible.map((item) => { const candidate = candidates[item.candidateId]; const published = candidate?.status === "published"; return <article key={item.candidateId} className={published ? "is-published" : ""}><span className="curation-artifacts__file"><FileText size={16} /></span><div><strong title={`${item.title}.md`}>{item.title}.md</strong><small>{recommendationText[item.recommendation] ?? item.recommendation}{candidate?.reviewNote ? " · 已备注" : ""}</small></div><em>{published ? <><Check size={13} />已发布</> : "草稿"}</em><div className="curation-artifacts__actions"><button type="button" onClick={() => onOpenCandidate(item.candidateId)}><Eye size={14} />查看</button><button type="button" disabled={published || busyId === item.candidateId} onClick={() => onPublish(item.candidateId)}><Send size={14} />{published ? "已发布" : "发布"}</button><button type="button" onClick={() => { setNotingId(item.candidateId); setNote(candidate?.reviewNote ?? ""); }}><MessageSquareText size={14} />备注</button></div></article>; })}
+        {visible.map((item) => candidates[item.candidateId] ? <CurationArtifactCard key={item.candidateId} candidate={candidates[item.candidateId]} title={item.title} description={recommendationText[item.recommendation] ?? item.recommendation} busy={busyId === item.candidateId} onOpen={onOpenCandidate} onPublish={onPublish} onSaveNote={onNote} /> : null)}
       </div>
       {session.summary.items.length > 3 ? <button className="curation-artifacts__expand" type="button" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>{expanded ? "收起文件" : `展开其余 ${session.summary.items.length - 3} 个文件`}<ChevronDown size={15} /></button> : null}
-      {notingId ? <div className="curation-note-editor"><label htmlFor="candidate-note">修改备注</label><textarea id="candidate-note" autoFocus value={note} onChange={(event) => setNote(event.target.value)} placeholder="写下修改意见；保存后不会立即重新生成" /><small>保存备注只记录意见。稍后可在会话中让 Agent 按备注重新生成。</small><div><button type="button" onClick={() => setNotingId(null)}>取消</button><Button type="button" disabled={busyId === notingId} loading={busyId === notingId} onClick={() => { onNote(notingId, note); setNotingId(null); }}>保存备注</Button></div></div> : null}
     </section>
   );
 }
