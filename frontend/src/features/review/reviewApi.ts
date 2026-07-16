@@ -98,10 +98,10 @@ export function createQuestionBatch(workspaceId: string, sourceRefs: string[]): 
 
 export function listQuestionCandidates(
   workspaceId: string,
-  filters: { query?: string; topic?: string; difficulty?: string; sourceId?: string; status?: string } = {},
+  filters: { query?: string; topic?: string; difficulty?: string; sourceId?: string; status?: string; page?: number } = {},
 ): Promise<QuestionCandidate[]> {
   const query = new URLSearchParams({ workspaceId });
-  Object.entries(filters).forEach(([key, value]) => value && query.set(key, value));
+  Object.entries(filters).forEach(([key, value]) => value && query.set(key, String(value)));
   return apiGet(`/api/review/question-candidates?${query}`);
 }
 

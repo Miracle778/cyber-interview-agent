@@ -84,8 +84,43 @@ describe("QuestionCatalog", () => {
     render(<QuestionCatalog workspace={workspace} />, { wrapper });
     await screen.findByRole("tab", { name: "整理会话" });
     fireEvent.click(screen.getByRole("tab", { name: "题目库" }));
-    expect(await screen.findByLabelText("Topic 筛选")).toBeInTheDocument();
-    expect(await screen.findByText("暂无候选题。选择资料后点击“AI 整理”。")).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "题目库浏览器" })).toBeInTheDocument();
+    expect(screen.getByLabelText("搜索候选题")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "返回整理会话" })).toBeInTheDocument();
+    expect(await screen.findByText("题目库还是空的")).toBeInTheDocument();
+  });
+
+  it("opens publication approval in the current viewport instead of below the library", async () => {
+    const pendingCandidate = { id: "c1", batchId: "b1", curationSessionId: "cs1", sourceRefs: ["s1"], correctionNote: "", reviewNote: "", reviewNoteUpdatedAt: null, duplicateOfQuestionId: null, duplicateQuestion: null, status: "review_pending", draft: { id: "d1", title: "缓存雪崩", markdown: "# 缓存雪崩\n\n## 题目\n\n什么是缓存雪崩？\n\n## 参考答案\n\n大量缓存同时失效。", status: "review_pending", version: 1, contentHash: "h1", documentType: "question" }, createdAt: "now", updatedAt: "now", question: { questionId: "q1", documentId: "d1", contentHash: "h1", title: "缓存雪崩", questionText: "什么是缓存雪崩？", referenceAnswer: "大量缓存同时失效。", topics: ["Redis"], difficulty: "medium", keyPoints: [], followUps: [] } };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/api/knowledge/sources")) return Response.json([]);
+      if (url.includes("/api/review/curation-sessions")) return Response.json([]);
+      if (url.includes("/api/review/question-batches")) return Response.json([]);
+      if (url.includes("/api/review/question-candidates")) return Response.json([pendingCandidate]);
+      if (url.endsWith("/api/knowledge/drafts/d1/publish-request") && init?.method === "POST") return Response.json({ sessionId: "publish-session", executionId: "publish-run", status: "waiting_for_approval" });
+      if (url.includes("/api/agent/actions?")) return Response.json([{ id: "action-1", workspaceId: "w1", sessionId: "publish-session", executionId: "publish-run", actionType: "knowledge.publish", preview: { title: "缓存雪崩", markdown: pendingCandidate.draft.markdown }, editableFields: ["title", "markdown"], status: "pending", version: 1, createdAt: "now", resolvedAt: null }]);
+      throw new Error(`unexpected ${url}`);
+    });
+
+    render(<QuestionCatalog workspace={workspace} />, { wrapper });
+    await screen.findByRole("tab", { name: "题目库" });
+    fireEvent.click(screen.getByRole("tab", { name: "题目库" }));
+    fireEvent.click(await screen.findByRole("button", { name: "确认入库" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "题目发布审批" });
+    expect(dialog.parentElement).toHaveClass("dialog-backdrop");
+    expect(within(dialog).getByRole("heading", { name: "发布审批" })).toBeInTheDocument();
+    expect((await within(dialog).findAllByText("缓存雪崩")).length).toBeGreaterThan(0);
+    expect(await within(dialog).findByRole("button", { name: "批准并入库" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "暂不发布" })).toBeInTheDocument();
+    expect(within(dialog).queryByText("knowledge.publish")).toBeNull();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "关闭发布审批" }));
+    expect(screen.queryByRole("dialog", { name: "题目发布审批" })).toBeNull();
+    expect(screen.getByRole("status", { name: "发布审批待处理" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "继续审批" }));
+    expect(await screen.findByRole("dialog", { name: "题目发布审批" })).toBeInTheDocument();
   });
 
   it("shows public execution evidence and retries a failed curation session", async () => {

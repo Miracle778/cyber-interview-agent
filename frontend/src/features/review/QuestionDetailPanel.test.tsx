@@ -11,13 +11,21 @@ const candidate: QuestionCandidate = {
 
 describe("QuestionDetailPanel", () => {
   afterEach(cleanup);
-  it("renders Markdown by default and exposes source only on demand", () => {
-    render(<QuestionDetailPanel candidate={candidate} sourceLabels={{ s1: "mysql.md" }} busy={false} onSave={vi.fn()} onRewrite={vi.fn()} onConfirm={vi.fn()} onOpenSession={vi.fn()} />);
+  it("renders Markdown for reading and edits the source in the second mode", () => {
+    const onSave = vi.fn();
+    render(<QuestionDetailPanel candidate={candidate} sourceLabels={{ s1: "mysql.md" }} busy={false} onSave={onSave} onRewrite={vi.fn()} onConfirm={vi.fn()} onOpenSession={vi.fn()} />);
     expect(screen.getByRole("article")).toHaveTextContent("多版本并发控制");
     expect(screen.queryByText("# MVCC", { exact: false })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Markdown 原文" }));
-    expect(screen.getByText(/# MVCC/)).toBeInTheDocument();
-    expect(screen.getByText("需要人工确认")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "阅读" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("button", { name: "编辑" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "原文" }));
+    const source = screen.getByRole("textbox", { name: "Markdown 原文" });
+    expect((source as HTMLTextAreaElement).value).toContain("# MVCC");
+    fireEvent.change(source, { target: { value: "# MVCC 新标题\n\n## 题目\n\n新的问题\n\n## 参考答案\n\n新的答案\n\n## 关键点\n\n- 快照\n- 版本链" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+    expect(onSave).toHaveBeenCalledWith({ version: 1, title: "MVCC 新标题", questionText: "新的问题", referenceAnswer: "新的答案", keyPoints: ["快照", "版本链"] });
+    expect(screen.getByText("确认后进入发布审批")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "来源证据" })).toHaveTextContent("mysql.md");
   });
 

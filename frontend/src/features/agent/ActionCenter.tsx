@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Play, ShieldQuestion, X } from "lucide-react";
+import { Check, PencilLine, Play, ShieldQuestion, X } from "lucide-react";
 import { ApiError } from "../../shared/api/client";
 import { Badge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
 import { Field } from "../../shared/ui/Field";
+import { MarkdownView } from "../knowledge/MarkdownView";
 import {
   createAgentSession,
   listAgentSessions,
@@ -29,6 +30,10 @@ function operationKey(kind: "approve" | "reject", actionId: string) {
   return `${kind}-${actionId}-${random}`;
 }
 
+function editValue(action: PendingAction, field: string, edits: Record<string, string>) {
+  return edits[field] ?? displayValue(action.preview[field] ?? "");
+}
+
 
 async function waitForPendingAction(workspaceId: string, executionId: string) {
   for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -50,6 +55,8 @@ export interface ActionCenterProps {
   watchExecutionId?: string | null;
   /** Notify the owning page after approve/reject delivery finishes. */
   onResolved?: () => void;
+  /** Use the focused publication review layout instead of the generic card. */
+  presentation?: "default" | "publication";
 }
 
 export function ActionCenter({
@@ -58,6 +65,7 @@ export function ActionCenter({
   actionType,
   watchExecutionId,
   onResolved,
+  presentation = "default",
 }: ActionCenterProps) {
   const queryClient = useQueryClient();
   const queryKey = useMemo(
@@ -69,6 +77,7 @@ export function ActionCenter({
   const [reason, setReason] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [showRejectReason, setShowRejectReason] = useState(false);
   const [watchAttempt, setWatchAttempt] = useState(0);
   const operationKeys = useRef(new Map<string, string>());
 
@@ -77,9 +86,10 @@ export function ActionCenter({
     queryFn: () => listActions(workspaceId, { status: "pending" }),
   });
   const allActions = actionsQuery.data ?? [];
-  const actions = actionType
-    ? allActions.filter((item) => item.actionType === actionType)
-    : allActions;
+  const actions = allActions.filter((item) =>
+    (!actionType || item.actionType === actionType)
+    && (!watchExecutionId || item.executionId === watchExecutionId),
+  );
   const selected = useMemo(
     () => actions.find((item) => item.id === selectedId) ?? actions[0] ?? null,
     [actions, selectedId],
@@ -100,6 +110,7 @@ export function ActionCenter({
       ),
     );
     setReason("");
+    setShowRejectReason(false);
   }, [selected?.id]);
 
   useEffect(() => {
@@ -151,8 +162,8 @@ export function ActionCenter({
     mutationFn: async (action: PendingAction) => {
       const changed = Object.fromEntries(
         action.editableFields
-          .filter((field) => edits[field] !== displayValue(action.preview[field] ?? ""))
-          .map((field) => [field, edits[field]]),
+          .filter((field) => editValue(action, field, edits) !== displayValue(action.preview[field] ?? ""))
+          .map((field) => [field, editValue(action, field, edits)]),
       );
       const keyName = `approve:${action.id}:${JSON.stringify({
         version: action.version,
@@ -235,8 +246,9 @@ export function ActionCenter({
 
   return (
     <Card
-      title="人工确认"
-      icon={<ShieldQuestion size={18} />}
+      title={presentation === "default" ? "人工确认" : undefined}
+      icon={presentation === "default" ? <ShieldQuestion size={18} /> : undefined}
+      className={presentation === "publication" ? "action-center-card--publication" : undefined}
       actions={
         showDiagnostic ? (
           <Button
@@ -277,7 +289,29 @@ export function ActionCenter({
           </div>
         ) : null}
 
-        {selected ? (
+        {selected && presentation === "publication" ? (
+          <div className="action-center__publication">
+            <div className="action-center__publication-status">
+              <Badge tone="warning" dot>等待你的决定</Badge>
+              <span>批准后，这道题会进入可复习题库</span>
+            </div>
+            <section className="action-center__publication-preview" aria-label="待发布题目预览">
+              <div><span>题目</span><strong>{editValue(selected, "title", edits) || "未命名题目"}</strong></div>
+              <MarkdownView markdown={editValue(selected, "markdown", edits)} />
+            </section>
+            {selected.editableFields.length > 0 ? (
+              <details className="action-center__publication-edit">
+                <summary><PencilLine size={15} />调整标题或内容</summary>
+                <div>
+                  {selected.editableFields.includes("title") ? <Field label="题目标题" name={`action-${selected.id}-title`} value={editValue(selected, "title", edits)} onChange={(event) => setEdits((current) => ({ ...current, title: event.target.value }))} /> : null}
+                  {selected.editableFields.includes("markdown") ? <label className="field" htmlFor={`action-${selected.id}-markdown`}><span className="field__label">Markdown 内容</span><textarea id={`action-${selected.id}-markdown`} className="field__input action-center__publication-markdown" value={editValue(selected, "markdown", edits)} onChange={(event) => setEdits((current) => ({ ...current, markdown: event.target.value }))} /></label> : null}
+                </div>
+              </details>
+            ) : null}
+            {showRejectReason ? <section className="action-center__reject-panel" aria-label="暂不发布原因"><label className="field" htmlFor={`action-${selected.id}-reason`}><span className="field__label">暂不发布原因</span><textarea id={`action-${selected.id}-reason`} className="field__input" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="说明需要继续修改的地方" autoFocus /></label><div><Button variant="ghost" disabled={resolving} onClick={() => { setReason(""); setShowRejectReason(false); }}>返回</Button><Button variant="danger" disabled={!reason.trim() || resolving} loading={rejectMutation.isPending} onClick={() => rejectMutation.mutate(selected)}><X size={16} aria-hidden="true" />确认暂不发布</Button></div></section> : null}
+            {!showRejectReason ? <footer className="action-center__publication-actions"><Button variant="ghost" disabled={resolving} onClick={() => setShowRejectReason(true)}>暂不发布</Button><Button loading={approveMutation.isPending} disabled={resolving} onClick={() => approveMutation.mutate(selected)}><Check size={16} aria-hidden="true" />批准并入库</Button></footer> : null}
+          </div>
+        ) : selected ? (
           <div className="action-center__detail">
             <div className="action-center__meta">
               <Badge tone="warning" dot>等待人工决定</Badge>

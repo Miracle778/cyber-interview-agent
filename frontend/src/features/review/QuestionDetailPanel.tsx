@@ -1,28 +1,66 @@
-import { AlertTriangle, Bot, CheckCircle2, Code2, Eye, Pencil, RefreshCw } from "lucide-react";
+import { AlertTriangle, Bot, CheckCircle2, Code2, Eye, FileText, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { Button } from "../../shared/ui/Button";
 import { MarkdownView } from "../knowledge/MarkdownView";
 import type { QuestionCandidate } from "./reviewTypes";
 
-export function QuestionDetailPanel({ candidate, sourceLabels, busy, onSave, onRewrite, onConfirm, onOpenSession }: { candidate: QuestionCandidate | null; sourceLabels: Record<string, string>; busy: boolean; onSave: (values: { version: number; title: string; questionText: string; referenceAnswer: string }) => void; onRewrite: (feedback: string) => void; onConfirm: () => void; onOpenSession: (sessionId: string) => void }) {
-  const [mode, setMode] = useState<"preview" | "source" | "edit">("preview");
+const statusLabels: Record<QuestionCandidate["status"], string> = {
+  draft: "草稿",
+  review_pending: "待确认",
+  published: "已入库",
+  rejected: "已拒绝",
+};
+
+const difficultyLabels: Record<QuestionCandidate["question"]["difficulty"], string> = {
+  easy: "简单",
+  medium: "中等",
+  hard: "困难",
+};
+
+function markdownSection(markdown: string, heading: string) {
+  const parts = markdown.split(/^##\s+(.+)\s*$/gm);
+  for (let index = 1; index < parts.length; index += 2) {
+    if (parts[index].trim() === heading) return parts[index + 1]?.trim();
+  }
+  return undefined;
+}
+
+export function QuestionDetailPanel({ candidate, sourceLabels, busy, approvalPending = false, onSave, onRewrite, onConfirm, onOpenSession }: { candidate: QuestionCandidate | null; sourceLabels: Record<string, string>; busy: boolean; approvalPending?: boolean; onSave: (values: { version: number; title: string; questionText: string; referenceAnswer: string; keyPoints: string[] }) => void; onRewrite: (feedback: string) => void; onConfirm: () => void; onOpenSession: (sessionId: string) => void }) {
+  const [mode, setMode] = useState<"preview" | "source">("preview");
   const [feedback, setFeedback] = useState("");
-  const [title, setTitle] = useState(candidate?.question.title ?? "");
-  const [questionText, setQuestionText] = useState(candidate?.question.questionText ?? "");
-  const [referenceAnswer, setReferenceAnswer] = useState(candidate?.question.referenceAnswer ?? "");
+  const [source, setSource] = useState(candidate?.draft?.markdown ?? (candidate ? `# ${candidate.question.title}\n\n## 题目\n\n${candidate.question.questionText}\n\n## 参考答案\n\n${candidate.question.referenceAnswer}\n\n## 关键点\n\n${candidate.question.keyPoints.map((point) => `- ${point}`).join("\n")}` : ""));
   if (!candidate) return <div className="question-detail-empty"><Eye size={22} /><p>选择一道候选题查看详情</p></div>;
   const draft = candidate.draft;
+  const markdown = (draft?.markdown ?? `## 题目\n\n${candidate.question.questionText}\n\n## 参考答案\n\n${candidate.question.referenceAnswer}\n\n## 关键点\n\n${candidate.question.keyPoints.map((point) => `- ${point}`).join("\n")}`).replace(/^# [^\n]+\n+/, "");
+  const saveSource = () => {
+    const title = source.match(/^#\s+(.+)$/m)?.[1].trim() || candidate.question.title;
+    const questionText = markdownSection(source, "题目") || candidate.question.questionText;
+    const referenceAnswer = markdownSection(source, "参考答案") || candidate.question.referenceAnswer;
+    const keyPointsSection = markdownSection(source, "关键点");
+    const keyPoints = keyPointsSection
+      ? keyPointsSection.split("\n").map((line) => line.replace(/^\s*[-*+]\s+/, "").trim()).filter(Boolean)
+      : candidate.question.keyPoints;
+    onSave({ version: draft?.version ?? 1, title, questionText, referenceAnswer, keyPoints });
+  };
   return (
     <section className="question-detail" aria-label="题目详情" key={candidate.id}>
-      <header className="question-detail__header"><div><span>{candidate.question.difficulty} · {candidate.question.topics.join(" / ")}</span><h3>{candidate.question.title}</h3></div><div className="segmented-control" aria-label="详情显示模式"><button aria-pressed={mode === "preview"} onClick={() => setMode("preview")}><Eye size={14} />渲染</button><button aria-pressed={mode === "source"} onClick={() => setMode("source")}><Code2 size={14} />Markdown 原文</button><button aria-pressed={mode === "edit"} onClick={() => setMode("edit")}><Pencil size={14} />编辑</button></div></header>
-      {mode === "preview" ? <MarkdownView markdown={draft?.markdown ?? `# ${candidate.question.title}\n\n## 题目\n\n${candidate.question.questionText}\n\n## 参考答案\n\n${candidate.question.referenceAnswer}`} /> : null}
-      {mode === "source" ? <pre className="report-preview">{draft?.markdown}</pre> : null}
-      {mode === "edit" ? <div className="question-edit-form"><label className="field"><span className="field__label">标题</span><input className="field__input" value={title} onChange={(event) => setTitle(event.target.value)} /></label><label className="field"><span className="field__label">题目</span><textarea className="field__input field__input--area" value={questionText} onChange={(event) => setQuestionText(event.target.value)} /></label><label className="field"><span className="field__label">参考答案</span><textarea className="field__input field__input--area" value={referenceAnswer} onChange={(event) => setReferenceAnswer(event.target.value)} /></label><Button loading={busy} onClick={() => onSave({ version: draft?.version ?? 1, title, questionText, referenceAnswer })}>保存草稿</Button></div> : null}
-      <section className="source-evidence" aria-label="来源证据"><strong>来源证据</strong><ul>{candidate.sourceRefs.map((ref) => { const sourceId = Object.keys(sourceLabels).find((id) => ref === id || ref.startsWith(`${id}#`)); return <li key={ref}>{sourceId ? sourceLabels[sourceId] : ref}{ref.includes("#") ? ` · ${ref.slice(ref.indexOf("#") + 1)}` : ""}</li>; })}</ul></section>
-      <aside className="ai-suggestion"><Bot size={18} /><div><strong>AI 整理建议</strong><p>{candidate.correctionNote || "题目结构完整，建议核对参考答案后入库。"}</p></div></aside>
-      {candidate.duplicateOfQuestionId ? <aside className="duplicate-warning"><AlertTriangle size={18} /><div><strong>发现相似已发布题目</strong>{candidate.duplicateQuestion ? <><p><b>{candidate.duplicateQuestion.title}</b></p><p>{candidate.duplicateQuestion.questionText}</p></> : <p>题目 ID：{candidate.duplicateOfQuestionId}</p>}<small>确认前请比较题目与答案差异。</small></div></aside> : null}
-      <div className="rewrite-row"><label className="field"><span className="field__label">让 AI 在原会话中重写</span><input className="field__input" value={feedback} onChange={(event) => setFeedback(event.target.value)} placeholder="例如：增加故障排查场景" /></label><Button variant="secondary" disabled={!feedback.trim() || busy} onClick={() => onRewrite(feedback.trim())}><RefreshCw size={15} />重新整理</Button><button type="button" className="text-link" onClick={() => onOpenSession(candidate.curationSessionId)}>查看生成会话</button></div>
-      {candidate.status === "review_pending" ? <section className="candidate-confirm"><CheckCircle2 size={18} /><div><strong>需要人工确认</strong><p>确认后创建发布审批；批准之前不会进入可复习题库。</p></div><Button loading={busy} onClick={onConfirm}>确认入库</Button></section> : null}
+      <div className="question-detail__scroll">
+        <header className="question-detail__header">
+          <div className="question-detail__breadcrumb">{candidate.question.topics.join(" / ") || "未分类"}</div>
+          <h3>{candidate.question.title}</h3>
+          <div className="question-detail__meta"><span className={`question-library__badge question-library__badge--${candidate.status}`}>{statusLabels[candidate.status]}</span><span>难度：{difficultyLabels[candidate.question.difficulty]}</span><span>来源：{candidate.sourceRefs.length} 份资料</span></div>
+        </header>
+        <div className="segmented-control" aria-label="详情显示模式"><button aria-pressed={mode === "preview"} onClick={() => setMode("preview")}><Eye size={14} />阅读</button><button aria-pressed={mode === "source"} onClick={() => setMode("source")}><Code2 size={14} />原文</button></div>
+        <div className="question-detail__content">
+          {mode === "preview" ? <MarkdownView markdown={markdown} /> : null}
+          {mode === "source" ? <div className="question-source-editor"><label className="field"><span className="field__label">Markdown 原文</span><textarea className="field__input question-source-editor__input" aria-label="Markdown 原文" value={source} onChange={(event) => setSource(event.target.value)} /></label><Button loading={busy} onClick={saveSource}>保存修改</Button></div> : null}
+        </div>
+        <section className="source-evidence" aria-label="来源证据"><div><FileText size={16} /><strong>来源证据</strong><span>{candidate.sourceRefs.length}</span></div><ul>{candidate.sourceRefs.map((ref) => { const sourceId = Object.keys(sourceLabels).find((id) => ref === id || ref.startsWith(`${id}#`)); return <li key={ref}>{sourceId ? sourceLabels[sourceId] : ref}{ref.includes("#") ? ` · ${ref.slice(ref.indexOf("#") + 1)}` : ""}</li>; })}</ul></section>
+        <aside className="ai-suggestion"><Bot size={18} /><div><strong>AI 整理建议</strong><p>{candidate.correctionNote || "题目结构完整，建议核对参考答案后入库。"}</p></div></aside>
+        {candidate.duplicateOfQuestionId ? <aside className="duplicate-warning"><AlertTriangle size={18} /><div><strong>发现相似已发布题目</strong>{candidate.duplicateQuestion ? <><p><b>{candidate.duplicateQuestion.title}</b></p><p>{candidate.duplicateQuestion.questionText}</p></> : <p>题目 ID：{candidate.duplicateOfQuestionId}</p>}<small>确认前请比较题目与答案差异。</small></div></aside> : null}
+        <div className="rewrite-row"><label className="field"><span className="field__label">让 AI 在原会话中重写</span><input className="field__input" value={feedback} onChange={(event) => setFeedback(event.target.value)} placeholder="例如：增加故障排查场景" /></label><Button variant="secondary" disabled={!feedback.trim() || busy} onClick={() => onRewrite(feedback.trim())}><RefreshCw size={15} />重新整理</Button><button type="button" className="text-link" onClick={() => onOpenSession(candidate.curationSessionId)}>查看生成会话</button></div>
+      </div>
+      {candidate.status === "review_pending" ? <section className="candidate-confirm"><CheckCircle2 size={18} /><div><strong>{approvalPending ? "发布审批已发起" : "确认后进入发布审批"}</strong><p>{approvalPending ? "可通过页面右下角的待处理入口继续审批。" : "批准之前不会进入可复习题库。"}</p></div>{!approvalPending ? <Button loading={busy} onClick={onConfirm}>确认入库</Button> : null}</section> : null}
     </section>
   );
 }

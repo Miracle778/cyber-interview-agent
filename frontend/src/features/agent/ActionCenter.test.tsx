@@ -312,11 +312,17 @@ describe("ActionCenter", () => {
       preview: { title: "缓存穿透" },
       editableFields: ["title", "markdown"],
     };
+    const unrelatedAction: PendingAction = {
+      ...publishAction,
+      id: "pub-other",
+      executionId: "other-publish-run",
+      preview: { title: "另一道题" },
+    };
     let reads = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       if (String(input).includes("/api/agent/actions?")) {
         reads += 1;
-        return Response.json(reads < 3 ? [] : [publishAction]);
+        return Response.json(reads < 3 ? [] : [unrelatedAction, publishAction]);
       }
       return Response.json([], { status: 200 });
     });
@@ -333,6 +339,7 @@ describe("ActionCenter", () => {
 
     expect(await screen.findByText("正在等待待确认动作…")).toBeInTheDocument();
     expect(await screen.findByText("缓存穿透")).toBeInTheDocument();
+    expect(screen.queryByText("另一道题")).toBeNull();
     expect(reads).toBeGreaterThanOrEqual(3);
   });
 
