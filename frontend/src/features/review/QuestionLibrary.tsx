@@ -6,8 +6,7 @@ import { listActions } from "../agent/hitlApi";
 import { requestPublication } from "../knowledge/draftApi";
 import type { KnowledgeSource } from "../knowledge/knowledgeTypes";
 import type { WorkspaceConfig } from "../settings/settingsApi";
-import { Button } from "../../shared/ui/Button";
-import { listQuestionBatches, listQuestionCandidates, rewriteQuestionCandidate, updateQuestionCandidate } from "./reviewApi";
+import { listAllQuestionCandidates, rewriteQuestionCandidate, updateQuestionCandidate } from "./reviewApi";
 import { QuestionDetailPanel } from "./QuestionDetailPanel";
 import type { QuestionCandidate } from "./reviewTypes";
 
@@ -34,50 +33,56 @@ function displayActionTitle(value: unknown) {
   return typeof value === "string" && value.trim() ? value : "待发布题目";
 }
 
-async function listAllQuestionCandidates(workspaceId: string, filters: { query?: string; topic?: string; difficulty?: string; sourceId?: string; status?: string } = {}) {
-  const items: QuestionCandidate[] = [];
-  for (let page = 1; page <= 20; page += 1) {
-    const batch = await listQuestionCandidates(workspaceId, { ...filters, page });
-    items.push(...batch);
-    if (batch.length < 50) break;
-  }
-  return items;
+function matchesCandidateFilters(candidate: QuestionCandidate, filters: { query: string; topic: string; difficulty: string; sourceId: string; status: string }, omit?: "topic" | "status") {
+  const needle = filters.query.trim().toLocaleLowerCase();
+  if (needle && !candidate.question.title.toLocaleLowerCase().includes(needle) && !candidate.question.questionText.toLocaleLowerCase().includes(needle)) return false;
+  if (omit !== "topic" && filters.topic && !candidate.question.topics.includes(filters.topic)) return false;
+  if (filters.difficulty && candidate.question.difficulty !== filters.difficulty) return false;
+  if (filters.sourceId && !candidate.sourceRefs.includes(filters.sourceId)) return false;
+  if (omit !== "status" && filters.status && candidate.status !== filters.status) return false;
+  return true;
 }
 
 interface QuestionLibraryProps {
   workspace: WorkspaceConfig;
   sources: KnowledgeSource[];
   initialCandidateId?: string | null;
+  initialStatus?: QuestionCandidate["status"] | "";
   onOpenSession: (sessionId: string) => void;
   onBackToSessions: () => void;
 }
 
-export function QuestionLibrary({ workspace, sources, initialCandidateId = null, onOpenSession, onBackToSessions }: QuestionLibraryProps) {
+export function QuestionLibrary({ workspace, sources, initialCandidateId = null, initialStatus = "", onOpenSession, onBackToSessions }: QuestionLibraryProps) {
   const client = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [topic, setTopic] = useState("");
   const [difficulty, setDifficulty] = useState("");
   const [sourceId, setSourceId] = useState("");
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState(initialStatus);
   const [publicationRequest, setPublicationRequest] = useState<{ executionId: string; candidateId: string; title: string } | null>(null);
   const [approvalOpen, setApprovalOpen] = useState(false);
   const publicationActions = useQuery({ queryKey: ["pending-actions", workspace.id], queryFn: () => listActions(workspace.id, { status: "pending" }), refetchInterval: 5000 });
-  const batches = useQuery({ queryKey: ["review-batches", workspace.id], queryFn: () => listQuestionBatches(workspace.id), refetchInterval: (value) => value.state.data?.some((item) => item.status === "generating") ? 1200 : false });
   const catalog = useQuery({ queryKey: ["review-candidates-overview", workspace.id], queryFn: () => listAllQuestionCandidates(workspace.id) });
   const candidates = useQuery({ queryKey: ["review-candidates", workspace.id, query, topic, difficulty, sourceId, status], queryFn: () => listAllQuestionCandidates(workspace.id, { query, topic, difficulty, sourceId, status }) });
   const sourceLabels = useMemo(() => Object.fromEntries(sources.map((source) => [source.id, source.originalFilename])), [sources]);
   const selected = useMemo(() => candidates.data?.find((item) => item.id === selectedId) ?? candidates.data?.[0] ?? null, [candidates.data, selectedId]);
+  const facetFilters = useMemo(() => ({ query, topic, difficulty, sourceId, status }), [query, topic, difficulty, sourceId, status]);
+  const topicFacetCandidates = useMemo(() => (catalog.data ?? []).filter((candidate) => matchesCandidateFilters(candidate, facetFilters, "topic")), [catalog.data, facetFilters]);
   const topicCounts = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const candidate of catalog.data ?? []) {
-      const primary = candidate.question.topics[0] || "未分类";
-      counts.set(primary, (counts.get(primary) ?? 0) + 1);
+    for (const candidate of topicFacetCandidates) {
+      const candidateTopics = new Set(candidate.question.topics.length > 0 ? candidate.question.topics : ["未分类"]);
+      for (const candidateTopic of candidateTopics) counts.set(candidateTopic, (counts.get(candidateTopic) ?? 0) + 1);
     }
+    if (topic && !counts.has(topic)) counts.set(topic, 0);
     return [...counts.entries()].sort(([left], [right]) => left.localeCompare(right, "zh-CN"));
-  }, [catalog.data]);
-  const statusCounts = useMemo(() => (catalog.data ?? []).reduce((counts, candidate) => ({ ...counts, [candidate.status]: counts[candidate.status] + 1 }), { draft: 0, review_pending: 0, published: 0, rejected: 0 }), [catalog.data]);
+  }, [topic, topicFacetCandidates]);
+  const statusCounts = useMemo(() => (catalog.data ?? []).filter((candidate) => matchesCandidateFilters(candidate, facetFilters, "status")).reduce((counts, candidate) => ({ ...counts, [candidate.status]: counts[candidate.status] + 1 }), { draft: 0, review_pending: 0, published: 0, rejected: 0 }), [catalog.data, facetFilters]);
+  const pendingPublicationActions = publicationActions.data?.filter((action) => action.actionType === "knowledge.publish") ?? [];
+  const publicationPendingCount = publicationRequest && !pendingPublicationActions.some((action) => action.executionId === publicationRequest.executionId) ? pendingPublicationActions.length + 1 : pendingPublicationActions.length;
   const hasFilters = Boolean(query || topic || difficulty || sourceId || status);
+  const resultScope = topic ? `${topic}主题` : hasFilters ? "当前筛选结果" : "全部候选";
   useEffect(() => { if (!selectedId && candidates.data?.[0]) setSelectedId(candidates.data[0].id); }, [candidates.data, selectedId]);
   useEffect(() => { if (initialCandidateId) setSelectedId(initialCandidateId); }, [initialCandidateId]);
   useEffect(() => {
@@ -88,7 +93,6 @@ export function QuestionLibrary({ workspace, sources, initialCandidateId = null,
   const invalidate = async () => Promise.all([
     client.invalidateQueries({ queryKey: ["review-candidates", workspace.id] }),
     client.invalidateQueries({ queryKey: ["review-candidates-overview", workspace.id] }),
-    client.invalidateQueries({ queryKey: ["review-batches", workspace.id] }),
   ]);
   const save = useMutation({ mutationFn: (values: { version: number; title: string; questionText: string; referenceAnswer: string; keyPoints: string[] }) => updateQuestionCandidate(selected!.id, values), onSuccess: invalidate });
   const rewrite = useMutation({ mutationFn: (feedback: string) => rewriteQuestionCandidate(selected!.id, feedback), onSuccess: async (session) => { await invalidate(); onOpenSession(session.id); } });
@@ -106,18 +110,19 @@ export function QuestionLibrary({ workspace, sources, initialCandidateId = null,
           <label><span>难度</span><select aria-label="难度筛选" value={difficulty} onChange={(event) => setDifficulty(event.target.value)}><option value="">全部</option><option value="easy">简单</option><option value="medium">中等</option><option value="hard">困难</option></select></label>
           <label><span>来源</span><select aria-label="来源筛选" value={sourceId} onChange={(event) => setSourceId(event.target.value)}><option value="">全部来源</option>{sources.map((source) => <option key={source.id} value={source.id}>{source.originalFilename}</option>)}</select></label>
           <button type="button" className="question-library__clear" disabled={!hasFilters} onClick={resetFilters}><SlidersHorizontal size={15} />清除筛选</button>
+          {publicationRequest && !approvalOpen ? <button type="button" className="question-library__approval-entry" aria-label={`打开待审批发布任务，共 ${publicationPendingCount} 项`} title={publicationRequest.title} onClick={() => setApprovalOpen(true)}><ShieldCheck size={16} /><span>待审批</span><strong>{publicationPendingCount}</strong></button> : null}
         </div>
       </header>
 
       <div className="question-library__workspace">
         <aside className="question-library__taxonomy" aria-label="题目分类">
           <header><strong>目录</strong><button type="button" aria-label="返回整理会话" title="返回整理会话" onClick={onBackToSessions}><ArrowLeft size={16} /></button></header>
-          <button type="button" className="question-library__topic" aria-current={!topic} onClick={() => setTopic("")}><span>全部题目</span><strong>{catalog.data?.length ?? 0}</strong></button>
-          <div className="question-library__topic-group"><small>按主要主题</small>{topicCounts.map(([name, count]) => <button key={name} type="button" className="question-library__topic" aria-current={topic === name} onClick={() => setTopic(topic === name ? "" : name)}><span>{name}</span><strong>{count}</strong><ChevronRight size={14} /></button>)}</div>
+          <button type="button" className="question-library__topic" aria-current={!topic} onClick={() => setTopic("")}><span>全部题目</span><strong>{topicFacetCandidates.length}</strong></button>
+          <div className="question-library__topic-group"><small>按主题</small>{topicCounts.map(([name, count]) => <button key={name} type="button" className="question-library__topic" aria-current={topic === name} onClick={() => setTopic(topic === name ? "" : name)}><span>{name}</span><strong>{count}</strong><ChevronRight size={14} /></button>)}</div>
         </aside>
 
         <section className="question-library__results" aria-label="题目结果">
-          <header><strong>{candidates.data?.length ?? 0} 道题目</strong>{batches.data?.[0] ? <span>最近整理 {batches.data[0].candidateCount} 道</span> : null}</header>
+          <header><strong>{candidates.data?.length ?? 0} 道题目</strong><span>{resultScope}</span></header>
           {candidates.isLoading ? <p className="status-note">正在读取候选题…</p> : null}
           {!candidates.isLoading && candidates.data?.length === 0 ? <div className="question-library__empty"><Search size={22} /><strong>{hasFilters ? "没有匹配的题目" : "题目库还是空的"}</strong><p>{hasFilters ? "尝试清除部分筛选条件。" : "返回整理会话，选择资料后使用 AI 整理。"}</p>{hasFilters ? <button type="button" onClick={resetFilters}>清除筛选</button> : <button type="button" onClick={onBackToSessions}>返回整理会话</button>}</div> : null}
           <div className="question-library__list" role="list">
@@ -133,6 +138,5 @@ export function QuestionLibrary({ workspace, sources, initialCandidateId = null,
       </div>
     </section>
     {publicationRequest && approvalOpen ? <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setApprovalOpen(false); }}><section className="publication-approval-dialog" role="dialog" aria-modal="true" aria-label="题目发布审批" onKeyDown={(event) => { if (event.key === "Escape") setApprovalOpen(false); }}><header><div className="publication-approval-dialog__icon"><ShieldCheck size={20} /></div><div><h2>发布审批</h2><p>确认题目内容无误后，将它加入可复习题库。</p></div><button type="button" aria-label="关闭发布审批" autoFocus onClick={() => setApprovalOpen(false)}><X size={18} /></button></header><ActionCenter workspaceId={workspace.id} showDiagnostic={false} actionType="knowledge.publish" watchExecutionId={publicationRequest.executionId} presentation="publication" onResolved={() => { setPublicationRequest(null); setApprovalOpen(false); void invalidate(); }} /></section></div> : null}
-    {publicationRequest && !approvalOpen ? <aside className="publication-approval-reminder" role="status" aria-label="发布审批待处理"><div><ShieldCheck size={18} /><span><strong>发布审批待处理</strong><small>{publicationRequest.title}</small></span></div><Button size="sm" onClick={() => setApprovalOpen(true)}>继续审批</Button></aside> : null}
   </>;
 }

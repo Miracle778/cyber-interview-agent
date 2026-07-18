@@ -105,6 +105,19 @@ export function listQuestionCandidates(
   return apiGet(`/api/review/question-candidates?${query}`);
 }
 
+export async function listAllQuestionCandidates(
+  workspaceId: string,
+  filters: { query?: string; topic?: string; difficulty?: string; sourceId?: string; status?: string } = {},
+): Promise<QuestionCandidate[]> {
+  const items: QuestionCandidate[] = [];
+  for (let page = 1; page <= 20; page += 1) {
+    const batch = await listQuestionCandidates(workspaceId, { ...filters, page });
+    items.push(...batch);
+    if (batch.length < 50) break;
+  }
+  return items;
+}
+
 export function getQuestionCandidate(id: string): Promise<QuestionCandidate> {
   return apiGet(`/api/review/question-candidates/${id}`);
 }

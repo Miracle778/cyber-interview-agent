@@ -79,15 +79,45 @@ describe("QuestionCatalog", () => {
       if (url.includes("/api/review/curation-sessions")) return Response.json([]);
       if (url.includes("/api/review/question-batches")) return Response.json([]);
       if (url.includes("/api/review/question-candidates")) return Response.json([]);
+      if (url.includes("/api/agent/actions?")) return Response.json([]);
       throw new Error(`unexpected ${url}`);
     });
     render(<QuestionCatalog workspace={workspace} />, { wrapper });
     await screen.findByRole("tab", { name: "整理会话" });
-    fireEvent.click(screen.getByRole("tab", { name: "题目库" }));
+    fireEvent.click(screen.getByRole("button", { name: /已发布/ }));
     expect(await screen.findByRole("region", { name: "题目库浏览器" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "已入库 0" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByLabelText("搜索候选题")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "返回整理会话" })).toBeInTheDocument();
-    expect(await screen.findByText("题目库还是空的")).toBeInTheDocument();
+    expect(await screen.findByText("没有匹配的题目")).toBeInTheDocument();
+  });
+
+  it("uses the same global candidate facts for overview counts and library results", async () => {
+    const candidate = (id: string, status: "published" | "review_pending") => ({ id, batchId: "b1", curationSessionId: "cs1", sourceRefs: ["s1"], correctionNote: "", reviewNote: "", reviewNoteUpdatedAt: null, duplicateOfQuestionId: null, duplicateQuestion: null, status, draft: null, createdAt: "now", updatedAt: "now", question: { questionId: `q-${id}`, documentId: `d-${id}`, contentHash: `h-${id}`, title: `题目 ${id}`, questionText: "题目", referenceAnswer: "答案", topics: ["database"], difficulty: "medium", keyPoints: [], followUps: [] } });
+    const allCandidates = [candidate("1", "published"), candidate("2", "published"), candidate("3", "review_pending")];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/api/knowledge/sources")) return Response.json([]);
+      if (url.includes("/api/review/curation-sessions")) return Response.json([{ id: "cs1", workspaceId: "w1", title: "mysql.md", sourceRefs: ["s1"], sources: [{ id: "s1", filename: "mysql.md", organizationState: "previously_curated" }], activeBatchId: "b1", executionId: "e1", executionStatus: "completed", stage: "waiting_for_command", progress: { completed: 1, total: 1 }, summary: { items: [] }, summaryVersion: 1, warnings: [], candidateCount: 1, pendingCount: 0, publishedCount: 1, messages: [], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, callCount: 0, estimatedCount: 0 }, createdAt: "now", updatedAt: "now" }]);
+      if (url.includes("/api/review/question-batches")) return Response.json([]);
+      if (url.includes("/api/review/question-candidates")) {
+        const params = new URL(url, "http://localhost").searchParams;
+        return Response.json(allCandidates.filter((item) => (!params.get("status") || item.status === params.get("status")) && (!params.get("topic") || item.question.topics.includes(params.get("topic")!))));
+      }
+      if (url.includes("/api/agent/actions?")) return Response.json([]);
+      throw new Error(`unexpected ${url}`);
+    });
+
+    render(<QuestionCatalog workspace={workspace} />, { wrapper });
+    const publishedSummary = await screen.findByRole("button", { name: /已发布/ });
+    await waitFor(() => expect(publishedSummary).toHaveTextContent("2"));
+    fireEvent.click(publishedSummary);
+    expect(await screen.findByRole("button", { name: "已入库 2" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("region", { name: "题目结果" })).toHaveTextContent("2 道题目");
+    const topic = screen.getByRole("button", { name: "database 2" });
+    fireEvent.click(topic);
+    await waitFor(() => expect(screen.getByRole("region", { name: "题目结果" })).toHaveTextContent("2 道题目"));
+    expect(screen.getByRole("region", { name: "题目结果" })).toHaveTextContent("database主题");
   });
 
   it("opens publication approval in the current viewport instead of below the library", async () => {
@@ -118,8 +148,11 @@ describe("QuestionCatalog", () => {
 
     fireEvent.click(within(dialog).getByRole("button", { name: "关闭发布审批" }));
     expect(screen.queryByRole("dialog", { name: "题目发布审批" })).toBeNull();
-    expect(screen.getByRole("status", { name: "发布审批待处理" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "继续审批" }));
+    const approvalEntry = screen.getByRole("button", { name: "打开待审批发布任务，共 1 项" });
+    expect(approvalEntry).toBeInTheDocument();
+    expect(approvalEntry.closest(".question-library__filters")).not.toBeNull();
+    expect(screen.queryByRole("status", { name: "发布审批待处理" })).toBeNull();
+    fireEvent.click(approvalEntry);
     expect(await screen.findByRole("dialog", { name: "题目发布审批" })).toBeInTheDocument();
   });
 
