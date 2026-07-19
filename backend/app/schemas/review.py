@@ -138,6 +138,8 @@ class SubmitReviewInputCommand(ReviewModel):
     version: int = Field(ge=1)
     idempotency_key: str = Field(min_length=8, max_length=200)
     value: str = Field(min_length=1, max_length=20000)
+    provider_model_id: str | None = None
+    reasoning_effort: ReasoningEffort | None = None
 
 
 class RetryReviewEvaluationCommand(ReviewModel):
@@ -152,7 +154,6 @@ class SkipReviewInputCommand(ReviewModel):
 
 class CreateReviewDiscussionCommand(ReviewModel):
     ordinal: int = Field(ge=1)
-    message: str = Field(min_length=1, max_length=20000)
 
 
 class QuestionSnapshotResource(ReviewModel):
@@ -272,6 +273,7 @@ class ReviewAttemptResource(ReviewModel):
     evaluation_error_code: str | None
     evaluation_started_at: str | None
     evaluation_completed_at: str | None
+    discussion_session_id: str | None = None
     created_at: str
     updated_at: str
 
@@ -445,6 +447,7 @@ class ReviewRoundResource(ReviewModel):
     messages: list[MessageResource]
     reports: list[ReviewReportResource]
     usage: UsageResource
+    context_usage: ContextUsageResource
     created_at: str
     updated_at: str
     completed_at: str | None

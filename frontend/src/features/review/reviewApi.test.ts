@@ -23,6 +23,13 @@ describe("reviewApi", () => {
     expect(body).not.toHaveProperty("executionId");
   });
 
+  it("submits the selected model configuration for the current answer", async () => {
+    const round = { id: "round-1", currentInput: { id: "input-1", version: 3 } } as ReviewRound;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(round));
+    await submitReviewAnswer(round, "answer", "answer-key-123", "model-2", "high");
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({ providerModelId: "model-2", reasoningEffort: "high" });
+  });
+
   it("retries the current failed evaluation with an idempotency key", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({}));
     await retryReviewEvaluation("round-1", "retry-evaluation-1");

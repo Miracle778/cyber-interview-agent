@@ -25,3 +25,8 @@ export function elapsedSeconds(startedAt: string, finishedAt: string): number | 
   if (!Number.isFinite(start) || !Number.isFinite(finish) || finish < start) return null;
   return Math.round((finish - start) / 1000);
 }
+
+export function formatElapsedSeconds(seconds: number): string {
+  const safe = Math.max(0, Math.round(seconds));
+  return safe < 60 ? `${safe} 秒` : `${Math.floor(safe / 60)} 分 ${safe % 60} 秒`;
+}

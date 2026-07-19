@@ -380,9 +380,11 @@ class AgentApplication:
         return {
             **asdict(session),
             "context_compacted": context.repository.context_compacted(session.id),
+            "context_usage": context.repository.context_usage(session.id),
             "usage": context.repository.usage(session.id),
             "latest_warning": context.repository.latest_warning(session.id),
             "messages": [asdict(item) for item in context.repository.list_messages(session.id)],
+            "executions": [asdict(item) for item in context.repository.list_executions(session.id)],
             "latest_execution": None if latest is None else asdict(latest),
             "current_action": (
                 None
@@ -398,10 +400,22 @@ class AgentApplication:
         }
 
     async def start_execution(
-        self, session_id: str, *, input: dict[str, Any]
+        self,
+        session_id: str,
+        *,
+        input: dict[str, Any],
+        configuration: dict[str, Any] | None = None,
     ) -> ExecutionRecord:
         context, session = self._locate_session(session_id)
-        return await context.executions.start(session, input=input)
+        if configuration and configuration.get("providerModelId"):
+            self._validate_review_model(
+                session.workspace_id,
+                str(configuration["providerModelId"]),
+                str(configuration.get("reasoningEffort", "none")),
+            )
+        return await context.executions.start(
+            session, input=input, configuration=configuration
+        )
 
     async def wait_execution(self, execution_id: str) -> ExecutionRecord:
         context = self._locate_execution(execution_id)

@@ -113,6 +113,7 @@ class ReviewApplication:
         self.curation_context_projection = curation_context_projection
         self.curation_context_factory = curation_context_factory
         self.selector = QuestionSelector()
+        self._discussion_locks: dict[str, asyncio.Lock] = {}
         self.curation_commands = CurationCommandService()
         self.timeline = SessionTimelineProjector(
             self.sessions.repository, self.events
@@ -1961,6 +1962,8 @@ class ReviewApplication:
         version: int,
         idempotency_key: str,
         value: str,
+        provider_model_id: str | None = None,
+        reasoning_effort: ReasoningEffort | None = None,
     ):
         round_record = self.repository.get_round(round_id)
         request = self.repository.get_input_request(request_id)
@@ -1968,12 +1971,17 @@ class ReviewApplication:
             raise ReviewConflictError("input request changed")
         if round_record.execution_id is None:
             raise ReviewConflictError("round has no execution")
+        resolved_model_id = provider_model_id or round_record.settings.answer_model_id
+        resolved_reasoning = reasoning_effort or round_record.settings.reasoning_effort
+        self.validate_model(resolved_model_id, resolved_reasoning)
         receipt = self.repository.accept_review_answer(
             request_id=request_id,
             expected_version=version,
             idempotency_key=idempotency_key,
             value=value,
             receipt_id=idempotency_key,
+            answer_model_id=resolved_model_id,
+            reasoning_effort=resolved_reasoning,
         )
         await self.executions.resume_accepted_input(
             round_record.execution_id,
@@ -2063,7 +2071,7 @@ class ReviewApplication:
         return round_record
 
     async def create_discussion(
-        self, round_id: str, *, ordinal: int, message: str
+        self, round_id: str, *, ordinal: int
     ):
         round_record = self.repository.get_round(round_id)
         attempts = self.repository.list_attempts(round_id)
@@ -2072,27 +2080,66 @@ class ReviewApplication:
         )
         if attempt is None:
             raise LookupError(ordinal)
-        session = await self.sessions.create(
-            workspace_id=self.workspace_id,
-            kind="review.discussion",
-            title=f"深入讨论：{attempt.question_snapshot.title}",
-            parent_session_id=round_record.session_id,
-        )
-        execution = await self.executions.start(
-            session,
-            input={
-                "question_snapshot": asdict(attempt.question_snapshot),
-                "attempt_evidence": {
-                    "attemptId": attempt.id,
-                    "evaluation": attempt.evaluation,
-                    "masterySuggestion": attempt.mastery_suggestion,
+        lock = self._discussion_locks.setdefault(attempt.id, asyncio.Lock())
+        async with lock:
+            existing_id = self.repository.find_discussion_session(
+                parent_session_id=round_record.session_id,
+                attempt_id=attempt.id,
+            )
+            if existing_id is not None:
+                existing = self.sessions.repository.get_session(
+                    existing_id, include_deleted=True
+                )
+                return (
+                    self.sessions.restore(existing.id)
+                    if existing.deleted_at is not None
+                    else existing
+                )
+            session = await self.sessions.create(
+                workspace_id=self.workspace_id,
+                kind="review.discussion",
+                title=f"深入讨论：{attempt.question_snapshot.title}",
+                parent_session_id=round_record.session_id,
+            )
+            initialization = await self.executions.start(
+                session,
+                input={
+                    "question_snapshot": asdict(attempt.question_snapshot),
+                    "attempt_evidence": {
+                        "attemptId": attempt.id,
+                        "answer": attempt.answer,
+                        "followUpAnswer": attempt.follow_up_answer,
+                        "evaluation": attempt.evaluation,
+                        "masterySuggestion": attempt.mastery_suggestion,
+                        "skipped": attempt.skipped,
+                    },
+                    "message": "",
+                    "parent_round_id": round_id,
                 },
-                "message": message,
-                "parent_round_id": round_id,
-            },
-            project_input_message=True,
+                project_input_message=False,
+            )
+            await self.executions.wait(initialization.id)
+            return self.sessions.get(session.id)
+
+    async def retry_discussion(self, round_id: str, *, session_id: str):
+        round_record = self.repository.get_round(round_id)
+        session = self.sessions.get(session_id)
+        if (
+            session.kind != "review.discussion"
+            or session.parent_session_id != round_record.session_id
+        ):
+            raise ReviewConflictError("discussion session does not belong to round")
+        latest = self.sessions.repository.latest_execution(session.id)
+        if latest is None or latest.status != "failed":
+            raise ReviewConflictError("discussion execution is not retryable")
+        message = latest.input.get("message")
+        if not isinstance(message, str) or not message.strip():
+            raise ReviewConflictError("discussion retry message is missing")
+        return await self.executions.start(
+            session,
+            input={"message": message.strip()},
+            project_input_message=False,
         )
-        return session
 
     async def round_resource(self, round_id: str) -> dict[str, Any]:
         round_record = self.repository.get_round(round_id)
@@ -2151,7 +2198,16 @@ class ReviewApplication:
             "question_count": len(round_record.question_snapshots),
             "current_question": current_question,
             "current_input": None if pending is None else asdict(pending),
-            "attempts": [asdict(item) for item in attempts],
+            "attempts": [
+                {
+                    **asdict(item),
+                    "discussion_session_id": self.repository.find_discussion_session(
+                        parent_session_id=round_record.session_id,
+                        attempt_id=item.id,
+                    ),
+                }
+                for item in attempts
+            ],
             "messages": [
                 asdict(message)
                 for message in self.sessions.repository.list_messages(
@@ -2162,6 +2218,9 @@ class ReviewApplication:
             ],
             "reports": reports,
             "usage": self.executions.usage(round_record.session_id),
+            "context_usage": self.sessions.repository.context_usage(
+                round_record.session_id
+            ),
             "execution_status": None if execution is None else execution.status,
             "created_at": round_record.created_at,
             "updated_at": round_record.updated_at,

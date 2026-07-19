@@ -236,6 +236,8 @@ async def test_active_catalog_and_round_answer_are_resource_driven(
                 "version": input_value["version"],
                 "idempotencyKey": "answer-q1-0001",
                 "value": "比较事务上下界和活跃事务集合",
+                "providerModelId": "model-1",
+                "reasoningEffort": "high",
             },
         )
         assert answered.status_code == 202, answered.text
@@ -249,6 +251,8 @@ async def test_active_catalog_and_round_answer_are_resource_driven(
         assert result["status"] == "report_pending"
         assert result["executionStatus"] == "waiting_for_approval"
         assert result["attempts"][0]["evaluation"]["score"] == "good"
+        assert result["settings"]["answer_model_id"] == "model-1"
+        assert result["settings"]["reasoning_effort"] == "high"
 
         duplicate = await client.post(
             f"/api/review/rounds/{round_value['id']}/answers",
@@ -336,6 +340,86 @@ async def test_skip_and_cancel_are_explicit_round_operations(api) -> None:
         )
         assert cancelled.status_code == 200
         assert cancelled.json()["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_discussion_is_prepared_once_and_waits_for_real_user_message(
+    api, application
+) -> None:
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = (
+            await client.post(
+                "/api/review/rounds",
+                json={
+                    "workspaceId": "w1",
+                    "selectedTopics": [],
+                    "difficulties": ["medium"],
+                    "mode": "random-mixed",
+                    "questionCount": 1,
+                    "answerModelId": "model-1",
+                    "reasoningEffort": "none",
+                },
+            )
+        ).json()
+        request = created["currentInput"]
+        answered = await client.post(
+            f"/api/review/rounds/{created['id']}/answers",
+            json={
+                "inputRequestId": request["id"],
+                "version": request["version"],
+                "idempotencyKey": "discussion-answer-0001",
+                "value": "我只提到了事务上下界",
+            },
+        )
+        assert answered.status_code == 202
+        await application.wait_execution(created["executionId"])
+
+        prepared = await client.post(
+            f"/api/review/rounds/{created['id']}/discussions",
+            json={"ordinal": 1},
+        )
+        assert prepared.status_code == 201, prepared.text
+        session_id = prepared.json()["id"]
+        detail = await application.session_detail(session_id)
+        assert detail["messages"] == []
+        assert detail["latest_execution"]["status"] == "completed"
+        assert detail["latest_execution"]["input"]["attempt_evidence"]["answer"] == "我只提到了事务上下界"
+
+        repeated = await client.post(
+            f"/api/review/rounds/{created['id']}/discussions",
+            json={"ordinal": 1},
+        )
+        assert repeated.json()["id"] == session_id
+        refreshed = (
+            await client.get(f"/api/review/rounds/{created['id']}")
+        ).json()
+        assert refreshed["attempts"][0]["discussionSessionId"] == session_id
+
+        execution = await application.start_execution(
+            session_id, input={"message": "解释遗漏的活跃事务集合"}
+        )
+        await application.wait_execution(execution.id)
+        after_message = await application.session_detail(session_id)
+        assert [item["content"] for item in after_message["messages"]] == [
+            "解释遗漏的活跃事务集合",
+            "这是基于冻结题目与 attempt 的解释。",
+        ]
+
+        product = application.review("w1").executions._repository  # noqa: SLF001
+        product.connection.execute(
+            "UPDATE agent_runs SET status = 'failed' WHERE id = ?",
+            (execution.id,),
+        )
+        product.connection.commit()
+        retried = await client.post(
+            f"/api/review/rounds/{created['id']}/discussions/{session_id}/retry"
+        )
+        assert retried.status_code == 202, retried.text
+        await application.wait_execution(retried.json()["id"])
+        after_retry = await application.session_detail(session_id)
+        assert [item["role"] for item in after_retry["messages"]].count("user") == 1
 
 
 @pytest.mark.asyncio

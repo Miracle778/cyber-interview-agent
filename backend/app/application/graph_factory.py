@@ -119,6 +119,7 @@ class ProductionGraphFactory:
                 middleware=middleware,
                 discussion_tools=dependencies.get("discussion_tools", ()),
                 answer_model_override=dependencies.get("answer_model_override"),
+                discussion_model_override=dependencies.get("discussion_model_override"),
                 checkpointer=dependencies["checkpointer"],
             )
             if kind == "review.discussion":

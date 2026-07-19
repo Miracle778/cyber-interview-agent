@@ -68,6 +68,7 @@ class SessionRecord:
     updated_at: str
     latest_execution_id: str | None
     deleted_at: str | None
+    parent_session_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,6 +262,14 @@ class ProductRepository:
             (session_id,),
         ).fetchone()
         return None if row is None else _execution(row)
+
+    def list_executions(self, session_id: str) -> tuple[ExecutionRecord, ...]:
+        rows = self.connection.execute(
+            "SELECT * FROM agent_runs WHERE session_id = ? "
+            "ORDER BY created_at, rowid",
+            (session_id,),
+        ).fetchall()
+        return tuple(_execution(row) for row in rows)
 
     def transition_execution(
         self,
@@ -543,6 +552,7 @@ class AgentSessionService:
         kind: str,
         title: str | None,
         parent_session_id: str | None = None,
+        session_id: str | None = None,
     ) -> SessionRecord:
         clean_title = (title or "").strip()
         session = self.repository.create_session(
@@ -551,6 +561,7 @@ class AgentSessionService:
             title=clean_title or "新会话",
             title_source="user" if clean_title else "placeholder",
             parent_session_id=parent_session_id,
+            session_id=session_id,
         )
         await self.events.publish(
             session.id, None, "session.created", {"title": session.title, "kind": kind}
@@ -600,6 +611,7 @@ def _session(row) -> SessionRecord:
         updated_at=row["updated_at"],
         latest_execution_id=row["last_run_id"],
         deleted_at=row["deleted_at"],
+        parent_session_id=row["parent_session_id"],
     )
 
 

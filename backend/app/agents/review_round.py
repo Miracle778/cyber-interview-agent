@@ -56,6 +56,7 @@ class ReviewRoundAgents:
         middleware: tuple[AgentMiddleware, ...] = (),
         discussion_tools=(),
         answer_model_override: ModelOverride | None = None,
+        discussion_model_override: ModelOverride | None = None,
         checkpointer=None,
     ) -> "ReviewRoundAgents":
         return cls(
@@ -78,7 +79,7 @@ class ReviewRoundAgents:
                     response_format=ReviewSessionReportOutput,
                 ),
                 model_bindings=model_bindings,
-                model_override=None,
+                model_override=discussion_model_override,
                 checkpointer=checkpointer,
             ),
             discussion=factory.create(

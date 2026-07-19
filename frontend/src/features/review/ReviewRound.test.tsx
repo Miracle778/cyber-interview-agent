@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ReviewRound } from "./ReviewRound";
@@ -16,10 +17,12 @@ describe("ReviewRound", () => {
   afterEach(cleanup);
   it("keeps typed input when the server submission fails", async () => {
     const submit = vi.fn().mockRejectedValue(new Error("network"));
-    render(<ReviewRound round={round} onSubmit={submit} onSkip={vi.fn()} onCancel={vi.fn()} busy={false} />);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(["providers"], []);
+    render(<QueryClientProvider client={client}><ReviewRound round={round} onSubmit={submit} onSkip={vi.fn()} onCancel={vi.fn()} busy={false} /></QueryClientProvider>);
     fireEvent.change(screen.getByLabelText("你的回答"), { target: { value: "缓存空值" } });
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
-    await waitFor(() => expect(submit).toHaveBeenCalledWith("缓存空值"));
+    await waitFor(() => expect(submit).toHaveBeenCalledWith("缓存空值", { providerModelId: "m", reasoningEffort: "none" }));
     expect(screen.getByLabelText("你的回答")).toHaveValue("缓存空值");
   });
 });

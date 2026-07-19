@@ -23,6 +23,11 @@ export interface AgentExecution {
   id: string;
   sessionId: string;
   status: AgentExecutionStatus;
+  configuration?: {
+    providerModelId: string | null;
+    reasoningEffort: "none" | "low" | "medium" | "high";
+  };
+  cancelRequestedAt?: string | null;
   resumeCount: number;
   errorCode: string | null;
   errorMessage: string | null;
@@ -52,9 +57,15 @@ export interface AgentSessionDetail extends AgentSession {
     callCount: number;
     estimatedCount: number;
   };
+  contextUsage: {
+    currentTokens: number;
+    thresholdTokens: number;
+    estimated: boolean;
+  };
   contextCompacted?: boolean;
   latestWarning: { code: string; message: string } | null;
   messages: AgentMessage[];
+  executions: AgentExecution[];
   latestExecution: AgentExecution | null;
   currentAction: {
     id: string;

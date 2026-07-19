@@ -123,6 +123,11 @@ async def test_answer_returns_202_before_evaluation_and_projects_safe_events(
     )
     await review.executions.wait(execution.id)
     current = await review.round_resource("round-async")
+    assert current["context_usage"] == {
+        "currentTokens": 0,
+        "thresholdTokens": 0,
+        "estimated": True,
+    }
     request = current["current_input"]
 
     api = FastAPI()

@@ -76,11 +76,21 @@ async def test_session_and_execution_resources_do_not_expose_graph_internals(api
 
         started = await client.post(
             f"/api/agent/sessions/{session['id']}/executions",
-            json={"input": {"text": "hello"}},
+            json={
+                "input": {"text": "hello"},
+                "configuration": {
+                    "providerModelId": "model-1",
+                    "reasoningEffort": "medium",
+                },
+            },
         )
         assert started.status_code == 202
         execution = started.json()
         assert execution["status"] == "running"
+        assert execution["configuration"] == {
+            "providerModelId": "model-1",
+            "reasoningEffort": "medium",
+        }
         assert "modelBindings" not in execution
 
         completed = await application.wait_execution(execution["id"])
@@ -88,6 +98,11 @@ async def test_session_and_execution_resources_do_not_expose_graph_internals(api
 
         detail = (await client.get(f"/api/agent/sessions/{session['id']}")).json()
         assert detail["latestExecution"]["status"] == "completed"
+        assert detail["contextUsage"] == {
+            "currentTokens": 0,
+            "thresholdTokens": 0,
+            "estimated": True,
+        }
         assert detail["messages"][-1]["content"] == "Echo: hello"
         assert detail["messages"][-1]["messageKind"] == "text"
         assert detail["messages"][-1]["payload"] == {}

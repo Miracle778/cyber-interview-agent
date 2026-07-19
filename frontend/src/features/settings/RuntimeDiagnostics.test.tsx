@@ -56,8 +56,10 @@ describe("RuntimeDiagnostics", () => {
       latestExecutionId: "r1",
 
       usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, callCount: 0, estimatedCount: 0 },
+      contextUsage: { currentTokens: 0, thresholdTokens: 0, estimated: true },
       latestWarning: null,
       messages: [],
+      executions: [],
       latestExecution: { id: "r1", sessionId: "s1", status: "running", resumeCount: 0, errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: null },
       currentAction: null,
     };

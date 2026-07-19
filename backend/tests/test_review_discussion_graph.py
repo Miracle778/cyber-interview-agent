@@ -60,3 +60,26 @@ async def test_discussion_graph_uses_frozen_evidence_without_parent_state() -> N
     assert result["response"].startswith("Read View")
     assert agents.calls[0]["context"].session_id == "discussion-1"
     assert "parent_round_id" not in agents.calls[0]
+
+
+@pytest.mark.asyncio
+async def test_discussion_graph_can_initialize_context_without_calling_model() -> None:
+    agents = RecordingDiscussionAgents()
+    graph = create_review_discussion_graph(agents)
+
+    result = await graph.ainvoke(
+        {
+            "question_snapshot": _question(),
+            "attempt_evidence": {
+                "attemptId": "attempt-1",
+                "answer": "我只提到了事务上下界",
+                "followUpAnswer": "补充活跃事务集合",
+            },
+            "message": "",
+            "parent_round_id": "round-1",
+        },
+        context=_context(),
+    )
+
+    assert agents.calls == []
+    assert result["attempt_evidence"]["answer"] == "我只提到了事务上下界"

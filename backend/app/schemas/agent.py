@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -20,8 +20,14 @@ class CreateSessionCommand(AgentModel):
     title: str | None = None
 
 
+class ExecutionConfigurationResource(AgentModel):
+    provider_model_id: str | None = None
+    reasoning_effort: Literal["none", "low", "medium", "high"] = "none"
+
+
 class StartExecutionCommand(AgentModel):
     input: dict[str, Any]
+    configuration: ExecutionConfigurationResource | None = None
 
 
 class SessionResource(AgentModel):
@@ -50,11 +56,6 @@ class ExecutionResource(AgentModel):
     finished_at: str | None
 
 
-class ExecutionConfigurationResource(AgentModel):
-    provider_model_id: str | None = None
-    reasoning_effort: str = "none"
-
-
 class MessageResource(AgentModel):
     id: str
     execution_id: str | None
@@ -81,6 +82,12 @@ class SessionUsageResource(AgentModel):
     estimated_count: int
 
 
+class ContextUsageResource(AgentModel):
+    current_tokens: int
+    threshold_tokens: int
+    estimated: bool
+
+
 class GuardWarningResource(AgentModel):
     code: str
     message: str
@@ -88,8 +95,10 @@ class GuardWarningResource(AgentModel):
 
 class SessionDetailResource(SessionResource):
     usage: SessionUsageResource
+    context_usage: ContextUsageResource
     context_compacted: bool
     latest_warning: GuardWarningResource | None = None
     messages: list[MessageResource]
+    executions: list[ExecutionResource]
     latest_execution: ExecutionResource | None
     current_action: PendingActionSummaryResource | None = None

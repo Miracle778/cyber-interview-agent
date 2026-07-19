@@ -111,6 +111,7 @@ async def test_recovery_marks_orphaned_running_execution_interrupted(tmp_path: P
         assert await application.recover() == (execution.id,)
         detail = await application.session_detail(session.id)
         assert detail["latest_execution"]["status"] == "interrupted"
+        assert [item["id"] for item in detail["executions"]] == [execution.id]
     finally:
         await application.close()
 

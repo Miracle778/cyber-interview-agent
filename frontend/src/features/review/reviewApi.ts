@@ -14,7 +14,7 @@ import type {
   ReviewAnswerReceipt,
   ReviewRound,
 } from "./reviewTypes";
-import type { AgentSession } from "../agent/agentTypes";
+import type { AgentExecution, AgentSession } from "../agent/agentTypes";
 
 export function listCurationSessions(workspaceId: string, deletedOnly = false): Promise<CurationSession[]> {
   const query = new URLSearchParams({ workspaceId });
@@ -185,13 +185,15 @@ export function createReviewRound(command: CreateReviewRoundRequest): Promise<Re
   return apiPost("/api/review/rounds", command);
 }
 
-export function submitReviewAnswer(round: ReviewRound, value: string, idempotencyKey: string): Promise<ReviewAnswerReceipt> {
+export function submitReviewAnswer(round: ReviewRound, value: string, idempotencyKey: string, providerModelId?: string, reasoningEffort?: "none" | "low" | "medium" | "high"): Promise<ReviewAnswerReceipt> {
   if (!round.currentInput) throw new Error("当前轮次没有待回答输入");
   return apiPost(`/api/review/rounds/${round.id}/answers`, {
     inputRequestId: round.currentInput.id,
     version: round.currentInput.version,
     idempotencyKey,
     value,
+    ...(providerModelId ? { providerModelId } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
   });
 }
 
@@ -216,8 +218,12 @@ export function cancelReviewRound(id: string): Promise<ReviewRound> {
   return apiPost(`/api/review/rounds/${id}/cancel`, {});
 }
 
-export function createReviewDiscussion(roundId: string, ordinal: number, message: string): Promise<AgentSession> {
-  return apiPost(`/api/review/rounds/${roundId}/discussions`, { ordinal, message });
+export function createReviewDiscussion(roundId: string, ordinal: number): Promise<AgentSession> {
+  return apiPost(`/api/review/rounds/${roundId}/discussions`, { ordinal });
+}
+
+export function retryReviewDiscussion(roundId: string, sessionId: string): Promise<AgentExecution> {
+  return apiPost(`/api/review/rounds/${roundId}/discussions/${sessionId}/retry`, {});
 }
 
 export function archiveReviewRound(sessionId: string): Promise<void> {

@@ -21,6 +21,9 @@ class ReviewDiscussionState(TypedDict, total=False):
 
 
 def create_review_discussion_graph(agents: DiscussionAgents, *, checkpointer=None):
+    def route(state: ReviewDiscussionState) -> str:
+        return "discuss" if str(state.get("message", "")).strip() else "end"
+
     async def discuss(
         state: ReviewDiscussionState,
         config: RunnableConfig,
@@ -54,6 +57,6 @@ def create_review_discussion_graph(agents: DiscussionAgents, *, checkpointer=Non
 
     graph = StateGraph(ReviewDiscussionState, context_schema=AgentContext)
     graph.add_node("discuss", discuss)
-    graph.add_edge(START, "discuss")
+    graph.add_conditional_edges(START, route, {"discuss": "discuss", "end": END})
     graph.add_edge("discuss", END)
     return graph.compile(checkpointer=checkpointer)

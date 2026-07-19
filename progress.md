@@ -235,6 +235,23 @@
 - 定向前端 17 passed，production build 通过。
 - 本机 5174 验证：题目总数 25，点击后显示 25 道/25 条；已发布 18，点击后显示 18 道/18 条。
 
+## 2026-07-19：深入讨论会话闭环修正启动
+
+- 已完成代码与本机页面诊断，确认固定代发问题、作答上下文缺失、Session 无恢复入口和重复创建风险。
+- 采用单 attempt 对应一个可恢复 discussion Session；首次打开只初始化持久上下文，不调用模型，用户发送后才进入 SSE 执行。
+- 本阶段不调用 superpowers、不创建新 worktree或 subagent；在现有 R2 分支端到端完成。
+- 首次 production build 被旧测试 fixture 缺少新增 `discussionSessionId` 阻断；该字段改为兼容旧响应/历史 fixture 的可选读取字段，服务端新响应仍始终返回明确值。
+- 浏览器客户端不支持 Playwright 风格的 `setViewportSize`，因此未重复调用；本轮使用当前真实窗口完成桌面交互核对，响应式约束由 production build 和既有 CSS 门禁保留，后续完整 R2 浏览器验收再统一覆盖窄屏。
+- 同一浏览器绑定也不暴露 `playwright.screenshot`；停止继续猜测截图 API，保留已取得的真实 DOM/交互证据，避免无变化工具循环。
+
+## 2026-07-19：深入讨论会话闭环修正完成
+
+- 点击入口不再自动发送固定问题；首次只初始化 checkpoint，页面明确提示发送后才调用 Agent。
+- 上下文卡展示题目、原回答、补充回答和评价；增加建议问题、真实 SSE 发送、停止与失败重试。
+- 旧 discussion Session 无需迁移即可恢复，返回报告后按钮显示“继续讨论”；重复点击复用同一 Session。
+- 自动证据：后端 Graph/API/Session/Repository 30 passed；前端 review 55 passed；production build 通过。
+- 本机 5174 验证：旧 MySQL B+ 树 discussion 成功恢复，完整作答上下文和历史回复可见，报告入口显示“继续讨论”。未额外发送模型问题。
+
 ## 2026-07-15：生成文件交互与自由意图
 
 - 候选题总结改为生成文件卡：默认 3 条，展开区限制高度并内部滚动；每个 draft 提供查看、发布、备注。
@@ -401,3 +418,27 @@
 - cancelled/failed 页面不再空白；完成与有记录的终态提供复习报告/会话回放双视图，旧数据从持久 attempt 还原回放。
 - 自动证据：后端 Review Graph/API/异步恢复 `13 passed`；前端 review feature `52 passed`；production build 与 `git diff --check` 通过。
 - 本机 5174 浏览器检查 5 条历史：2 条可恢复、2 条已结束、1 条已完成；恢复入口、终态、报告和旧数据回放均可见。未点击恢复，避免触发真实模型调用。
+# 2026-07-19：深入讨论工作台体验补全
+
+- 已对照用户截图完成静态审查：确认上下文过高、消息列失衡、重复返回入口、模型控制/运行事实缺失，以及完成态错误显示停止按钮。
+- `ui-ux-pro-max` 门禁确定为“内容优先聊天主区 + 320px 有界上下文侧栏 + 紧凑 composer”；正在进行实现与本机 5174 验收。
+- 页面已改为聊天主区 + 320px 侧栏：本题上下文和评价摘要有界折叠，消息列扩到 860px，移动端回落为上下两区；重复的全局返回入口在讨论态隐藏。
+- composer 已补模型、思考强度、停止/发送；配置随 execution 持久化并真实覆盖 `agent_chat` 模型。侧栏展示状态、耗时、Token、调用次数和上下文压缩事实，assistant 回复增加复制操作。
+- 修复历史 execution 状态滞后导致完成后仍显示“停止”：同 execution 的持久 assistant 回复现在作为终态纠偏证据。
+- 验证：后端定向 `15 passed`；前端定向 `10 passed`；`tsc --noEmit`、production build、`git diff --check` 通过。
+- 浏览器可加载 5174 前端，但当前浏览器会话无法取得本机 8000 的 workspace 数据，只看到“正在连接本地服务”，因此未虚报真实数据视觉验收；需在用户已有本机会话刷新后复核最终密度。
+- 用户在真实页面复核后否决第一版 composer 与笼统上下文状态；阶段 21 改为直接对齐题库整理 Agent 的既有视觉/交互规范，并暴露通用 middleware 已记录的真实上下文 Token 进度。
+- 深入讨论 composer 已切换为题库整理页同款 DOM/CSS 结构：textarea 独占首行、设置胶囊渐进披露模型/思考强度、Shift+Enter 提示、44px 圆形发送以及运行时停止态。
+- 通用 `SessionDetailResource` 新增 `contextUsage`，直接读取 `agent_context_usage`；讨论运行详情默认展开并显示执行状态、耗时、模型、Token、调用次数、百分比圆环和 `当前上下文 / 压缩阈值`，压缩发生后显示事实提示。
+- 复用题库整理页的运行详情、上下文圆环、提示与 loading 视觉类；保留 discussion 真实 SSE/停止/失败重试，不伪造题库整理特有的读取、合并等阶段。
+- 新鲜验证：后端定向 `15 passed`；前端相关 `19 passed`；`tsc --noEmit`、production build、`git diff --check` 通过。后端响应契约已变化，真实页面复核前必须重启 8000 服务。
+
+## 2026-07-19：复习 Agent 工作台比例与组件统一
+
+- 修复深入讨论与普通复习工作台同时渲染；进入讨论时只保留讨论工作台，退出后恢复原复习会话。
+- review shell 的内容区、workbench 与 main 改为传递父级可用高度；普通会话和讨论会话不再各自硬编码 viewport 减法，桌面填满剩余高度，移动端保持自然滚动。
+- 两类工作台右栏统一扩为 `340–400px` 自适应宽度并压缩卡片间距；普通复习侧栏新增真实上下文百分比圆环、current/threshold、模型、思考强度、Token 与调用次数，关键点改为有界折叠区。
+- 普通复习 composer 已切换为题库整理/深入讨论同款 Dock：textarea 独占首行、紧凑模型摘要、Shift+Enter 提示、跳过次动作和 44px 圆形发送。
+- 新鲜验证：后端 round projection/restart `7 passed`；前端会话、讨论、页面 `11 passed`；`tsc --noEmit` 与 production build 通过（仅保留既有 >500 kB chunk 提示）。浏览器连接连续两次返回失效 tab，已按门禁停止无变化重试，未将其写成浏览器验收通过。
+- 二次比例校正：普通复习与深入讨论的聊天区/状态栏均显式占满同一 Grid 行；两个右栏移除整体 `overflow-y` 和滚动槽。普通复习的长关键点限制在剩余高度内滚动，移动端恢复自然文档流。最新 production build 与 `git diff --check` 通过。
+- 单屏滚动边界修正：桌面普通复习和深入讨论的 shell 固定为 `100dvh` 并禁止整页溢出，移除聊天工作台/会话的 520px 最低高度；对话记录内部继续滚动，composer 和右栏固定可见。移动端在 899px 以下恢复页面自然滚动。最新 production build 与 `git diff --check` 通过。

@@ -59,7 +59,7 @@ export function ReviewPage({ workspace }: ReviewPageProps) {
   const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [optimisticMessage, setOptimisticMessage] = useState<ReviewTimelineMessage | null>(null);
-  const [discussionSessionId, setDiscussionSessionId] = useState<string | null>(null);
+  const [discussionTarget, setDiscussionTarget] = useState<{ sessionId: string; ordinal: number } | null>(null);
   const focusedWorkspaceRef = useRef<HTMLElement | null>(null);
   const rounds = useQuery({ queryKey: ["review-rounds", workspaceId], queryFn: () => listReviewRounds(workspaceId), enabled: Boolean(workspace) });
   const questions = useQuery({ queryKey: ["active-review-questions", workspaceId], queryFn: () => listActiveQuestions(workspaceId), enabled: Boolean(workspace) });
@@ -77,7 +77,7 @@ export function ReviewPage({ workspace }: ReviewPageProps) {
   }, [round.data?.id]);
   const create = useMutation({ mutationFn: createReviewRound, onSuccess: async (value) => { setCreating(false); setSelectedRoundId(value.id); await invalidateRound(value.id); } });
   const answer = useMutation({
-    mutationFn: ({ value, key }: { value: string; key: string }) => submitReviewAnswer(round.data!, value, key),
+    mutationFn: ({ value, key, providerModelId, reasoningEffort }: { value: string; key: string; providerModelId: string; reasoningEffort: "none" | "low" | "medium" | "high" }) => submitReviewAnswer(round.data!, value, key, providerModelId, reasoningEffort),
     onSuccess: async (receipt) => { await invalidateRound(receipt.roundId); setOptimisticMessage(null); },
     onError: () => setOptimisticMessage(null),
   });
@@ -85,7 +85,13 @@ export function ReviewPage({ workspace }: ReviewPageProps) {
   const recover = useMutation({ mutationFn: () => retryReviewRound(round.data!.id), onSuccess: async (value) => invalidateRound(value.id) });
   const skip = useMutation({ mutationFn: () => skipReviewQuestion(round.data!, commandId("skip")), onSuccess: async (value) => invalidateRound(value.id) });
   const cancel = useMutation({ mutationFn: () => cancelReviewRound(round.data!.id), onSuccess: async (value) => invalidateRound(value.id) });
-  const discuss = useMutation({ mutationFn: (ordinal: number) => createReviewDiscussion(round.data!.id, ordinal, "请结合本次回答解释遗漏点，并给一个迁移应用示例。"), onSuccess: (session) => setDiscussionSessionId(session.id) });
+  const discuss = useMutation({
+    mutationFn: (ordinal: number) => createReviewDiscussion(round.data!.id, ordinal),
+    onSuccess: async (session, ordinal) => {
+      setDiscussionTarget({ sessionId: session.id, ordinal });
+      await invalidateRound(round.data!.id);
+    },
+  });
   const archive = useMutation({ mutationFn: (value: ReviewRound) => archiveReviewRound(value.sessionId), onSuccess: () => client.invalidateQueries({ queryKey: ["review-rounds", workspaceId] }) });
   const restore = useMutation({ mutationFn: (value: ReviewRound) => restoreReviewRound(value.sessionId), onSuccess: () => client.invalidateQueries({ queryKey: ["review-rounds", workspaceId] }) });
   const busy = create.isPending || answer.isPending || skip.isPending || cancel.isPending || retry.isPending || recover.isPending;
@@ -94,26 +100,28 @@ export function ReviewPage({ workspace }: ReviewPageProps) {
 
   if (!workspace) return <div className="empty-state"><p>请先初始化工作区</p><Link className="text-link" to="/settings">前往设置</Link></div>;
 
-  async function submitAnswer(value: string) {
+  async function submitAnswer(value: string, configuration: { providerModelId: string; reasoningEffort: "none" | "low" | "medium" | "high" }) {
     if (!round.data?.currentInput) throw new Error("当前没有待回答输入");
     const key = commandId("answer");
     setOptimisticMessage({ id: key, executionId: round.data.executionId, role: "user", content: value, messageKind: "review_answer", payload: {}, createdAt: new Date().toISOString() });
-    await answer.mutateAsync({ value, key });
+    await answer.mutateAsync({ value, key, ...configuration });
   }
 
   const showRoundMenu = round.data && !["completed", "cancelled", "failed"].includes(round.data.status);
-  const toolbarActions = selectedRoundId || creating ? <>
-    <Button variant="ghost" className="review-back" onClick={() => { setSelectedRoundId(null); setCreating(false); setDiscussionSessionId(null); }}><ArrowLeft size={16} />返回历史</Button>
+  const toolbarActions = (selectedRoundId || creating) && !discussionTarget ? <>
+    <Button variant="ghost" className="review-back" onClick={() => { setSelectedRoundId(null); setCreating(false); setDiscussionTarget(null); }}><ArrowLeft size={16} />返回历史</Button>
     {showRoundMenu ? <details className="review-round-menu"><summary aria-label="更多轮次操作"><MoreHorizontal size={19} /></summary><div><button type="button" className="is-danger" disabled={busy} onClick={() => cancel.mutate()}><StopCircle size={16} />结束本轮</button></div></details> : null}
   </> : null;
 
-  return <ReviewShell section={section} actions={toolbarActions} onSectionChange={(value) => { setSection(value); setSelectedRoundId(null); setCreating(false); setDiscussionSessionId(null); }}>
-    {section === "catalog" ? <QuestionCatalog workspace={workspace} /> : !selectedRoundId && !creating ? <ReviewLanding rounds={rounds.data ?? []} questionCount={questions.isPending ? null : questions.data?.length ?? 0} onCreate={() => setCreating(true)} onOpen={(id) => { setSelectedRoundId(id); setDiscussionSessionId(null); }} onCatalog={() => setSection("catalog")} onArchive={(value) => archive.mutate(value)} onRestore={(value) => restore.mutate(value)} /> : <section className="review-workbench" aria-label="复习工作台">
+  const discussionAttempt = discussionTarget ? round.data?.attempts.find((item) => item.ordinal === discussionTarget.ordinal) ?? null : null;
+
+  return <ReviewShell section={section} actions={toolbarActions} onSectionChange={(value) => { setSection(value); setSelectedRoundId(null); setCreating(false); setDiscussionTarget(null); }}>
+    {section === "catalog" ? <QuestionCatalog workspace={workspace} /> : !selectedRoundId && !creating ? <ReviewLanding rounds={rounds.data ?? []} questionCount={questions.isPending ? null : questions.data?.length ?? 0} onCreate={() => setCreating(true)} onOpen={(id) => { setSelectedRoundId(id); setDiscussionTarget(null); }} onCatalog={() => setSection("catalog")} onArchive={(value) => archive.mutate(value)} onRestore={(value) => restore.mutate(value)} /> : <section className="review-workbench" aria-label="复习工作台">
       <main className="review-workbench__main">
         {creating ? <ReviewSetup workspace={workspace} questions={questions.data ?? []} onCreate={(request) => create.mutate(request)} onCatalog={() => { setSection("catalog"); setCreating(false); }} busy={create.isPending} /> : null}
         {round.isPending && selectedRoundId ? <p className="status-note" role="status">正在恢复复习轮次…</p> : null}
-        {round.data && ["waiting_for_input", "running"].includes(round.data.status) && round.data.executionStatus !== "failed" ? <><ReviewQuestionStepper round={round.data} /><section ref={focusedWorkspaceRef} className="review-focus-workspace"><ReviewConversation round={round.data} optimisticMessage={optimisticMessage} busy={busy} onSubmit={submitAnswer} onSkip={() => skip.mutate()} onRetry={() => retry.mutate()} /><div className="review-insight-column"><ReviewRuntimePanel round={round.data} />{round.data.executionStatus === "waiting_for_approval" ? <ActionCenter workspaceId={workspace.id} showDiagnostic={false} actionType="knowledge.publish" watchExecutionId={round.data.executionId} onResolved={() => void invalidateRound(round.data!.id)} /> : null}</div></section></> : null}
-        {discussionSessionId ? <ReviewDiscussion sessionId={discussionSessionId} onClose={() => setDiscussionSessionId(null)} /> : <>{round.data && (round.data.executionStatus === "failed" || ["cancelled", "failed"].includes(round.data.status)) ? <><ReviewTerminalState round={round.data} recovering={recover.isPending} onRecover={() => recover.mutate()} />{round.data.attempts.length ? <ReviewResults round={round.data} onDiscuss={(ordinal) => discuss.mutate(ordinal)} /> : null}</> : null}{round.data && ["report_pending", "completed"].includes(round.data.status) ? <ReviewResults round={round.data} onDiscuss={(ordinal) => discuss.mutate(ordinal)} /> : null}</>}
+        {!discussionTarget && round.data && ["waiting_for_input", "running"].includes(round.data.status) && round.data.executionStatus !== "failed" ? <><ReviewQuestionStepper round={round.data} /><section ref={focusedWorkspaceRef} className="review-focus-workspace"><ReviewConversation round={round.data} optimisticMessage={optimisticMessage} busy={busy} onSubmit={submitAnswer} onSkip={() => skip.mutate()} onRetry={() => retry.mutate()} /><div className="review-insight-column"><ReviewRuntimePanel round={round.data} />{round.data.executionStatus === "waiting_for_approval" ? <ActionCenter workspaceId={workspace.id} showDiagnostic={false} actionType="knowledge.publish" watchExecutionId={round.data.executionId} onResolved={() => void invalidateRound(round.data!.id)} /> : null}</div></section></> : null}
+        {discussionTarget && discussionAttempt && round.data ? <ReviewDiscussion roundId={round.data.id} sessionId={discussionTarget.sessionId} attempt={discussionAttempt} defaultModelId={round.data.settings.answer_model_id} defaultReasoning={round.data.settings.reasoning_effort} onClose={() => setDiscussionTarget(null)} /> : <>{round.data && (round.data.executionStatus === "failed" || ["cancelled", "failed"].includes(round.data.status)) ? <><ReviewTerminalState round={round.data} recovering={recover.isPending} onRecover={() => recover.mutate()} />{round.data.attempts.length ? <ReviewResults round={round.data} discussingOrdinal={discuss.isPending ? discuss.variables ?? null : null} onDiscuss={(ordinal) => discuss.mutate(ordinal)} /> : null}</> : null}{round.data && ["report_pending", "completed"].includes(round.data.status) ? <ReviewResults round={round.data} discussingOrdinal={discuss.isPending ? discuss.variables ?? null : null} onDiscuss={(ordinal) => discuss.mutate(ordinal)} /> : null}</>}
         {error || (stream.executionError && round.data?.executionStatus !== "failed") ? <div className="error-banner" role="alert"><AlertCircle size={16} /><span>错误：{error?.message ?? stream.executionError?.message}</span><span>{error?.advice ?? "刷新轮次后重试"}</span></div> : null}
       </main>
     </section>}

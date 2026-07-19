@@ -58,6 +58,9 @@ describe("ReviewLanding", () => {
   it("keeps archived rounds collapsed and restores them explicitly", () => {
     const restore = vi.fn();
     render(<ReviewLanding rounds={[{ ...historyRound, archivedAt: "2026-07-19T03:00:00Z" }]} questionCount={10} onCreate={vi.fn()} onOpen={vi.fn()} onCatalog={vi.fn()} onArchive={vi.fn()} onRestore={restore} />);
+    const historyRegion = screen.getByLabelText("复习历史与归档");
+    expect(historyRegion.querySelector(".review-landing__list")).toBeInTheDocument();
+    expect(historyRegion.lastElementChild).toHaveClass("review-archive");
     expect(screen.getByRole("button", { name: "已结束 0，点击查看条目" })).toBeInTheDocument();
     expect(screen.getByText("已归档").closest("details")).not.toHaveAttribute("open");
     fireEvent.click(screen.getByText("已归档"));

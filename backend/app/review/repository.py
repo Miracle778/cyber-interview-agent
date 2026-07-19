@@ -1369,6 +1369,19 @@ class ReviewRepository:
         ).fetchall()
         return tuple(self._round_record(row) for row in rows)
 
+    def find_discussion_session(
+        self, *, parent_session_id: str, attempt_id: str
+    ) -> str | None:
+        row = self._connection.execute(
+            "SELECT s.id FROM agent_sessions s "
+            "JOIN agent_runs r ON r.session_id = s.id "
+            "WHERE s.parent_session_id = ? AND s.graph_id = 'review.discussion' "
+            "AND json_extract(r.input_json, '$.attempt_evidence.attemptId') = ? "
+            "ORDER BY s.updated_at DESC, r.rowid ASC LIMIT 1",
+            (parent_session_id, attempt_id),
+        ).fetchone()
+        return None if row is None else str(row["id"])
+
     def pending_input(self, round_id: str) -> ReviewInputRequestRecord | None:
         row = self._connection.execute(
             "SELECT * FROM review_input_requests "
@@ -1514,6 +1527,8 @@ class ReviewRepository:
         receipt_id: str | None = None,
         attempt_id: str | None = None,
         message_id: str | None = None,
+        answer_model_id: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> ReviewAnswerReceipt:
         value_hash = sha256(value.encode("utf-8")).hexdigest()
         with self._transaction():
@@ -1564,6 +1579,15 @@ class ReviewRepository:
                 "interrupted",
             }:
                 raise ReviewConflictError("round execution is not resumable")
+
+            if answer_model_id is not None and reasoning_effort is not None:
+                settings = json.loads(round_row["settings_json"])
+                settings["answer_model_id"] = answer_model_id
+                settings["reasoning_effort"] = reasoning_effort
+                self._connection.execute(
+                    "UPDATE review_rounds SET settings_json = ? WHERE id = ?",
+                    (_canonical_json(settings), request["round_id"]),
+                )
 
             ordinal = int(request["ordinal"])
             snapshots = json.loads(round_row["question_snapshots_json"])

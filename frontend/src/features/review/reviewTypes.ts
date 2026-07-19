@@ -254,6 +254,7 @@ export interface ReviewAttempt {
   evaluationErrorCode: string | null;
   evaluationStartedAt: string | null;
   evaluationCompletedAt: string | null;
+  discussionSessionId?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -309,6 +310,7 @@ export interface ReviewRound {
   messages: ReviewTimelineMessage[];
   reports: { id: string; reportKind: "session_report" | "mastery_report"; title: string; status: string; version: number; publication: { state: string; target_path: string; error_code: string | null } | null }[];
   usage: { inputTokens: number; outputTokens: number; totalTokens: number; callCount: number; estimatedCount: number };
+  contextUsage?: { currentTokens: number; thresholdTokens: number; estimated: boolean };
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;

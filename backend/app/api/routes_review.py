@@ -41,6 +41,7 @@ from app.schemas.review import (
     BulkDeleteQuestionCandidatesCommand,
     QuestionDeletionResultResource,
 )
+from app.schemas.agent import ExecutionResource
 
 
 router = APIRouter(prefix="/api/review", tags=["review"])
@@ -506,6 +507,8 @@ async def submit_review_answer(
         version=command.version,
         idempotency_key=command.idempotency_key,
         value=command.value,
+        provider_model_id=command.provider_model_id,
+        reasoning_effort=command.reasoning_effort,
     )
     return review.answer_receipt_resource(receipt)
 
@@ -579,5 +582,19 @@ async def create_review_discussion(
 ):
     review = application.locate_review_round(round_id)
     return await review.create_discussion(
-        round_id, ordinal=command.ordinal, message=command.message
+        round_id, ordinal=command.ordinal
     )
+
+
+@router.post(
+    "/rounds/{round_id}/discussions/{session_id}/retry",
+    response_model=ExecutionResource,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_review_discussion(
+    round_id: str,
+    session_id: str,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_review_round(round_id)
+    return await review.retry_discussion(round_id, session_id=session_id)

@@ -24,10 +24,12 @@ export function getAgentSession(sessionId: string): Promise<AgentSessionDetail> 
 export function startAgentExecution(
   sessionId: string,
   input: Record<string, unknown>,
+  configuration?: { providerModelId: string | null; reasoningEffort: "none" | "low" | "medium" | "high" },
 ): Promise<AgentExecution> {
-  return apiPost<{ input: Record<string, unknown> }, AgentExecution>(
+  const command = configuration ? { input, configuration } : { input };
+  return apiPost<typeof command, AgentExecution>(
     `/api/agent/sessions/${sessionId}/executions`,
-    { input },
+    command,
   );
 }
 

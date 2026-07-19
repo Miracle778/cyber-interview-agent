@@ -89,7 +89,14 @@ async def start_execution(
     command: StartExecutionCommand,
     application: AgentApplication = Depends(get_agent_application),
 ) -> ExecutionRecord:
-    return await application.start_execution(session_id, input=command.input)
+    configuration = (
+        None
+        if command.configuration is None
+        else command.configuration.model_dump(by_alias=True)
+    )
+    return await application.start_execution(
+        session_id, input=command.input, configuration=configuration
+    )
 
 
 @router.post(

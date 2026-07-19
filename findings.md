@@ -311,3 +311,36 @@
 
 - 原“累计候选”按候选版本行计数，题目库则按 `groupLogicalQuestions` 展示逻辑题目；同题多个历史或候选版本会造成主页数字大于点击后的条目数。
 - 整理会话主页现在直接复用题目库的逻辑归组结果：总数按 group 数，已发布按 group 的聚合状态计数。单个会话中的“候选数”仍表示该次整理生成的版本数，语义保持不变。
+
+## 深入讨论会话闭环诊断
+
+- 当前“深入讨论”点击后立即创建 Session，并替用户发送固定问题、直接调用模型；这把“打开讨论”和“发送问题”错误地合并成一次操作。
+- 初始 discussion input 只有题目快照、评价与 mastery suggestion，缺少用户原回答和追问回答，无法可靠兑现“结合本次回答”的产品承诺。
+- discussion Session ID 只保存在页面局部状态，返回报告后没有持久入口恢复；按钮也没有 pending 防重，可能重复创建子 Session。
+- 正确边界是 attempt 与 discussion Session 持久关联；打开时只准备或复用 Session 并初始化 checkpoint，用户真实发送后才启动模型执行，后续继续复用同一 thread。
+
+## 深入讨论会话闭环实现
+
+- 没有新增平行聊天 Runtime：首次打开使用一个无模型 initialization execution 把冻结题目和完整 attempt evidence 写入原生 LangGraph checkpoint，真实用户消息继续走通用 execution/SSE。
+- attempt 与 discussion 的恢复关系从已有持久事实解析：父 Session、`review.discussion` kind 和 initialization input 中的稳定 attempt ID；因此旧数据无需迁移，新旧会话都能恢复。
+- discussion evidence 现在包含原回答、补充回答、评价、掌握度建议和跳过事实；报告页按钮按真实关联切换“深入讨论/继续讨论”。
+- 失败重试复用失败 execution 的原始消息但不再次投影用户气泡；停止复用统一 execution cancel，避免引入讨论专用取消状态机。
+# 2026-07-19：深入讨论工作台审查
+
+- 真实页面仍沿用“报告摘要 + 文档正文 + 输入框”的纵向堆叠，首屏被 2×2 上下文卡占用，长回复只有约 760px，右侧形成大片无效空白。
+- 页面同时展示全局“返回历史”和局部“返回复习报告”，导航层级重复；深入讨论态只应保留回到所属报告的局部返回。
+- 通用 execution 已持久化模型配置、耗时、usage 和 context-compacted，但讨论页未展示，也无法在发送前覆盖 `agent_chat` 模型与思考强度。
+- `running` 仅根据最新 execution 状态判断；历史数据中 execution 状态滞后时，即使同一 execution 已有持久 assistant 消息，页面仍错误显示“停止”。持久回复应作为终态纠偏证据。
+- `ui-ux-pro-max` 检索采用 content-first、data-dense Agent workbench：聊天是主任务，上下文和运行事实进入有界侧栏；保留现有品牌色、字体和 Lucide 图标，拒绝紫粉营销色、Comic 字体和 Landing Page 结构。
+- 用户实页复核证明第一版 composer 仍是并排表单，模型/思考强度挤占输入层级，和题库整理 Agent 的紧凑聊天 Dock 不一致。
+- 题库整理页已有成熟约束：textarea 独占首行、模型与思考强度进入渐进披露胶囊、44px 圆形发送、运行详情默认展开、上下文用量展示百分比圆环及 `current / threshold`。
+- `agent_context_usage` 已由通用 `ProjectingSummarizationMiddleware` 为 `review.discussion` 持久化；缺口只是 `SessionDetailResource` 未返回 `ProductRepository.context_usage(session_id)`，不需要新造估算算法。
+
+## 2026-07-19：复习 Agent 工作台比例根因
+
+- 深入讨论打开后，普通复习工作台仍同时渲染在同一个 main 中，讨论工作台只是追加到下方；这是页面高度异常和大段空白的首要根因，不能只靠继续调整 `calc(100dvh - Npx)` 掩盖。
+- `review-focus-workspace`、普通会话和讨论会话分别使用两套视口估算，父级其实已经是 `minmax(0, 1fr)`；子页面应消费父级可用高度，桌面端统一 `height: 100%`，窄屏再恢复自然高度。
+- 两种 Agent 会话应共享 composer 和运行事实语言：输入独占首行、底部紧凑工具栏、单一圆形发送；右栏以掌握程度为首要反馈，模型、Token、上下文进入默认展开的运行详情，长关键点独立有界折叠。
+- 普通复习轮次的上下文用量已经由通用 middleware 按 session 持久化，本次只需在 `ReviewRoundResource` 投影 `contextUsage`，不新建复习专用统计逻辑。
+- 左右分栏等高不能只依赖 Grid 默认 stretch：子栏自身的 `overflow-y:auto` 会形成独立滚动容器和明显滚动槽，视觉上仍像两个不同高度的面板。桌面工作台应由共同父级裁切，聊天记录作为主滚动区，右栏整体禁止滚动；长关键点或上下文只在展开卡片内部有界滚动。
+- 仅移除右栏滚动仍不满足单屏会话：`review-shell` 使用 `min-height: 100dvh`，同时聊天工作台保留 `min-height: 520px`，内容会反向撑高 shell 并触发 body 滚动。桌面会话态必须固定为 `height: 100dvh`、裁切 shell，并把所有中间 Grid 节点设为 `min-height: 0`；移动端再显式恢复自然文档流。

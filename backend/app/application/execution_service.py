@@ -136,11 +136,13 @@ class AgentExecutionService:
         *,
         input: dict[str, Any],
         project_input_message: bool = True,
+        configuration: dict[str, Any] | None = None,
     ) -> ExecutionRecord:
         execution = await self.prepare(
             session,
             input=input,
             project_input_message=project_input_message,
+            configuration=configuration,
         )
         self.run_prepared(execution, graph_input=input)
         return execution
@@ -1119,6 +1121,15 @@ class AgentExecutionService:
                     answer_model_override=(
                         self._round_model_override(session.id)
                         if session.kind == "review.round"
+                        else None
+                    ),
+                    discussion_model_override=(
+                        ModelOverride(
+                            provider_model_id=execution.configuration.provider_model_id,
+                            reasoning_effort=execution.configuration.reasoning_effort,
+                        )
+                        if session.kind == "review.discussion"
+                        and execution.configuration.provider_model_id is not None
                         else None
                     ),
                 )

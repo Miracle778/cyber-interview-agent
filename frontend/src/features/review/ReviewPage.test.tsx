@@ -21,7 +21,7 @@ const waitingRound: ReviewRound = {
   status: "waiting_for_input", executionStatus: "waiting_for_input", currentIndex: 0, questionCount: 2,
   currentQuestion: { id: "q1", title: "MVCC", questionText: "Read View 如何判断可见性？", topics: ["database"], difficulty: "medium" },
   currentInput: { id: "input-1", roundId: "round-1", ordinal: 1, kind: "answer", prompt: "Read View 如何判断可见性？", version: 1, status: "pending", createdAt: "now", resolvedAt: null },
-  attempts: [], reports: [], usage: { inputTokens: 12, outputTokens: 4, totalTokens: 16, callCount: 1, estimatedCount: 0 }, createdAt: "now", updatedAt: "now", completedAt: null,
+  attempts: [], reports: [], usage: { inputTokens: 12, outputTokens: 4, totalTokens: 16, callCount: 1, estimatedCount: 0 }, contextUsage: { currentTokens: 32000, thresholdTokens: 89600, estimated: true }, createdAt: "now", updatedAt: "now", completedAt: null,
   messages: [],
 };
 
@@ -92,7 +92,9 @@ describe("R2 ReviewPage", () => {
     const feedback = screen.getByLabelText("本题反馈");
     expect(feedback).toHaveTextContent("model-1");
     expect(feedback).toHaveTextContent("中等思考");
-    expect(feedback).toHaveTextContent("16 tokens");
+    expect(feedback).toHaveTextContent("16");
+    expect(feedback).toHaveTextContent("32k / 90k");
+    expect(feedback).toHaveTextContent("36%");
     expect(screen.getByRole("navigation", { name: "本轮题目进度" })).toHaveTextContent("MVCC");
     expect(screen.queryByRole("navigation", { name: "复习轮次历史" })).not.toBeInTheDocument();
     expect(screen.queryByText("待确认操作")).toBeNull();
