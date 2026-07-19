@@ -5,19 +5,19 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
-from app.agents.factory import AgentFactory, ModelOverride
-from app.agents.question_curation import QuestionCurationAgent
-from app.agents.curation_command import CurationCommandModels
+from app.agents.agent_factory import AgentFactory, ModelOverride
+from app.agents.question_curation_agent import QuestionCurationAgent
+from app.agents.curation_command_agents import CurationCommandAgents
 from app.agents.context_assembly import model_token_counter
-from app.agents.review import ReviewAgents
-from app.agents.review_round import ReviewRoundAgents
+from app.agents.single_review_agents import SingleReviewAgents
+from app.agents.review_round_agents import ReviewRoundAgents
 from app.graphs.publication import create_publication_graph
 from app.graphs.question_curation import create_question_curation_graph
 from app.graphs.review import create_review_graph
 from app.graphs.review_discussion import create_review_discussion_graph
 from app.graphs.review_round import create_review_round_graph
-from app.middleware.defaults import REVIEW_ROUND_BUDGET, build_default_middleware
-from app.middleware.tool_policy import ToolPolicyMiddleware
+from app.middleware.middleware_stack import REVIEW_ROUND_BUDGET, build_default_middleware
+from app.middleware.tool_policy_middleware import ToolPolicyMiddleware
 
 
 class DiagnosticState(TypedDict, total=False):
@@ -33,7 +33,7 @@ class ProductionGraphFactory:
     def __init__(self, agents: AgentFactory) -> None:
         self._agents = agents
 
-    def create_curation_command_models(
+    def create_curation_command_agents(
         self,
         *,
         model_bindings,
@@ -67,7 +67,7 @@ class ProductionGraphFactory:
             budget_profile=REVIEW_ROUND_BUDGET,
             context_limit_tokens=context_limit_tokens,
         )
-        return CurationCommandModels.create(
+        return CurationCommandAgents.create(
             self._agents,
             model_bindings=model_bindings,
             interaction_override=interaction_override,
@@ -154,7 +154,7 @@ class ProductionGraphFactory:
                 interrupt_on={},
                 context_limit_tokens=context_limit_tokens,
             )
-            review_agents = ReviewAgents.create(
+            review_agents = SingleReviewAgents.create(
                 self._agents,
                 model_bindings=bindings,
                 middleware=middleware,

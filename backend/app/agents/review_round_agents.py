@@ -1,44 +1,29 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, replace
-from typing import Any, Protocol
+from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import HumanMessage
 
 from app.agents.context import AgentContext
-from app.agents.factory import AgentFactory, AgentSpec, ModelOverride
+from app.agents.agent_factory import AgentFactory, AgentSpec, ModelOverride
+from app.agents.agent_invocation import final_ai_text, isolated_thread_config
+from app.agents.agent_protocols import AgentRunnable
+from app.agents.prompts.review_round_prompts import (
+    REVIEW_DISCUSSION_PROMPT,
+    REVIEW_ROUND_EVALUATION_PROMPT,
+    REVIEW_ROUND_REPORT_PROMPT,
+    render_review_discussion_input,
+    render_round_evaluation_input,
+    render_round_report_input,
+)
 from app.agents.review_round_contracts import (
     ReviewSessionReportOutput,
     RoundAnswerEvaluation,
 )
 from app.review.models import QuestionSnapshot
-
-
-class AgentRunnable(Protocol):
-    async def ainvoke(
-        self,
-        input: dict[str, Any],
-        config: dict[str, Any] | None = None,
-        *,
-        context: AgentContext | None = None,
-    ) -> dict[str, Any]: ...
-
-
-_EVALUATION_PROMPT = (
-    "根据冻结题目、参考答案和关键点评价回答。返回证据、缺失点、是否需要一次"
-    "必要追问和 mastery 建议；不得输出隐藏推理。"
-)
-_REPORT_PROMPT = (
-    "根据结构化 attempts 生成简洁中文轮次报告和 mastery 解释。"
-    "不得直接修改 mastery，也不得输出隐藏推理。"
-)
-_DISCUSSION_PROMPT = (
-    "围绕给定冻结题目和 attempt 证据深入讨论。只读知识，"
-    "不得修改父复习轮次或自动发布内容。"
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,7 +48,7 @@ class ReviewRoundAgents:
             evaluator=factory.create(
                 AgentSpec(
                     role="answer_evaluation",
-                    system_prompt=_EVALUATION_PROMPT,
+                    prompt=REVIEW_ROUND_EVALUATION_PROMPT,
                     middleware=middleware,
                     response_format=RoundAnswerEvaluation,
                 ),
@@ -74,7 +59,7 @@ class ReviewRoundAgents:
             reporter=factory.create(
                 AgentSpec(
                     role="report_summarization",
-                    system_prompt=_REPORT_PROMPT,
+                    prompt=REVIEW_ROUND_REPORT_PROMPT,
                     middleware=middleware,
                     response_format=ReviewSessionReportOutput,
                 ),
@@ -85,7 +70,7 @@ class ReviewRoundAgents:
             discussion=factory.create(
                 AgentSpec(
                     role="agent_chat",
-                    system_prompt=_DISCUSSION_PROMPT,
+                    prompt=REVIEW_DISCUSSION_PROMPT,
                     tools=tuple(discussion_tools),
                     middleware=middleware,
                 ),
@@ -105,15 +90,12 @@ class ReviewRoundAgents:
         config: dict[str, Any],
         progress_scope: tuple[str, ...] = (),
     ) -> RoundAnswerEvaluation:
-        prompt = (
-            f"冻结题目：{json.dumps(asdict(question), ensure_ascii=False)}\n"
-            f"用户回答：{answer}"
+        prompt = render_round_evaluation_input(
+            question=asdict(question), answer=answer, supplement=supplement
         )
-        if supplement:
-            prompt += f"\n补充回答：{supplement}"
         result = await self.evaluator.ainvoke(
             {"messages": [HumanMessage(content=prompt)]},
-            _role_config(config, context, "answer_evaluation"),
+            isolated_thread_config(config, context, "answer_evaluation"),
             context=(
                 replace(context, progress_scope=progress_scope)
                 if progress_scope
@@ -135,20 +117,19 @@ class ReviewRoundAgents:
         context: AgentContext,
         config: dict[str, Any],
     ) -> ReviewSessionReportOutput:
-        payload = {
-            "attempts": attempts,
-            "settings": settings,
-            "confirmedPriorReports": prior_reports[-3:],
-        }
         result = await self.reporter.ainvoke(
             {
                 "messages": [
                     HumanMessage(
-                        content=json.dumps(payload, ensure_ascii=False)
+                        content=render_round_report_input(
+                            attempts=attempts,
+                            settings=settings,
+                            prior_reports=prior_reports,
+                        )
                     )
                 ]
             },
-            _role_config(config, context, "report_summarization"),
+            isolated_thread_config(config, context, "report_summarization"),
             context=context,
         )
         if "structured_response" not in result:
@@ -170,35 +151,18 @@ class ReviewRoundAgents:
             {
                 "messages": [
                     HumanMessage(
-                        content=json.dumps(
-                            {
-                                "question": asdict(question),
-                                "attemptEvidence": attempt_evidence,
-                                "message": message,
-                            },
-                            ensure_ascii=False,
+                        content=render_review_discussion_input(
+                            question=asdict(question),
+                            attempt_evidence=attempt_evidence,
+                            message=message,
                         )
                     )
                 ]
             },
-            _role_config(config, context, "agent_chat"),
+            isolated_thread_config(config, context, "agent_chat"),
             context=context,
         )
-        messages = result.get("messages", ())
-        final = messages[-1] if messages else None
-        text = final.text.strip() if isinstance(final, AIMessage) else ""
+        text = final_ai_text(result)
         if not text:
             raise ValueError("模型未生成深入讨论回复")
         return text
-
-
-def _role_config(
-    config: dict[str, Any], context: AgentContext, role: str
-) -> dict[str, Any]:
-    isolated = {
-        key: value for key, value in config.items() if key != "configurable"
-    }
-    isolated["configurable"] = {
-        "thread_id": f"{context.session_id}:{role}"
-    }
-    return isolated

@@ -30,7 +30,7 @@ class _Responder:
         yield "恢复后完成"
 
 
-def _command_models(classifier):
+def _command_agents(classifier):
     return SimpleNamespace(
         classifier=classifier,
         summarizer=SimpleNamespace(),
@@ -199,7 +199,7 @@ async def test_interrupted_curation_command_requires_explicit_retry(
     )
     entered = asyncio.Event()
     review = first.locate_review_session(session_id)
-    review.curation_command_models = _command_models(
+    review.curation_command_agents = _command_agents(
         _BlockingClassifier(entered)
     )
     accepted = await review.submit_curation_command(
@@ -227,7 +227,7 @@ async def test_interrupted_curation_command_requires_explicit_retry(
             "execution.completed"
         )
 
-        restored_review.curation_command_models = _command_models(
+        restored_review.curation_command_agents = _command_agents(
             _ResolvedClassifier()
         )
         retried = await restored_review.retry_curation_command(

@@ -11,7 +11,7 @@ from app.infrastructure.observability import (
     OpenTelemetryObservabilitySink,
     SafeObservabilitySink,
 )
-from app.middleware.observability import TraceContext
+from app.middleware.observability_middleware import TraceContext
 
 
 def trace_context() -> TraceContext:

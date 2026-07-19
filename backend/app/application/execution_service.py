@@ -13,7 +13,7 @@ from uuid import uuid4
 from langgraph.types import Command
 
 from app.agents.context import AgentContext
-from app.agents.factory import ModelOverride
+from app.agents.agent_factory import ModelOverride
 from app.application.event_projector import AgentEventProjector
 from app.application.session_service import (
     ExecutionRecord,

@@ -11,8 +11,8 @@ from app.api.routes_hitl import router as hitl_router
 from app.api.routes_knowledge import router as knowledge_router
 from app.api.routes_review import router as review_router
 from app.api.routes_settings import router as settings_router
-from app.agents.factory import AgentFactory
-from app.agents.model_resolver import ChatModelResolver, ModelResolutionError
+from app.agents.agent_factory import AgentFactory
+from app.agents.agent_model_resolver import ChatModelResolver, ModelResolutionError
 from app.application.graph_factory import ProductionGraphFactory
 from app.application.session_service import ProductRecordNotFoundError, SessionBusyError
 from app.application.workspace_runtime import AgentApplication

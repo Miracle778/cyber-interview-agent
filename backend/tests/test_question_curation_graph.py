@@ -3,7 +3,7 @@ from pydantic import ValidationError
 from pathlib import Path
 
 from app.agents.context import AgentContext
-from app.agents.question_curation import QuestionCurationAgent
+from app.agents.question_curation_agent import QuestionCurationAgent
 from app.agents.question_curation_contracts import (
     QuestionCandidate,
     QuestionCandidateBatch,

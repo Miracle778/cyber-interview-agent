@@ -9,8 +9,8 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 
 from app.agents.context import AgentContext
-from app.middleware.defaults import REVIEW_ROUND_BUDGET, build_default_middleware
-from app.middleware.no_progress import NoProgressError, NoProgressMiddleware
+from app.middleware.middleware_stack import REVIEW_ROUND_BUDGET, build_default_middleware
+from app.middleware.no_progress_middleware import NoProgressError, NoProgressMiddleware
 
 
 class Projection:

@@ -1,5 +1,13 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-07-19：Agent 代码结构整理第一阶段
+
+- 完成 Agent、Factory、模型解析器和 Middleware 文件的显式语义命名，所有生产代码与测试导入已迁移，旧含糊模块不再存在。
+- 新增 `app/agents/prompts/`，提取题目整理、整理命令、单题复习、轮次复习和深入讨论 Prompt；PromptSpec 提供稳定 ID/版本，输入 renderer 与 Agent 调用解耦。
+- 新增共享 `AgentRunnable`/`StreamingAgentRunnable` 和 thread invocation helper，删除各 Agent 模块的重复 Protocol 与 `_role_config`。
+- 新增模块布局、Prompt identity/render 和 thread 隔离测试；核心 Agent/Middleware 53 tests、API/重启/异步执行 50 tests 通过，最终后端全量 339 tests 通过，compileall 通过。
+- 本阶段保持数据库 schema、API DTO、Graph state、thread ID、事件类型和 SSE 顺序不变；已运行后端全量回归，未重复运行前端或浏览器验收。
+
 ## 2026-07-16：候选状态文件下钻完成
 
 - 抽取共享 `CurationArtifactCard`，会话总结与右栏列表共用查看、发布、备注行为及 query-backed candidate 状态。

@@ -17,12 +17,12 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 
 from app.agents.context import AgentContext
-from app.middleware.defaults import build_default_middleware
-from app.middleware.no_progress import NoProgressError, NoProgressMiddleware
-from app.middleware.observability import ObservabilityMiddleware
-from app.middleware.session_title import SessionTitleMiddleware
-from app.middleware.summarization import ProjectingSummarizationMiddleware
-from app.middleware.usage import UsageProjectionMiddleware
+from app.middleware.middleware_stack import build_default_middleware
+from app.middleware.no_progress_middleware import NoProgressError, NoProgressMiddleware
+from app.middleware.observability_middleware import ObservabilityMiddleware
+from app.middleware.session_title_middleware import SessionTitleMiddleware
+from app.middleware.summarization_middleware import ProjectingSummarizationMiddleware
+from app.middleware.usage_projection_middleware import UsageProjectionMiddleware
 
 
 class FakeProjection:

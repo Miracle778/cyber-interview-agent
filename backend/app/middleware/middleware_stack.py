@@ -11,11 +11,11 @@ from langchain.agents.middleware import (
 )
 from langchain_core.language_models import BaseChatModel
 
-from app.middleware.no_progress import NoProgressMiddleware
-from app.middleware.observability import ObservabilityMiddleware, ObservabilitySink
-from app.middleware.session_title import SessionTitleMiddleware
-from app.middleware.summarization import ProjectingSummarizationMiddleware
-from app.middleware.usage import MiddlewareProjection, UsageProjectionMiddleware
+from app.middleware.no_progress_middleware import NoProgressMiddleware
+from app.middleware.observability_middleware import ObservabilityMiddleware, ObservabilitySink
+from app.middleware.session_title_middleware import SessionTitleMiddleware
+from app.middleware.summarization_middleware import ProjectingSummarizationMiddleware
+from app.middleware.usage_projection_middleware import MiddlewareProjection, UsageProjectionMiddleware
 
 
 @dataclass(frozen=True, slots=True)

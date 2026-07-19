@@ -1,5 +1,13 @@
 # Agent Runtime 框架收敛关键发现
 
+## 2026-07-19 Agent 代码结构整理第一阶段
+
+- 原 `agents/review.py`、`review_round.py`、`curation_command.py` 不能从文件名判断是单个 Agent 还是多个 runnable 聚合；现改为显式单数/复数 Agent 模块名，并将 `AgentFactory`、模型解析器和所有 Middleware 模块改为可搜索的语义名称。
+- System Prompt 和 HumanMessage 输入渲染原本散落在 Agent 方法中；现集中到 `app/agents/prompts/`，每个 Prompt 具有稳定 ID、版本和独立 renderer。第一阶段只搬迁原文和等价渲染，不调整提示词行为。
+- 四个 Agent 模块重复定义 `AgentRunnable` 和 role thread 配置；现统一为共享 protocol 与 `isolated_thread_config`，保持既有 `{session_id}:{namespace}` checkpoint 键不变。
+- `CurationCommandModels` 实际拥有 classifier、summarizer、responder 三个 Agent runnable，已改名 `CurationCommandAgents`；单题 `ReviewAgents` 已改名 `SingleReviewAgents`，避免与轮次 Agent 混淆。
+- 本阶段没有拆分 `ReviewApplication`、`ReviewRepository`、`AgentExecutionService`，也没有按 Agent 类型调整 middleware profile；这些属于后续高风险结构阶段。
+
 ## 2026-07-16 候选状态下钻与共享文件卡
 
 - 右栏状态数字与会话总结消费同一份 `QuestionCandidate` 查询结果和同一组 mutation；共享组件负责表现一致，React Query/服务端继续作为状态真相。

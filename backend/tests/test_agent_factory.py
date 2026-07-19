@@ -10,9 +10,10 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 
 from app.agents.context import AgentContext
-from app.agents.factory import AgentFactory, AgentSpec, ModelOverride
+from app.agents.agent_factory import AgentFactory, AgentSpec, ModelOverride
+from app.agents.prompts.prompt_spec import PromptSpec
 from app.agents.review_contracts import AnswerEvaluation
-from app.agents.model_resolver import ChatModelResolver, ModelResolutionError
+from app.agents.agent_model_resolver import ChatModelResolver, ModelResolutionError
 from app.db.app_database import connect_app_database
 from app.providers.base import ProviderErrorCode
 from app.repositories.provider_repository import ProviderRepository
@@ -136,12 +137,16 @@ def test_agent_factory_delegates_to_create_agent_without_invocation_wrapper(
         captured["create"] = kwargs
         return compiled
 
-    monkeypatch.setattr("app.agents.factory.create_agent", fake_create_agent)
+    monkeypatch.setattr("app.agents.agent_factory.create_agent", fake_create_agent)
     factory = AgentFactory(StubResolver())
     spec = AgentSpec(
         role="question_generation",
         execution_name="curation_command_classifier",
-        system_prompt="Evaluate the answer",
+        prompt=PromptSpec(
+            id="test-answer-evaluation",
+            version="1.0",
+            system="Evaluate the answer",
+        ),
         response_format=AnswerEvaluation,
     )
 
@@ -179,7 +184,12 @@ async def test_agent_factory_returns_a_real_runnable_agent_graph():
             return model
 
     agent = AgentFactory(StubResolver()).create(
-        AgentSpec(role="agent_chat", system_prompt="Be concise"),
+        AgentSpec(
+            role="agent_chat",
+            prompt=PromptSpec(
+                id="test-agent-chat", version="1.0", system="Be concise"
+            ),
+        ),
         model_bindings={"agent_chat": "model-1"},
     )
     context = AgentContext(
@@ -212,12 +222,19 @@ def test_agent_factory_uses_validated_session_model_override(monkeypatch):
             return object()
 
     monkeypatch.setattr(
-        "app.agents.factory.create_agent", lambda **kwargs: kwargs
+        "app.agents.agent_factory.create_agent", lambda **kwargs: kwargs
     )
     factory = AgentFactory(StubResolver())
 
     factory.create(
-        AgentSpec(role="answer_evaluation", system_prompt="Evaluate"),
+        AgentSpec(
+            role="answer_evaluation",
+            prompt=PromptSpec(
+                id="test-answer-evaluation",
+                version="1.0",
+                system="Evaluate",
+            ),
+        ),
         model_bindings={"answer_evaluation": "workspace-default"},
         model_override=ModelOverride(
             provider_model_id="session-model",
@@ -241,7 +258,7 @@ def test_model_resolver_maps_reasoning_effort_to_provider_options(
     )
     captured = {}
     monkeypatch.setattr(
-        "app.agents.model_resolver.ChatOpenAI",
+        "app.agents.agent_model_resolver.ChatOpenAI",
         lambda **kwargs: captured.update(kwargs) or GenericFakeChatModel(
             messages=iter([AIMessage(content="ok")])
         ),

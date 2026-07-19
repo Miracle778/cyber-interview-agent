@@ -161,7 +161,7 @@ async def test_free_form_response_streams_real_chunks_and_persists_joined_text(
         models = RecordingCurationModels(
             CurationCommandPlan()
         )
-        app.locate_review_session(session_id).curation_command_models = models
+        app.locate_review_session(session_id).curation_command_agents = models
 
         accepted = await client.post(
             f"/api/review/curation-sessions/{session_id}/commands",
@@ -217,7 +217,7 @@ async def test_ambiguous_side_effect_still_uses_classifier_without_streaming_rep
         models = RecordingCurationModels(
             CurationCommandPlan(clarification="请明确要处理的题号")
         )
-        app.locate_review_session(session_id).curation_command_models = models
+        app.locate_review_session(session_id).curation_command_agents = models
 
         accepted = await client.post(
             f"/api/review/curation-sessions/{session_id}/commands",
@@ -271,7 +271,7 @@ async def test_conversation_stream_starts_before_overflow_summary_finishes(
         models.responder = SignallingResponder(
             entered=responder_entered, order=call_order
         )
-        review.curation_command_models = models
+        review.curation_command_agents = models
         detail = (
             await client.get(f"/api/review/curation-sessions/{session_id}")
         ).json()
@@ -356,7 +356,7 @@ async def test_curation_command_returns_accepted_before_classifier_finishes(
             entered=entered,
             release=release,
         )
-        app.locate_review_session(session_id).curation_command_models = models
+        app.locate_review_session(session_id).curation_command_agents = models
 
         response = await asyncio.wait_for(
             client.post(
@@ -423,7 +423,7 @@ async def test_curation_command_cancel_keeps_user_message_without_final_reply(
             release=release,
         )
         review = app.locate_review_session(session_id)
-        review.curation_command_models = models
+        review.curation_command_agents = models
 
         response = await client.post(
             f"/api/review/curation-sessions/{session_id}/commands",
@@ -530,7 +530,7 @@ async def test_immediate_abandon_cancels_command_and_releases_session(
             entered=entered,
             release=asyncio.Event(),
         )
-        review.curation_command_models = models
+        review.curation_command_agents = models
         accepted = (
             await client.post(
                 f"/api/review/curation-sessions/{session_id}/commands",
@@ -1336,7 +1336,7 @@ async def test_explicit_confirm_command_publishes_without_second_decision(
         models = RecordingCurationModels(
             CurationCommandPlan(clarification="不应调用模型")
         )
-        review.curation_command_models = models
+        review.curation_command_agents = models
         context_before = review.repository.get_or_create_curation_context(
             session_id
         )
@@ -1569,7 +1569,7 @@ async def test_budget_overflow_compacts_or_safely_degrades(
             CurationCommandPlan(clarification="已识别复杂命令"),
             fail_summary=summary_fails,
         )
-        review.curation_command_models = models
+        review.curation_command_agents = models
         latest = review.sessions.repository.latest_execution(session_id)
         for index in range(16):
             review.sessions.repository.append_message(

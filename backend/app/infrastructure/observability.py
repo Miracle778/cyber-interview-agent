@@ -13,7 +13,7 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-from app.middleware.observability import TraceContext
+from app.middleware.observability_middleware import TraceContext
 
 
 AttributeValue = str | int | float | bool

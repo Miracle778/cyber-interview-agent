@@ -10,7 +10,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from app.agents.context import AgentContext
-from app.agents.review import ReviewAgents
+from app.agents.single_review_agents import SingleReviewAgents
 from app.agents.review_contracts import AnswerEvaluation
 from app.graphs.review import create_review_graph
 from app.hitl.models import PendingActionRecord
@@ -50,7 +50,7 @@ async def test_review_graph_uses_agent_results_without_provider_state():
     reporter = RecordingAgent(
         {"messages": [AIMessage(content="# 单题复习\n\n- 评分：partial")]}
     )
-    agents = ReviewAgents(evaluator=evaluator, reporter=reporter)
+    agents = SingleReviewAgents(evaluator=evaluator, reporter=reporter)
     graph = create_review_graph(agents)
     context = AgentContext(
         workspace_id="workspace-1",
@@ -86,7 +86,7 @@ async def test_review_agents_reject_empty_report():
     evaluation = AnswerEvaluation(
         score="good", missing_key_points=[], evidence="回答完整"
     )
-    agents = ReviewAgents(
+    agents = SingleReviewAgents(
         evaluator=RecordingAgent({"structured_response": evaluation}),
         reporter=RecordingAgent({"messages": [AIMessage(content="   ")]}),
     )
@@ -114,7 +114,7 @@ async def test_review_graph_keeps_draft_and_publication_as_explicit_nodes():
     evaluation = AnswerEvaluation(
         score="partial", missing_key_points=["隔离性"], evidence="提到原子性"
     )
-    agents = ReviewAgents(
+    agents = SingleReviewAgents(
         evaluator=RecordingAgent({"structured_response": evaluation}),
         reporter=RecordingAgent(
             {"messages": [AIMessage(content="# 单题复习\n\n需要补充隔离性")]}

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from langchain.agents.middleware import SummarizationMiddleware
 
-from app.middleware.usage import ContextUsageProjection
+from app.middleware.usage_projection_middleware import ContextUsageProjection
 
 
 class ProjectingSummarizationMiddleware(SummarizationMiddleware):

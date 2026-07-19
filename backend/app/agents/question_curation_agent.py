@@ -3,34 +3,20 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage
 
 from app.agents.context import AgentContext
-from app.agents.factory import AgentFactory, AgentSpec
+from app.agents.agent_factory import AgentFactory, AgentSpec
+from app.agents.agent_invocation import isolated_thread_config
+from app.agents.agent_protocols import AgentRunnable
+from app.agents.prompts.question_curation_prompts import (
+    QUESTION_CURATION_PROMPT,
+    render_question_curation_input,
+)
 from app.agents.question_curation_contracts import QuestionCandidateBatch
 from app.review.question_similarity import same_question
-
-
-class AgentRunnable(Protocol):
-    async def ainvoke(
-        self,
-        input: dict[str, Any],
-        config: dict[str, Any] | None = None,
-        *,
-        context: AgentContext | None = None,
-    ) -> dict[str, Any]: ...
-
-
-_PROMPT = (
-    "把给定来源整理为可复习的中文面试题候选。纠正明显错误，保留来源引用，"
-    "标注 topic、难度、关键点、必要追问和简短修正说明。"
-    "来源中每个清晰可辨的独立题目都必须分别生成一个候选；不得任意合并、"
-    "抽样或只挑代表题。若来源明确列出 N 道题，必须返回 N 个 candidates。"
-    "不得自动发布。"
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +37,7 @@ class QuestionCurationAgent:
             factory.create(
                 AgentSpec(
                     role="question_generation",
-                    system_prompt=_PROMPT,
+                    prompt=QUESTION_CURATION_PROMPT,
                     tools=tuple(tools),
                     middleware=middleware,
                     response_format=QuestionCandidateBatch,
@@ -74,14 +60,13 @@ class QuestionCurationAgent:
         candidates = []
         known_questions = list(similar_questions)
         for source_unit in units:
-            body = ["来源：", *source_unit]
-            if known_questions:
-                body.extend(("现有相似题：", *known_questions))
-            if rewrite_feedback:
-                body.extend(("重写要求：", rewrite_feedback))
             result = await self.runnable.ainvoke(
-                {"messages": [HumanMessage(content="\n".join(body))]},
-                _role_config(config, context, "question_generation"),
+                {"messages": [HumanMessage(content=render_question_curation_input(
+                    source_unit,
+                    known_questions=tuple(known_questions),
+                    rewrite_feedback=rewrite_feedback,
+                ))]},
+                isolated_thread_config(config, context, "question_generation"),
                 context=context,
             )
             if "structured_response" not in result:
@@ -152,15 +137,3 @@ def _split_numbered_source(source: str) -> tuple[str, ...]:
         for offset in range(0, len(items), _MAX_NUMBERED_ITEMS_PER_CALL)
         for group in (items[offset : offset + _MAX_NUMBERED_ITEMS_PER_CALL],)
     )
-
-
-def _role_config(
-    config: dict[str, Any], context: AgentContext, role: str
-) -> dict[str, Any]:
-    isolated = {
-        key: value for key, value in config.items() if key != "configurable"
-    }
-    isolated["configurable"] = {
-        "thread_id": f"{context.session_id}:{role}"
-    }
-    return isolated

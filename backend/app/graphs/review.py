@@ -8,7 +8,7 @@ from langgraph.runtime import Runtime
 from langgraph.types import interrupt
 
 from app.agents.context import AgentContext
-from app.agents.review import ReviewAgents
+from app.agents.single_review_agents import SingleReviewAgents
 from app.agents.review_contracts import (
     AnswerEvaluation,
     SingleReviewInput,
@@ -17,7 +17,7 @@ from app.agents.review_contracts import (
 
 
 def create_review_graph(
-    agents: ReviewAgents,
+    agents: SingleReviewAgents,
     *,
     create_draft=None,
     request_action=None,

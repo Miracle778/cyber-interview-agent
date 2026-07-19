@@ -7,7 +7,7 @@ import re
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage
 
-from app.middleware.usage import MiddlewareProjection
+from app.middleware.usage_projection_middleware import MiddlewareProjection
 
 
 class NoProgressError(RuntimeError):

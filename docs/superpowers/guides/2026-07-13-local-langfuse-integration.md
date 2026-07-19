@@ -335,5 +335,5 @@ usage、HITL 和发布状态仍由本地 Runtime SQLite 负责。
 - `infra/observability/langfuse/compose.yaml`：本机 Langfuse v3 栈；
 - `infra/observability/langfuse/.env.example`：环境变量模板；
 - `backend/app/infrastructure/observability.py`：OTLP exporter 和 fail-open sink；
-- `backend/app/middleware/observability.py`：Agent model span middleware；
+- `backend/app/middleware/observability_middleware.py`：Agent model span middleware；
 - `docs/verification/runtime-middleware-1-0.md`：阶段验收证据和人工验收流程。

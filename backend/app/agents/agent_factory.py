@@ -11,14 +11,15 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
 from app.agents.context import AgentContext
-from app.agents.model_resolver import ChatModelResolver, ModelResolutionError
+from app.agents.agent_model_resolver import ChatModelResolver, ModelResolutionError
+from app.agents.prompts.prompt_spec import PromptSpec
 from app.providers.base import ProviderErrorCode
 
 
 @dataclass(frozen=True, slots=True)
 class AgentSpec:
     role: str
-    system_prompt: str
+    prompt: PromptSpec
     execution_name: str | None = None
     tools: tuple[BaseTool, ...] = ()
     middleware: tuple[AgentMiddleware, ...] = ()
@@ -67,7 +68,7 @@ class AgentFactory:
         return create_agent(
             model=model,
             tools=spec.tools,
-            system_prompt=spec.system_prompt,
+            system_prompt=spec.prompt.system,
             middleware=spec.middleware,
             response_format=(
                 None

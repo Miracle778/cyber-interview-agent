@@ -7,7 +7,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from app.application.workspace_runtime import build_curation_command_context
-from app.middleware.no_progress import NoProgressError, NoProgressMiddleware
+from app.middleware.no_progress_middleware import NoProgressError, NoProgressMiddleware
 
 
 class Projection:

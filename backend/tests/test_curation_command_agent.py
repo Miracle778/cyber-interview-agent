@@ -13,13 +13,13 @@ from app.agents.context_assembly import (
     ContextSummary,
     ContextTurn,
 )
-from app.agents.curation_command import (
+from app.agents.curation_command_agents import (
     CurationCommandClassifier,
-    CurationCommandModels,
+    CurationCommandAgents,
     CurationCommandResponder,
     CurationContextSummarizer,
 )
-from app.agents.factory import ModelOverride
+from app.agents.agent_factory import ModelOverride
 from app.review.curation_command_contracts import (
     CurationCommandPlan,
     CurationDialogueSummary,
@@ -114,7 +114,7 @@ def test_models_use_explicit_roles_names_and_no_tools_or_checkpoint() -> None:
     responder = StreamingRunnable()
     factory = RecordingFactory((classifier, summarizer, responder))
 
-    models = CurationCommandModels.create(
+    models = CurationCommandAgents.create(
         factory,
         model_bindings={
             "question_generation": "model-a",
@@ -154,7 +154,7 @@ def test_interaction_override_only_changes_classifier_model() -> None:
         reasoning_effort="high",
     )
 
-    CurationCommandModels.create(
+    CurationCommandAgents.create(
         factory,
         model_bindings={
             "question_generation": "default-model",

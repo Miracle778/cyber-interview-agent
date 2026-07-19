@@ -14,7 +14,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from app.agents.context import AgentContext
-from app.middleware.tool_policy import ToolPolicyMiddleware
+from app.middleware.tool_policy_middleware import ToolPolicyMiddleware
 from app.tools.runtime_tools import create_runtime_tools
 
 

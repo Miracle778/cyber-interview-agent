@@ -7,7 +7,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
 
 from app.agents.context import AgentContext
-from app.agents.question_curation import QuestionCurationAgent
+from app.agents.question_curation_agent import QuestionCurationAgent
 
 
 class QuestionCurationState(TypedDict, total=False):

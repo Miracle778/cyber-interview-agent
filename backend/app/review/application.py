@@ -20,8 +20,8 @@ from app.agents.context_assembly import (
     ContextBudgetExceededError,
     ContextSummary,
 )
-from app.agents.curation_command import CurationCommandModels
-from app.agents.factory import ModelOverride
+from app.agents.curation_command_agents import CurationCommandAgents
+from app.agents.agent_factory import ModelOverride
 from app.application.session_service import (
     AgentSessionService,
     MessageRecord,
@@ -50,7 +50,7 @@ from app.review.models import (
 from app.review.repository import ReviewRepository
 from app.review.selector import QuestionSelector
 from app.review.timeline import SessionTimelineProjector
-from app.middleware.usage import ContextUsageProjection
+from app.middleware.usage_projection_middleware import ContextUsageProjection
 from app.services.document_ingestion import extract_text
 
 
@@ -90,9 +90,9 @@ class ReviewApplication:
         validate_model: Callable[[str, str], None],
         actions: PendingActionRepository,
         hitl: HitlService,
-        curation_command_models: CurationCommandModels | None = None,
-        curation_command_models_factory: (
-            Callable[[ModelOverride], CurationCommandModels] | None
+        curation_command_agents: CurationCommandAgents | None = None,
+        curation_command_agents_factory: (
+            Callable[[ModelOverride], CurationCommandAgents] | None
         ) = None,
         curation_context_projection=None,
         curation_context_factory: Callable[..., AgentContext] | None = None,
@@ -108,8 +108,8 @@ class ReviewApplication:
         self.validate_model = validate_model
         self.actions = actions
         self.hitl = hitl
-        self.curation_command_models = curation_command_models
-        self.curation_command_models_factory = curation_command_models_factory
+        self.curation_command_agents = curation_command_agents
+        self.curation_command_agents_factory = curation_command_agents_factory
         self.curation_context_projection = curation_context_projection
         self.curation_context_factory = curation_context_factory
         self.selector = QuestionSelector()
@@ -635,12 +635,12 @@ class ReviewApplication:
             )
         if provider_model_id is not None:
             self.validate_model(provider_model_id, reasoning_effort)
-        command_models = self.curation_command_models
+        command_agents = self.curation_command_agents
         if (
             provider_model_id is not None
-            and self.curation_command_models_factory is not None
+            and self.curation_command_agents_factory is not None
         ):
-            command_models = self.curation_command_models_factory(
+            command_agents = self.curation_command_agents_factory(
                 ModelOverride(
                     provider_model_id=provider_model_id,
                     reasoning_effort=reasoning_effort,
@@ -695,7 +695,7 @@ class ReviewApplication:
         self._schedule_curation_command(
             receipt=receipt,
             text=text,
-            command_models=command_models,
+            command_agents=command_agents,
             submitted_at=submitted_at,
         )
         return self._accepted_curation_command_resource(receipt)
@@ -705,7 +705,7 @@ class ReviewApplication:
         *,
         receipt,
         text: str,
-        command_models: CurationCommandModels | None,
+        command_agents: CurationCommandAgents | None,
         submitted_at: str,
     ) -> None:
         if receipt.execution_id is None:
@@ -726,7 +726,7 @@ class ReviewApplication:
                     _execution_id=current.id,
                     _cancellation=cancellation,
                     _submitted_at=submitted_at,
-                    _command_models=command_models,
+                    _command_agents=command_agents,
                 )
             except (ExecutionCancelled, asyncio.CancelledError):
                 latest = self.sessions.repository.get_execution(current.id)
@@ -758,12 +758,12 @@ class ReviewApplication:
         if receipt.lifecycle_status not in {"interrupted", "failed"}:
             raise ReviewConflictError("curation command cannot be retried")
         curation = self.repository.get_curation_session(receipt.session_id)
-        command_models = self.curation_command_models
+        command_agents = self.curation_command_agents
         if (
             curation.preferred_model_id is not None
-            and self.curation_command_models_factory is not None
+            and self.curation_command_agents_factory is not None
         ):
-            command_models = self.curation_command_models_factory(
+            command_agents = self.curation_command_agents_factory(
                 ModelOverride(
                     provider_model_id=curation.preferred_model_id,
                     reasoning_effort=curation.preferred_reasoning_effort,
@@ -785,7 +785,7 @@ class ReviewApplication:
         self._schedule_curation_command(
             receipt=receipt,
             text=receipt.original_text,
-            command_models=command_models,
+            command_agents=command_agents,
             submitted_at=receipt.created_at,
         )
         return self._accepted_curation_command_resource(receipt)
@@ -823,7 +823,7 @@ class ReviewApplication:
         _execution_id: str | None = None,
         _cancellation: ExecutionCancellation | None = None,
         _submitted_at: str | None = None,
-        _command_models: CurationCommandModels | None = None,
+        _command_agents: CurationCommandAgents | None = None,
     ) -> dict[str, Any]:
         command_started_at = (
             _submitted_at or datetime.now(timezone.utc).isoformat()
@@ -869,11 +869,11 @@ class ReviewApplication:
         deterministic = self.curation_commands.try_parse(
             text, curation.summary, focused_candidate_ids
         )
-        command_models = _command_models or self.curation_command_models
+        command_agents = _command_agents or self.curation_command_agents
         plan: CurationCommandPlan
         if deterministic is not None:
             plan = deterministic
-        elif command_models is None:
+        elif command_agents is None:
             plan = CurationCommandPlan(
                 clarification=(
                     "我还不能安全确定要处理哪些题目，请明确题号和要执行的操作。"
@@ -911,19 +911,19 @@ class ReviewApplication:
                 )
                 assembler = ContextAssembler()
                 budget = self._curation_context_budget(
-                    command_models.context_limit_tokens
+                    command_agents.context_limit_tokens
                 )
                 try:
                     assembled = assembler.assemble(
                         material,
                         budget,
-                        command_models.token_counter,
+                        command_agents.token_counter,
                     )
                 except ContextBudgetExceededError as error:
                     raise ReviewConflictError(error.code) from error
                 if assembled.overflow_turns and compact_overflow:
                     try:
-                        compacted = await command_models.summarizer.summarize(
+                        compacted = await command_agents.summarizer.summarize(
                             prior_summary=prior_summary,
                             overflow_turns=assembled.overflow_turns,
                             context=invocation_context,
@@ -955,7 +955,7 @@ class ReviewApplication:
                         assembled = assembler.assemble(
                             material,
                             budget,
-                            command_models.token_counter,
+                            command_agents.token_counter,
                         )
                         if self.curation_context_projection is not None:
                             self.curation_context_projection.mark_context_compacted(
@@ -993,7 +993,7 @@ class ReviewApplication:
                     await context_provider(compact_overflow=False)
                 )
                 response_chunks: list[str] = []
-                async for chunk in command_models.responder.astream(
+                async for chunk in command_agents.responder.astream(
                     response_context.render(),
                     context=response_invocation_context,
                 ):
@@ -1017,7 +1017,7 @@ class ReviewApplication:
             else:
                 interpreter = CurationCommandInterpreter(
                     self.curation_commands,
-                    command_models.classifier,
+                    command_agents.classifier,
                 )
                 plan = await interpreter.interpret(
                     text=text,

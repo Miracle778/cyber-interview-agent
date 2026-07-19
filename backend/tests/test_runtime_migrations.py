@@ -4,7 +4,7 @@ from pathlib import Path
 from app.agents.context import AgentContext
 from app.application.session_service import ProductRepository
 from app.application.workspace_runtime import SqliteMiddlewareProjection
-from app.middleware.usage import ContextUsageProjection
+from app.middleware.usage_projection_middleware import ContextUsageProjection
 
 from app.infrastructure.runtime_database import (
     connect_runtime_database,

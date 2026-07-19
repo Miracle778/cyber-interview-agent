@@ -9,7 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 from app.application.execution_service import AgentExecutionService, GraphFactory
-from app.agents.factory import ModelOverride
+from app.agents.agent_factory import ModelOverride
 from app.application.session_service import (
     AgentSessionService,
     EventRecord,
@@ -39,7 +39,7 @@ from app.knowledge.drafts import (
 )
 from app.knowledge.publication import PublicationService
 from app.knowledge.publication_handler import KnowledgePublishActionHandler
-from app.middleware.usage import ContextUsageProjection, UsageProjection
+from app.middleware.usage_projection_middleware import ContextUsageProjection, UsageProjection
 from app.review.application import ReviewApplication
 from app.review.service import ReviewDomainService
 from app.review.selector import QuestionSelector
@@ -239,21 +239,21 @@ class WorkspaceRuntime:
             resume_action=executions.resume_approval,
         )
         holder["hitl"] = hitl
-        command_models_factory = getattr(
-            graph_factory, "create_curation_command_models", None
+        command_agents_factory = getattr(
+            graph_factory, "create_curation_command_agents", None
         )
         configured_model_bindings = model_bindings()
-        command_models_available = (
-            command_models_factory is not None
+        command_agents_available = (
+            command_agents_factory is not None
             and {
                 "question_generation",
                 "report_summarization",
             }.issubset(configured_model_bindings)
         )
-        command_models = (
+        command_agents = (
             None
-            if not command_models_available
-            else command_models_factory(
+            if not command_agents_available
+            else command_agents_factory(
                 model_bindings=configured_model_bindings,
                 projection=projection,
                 audit=audit,
@@ -261,12 +261,12 @@ class WorkspaceRuntime:
             )
         )
 
-        def create_command_models(
+        def create_command_agents(
             override: ModelOverride,
         ):
-            if command_models_factory is None:
-                raise RuntimeError("curation command models are not configured")
-            return command_models_factory(
+            if command_agents_factory is None:
+                raise RuntimeError("curation command agents are not configured")
+            return command_agents_factory(
                 model_bindings=configured_model_bindings,
                 projection=projection,
                 audit=audit,
@@ -292,10 +292,10 @@ class WorkspaceRuntime:
             validate_model=validate_review_model,
             actions=actions,
             hitl=hitl,
-            curation_command_models=command_models,
-            curation_command_models_factory=(
-                create_command_models
-                if command_models_factory is not None
+            curation_command_agents=command_agents,
+            curation_command_agents_factory=(
+                create_command_agents
+                if command_agents_factory is not None
                 and "report_summarization" in configured_model_bindings
                 else None
             ),
