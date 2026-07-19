@@ -16,6 +16,7 @@ from app.knowledge.drafts import CreateDraftCommand
 from app.graphs.publication import create_publication_graph
 from tests.test_review_api_v2 import _graph_factory
 from app.review.curation_command_contracts import CurationCommandPlan
+from app.review.errors import ReviewConflictError
 
 
 def _session_graph_factory(kind, **dependencies):
@@ -895,6 +896,95 @@ async def test_candidate_rewrite_resumes_its_original_curation_session(
             f"/api/review/question-candidates/{candidate_id}"
         )).json()
         assert candidate["curationSessionId"] == created["id"]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_generation_links_evidence_to_published_question_and_blocks_republish(
+    api, application
+) -> None:
+    app, source_ids = application
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        first = (await client.post(
+            "/api/review/curation-sessions",
+            json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+        )).json()
+        await app.wait_execution(first["executionId"])
+        first_detail = (await client.get(
+            f"/api/review/curation-sessions/{first['id']}"
+        )).json()
+        first_candidate_id = first_detail["summary"]["items"][0]["candidateId"]
+        published = await client.post(
+            f"/api/review/question-candidates/{first_candidate_id}/publish",
+            json={"idempotencyKey": "publish-original-question"},
+        )
+        assert published.status_code == 200, published.text
+        published_question_id = published.json()["question"]["questionId"]
+
+        duplicate_session = (await client.post(
+            "/api/review/curation-sessions",
+            json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+        )).json()
+        await app.wait_execution(duplicate_session["executionId"])
+        duplicate_detail = (await client.get(
+            f"/api/review/curation-sessions/{duplicate_session['id']}"
+        )).json()
+        duplicate_id = duplicate_detail["summary"]["items"][0]["candidateId"]
+        duplicate = (await client.get(
+            f"/api/review/question-candidates/{duplicate_id}"
+        )).json()
+
+        assert duplicate["duplicateOfQuestionId"] == published_question_id
+        assert app.review("w1").repository.list_question_source_links(
+            published_question_id
+        )
+        with pytest.raises(ReviewConflictError, match="duplicate candidate"):
+            await client.post(
+                f"/api/review/question-candidates/{duplicate_id}/publish",
+                json={"idempotencyKey": "do-not-republish-duplicate"},
+            )
+
+        edited = await client.patch(
+            f"/api/review/question-candidates/{duplicate_id}",
+            json={
+                "version": duplicate["draft"]["version"],
+                "referenceAnswer": "这是更新后的参考答案，保留旧版用于历史追溯。",
+            },
+        )
+        assert edited.status_code == 200, edited.text
+        updated = await client.post(
+            f"/api/review/question-candidates/{duplicate_id}/update-active-version",
+            json={
+                "targetQuestionId": published_question_id,
+                "expectedActiveHash": published.json()["question"]["contentHash"],
+                "idempotencyKey": "promote-duplicate-as-revision",
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["question"]["questionId"] == published_question_id
+        assert updated.json()["revisionOfQuestionId"] == published_question_id
+        assert updated.json()["isActiveVersion"] is True
+
+        old_version = await client.get(
+            f"/api/review/question-candidates/{first_candidate_id}"
+        )
+        assert old_version.json()["status"] == "published"
+        assert old_version.json()["isActiveVersion"] is False
+        active = app.review("w1").repository.list_active_questions("w1")
+        assert len(active) == 1
+        assert active[0].snapshot.question_id == published_question_id
+        assert active[0].snapshot.reference_answer.startswith("这是更新后的")
+        repeated_update = await client.post(
+            f"/api/review/question-candidates/{duplicate_id}/update-active-version",
+            json={
+                "targetQuestionId": published_question_id,
+                "expectedActiveHash": published.json()["question"]["contentHash"],
+                "idempotencyKey": "promote-duplicate-as-revision",
+            },
+        )
+        assert repeated_update.status_code == 200, repeated_update.text
+        assert repeated_update.json()["isActiveVersion"] is True
 
 
 @pytest.mark.asyncio

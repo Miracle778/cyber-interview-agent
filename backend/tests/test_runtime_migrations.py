@@ -53,7 +53,7 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     assert "agent_context_usage" in _tables(connection)
     connection.close()
 
@@ -93,7 +93,7 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     reopened.close()
 
 

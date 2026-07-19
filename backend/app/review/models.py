@@ -170,6 +170,8 @@ class QuestionCandidateRecord:
     rejected_at: str | None
     rejection_action_id: str | None
     duplicate_of_question_id: str | None
+    revision_of_question_id: str | None
+    revision_base_hash: str | None
     status: str
     deleted_at: str | None
     deletion_reason: str

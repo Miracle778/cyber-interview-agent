@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from hashlib import sha256
 from typing import Any, Iterator, cast
 from uuid import uuid4
@@ -195,14 +195,11 @@ class ReviewRepository:
             (question_id, source_id, evidence_ref),
         ).fetchone()
         if existing is not None:
-            record = self._question_source_link_record(existing)
-            if (
-                record.batch_id != batch_id
-                or record.session_id != session_id
-                or record.merge_reason != merge_reason
-            ):
-                raise ReviewConflictError("question source link identity changed")
-            return record
+            # The logical identity is question + source + evidence.  A later
+            # curation session may rediscover the same evidence; its candidate
+            # retains that run's audit trail, while the question-source edge is
+            # intentionally idempotent.
+            return self._question_source_link_record(existing)
         identifier = link_id or str(uuid4())
         with self._transaction():
             self._connection.execute(
@@ -901,6 +898,64 @@ class ReviewRepository:
         ).fetchone()
         return None if row is None else self._candidate_record(row)
 
+    def prepare_candidate_revision(
+        self,
+        *,
+        workspace_id: str,
+        candidate_id: str,
+        target_question_id: str,
+        expected_active_hash: str,
+    ) -> QuestionCandidateRecord:
+        candidate = self.get_candidate(candidate_id)
+        batch = self.get_batch(candidate.batch_id)
+        target = self.get_active_question(target_question_id)
+        if batch.workspace_id != workspace_id or target.workspace_id != workspace_id:
+            raise LookupError(candidate_id)
+        if (
+            candidate.status == "published"
+            and candidate.revision_of_question_id == target_question_id
+            and target.draft_id == candidate.draft_id
+        ):
+            return candidate
+        if target.snapshot.content_hash != expected_active_hash:
+            raise ReviewConflictError(
+                "active question changed before revision was requested"
+            )
+        if candidate.status != "review_pending" or candidate.draft_id is None:
+            raise ReviewConflictError(
+                "only a pending candidate can update the active question"
+            )
+        from app.review.question_similarity import same_question
+
+        if not same_question(
+            candidate.question.question_text,
+            target.snapshot.question_text,
+            left_topics=candidate.question.topics,
+            right_topics=target.snapshot.topics,
+            threshold=0.78,
+        ):
+            raise ReviewConflictError(
+                "candidate does not belong to the target logical question"
+            )
+        revised = replace(candidate.question, question_id=target_question_id)
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_question_candidates SET question_json = ?, "
+                "duplicate_of_question_id = ?, revision_of_question_id = ?, "
+                "revision_base_hash = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND status = 'review_pending'",
+                (
+                    _canonical_json(asdict(revised)),
+                    target_question_id,
+                    target_question_id,
+                    target.snapshot.content_hash,
+                    candidate_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError("candidate revision state changed")
+        return self.get_candidate(candidate_id)
+
     def list_candidates(
         self,
         workspace_id: str,
@@ -1152,6 +1207,30 @@ class ReviewRepository:
                 (candidate.question.question_id, draft_id, publication_id),
             ).fetchone()
             if existing is None:
+                if candidate.revision_of_question_id is not None:
+                    raise ReviewConflictError(
+                        "active question disappeared before revision publication"
+                    )
+                from app.review.question_similarity import same_question
+
+                active_rows = self._connection.execute(
+                    "SELECT question_json FROM review_question_catalog "
+                    "WHERE workspace_id = ? AND active = 1",
+                    (workspace_id,),
+                ).fetchall()
+                if any(
+                    same_question(
+                        candidate.question.question_text,
+                        self._snapshot(row["question_json"]).question_text,
+                        left_topics=candidate.question.topics,
+                        right_topics=self._snapshot(row["question_json"]).topics,
+                        threshold=0.9,
+                    )
+                    for row in active_rows
+                ):
+                    raise ReviewConflictError(
+                        "an equivalent logical question is already active"
+                    )
                 self._connection.execute(
                     "INSERT INTO review_question_catalog "
                     "(question_id, workspace_id, document_id, draft_id, "
@@ -1170,6 +1249,14 @@ class ReviewRepository:
             else:
                 if existing["question_id"] != candidate.question.question_id:
                     raise ReviewConflictError("publication already projects different question facts")
+                if (
+                    candidate.revision_of_question_id is not None
+                    and existing["content_hash"] != candidate.revision_base_hash
+                    and existing["draft_id"] != draft_id
+                ):
+                    raise ReviewConflictError(
+                        "active question changed before revision publication"
+                    )
                 self._connection.execute(
                     "UPDATE review_question_catalog SET document_id = ?, draft_id = ?, "
                     "publication_id = ?, question_json = ?, content_hash = ?, active = 1, "
@@ -2046,6 +2133,8 @@ class ReviewRepository:
             rejected_at=row["rejected_at"],
             rejection_action_id=row["rejection_action_id"],
             duplicate_of_question_id=row["duplicate_of_question_id"],
+            revision_of_question_id=row["revision_of_question_id"],
+            revision_base_hash=row["revision_base_hash"],
             status=row["status"],
             deleted_at=row["deleted_at"],
             deletion_reason=row["deletion_reason"],

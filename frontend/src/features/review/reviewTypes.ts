@@ -58,6 +58,8 @@ export interface QuestionCandidate {
   rejectionActionId?: string | null;
   duplicateOfQuestionId: string | null;
   duplicateQuestion: CandidateQuestion | null;
+  revisionOfQuestionId?: string | null;
+  isActiveVersion?: boolean;
   status: "draft" | "review_pending" | "rejected" | "published";
   deletedAt?: string | null;
   deletionReason?: string;

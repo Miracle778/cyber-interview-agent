@@ -147,6 +147,10 @@ export function publishQuestionCandidate(id: string, idempotencyKey: string): Pr
   return apiPost(`/api/review/question-candidates/${id}/publish`, { idempotencyKey });
 }
 
+export function updateActiveQuestionVersion(id: string, targetQuestionId: string, expectedActiveHash: string, idempotencyKey: string): Promise<QuestionCandidate> {
+  return apiPost(`/api/review/question-candidates/${id}/update-active-version`, { targetQuestionId, expectedActiveHash, idempotencyKey });
+}
+
 export function deleteQuestionCandidate(id: string, expectedVersion: number | null, reason = ""): Promise<QuestionDeletionResult> {
   return apiPost(`/api/review/question-candidates/${id}/delete`, { idempotencyKey: crypto.randomUUID(), expectedVersion, reason });
 }

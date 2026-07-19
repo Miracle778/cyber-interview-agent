@@ -286,3 +286,10 @@
 - `question.revise` 复用正式 Graph/Execution Runtime；原 Session 存在则复用（归档会自动恢复），不存在则创建持久修订 Session。输入只包含当前题目 Markdown、反馈/备注/退回原因、来源引用、重复关系和发布状态，并只接受一个候选输出。
 - 修订未发布题时递增原 draft version；已发布题创建同 document 的新 draft，旧 publication receipt 和 Vault 版本继续可追溯，新版本重新进入 review pending/HITL。
 - 浏览器发现并修复既有回调歧义：重写 API 返回的是 Session，不能再把 Session ID 当 candidate ID 调原会话解析接口；现在直接打开返回的修订 Session。
+
+## 逻辑题唯一 active 版本
+
+- `published` 只表示某个候选曾经发布，不能等同于当前可复习版本；active 必须由 catalog 当前 `draft_id` 与 candidate `draft_id` 的一致性推导。
+- “更新入库版”不能创建新逻辑题，也不能覆盖旧文件；应复用稳定 `question_id`，只原子更新 catalog 指针，并把旧 publication 作为历史证据保留。
+- UI 发起更新时提交读取到的 active content hash；服务端准备修订和最终 catalog 投影均再次校验，避免两个页面同时更新造成静默覆盖。
+- 已开始的复习轮次消费冻结快照，因此 active 版本更新只影响之后创建的轮次，不需要回写历史评价与掌握度事实。

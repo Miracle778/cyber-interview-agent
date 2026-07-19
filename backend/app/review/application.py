@@ -1320,6 +1320,7 @@ class ReviewApplication:
         candidate = self.repository.get_candidate(candidate_id)
         if candidate.status == "published":
             return
+        self._assert_candidate_publishable(candidate)
         if candidate.draft_id is None:
             raise ReviewConflictError("candidate has no draft")
         draft = await self.drafts.get(candidate.draft_id)
@@ -1358,6 +1359,42 @@ class ReviewApplication:
             ),
         )
         await self.executions.wait(execution.id)
+
+    def _assert_candidate_publishable(self, candidate) -> None:
+        if candidate.status == "rejected":
+            raise ReviewConflictError("rejected candidate cannot be published")
+        if (
+            candidate.duplicate_of_question_id is not None
+            and candidate.revision_of_question_id
+            != candidate.duplicate_of_question_id
+        ):
+            raise ReviewConflictError(
+                "duplicate candidate must be resolved before publication"
+            )
+        from app.review.question_similarity import same_question
+
+        for active in self.repository.list_active_questions(self.workspace_id):
+            if active.snapshot.question_id == candidate.question.question_id:
+                if (
+                    candidate.revision_of_question_id is not None
+                    and active.snapshot.content_hash
+                    != candidate.revision_base_hash
+                    and active.draft_id != candidate.draft_id
+                ):
+                    raise ReviewConflictError(
+                        "active question changed before revision publication"
+                    )
+                continue
+            if same_question(
+                candidate.question.question_text,
+                active.snapshot.question_text,
+                left_topics=candidate.question.topics,
+                right_topics=active.snapshot.topics,
+                threshold=0.9,
+            ):
+                raise ReviewConflictError(
+                    "an equivalent question is already published"
+                )
 
     async def _start_curation_execution(
         self,
@@ -1589,6 +1626,14 @@ class ReviewApplication:
                 ).snapshot
             except LookupError:
                 duplicate = None
+        is_active_version = False
+        try:
+            active = self.repository.get_active_question(
+                candidate.question.question_id
+            )
+            is_active_version = active.draft_id == candidate.draft_id
+        except LookupError:
+            pass
         return {
             "id": candidate.id,
             "batch_id": candidate.batch_id,
@@ -1606,6 +1651,8 @@ class ReviewApplication:
             "duplicate_question": (
                 None if duplicate is None else asdict(duplicate)
             ),
+            "revision_of_question_id": candidate.revision_of_question_id,
+            "is_active_version": is_active_version,
             "status": candidate.status,
             "deleted_at": candidate.deleted_at,
             "deletion_reason": candidate.deletion_reason,
@@ -1701,8 +1748,27 @@ class ReviewApplication:
         batch = self.repository.get_batch(candidate.batch_id)
         if batch.workspace_id != self.workspace_id:
             raise LookupError(candidate_id)
-        if candidate.status == "rejected":
-            raise ReviewConflictError("rejected candidate cannot be published")
+        self._assert_candidate_publishable(candidate)
+        await self._publish_curation_candidate(
+            candidate_id, idempotency_key=idempotency_key
+        )
+        return await self.candidate_resource(candidate_id)
+
+    async def update_active_question_version(
+        self,
+        candidate_id: str,
+        *,
+        target_question_id: str,
+        expected_active_hash: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        candidate = self.repository.prepare_candidate_revision(
+            workspace_id=self.workspace_id,
+            candidate_id=candidate_id,
+            target_question_id=target_question_id,
+            expected_active_hash=expected_active_hash,
+        )
+        self._assert_candidate_publishable(candidate)
         await self._publish_curation_candidate(
             candidate_id, idempotency_key=idempotency_key
         )

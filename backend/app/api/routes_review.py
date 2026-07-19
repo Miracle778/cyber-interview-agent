@@ -36,6 +36,7 @@ from app.schemas.review import (
     UpdateQuestionCandidateCommand,
     UpdateQuestionCandidateNoteCommand,
     PublishQuestionCandidateCommand,
+    UpdateActiveQuestionVersionCommand,
     DeleteQuestionCandidateCommand,
     BulkDeleteQuestionCandidatesCommand,
     QuestionDeletionResultResource,
@@ -397,6 +398,24 @@ async def publish_question_candidate(
     review = application.locate_review_candidate(candidate_id)
     return await review.publish_candidate(
         candidate_id, idempotency_key=command.idempotency_key
+    )
+
+
+@router.post(
+    "/question-candidates/{candidate_id}/update-active-version",
+    response_model=QuestionCandidateResource,
+)
+async def update_active_question_version(
+    candidate_id: str,
+    command: UpdateActiveQuestionVersionCommand,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_review_candidate(candidate_id)
+    return await review.update_active_question_version(
+        candidate_id,
+        target_question_id=command.target_question_id,
+        expected_active_hash=command.expected_active_hash,
+        idempotency_key=command.idempotency_key,
     )
 
 

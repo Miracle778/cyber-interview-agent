@@ -966,7 +966,15 @@ class AgentExecutionService:
                 for source_ref in source_refs:
                     source_id = str(source_ref).split("#", 1)[0]
                     self._review_repository.upsert_question_source_link(
-                        question_id=snapshot.question_id,
+                        # A duplicate candidate is still retained as an auditable
+                        # version, but its evidence belongs to the existing logical
+                        # question.  Linking the source to the candidate's transient
+                        # question id made "merge" a UI-only label and lost the
+                        # provenance from the published question.
+                        question_id=(
+                            candidate.duplicate_of_question_id
+                            or snapshot.question_id
+                        ),
                         source_id=source_id,
                         batch_id=batch.id,
                         session_id=session.id,

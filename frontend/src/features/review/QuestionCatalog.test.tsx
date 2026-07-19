@@ -160,7 +160,7 @@ describe("QuestionCatalog", () => {
   });
 
   it("uses the same global candidate facts for overview counts and library results", async () => {
-    const candidate = (id: string, status: "published" | "review_pending") => ({ id, batchId: "b1", curationSessionId: "cs1", sourceRefs: ["s1"], correctionNote: "", reviewNote: "", reviewNoteUpdatedAt: null, duplicateOfQuestionId: null, duplicateQuestion: null, status, draft: null, createdAt: "now", updatedAt: "now", question: { questionId: `q-${id}`, documentId: `d-${id}`, contentHash: `h-${id}`, title: `题目 ${id}`, questionText: "题目", referenceAnswer: "答案", topics: ["database"], difficulty: "medium", keyPoints: [], followUps: [] } });
+    const candidate = (id: string, status: "published" | "review_pending") => ({ id, batchId: "b1", curationSessionId: "cs1", sourceRefs: ["s1"], correctionNote: "", reviewNote: "", reviewNoteUpdatedAt: null, duplicateOfQuestionId: null, duplicateQuestion: null, status, draft: null, createdAt: "now", updatedAt: "now", question: { questionId: `q-${id}`, documentId: `d-${id}`, contentHash: `h-${id}`, title: `题目 ${id}`, questionText: `题目 ${id}`, referenceAnswer: "答案", topics: ["database"], difficulty: "medium", keyPoints: [], followUps: [] } });
     const allCandidates = [candidate("1", "published"), candidate("2", "published"), candidate("3", "review_pending")];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
@@ -180,11 +180,41 @@ describe("QuestionCatalog", () => {
     await waitFor(() => expect(publishedSummary).toHaveTextContent("2"));
     fireEvent.click(publishedSummary);
     expect(await screen.findByRole("button", { name: "已入库 2" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("region", { name: "题目结果" })).toHaveTextContent("2 道题目");
+    expect(screen.getByRole("region", { name: "题目结果" })).toHaveTextContent("2 道逻辑题目");
     const topic = screen.getByRole("button", { name: "database 2" });
     fireEvent.click(topic);
-    await waitFor(() => expect(screen.getByRole("region", { name: "题目结果" })).toHaveTextContent("2 道题目"));
+    await waitFor(() => expect(screen.getByRole("region", { name: "题目结果" })).toHaveTextContent("2 道逻辑题目"));
     expect(screen.getByRole("region", { name: "题目结果" })).toHaveTextContent("database主题");
+  });
+
+  it("promotes a candidate through the update-active-version flow", async () => {
+    const active = { id: "c-active", batchId: "b1", curationSessionId: "cs1", sourceRefs: ["s1"], correctionNote: "", reviewNote: "", reviewNoteUpdatedAt: null, duplicateOfQuestionId: null, duplicateQuestion: null, revisionOfQuestionId: null, isActiveVersion: true, status: "published", draft: { id: "d-active", title: "MVCC 原理", markdown: "# MVCC 原理", status: "published", version: 1, contentHash: "active-hash", documentType: "question" }, createdAt: "now", updatedAt: "2026-07-19T08:00:00Z", question: { questionId: "q-mvcc", documentId: "d-active", contentHash: "active-hash", title: "MVCC 原理", questionText: "MVCC 的实现原理是什么？", referenceAnswer: "旧答案", topics: ["MySQL"], difficulty: "medium", keyPoints: [], followUps: [] } };
+    const candidate = { id: "c-next", batchId: "b2", curationSessionId: "cs2", sourceRefs: ["s1"], correctionNote: "", reviewNote: "", reviewNoteUpdatedAt: null, duplicateOfQuestionId: "q-mvcc", duplicateQuestion: active.question, revisionOfQuestionId: null, isActiveVersion: false, status: "review_pending", draft: { id: "d-next", title: "MVCC 原理（新版）", markdown: "# MVCC 原理（新版）", status: "review_pending", version: 2, contentHash: "candidate-hash", documentType: "question" }, createdAt: "now", updatedAt: "2026-07-19T09:00:00Z", question: { questionId: "q-next", documentId: "d-next", contentHash: "candidate-hash", title: "MVCC 原理（新版）", questionText: "请说明 MVCC 的实现原理。", referenceAnswer: "新答案", topics: ["MySQL"], difficulty: "medium", keyPoints: [], followUps: [] } };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/review/question-candidates/c-next/update-active-version") && init?.method === "POST") return Response.json({ ...candidate, status: "published", revisionOfQuestionId: "q-mvcc", isActiveVersion: true, question: { ...candidate.question, questionId: "q-mvcc" } });
+      if (url.includes("/api/knowledge/sources")) return Response.json([]);
+      if (url.includes("/api/review/curation-sessions")) return Response.json([]);
+      if (url.includes("/api/review/question-batches")) return Response.json([]);
+      if (url.includes("/api/review/question-candidates")) return Response.json([active, candidate]);
+      if (url.includes("/api/agent/actions?")) return Response.json([]);
+      throw new Error(`unexpected ${url}`);
+    });
+    vi.spyOn(globalThis, "confirm").mockReturnValue(true);
+
+    render(<QuestionCatalog workspace={workspace} />, { wrapper });
+    fireEvent.click(await screen.findByRole("tab", { name: "题目库" }));
+    fireEvent.click(await screen.findByRole("button", { name: /候选版本/ }));
+    fireEvent.click(screen.getByRole("button", { name: "更新入库版" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/review/question-candidates/c-next/update-active-version",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining('"expectedActiveHash":"active-hash"'),
+      }),
+    ));
+    expect(await screen.findByText(/旧版本已转为历史版本/)).toBeInTheDocument();
   });
 
   it("opens publication approval in the current viewport instead of below the library", async () => {

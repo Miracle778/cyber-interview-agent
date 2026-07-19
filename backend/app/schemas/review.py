@@ -123,6 +123,12 @@ class PublishQuestionCandidateCommand(ReviewModel):
     idempotency_key: str = Field(min_length=8, max_length=200)
 
 
+class UpdateActiveQuestionVersionCommand(ReviewModel):
+    target_question_id: str = Field(min_length=1)
+    expected_active_hash: str = Field(min_length=64, max_length=64)
+    idempotency_key: str = Field(min_length=8, max_length=200)
+
+
 class CreateReviewRoundCommand(ReviewRoundSettings):
     workspace_id: str = Field(min_length=1)
 
@@ -187,6 +193,8 @@ class QuestionCandidateResource(ReviewModel):
     rejection_action_id: str | None
     duplicate_of_question_id: str | None
     duplicate_question: QuestionSnapshotResource | None
+    revision_of_question_id: str | None
+    is_active_version: bool
     status: str
     deleted_at: str | None
     deletion_reason: str

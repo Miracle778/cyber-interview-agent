@@ -372,3 +372,10 @@
 - 新增跨层测试验证 Session 永久删除后题目/血缘保留、缺失会话创建修订 Session、logical question 不变、draft 版本推进，以及删除幂等/列表排除/恢复/部分失败。
 - 定向证据：后端 runtime migration + agent routes + curation/API/catalog `41 passed`；前端 QuestionCatalog/QuestionDetailPanel/CurationSessionList `18 passed`；production build 通过，`git diff --check` 与 compileall 通过。
 - 最小浏览器验收：本机真实 51 道题显示独立 checkbox；勾选后出现“已选 1 道/批量删除”；1280px 和 390px 均 `clientWidth == scrollWidth`，console warning/error 为 0。未执行真实删除，避免修改用户当前测试数据；删除副作用由自动化跨层测试覆盖。
+
+## 2026-07-19：逻辑题唯一入库版与版本晋升
+
+- 题目库按稳定逻辑题身份归组；普通发布在应用层和 catalog 事务内双重阻止等价题成为第二个 active 题目。
+- 新增“更新入库版”专用 API：待确认候选复用目标 `question_id`，以 active content hash 做乐观并发校验，原子切换 catalog；旧 publication、Vault 文件与已开始复习轮次继续保留。
+- 前端版本区区分当前入库版、历史入库版与候选版；候选可显式晋升，普通确认入库会提示改走更新流程。
+- 自动证据：后端定向 `47 passed`；前端定向 `15 passed`；production build 与 `git diff --check` 通过。5174 当前未连接后端且 Workspace 未初始化，真实数据浏览器晋升仍待服务恢复后补验收。
