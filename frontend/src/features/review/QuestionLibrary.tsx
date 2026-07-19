@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronRight, Search, ShieldCheck, SlidersHorizontal, Trash2, X } from "lucide-react";
+import { ChevronRight, Search, ShieldCheck, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ActionCenter } from "../agent/ActionCenter";
 import { listActions } from "../agent/hitlApi";
@@ -136,7 +136,7 @@ export function QuestionLibrary({ workspace, sources, initialCandidateId = null,
 
       <div className="question-library__workspace">
         <aside className="question-library__taxonomy" aria-label="题目分类">
-          <header><strong>目录</strong><button type="button" aria-label="返回整理会话" title="返回整理会话" onClick={onBackToSessions}><ArrowLeft size={16} /></button></header>
+          <header><strong>目录</strong></header>
           <button type="button" className="question-library__topic" aria-current={!topic} onClick={() => setTopic("")}><span>全部题目</span><strong>{topicFacetGroups.length}</strong></button>
           <div className="question-library__topic-group"><small>按主题</small>{topicCounts.map(([name, count]) => <button key={name} type="button" className="question-library__topic" aria-current={topic === name} onClick={() => setTopic(topic === name ? "" : name)}><span>{name}</span><strong>{count}</strong><ChevronRight size={14} /></button>)}</div>
         </aside>

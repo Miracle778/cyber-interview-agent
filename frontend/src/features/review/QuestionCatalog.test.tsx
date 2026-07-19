@@ -44,7 +44,8 @@ describe("QuestionCatalog", () => {
     fireEvent.click(screen.getByText("Agent 处理完成"));
     expect(processDetails).toHaveAttribute("open");
     expect(screen.getByLabelText("回复题匠")).toBeEnabled();
-    expect(screen.getByRole("button", { name: "返回会话历史" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "返回整理会话" }));
+    expect(screen.getByRole("region", { name: "历史整理会话" })).toBeInTheDocument();
   });
 
   it("selects sources in a dialog and warns without blocking repeated curation", async () => {
@@ -89,7 +90,10 @@ describe("QuestionCatalog", () => {
     expect(screen.getByRole("button", { name: "已入库 0" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByLabelText("搜索候选题")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "返回整理会话" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "题目库" })).toBeInTheDocument();
     expect(await screen.findByText("没有匹配的题目")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "返回整理会话" }));
+    expect(screen.getByRole("region", { name: "历史整理会话" })).toBeInTheDocument();
   });
 
   it("opens an origin session directly even when it is absent from the session list", async () => {

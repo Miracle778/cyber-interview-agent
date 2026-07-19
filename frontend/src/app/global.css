@@ -2713,7 +2713,11 @@ select:disabled {
 }
 
 /* Curation workspace follows the same history -> focused chat model as review rounds. */
-.catalog-back { display: inline-flex; min-height: 36px; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); padding: 0; color: var(--primary); background: transparent; border: 0; cursor: pointer; }
+.catalog-context-nav { position: sticky; z-index: 5; top: 0; display: flex; min-height: 54px; align-items: center; gap: var(--space-3); padding: 7px var(--space-3); background: color-mix(in srgb, var(--surface) 96%, transparent); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-sm); backdrop-filter: blur(10px); }
+.catalog-context-nav > span { min-width: 0; overflow: hidden; color: var(--text-muted); font-size: .76rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.catalog-back { display: inline-flex; min-height: 40px; flex: 0 0 auto; align-items: center; gap: var(--space-2); padding: 0 var(--space-3); color: var(--primary); background: var(--primary-soft); border: 1px solid color-mix(in srgb, var(--primary) 24%, var(--border)); border-radius: var(--radius-sm); font: inherit; font-size: .78rem; font-weight: 700; cursor: pointer; transition: background var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease), transform var(--duration-fast) var(--ease); }
+.catalog-back:hover, .catalog-back:focus-visible { background: color-mix(in srgb, var(--primary-soft) 88%, var(--surface)); border-color: color-mix(in srgb, var(--primary) 46%, var(--border)); outline: none; }
+.catalog-back:active { transform: translateY(1px); }
 .curation-landing { display: grid; gap: var(--space-4); padding: var(--space-5); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); }
 .curation-landing > header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); }
 .curation-landing > header > div > span { color: var(--primary); font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
