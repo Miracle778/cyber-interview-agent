@@ -53,6 +53,12 @@ export interface ActionCenterProps {
   actionType?: string;
   /** Poll until the pending action produced by this run appears. */
   watchExecutionId?: string | null;
+  /** Focus one exact action when the caller already received it from the API. */
+  actionId?: string | null;
+  /** Render a freshly created action without waiting for the list query to refresh. */
+  initialAction?: PendingAction | null;
+  /** Require the user to choose an action before its details are shown. */
+  requireSelection?: boolean;
   /** Notify the owning page after approve/reject delivery finishes. */
   onResolved?: () => void;
   /** Use the focused publication review layout instead of the generic card. */
@@ -64,6 +70,9 @@ export function ActionCenter({
   showDiagnostic = true,
   actionType,
   watchExecutionId,
+  actionId,
+  initialAction,
+  requireSelection = false,
   onResolved,
   presentation = "default",
 }: ActionCenterProps) {
@@ -85,14 +94,24 @@ export function ActionCenter({
     queryKey,
     queryFn: () => listActions(workspaceId, { status: "pending" }),
   });
-  const allActions = actionsQuery.data ?? [];
+  const allActions = useMemo(() => {
+    const queried = actionsQuery.data ?? [];
+    if (!initialAction || queried.some((item) => item.id === initialAction.id)) return queried;
+    return [initialAction, ...queried];
+  }, [actionsQuery.data, initialAction]);
   const actions = allActions.filter((item) =>
     (!actionType || item.actionType === actionType)
+    && (!actionId || item.id === actionId)
+    && (!watchExecutionId || item.executionId === watchExecutionId),
+  );
+  const watchedActionReady = allActions.some((item) =>
+    (!actionId || item.id === actionId)
     && (!watchExecutionId || item.executionId === watchExecutionId),
   );
   const selected = useMemo(
-    () => actions.find((item) => item.id === selectedId) ?? actions[0] ?? null,
-    [actions, selectedId],
+    () => actions.find((item) => item.id === selectedId)
+      ?? (requireSelection ? null : actions[0] ?? null),
+    [actions, requireSelection, selectedId],
   );
 
   useEffect(() => {
@@ -114,7 +133,7 @@ export function ActionCenter({
   }, [selected?.id]);
 
   useEffect(() => {
-    if (!watchExecutionId) {
+    if (!watchExecutionId || watchedActionReady) {
       setLocalError(null);
       return;
     }
@@ -131,7 +150,7 @@ export function ActionCenter({
     return () => {
       cancelled = true;
     };
-  }, [queryClient, queryKey, watchAttempt, watchExecutionId, workspaceId]);
+  }, [queryClient, queryKey, watchAttempt, watchExecutionId, watchedActionReady, workspaceId]);
 
   const runMutation = useMutation({
     mutationFn: async () => {
@@ -228,7 +247,11 @@ export function ActionCenter({
       queryClient.setQueryData<PendingAction[]>(queryKey, (current = []) =>
         current.filter((item) => item.id !== resolved.id),
       );
-      setMessage("确认动作已拒绝");
+      setMessage(
+        resolved.actionType === "knowledge.publish"
+          ? "题目已退回修改"
+          : "确认动作已拒绝",
+      );
       onResolved?.();
     },
     onError: (error) =>
@@ -272,7 +295,11 @@ export function ActionCenter({
           <p className="status-note">暂无待确认动作</p>
         ) : null}
 
-        {actions.length > 1 ? (
+        {requireSelection && actions.length > 0 && !selected ? (
+          <p className="status-note">请选择要审批的题目</p>
+        ) : null}
+
+        {actions.length > 1 || (requireSelection && actions.length > 0) ? (
           <div className="action-center__list" role="list" aria-label="待确认动作">
             {actions.map((item) => (
               <button
@@ -282,7 +309,7 @@ export function ActionCenter({
                 aria-current={selected?.id === item.id}
                 onClick={() => setSelectedId(item.id)}
               >
-                <span>{displayValue(item.preview.summary ?? item.actionType)}</span>
+                <span>{displayValue(item.preview.title ?? item.preview.summary ?? item.actionType)}</span>
                 <Badge tone="warning">待确认</Badge>
               </button>
             ))}
@@ -308,8 +335,8 @@ export function ActionCenter({
                 </div>
               </details>
             ) : null}
-            {showRejectReason ? <section className="action-center__reject-panel" aria-label="暂不发布原因"><label className="field" htmlFor={`action-${selected.id}-reason`}><span className="field__label">暂不发布原因</span><textarea id={`action-${selected.id}-reason`} className="field__input" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="说明需要继续修改的地方" autoFocus /></label><div><Button variant="ghost" disabled={resolving} onClick={() => { setReason(""); setShowRejectReason(false); }}>返回</Button><Button variant="danger" disabled={!reason.trim() || resolving} loading={rejectMutation.isPending} onClick={() => rejectMutation.mutate(selected)}><X size={16} aria-hidden="true" />确认暂不发布</Button></div></section> : null}
-            {!showRejectReason ? <footer className="action-center__publication-actions"><Button variant="ghost" disabled={resolving} onClick={() => setShowRejectReason(true)}>暂不发布</Button><Button loading={approveMutation.isPending} disabled={resolving} onClick={() => approveMutation.mutate(selected)}><Check size={16} aria-hidden="true" />批准并入库</Button></footer> : null}
+            {showRejectReason ? <section className="action-center__reject-panel" aria-label="退回修改原因"><label className="field" htmlFor={`action-${selected.id}-reason`}><span className="field__label">退回修改原因</span><textarea id={`action-${selected.id}-reason`} className="field__input" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="说明需要继续修改的地方" autoFocus /></label><div><Button variant="ghost" disabled={resolving} onClick={() => { setReason(""); setShowRejectReason(false); }}>返回</Button><Button variant="danger" disabled={!reason.trim() || resolving} loading={rejectMutation.isPending} onClick={() => rejectMutation.mutate(selected)}><X size={16} aria-hidden="true" />确认退回修改</Button></div></section> : null}
+            {!showRejectReason ? <footer className="action-center__publication-actions"><Button variant="ghost" disabled={resolving} onClick={() => setShowRejectReason(true)}>退回修改</Button><Button loading={approveMutation.isPending} disabled={resolving} onClick={() => approveMutation.mutate(selected)}><Check size={16} aria-hidden="true" />批准并入库</Button></footer> : null}
           </div>
         ) : selected ? (
           <div className="action-center__detail">

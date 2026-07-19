@@ -146,7 +146,8 @@ class MasteryProjection:
 class QuestionBatchRecord:
     id: str
     workspace_id: str
-    session_id: str
+    session_id: str | None
+    origin_session_id: str
     run_id: str | None
     source_refs: tuple[str, ...]
     rewrite_of_batch_id: str | None
@@ -165,8 +166,13 @@ class QuestionCandidateRecord:
     correction_note: str
     review_note: str
     review_note_updated_at: str | None
+    rejection_reason: str | None
+    rejected_at: str | None
+    rejection_action_id: str | None
     duplicate_of_question_id: str | None
     status: str
+    deleted_at: str | None
+    deletion_reason: str
     created_at: str
     updated_at: str
 
@@ -213,7 +219,8 @@ class QuestionSourceLinkRecord:
     question_id: str
     source_id: str
     batch_id: str
-    session_id: str
+    session_id: str | None
+    origin_session_id: str
     evidence_ref: str
     merge_reason: str
     created_at: str

@@ -10,6 +10,7 @@ from app.application.workspace_runtime import AgentApplication
 from app.db.app_database import connect_app_database
 from app.knowledge.drafts import CreateDraftCommand, KnowledgeDraftService
 from app.main import app
+from app.review.models import QuestionSnapshot
 from app.services.workspace_service import WorkspaceService
 
 
@@ -96,7 +97,7 @@ def test_patch_updates_version_and_stale_version_is_typed_conflict(
     assert stale.json()["code"] == "draft_version_changed"
 
 
-def test_publish_request_returns_run_without_writing_vault(draft_client) -> None:
+def test_publish_request_returns_ready_action_without_writing_vault(draft_client) -> None:
     client, _runtime, roots, workspace_id, _second_id = draft_client
     draft = _create_draft(roots[workspace_id], workspace_id)
 
@@ -108,27 +109,33 @@ def test_publish_request_returns_run_without_writing_vault(draft_client) -> None
     body = response.json()
     assert body["sessionId"]
     assert body["executionId"]
-    assert body["status"] in {"running", "waiting_for_approval"}
+    assert body["status"] == "waiting_for_approval"
+    assert body["reused"] is False
+    assert body["action"]["executionId"] == body["executionId"]
+    assert body["action"]["status"] == "pending"
     assert not list((roots[workspace_id] / "knowledge-vault").rglob("*.md"))
     assert str(roots[workspace_id]) not in response.text
 
-    # The publish graph runs asynchronously; wait for the run to fully
-    # reach waiting_for_approval so the fixture teardown does not abort
-    # the graph task mid-flight and leak state into later tests. Polling
-    # the run status (not just the action) guarantees the RunManager has
-    # finished transitioning the run and the task is gone from _tasks.
     session_id = body["sessionId"]
-    for _ in range(100):
-        detail = client.get(f"/api/agent/sessions/{session_id}").json()
-        latest_run = detail.get("latestExecution")
-        if latest_run and latest_run.get("status") == "waiting_for_approval":
-            break
-        asyncio.run(asyncio.sleep(0.01))
-    else:
-        raise AssertionError("publish run did not reach waiting_for_approval")
+    detail = client.get(f"/api/agent/sessions/{session_id}").json()
+    assert detail["latestExecution"]["status"] == "waiting_for_approval"
 
     pending = client.get(f"/api/knowledge/drafts/{draft.id}")
     assert pending.json()["status"] == "review_pending"
+
+
+def test_repeated_publish_request_reuses_existing_pending_action(draft_client) -> None:
+    client, _runtime, roots, workspace_id, _second_id = draft_client
+    draft = _create_draft(roots[workspace_id], workspace_id)
+
+    first = client.post(f"/api/knowledge/drafts/{draft.id}/publish-request")
+    second = client.post(f"/api/knowledge/drafts/{draft.id}/publish-request")
+
+    assert first.status_code == 202
+    assert second.status_code == 202
+    assert second.json()["reused"] is True
+    assert second.json()["executionId"] == first.json()["executionId"]
+    assert second.json()["action"]["id"] == first.json()["action"]["id"]
 
 
 def test_approval_exposes_vault_publication_result(draft_client) -> None:
@@ -172,25 +179,43 @@ def test_approval_exposes_vault_publication_result(draft_client) -> None:
 
 
 def test_rejection_marks_the_bound_draft_rejected(draft_client) -> None:
-    client, _runtime, roots, workspace_id, _second_id = draft_client
+    client, runtime, roots, workspace_id, _second_id = draft_client
     draft = _create_draft(roots[workspace_id], workspace_id)
+    curation_session = asyncio.run(
+        runtime.create_session(
+            workspace_id=workspace_id,
+            kind="question.curate",
+            title="题目整理",
+        )
+    )
+    review = runtime.review(workspace_id)
+    batch = review.repository.create_batch(
+        workspace_id=workspace_id,
+        session_id=curation_session.id,
+        run_id=None,
+        source_refs=(),
+    )
+    candidate = review.repository.save_candidate(
+        batch_id=batch.id,
+        draft_id=draft.id,
+        status="review_pending",
+        question=QuestionSnapshot(
+            question_id="question-rejected",
+            document_id=draft.document_id,
+            content_hash=draft.content_hash,
+            title=draft.title,
+            question_text="为什么需要退回？",
+            reference_answer="内容需要修正。",
+            topics=("review",),
+            difficulty="medium",
+            key_points=("退回原因",),
+            follow_ups=(),
+        ),
+    )
     requested = client.post(
         f"/api/knowledge/drafts/{draft.id}/publish-request"
     ).json()
-    for _ in range(100):
-        actions = client.get(
-            "/api/agent/actions",
-            params={"workspaceId": workspace_id, "status": "pending"},
-        ).json()
-        action = next(
-            (item for item in actions if item["executionId"] == requested["executionId"]),
-            None,
-        )
-        if action is not None:
-            break
-        asyncio.run(asyncio.sleep(0.01))
-    else:
-        raise AssertionError("publication action did not appear")
+    action = requested["action"]
 
     rejected = client.post(
         f"/api/agent/actions/{action['id']}/reject",
@@ -201,11 +226,40 @@ def test_rejection_marks_the_bound_draft_rejected(draft_client) -> None:
         },
     )
     detail = client.get(f"/api/knowledge/drafts/{draft.id}")
+    candidate_detail = client.get(
+        f"/api/review/question-candidates/{candidate.id}"
+    )
 
     assert rejected.status_code == 200
     assert detail.json()["status"] == "rejected"
+    assert candidate_detail.json()["status"] == "rejected"
+    assert candidate_detail.json()["rejectionReason"] == "内容不准确"
+    assert candidate_detail.json()["rejectedAt"]
+    assert candidate_detail.json()["rejectionActionId"] == action["id"]
     assert detail.json()["publication"] is None
     assert not list((roots[workspace_id] / "knowledge-vault").rglob("*.md"))
+
+    revised = client.patch(
+        f"/api/review/question-candidates/{candidate.id}",
+        json={
+            "version": draft.version,
+            "title": "修正后的题目",
+            "questionText": "如何修正后重新审批？",
+            "referenceAnswer": "保存新版本后重新提交。",
+            "keyPoints": ["新版本"],
+        },
+    )
+    requested_again = client.post(
+        f"/api/knowledge/drafts/{draft.id}/publish-request"
+    )
+
+    assert revised.status_code == 200
+    assert revised.json()["status"] == "review_pending"
+    assert revised.json()["draft"]["status"] == "review_pending"
+    assert revised.json()["draft"]["version"] == draft.version + 1
+    assert revised.json()["rejectionReason"] is None
+    assert requested_again.status_code == 202
+    assert requested_again.json()["action"]["id"] != action["id"]
 
 
 def test_unknown_draft_returns_typed_404(draft_client) -> None:

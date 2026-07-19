@@ -7,7 +7,7 @@ const statusLabels: Record<QuestionCandidate["status"], string> = {
   draft: "草稿",
   review_pending: "待确认",
   published: "已发布",
-  rejected: "已拒绝",
+  rejected: "待修改",
 };
 
 const difficultyLabels: Record<QuestionCandidate["question"]["difficulty"], string> = {

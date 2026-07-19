@@ -92,6 +92,73 @@ describe("QuestionCatalog", () => {
     expect(await screen.findByText("没有匹配的题目")).toBeInTheDocument();
   });
 
+  it("opens an origin session directly even when it is absent from the session list", async () => {
+    const candidate = { id: "c-old", batchId: "b-old", curationSessionId: "cs-old", sourceRefs: [], correctionNote: "", reviewNote: "", reviewNoteUpdatedAt: null, duplicateOfQuestionId: null, duplicateQuestion: null, status: "rejected", draft: null, createdAt: "now", updatedAt: "now", question: { questionId: "q-old", documentId: "d-old", contentHash: "h-old", title: "IAM 权限模型", questionText: "如何设计 IAM？", referenceAnswer: "使用最小权限。", topics: ["IAM"], difficulty: "hard", keyPoints: [], followUps: [] } };
+    const originSession = { id: "cs-old", workspaceId: "w1", title: "iam.md", sourceRefs: [], sources: [], activeBatchId: "b-old", executionId: null, executionStatus: "completed", stage: "waiting_for_command", progress: { completed: 1, total: 1 }, summary: { items: [] }, summaryVersion: 1, warnings: [], candidateCount: 1, pendingCount: 0, publishedCount: 0, messages: [{ id: "m-old", executionId: null, role: "assistant", content: "IAM 题目整理完成", messageKind: "curation_summary", payload: {}, createdAt: "now" }], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, callCount: 0, estimatedCount: 0 }, contextUsage: { currentTokens: 0, thresholdTokens: 1000, estimated: false }, createdAt: "now", updatedAt: "now" };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/review/question-candidates/c-old/origin-session")) return Response.json({ status: "available", sessionId: "cs-old", session: originSession });
+      if (url.includes("/api/knowledge/sources")) return Response.json([]);
+      if (url.includes("/api/review/curation-sessions")) return Response.json([]);
+      if (url.includes("/api/review/question-candidates")) return Response.json([candidate]);
+      if (url.includes("/api/agent/actions?")) return Response.json([]);
+      if (url.includes("/api/settings/providers")) return Response.json([]);
+      throw new Error(`unexpected ${url}`);
+    });
+
+    render(<QuestionCatalog workspace={workspace} />, { wrapper });
+    fireEvent.click(await screen.findByRole("tab", { name: "题目库" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看生成会话" }));
+
+    expect(await screen.findByRole("log", { name: "整理对话" })).toHaveTextContent("IAM 题目整理完成");
+    expect(screen.queryByText("正在查找原生成会话…")).toBeNull();
+  });
+
+  it("offers to restore an origin session from the recycle bin", async () => {
+    const candidate = { id: "c-trash", batchId: "b-trash", curationSessionId: "cs-trash", sourceRefs: [], correctionNote: "", reviewNote: "", reviewNoteUpdatedAt: null, duplicateOfQuestionId: null, duplicateQuestion: null, status: "rejected", draft: null, createdAt: "now", updatedAt: "now", question: { questionId: "q-trash", documentId: "d-trash", contentHash: "h-trash", title: "回收站题目", questionText: "问题", referenceAnswer: "答案", topics: ["IAM"], difficulty: "hard", keyPoints: [], followUps: [] } };
+    const restoredSession = { id: "cs-trash", workspaceId: "w1", title: "trash.md", sourceRefs: [], sources: [], activeBatchId: "b-trash", executionId: null, executionStatus: "completed", stage: "waiting_for_command", progress: { completed: 1, total: 1 }, summary: { items: [] }, summaryVersion: 1, warnings: [], candidateCount: 1, pendingCount: 0, publishedCount: 0, messages: [], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, callCount: 0, estimatedCount: 0 }, contextUsage: { currentTokens: 0, thresholdTokens: 1000, estimated: false }, createdAt: "now", updatedAt: "now", deletedAt: null };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/review/question-candidates/c-trash/origin-session")) return Response.json({ status: "recycled", sessionId: "cs-trash", session: { ...restoredSession, deletedAt: "now" } });
+      if (url.endsWith("/api/agent/sessions/cs-trash/restore") && init?.method === "POST") return Response.json({ id: "cs-trash" });
+      if (url.endsWith("/api/review/curation-sessions/cs-trash")) return Response.json(restoredSession);
+      if (url.includes("/api/knowledge/sources")) return Response.json([]);
+      if (url.includes("/api/review/curation-sessions")) return Response.json([]);
+      if (url.includes("/api/review/question-candidates")) return Response.json([candidate]);
+      if (url.includes("/api/agent/actions?")) return Response.json([]);
+      if (url.includes("/api/settings/providers")) return Response.json([]);
+      throw new Error(`unexpected ${url}`);
+    });
+
+    render(<QuestionCatalog workspace={workspace} />, { wrapper });
+    fireEvent.click(await screen.findByRole("tab", { name: "题目库" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看生成会话" }));
+
+    expect(await screen.findByText("原生成会话在回收站中，恢复后可以继续查看和修改。")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "恢复并打开" }));
+    expect(await screen.findByRole("region", { name: "整理会话工作台" })).toBeInTheDocument();
+  });
+
+  it("explains a missing curation projection instead of opening an empty workspace", async () => {
+    const candidate = { id: "c-missing", batchId: "b-missing", curationSessionId: "cs-missing", sourceRefs: [], correctionNote: "", reviewNote: "", reviewNoteUpdatedAt: null, duplicateOfQuestionId: null, duplicateQuestion: null, status: "rejected", draft: null, createdAt: "now", updatedAt: "now", question: { questionId: "q-missing", documentId: "d-missing", contentHash: "h-missing", title: "IAM 历史题目", questionText: "问题", referenceAnswer: "答案", topics: ["IAM"], difficulty: "hard", keyPoints: [], followUps: [] } };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/review/question-candidates/c-missing/origin-session")) return Response.json({ status: "projection_missing", sessionId: "cs-missing", session: null });
+      if (url.includes("/api/knowledge/sources")) return Response.json([]);
+      if (url.includes("/api/review/curation-sessions")) return Response.json([]);
+      if (url.includes("/api/review/question-candidates")) return Response.json([candidate]);
+      if (url.includes("/api/agent/actions?")) return Response.json([]);
+      throw new Error(`unexpected ${url}`);
+    });
+
+    render(<QuestionCatalog workspace={workspace} />, { wrapper });
+    fireEvent.click(await screen.findByRole("tab", { name: "题目库" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看生成会话" }));
+
+    expect(await screen.findByText("生成会话的展示记录不完整，暂时无法打开；题目和来源内容仍然保留。")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "整理会话工作台" })).toBeNull();
+  });
+
   it("uses the same global candidate facts for overview counts and library results", async () => {
     const candidate = (id: string, status: "published" | "review_pending") => ({ id, batchId: "b1", curationSessionId: "cs1", sourceRefs: ["s1"], correctionNote: "", reviewNote: "", reviewNoteUpdatedAt: null, duplicateOfQuestionId: null, duplicateQuestion: null, status, draft: null, createdAt: "now", updatedAt: "now", question: { questionId: `q-${id}`, documentId: `d-${id}`, contentHash: `h-${id}`, title: `题目 ${id}`, questionText: "题目", referenceAnswer: "答案", topics: ["database"], difficulty: "medium", keyPoints: [], followUps: [] } });
     const allCandidates = [candidate("1", "published"), candidate("2", "published"), candidate("3", "review_pending")];
@@ -122,14 +189,16 @@ describe("QuestionCatalog", () => {
 
   it("opens publication approval in the current viewport instead of below the library", async () => {
     const pendingCandidate = { id: "c1", batchId: "b1", curationSessionId: "cs1", sourceRefs: ["s1"], correctionNote: "", reviewNote: "", reviewNoteUpdatedAt: null, duplicateOfQuestionId: null, duplicateQuestion: null, status: "review_pending", draft: { id: "d1", title: "缓存雪崩", markdown: "# 缓存雪崩\n\n## 题目\n\n什么是缓存雪崩？\n\n## 参考答案\n\n大量缓存同时失效。", status: "review_pending", version: 1, contentHash: "h1", documentType: "question" }, createdAt: "now", updatedAt: "now", question: { questionId: "q1", documentId: "d1", contentHash: "h1", title: "缓存雪崩", questionText: "什么是缓存雪崩？", referenceAnswer: "大量缓存同时失效。", topics: ["Redis"], difficulty: "medium", keyPoints: [], followUps: [] } };
+    const existingAction = { id: "action-existing", workspaceId: "w1", sessionId: "existing-session", executionId: "existing-run", actionType: "knowledge.publish", preview: { title: "TCP 慢启动", markdown: "# TCP 慢启动" }, editableFields: ["title", "markdown"], status: "pending", version: 1, createdAt: "now", resolvedAt: null };
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       if (url.includes("/api/knowledge/sources")) return Response.json([]);
       if (url.includes("/api/review/curation-sessions")) return Response.json([]);
       if (url.includes("/api/review/question-batches")) return Response.json([]);
       if (url.includes("/api/review/question-candidates")) return Response.json([pendingCandidate]);
-      if (url.endsWith("/api/knowledge/drafts/d1/publish-request") && init?.method === "POST") return Response.json({ sessionId: "publish-session", executionId: "publish-run", status: "waiting_for_approval" });
-      if (url.includes("/api/agent/actions?")) return Response.json([{ id: "action-1", workspaceId: "w1", sessionId: "publish-session", executionId: "publish-run", actionType: "knowledge.publish", preview: { title: "缓存雪崩", markdown: pendingCandidate.draft.markdown }, editableFields: ["title", "markdown"], status: "pending", version: 1, createdAt: "now", resolvedAt: null }]);
+      const publicationAction = { id: "action-1", workspaceId: "w1", sessionId: "publish-session", executionId: "publish-run", actionType: "knowledge.publish", preview: { title: "缓存雪崩", markdown: pendingCandidate.draft.markdown }, editableFields: ["title", "markdown"], status: "pending", version: 1, createdAt: "now", resolvedAt: null };
+      if (url.endsWith("/api/knowledge/drafts/d1/publish-request") && init?.method === "POST") return Response.json({ sessionId: "publish-session", executionId: "publish-run", status: "waiting_for_approval", action: publicationAction, reused: false });
+      if (url.includes("/api/agent/actions?")) return Response.json([existingAction]);
       throw new Error(`unexpected ${url}`);
     });
 
@@ -143,17 +212,22 @@ describe("QuestionCatalog", () => {
     expect(within(dialog).getByRole("heading", { name: "发布审批" })).toBeInTheDocument();
     expect((await within(dialog).findAllByText("缓存雪崩")).length).toBeGreaterThan(0);
     expect(await within(dialog).findByRole("button", { name: "批准并入库" })).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "暂不发布" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "退回修改" })).toBeInTheDocument();
     expect(within(dialog).queryByText("knowledge.publish")).toBeNull();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "关闭发布审批" }));
     expect(screen.queryByRole("dialog", { name: "题目发布审批" })).toBeNull();
-    const approvalEntry = screen.getByRole("button", { name: "打开待审批发布任务，共 1 项" });
+    const approvalEntry = screen.getByRole("button", { name: "打开待审批发布任务，共 2 项" });
     expect(approvalEntry).toBeInTheDocument();
     expect(approvalEntry.closest(".question-library__filters")).not.toBeNull();
     expect(screen.queryByRole("status", { name: "发布审批待处理" })).toBeNull();
     fireEvent.click(approvalEntry);
-    expect(await screen.findByRole("dialog", { name: "题目发布审批" })).toBeInTheDocument();
+    const queueDialog = await screen.findByRole("dialog", { name: "题目发布审批" });
+    expect(within(queueDialog).getByText("请选择要审批的题目")).toBeInTheDocument();
+    expect(within(queueDialog).queryByRole("button", { name: "批准并入库" })).toBeNull();
+    fireEvent.click(within(queueDialog).getByRole("button", { name: /TCP 慢启动/ }));
+    expect(await within(queueDialog).findByRole("button", { name: "批准并入库" })).toBeInTheDocument();
+    expect(within(queueDialog).getAllByText("TCP 慢启动").length).toBeGreaterThan(0);
   });
 
   it("shows public execution evidence and retries a failed curation session", async () => {

@@ -10,6 +10,7 @@ from app.schemas.drafts import (
     PublishDraftExecutionResource,
     UpdateKnowledgeDraftRequest,
 )
+from app.schemas.hitl import PendingActionResource
 
 
 router = APIRouter(prefix="/api/knowledge/drafts", tags=["knowledge-drafts"])
@@ -56,9 +57,11 @@ async def request_publication(
     draft_id: str,
     application: AgentApplication = Depends(get_agent_application),
 ) -> PublishDraftExecutionResource:
-    run = await application.request_draft_publication(draft_id)
+    result = await application.request_draft_publication(draft_id)
     return PublishDraftExecutionResource(
-        session_id=run.session_id,
-        execution_id=run.id,
-        status=run.status,
+        session_id=result.execution.session_id,
+        execution_id=result.execution.id,
+        status=result.execution.status,
+        action=PendingActionResource.model_validate(result.action),
+        reused=result.reused,
     )

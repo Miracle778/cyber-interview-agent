@@ -26,7 +26,7 @@ DraftStatus: TypeAlias = Literal[
 _DOCUMENT_TYPES = frozenset(
     {"source", "question", "concept", "session_report", "mastery_report"}
 )
-_EDITABLE_STATUSES = frozenset({"draft", "review_pending"})
+_EDITABLE_STATUSES = frozenset({"draft", "review_pending", "rejected"})
 
 
 class KnowledgeDraftError(RuntimeError):
@@ -219,6 +219,8 @@ class KnowledgeDraftService:
                 digest = _hash_text(markdown)
                 cursor = await connection.execute(
                     "UPDATE knowledge_drafts SET title = ?, content_hash = ?, "
+                    "status = CASE WHEN status = 'rejected' "
+                    "THEN 'review_pending' ELSE status END, "
                     "version = version + 1, updated_at = CURRENT_TIMESTAMP "
                     "WHERE id = ? AND workspace_id = ? AND version = ? "
                     "AND content_hash = ?",

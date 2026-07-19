@@ -1,12 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronRight, Search, ShieldCheck, SlidersHorizontal, X } from "lucide-react";
+import { ArrowLeft, ChevronRight, Search, ShieldCheck, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ActionCenter } from "../agent/ActionCenter";
 import { listActions } from "../agent/hitlApi";
+import type { PendingAction } from "../agent/hitlTypes";
 import { requestPublication } from "../knowledge/draftApi";
+import { Button } from "../../shared/ui/Button";
 import type { KnowledgeSource } from "../knowledge/knowledgeTypes";
 import type { WorkspaceConfig } from "../settings/settingsApi";
-import { listAllQuestionCandidates, rewriteQuestionCandidate, updateQuestionCandidate } from "./reviewApi";
+import { bulkDeleteQuestionCandidates, deleteQuestionCandidate, listAllQuestionCandidates, rewriteQuestionCandidate, updateQuestionCandidate } from "./reviewApi";
 import { QuestionDetailPanel } from "./QuestionDetailPanel";
 import type { QuestionCandidate } from "./reviewTypes";
 
@@ -14,7 +16,7 @@ const statusLabels: Record<QuestionCandidate["status"], string> = {
   draft: "草稿",
   review_pending: "待确认",
   published: "已入库",
-  rejected: "已拒绝",
+  rejected: "待修改",
 };
 
 const difficultyLabels: Record<QuestionCandidate["question"]["difficulty"], string> = {
@@ -27,10 +29,6 @@ function updatedLabel(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "刚刚更新";
   return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Shanghai" }).format(date);
-}
-
-function displayActionTitle(value: unknown) {
-  return typeof value === "string" && value.trim() ? value : "待发布题目";
 }
 
 function matchesCandidateFilters(candidate: QuestionCandidate, filters: { query: string; topic: string; difficulty: string; sourceId: string; status: string }, omit?: "topic" | "status") {
@@ -49,10 +47,11 @@ interface QuestionLibraryProps {
   initialCandidateId?: string | null;
   initialStatus?: QuestionCandidate["status"] | "";
   onOpenSession: (sessionId: string) => void;
+  onOpenDirectSession: (session: import("./reviewTypes").CurationSession) => void;
   onBackToSessions: () => void;
 }
 
-export function QuestionLibrary({ workspace, sources, initialCandidateId = null, initialStatus = "", onOpenSession, onBackToSessions }: QuestionLibraryProps) {
+export function QuestionLibrary({ workspace, sources, initialCandidateId = null, initialStatus = "", onOpenSession, onOpenDirectSession, onBackToSessions }: QuestionLibraryProps) {
   const client = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -60,7 +59,9 @@ export function QuestionLibrary({ workspace, sources, initialCandidateId = null,
   const [difficulty, setDifficulty] = useState("");
   const [sourceId, setSourceId] = useState("");
   const [status, setStatus] = useState(initialStatus);
-  const [publicationRequest, setPublicationRequest] = useState<{ executionId: string; candidateId: string; title: string } | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deletionNotice, setDeletionNotice] = useState("");
+  const [publicationRequest, setPublicationRequest] = useState<{ action: PendingAction; candidateId: string } | null>(null);
   const [approvalOpen, setApprovalOpen] = useState(false);
   const publicationActions = useQuery({ queryKey: ["pending-actions", workspace.id], queryFn: () => listActions(workspace.id, { status: "pending" }), refetchInterval: 5000 });
   const catalog = useQuery({ queryKey: ["review-candidates-overview", workspace.id], queryFn: () => listAllQuestionCandidates(workspace.id) });
@@ -80,24 +81,32 @@ export function QuestionLibrary({ workspace, sources, initialCandidateId = null,
   }, [topic, topicFacetCandidates]);
   const statusCounts = useMemo(() => (catalog.data ?? []).filter((candidate) => matchesCandidateFilters(candidate, facetFilters, "status")).reduce((counts, candidate) => ({ ...counts, [candidate.status]: counts[candidate.status] + 1 }), { draft: 0, review_pending: 0, published: 0, rejected: 0 }), [catalog.data, facetFilters]);
   const pendingPublicationActions = publicationActions.data?.filter((action) => action.actionType === "knowledge.publish") ?? [];
-  const publicationPendingCount = publicationRequest && !pendingPublicationActions.some((action) => action.executionId === publicationRequest.executionId) ? pendingPublicationActions.length + 1 : pendingPublicationActions.length;
+  const publicationPendingCount = publicationRequest && !pendingPublicationActions.some((action) => action.id === publicationRequest.action.id) ? pendingPublicationActions.length + 1 : pendingPublicationActions.length;
   const hasFilters = Boolean(query || topic || difficulty || sourceId || status);
   const resultScope = topic ? `${topic}主题` : hasFilters ? "当前筛选结果" : "全部候选";
   useEffect(() => { if (!selectedId && candidates.data?.[0]) setSelectedId(candidates.data[0].id); }, [candidates.data, selectedId]);
   useEffect(() => { if (initialCandidateId) setSelectedId(initialCandidateId); }, [initialCandidateId]);
-  useEffect(() => {
-    if (publicationRequest) return;
-    const pending = publicationActions.data?.find((action) => action.actionType === "knowledge.publish");
-    if (pending) setPublicationRequest({ executionId: pending.executionId, candidateId: "", title: displayActionTitle(pending.preview.title) });
-  }, [publicationActions.data, publicationRequest]);
   const invalidate = async () => Promise.all([
     client.invalidateQueries({ queryKey: ["review-candidates", workspace.id] }),
     client.invalidateQueries({ queryKey: ["review-candidates-overview", workspace.id] }),
   ]);
   const save = useMutation({ mutationFn: (values: { version: number; title: string; questionText: string; referenceAnswer: string; keyPoints: string[] }) => updateQuestionCandidate(selected!.id, values), onSuccess: invalidate });
-  const rewrite = useMutation({ mutationFn: (feedback: string) => rewriteQuestionCandidate(selected!.id, feedback), onSuccess: async (session) => { await invalidate(); onOpenSession(session.id); } });
-  const confirm = useMutation({ mutationFn: async () => { if (!selected?.draft) throw new Error("候选题没有草稿"); return requestPublication(selected.draft.id); }, onSuccess: (result) => { setPublicationRequest({ executionId: result.executionId, candidateId: selected!.id, title: selected!.question.title }); setApprovalOpen(true); } });
-  const busy = save.isPending || rewrite.isPending || confirm.isPending;
+  const rewrite = useMutation({ mutationFn: (feedback: string) => rewriteQuestionCandidate(selected!.id, feedback), onSuccess: async (session) => { await invalidate(); onOpenDirectSession(session); } });
+  const confirm = useMutation({ mutationFn: async () => { if (!selected?.draft) throw new Error("候选题没有草稿"); return requestPublication(selected.draft.id); }, onSuccess: (result) => {
+    client.setQueryData<PendingAction[]>(["pending-actions", workspace.id], (current = []) => [result.action, ...current.filter((action) => action.id !== result.action.id)]);
+    setPublicationRequest({ action: result.action, candidateId: selected!.id });
+    setApprovalOpen(true);
+  } });
+  const remove = useMutation({ mutationFn: (targets: QuestionCandidate[]) => targets.length === 1 ? deleteQuestionCandidate(targets[0].id, targets[0].draft?.version ?? null) : bulkDeleteQuestionCandidates(workspace.id, targets), onSuccess: async (result) => {
+    const removed = new Set(result.items.filter((item) => ["deleted", "already_deleted"].includes(item.status)).map((item) => item.candidateId));
+    const unresolved = result.items.filter((item) => !removed.has(item.candidateId));
+    setSelectedIds((current) => new Set([...current].filter((id) => !removed.has(id))));
+    setSelectedId((current) => current && removed.has(current) ? null : current);
+    setDeletionNotice(unresolved.length > 0 ? `已删除 ${removed.size} 道，${unresolved.length} 道因版本变化或不存在而未删除。` : `已将 ${removed.size} 道题移入题目回收站。`);
+    await invalidate();
+  }, onError: () => setDeletionNotice("删除未完成，请刷新题目状态后重试。") });
+  const busy = save.isPending || rewrite.isPending || confirm.isPending || remove.isPending;
+  const confirmDelete = (targets: QuestionCandidate[]) => { if (targets.length > 0 && globalThis.confirm(`将 ${targets.length} 道题移入题目回收站？已发布题会从可复习题库停用，但不会删除 Vault 文件。`)) remove.mutate(targets); };
   const resetFilters = () => { setQuery(""); setTopic(""); setDifficulty(""); setSourceId(""); setStatus(""); };
 
   return <>
@@ -110,7 +119,7 @@ export function QuestionLibrary({ workspace, sources, initialCandidateId = null,
           <label><span>难度</span><select aria-label="难度筛选" value={difficulty} onChange={(event) => setDifficulty(event.target.value)}><option value="">全部</option><option value="easy">简单</option><option value="medium">中等</option><option value="hard">困难</option></select></label>
           <label><span>来源</span><select aria-label="来源筛选" value={sourceId} onChange={(event) => setSourceId(event.target.value)}><option value="">全部来源</option>{sources.map((source) => <option key={source.id} value={source.id}>{source.originalFilename}</option>)}</select></label>
           <button type="button" className="question-library__clear" disabled={!hasFilters} onClick={resetFilters}><SlidersHorizontal size={15} />清除筛选</button>
-          {publicationRequest && !approvalOpen ? <button type="button" className="question-library__approval-entry" aria-label={`打开待审批发布任务，共 ${publicationPendingCount} 项`} title={publicationRequest.title} onClick={() => setApprovalOpen(true)}><ShieldCheck size={16} /><span>待审批</span><strong>{publicationPendingCount}</strong></button> : null}
+          {publicationPendingCount > 0 && !approvalOpen ? <button type="button" className="question-library__approval-entry" aria-label={`打开待审批发布任务，共 ${publicationPendingCount} 项`} title="查看全部待审批题目" onClick={() => { setPublicationRequest(null); setApprovalOpen(true); }}><ShieldCheck size={16} /><span>待审批</span><strong>{publicationPendingCount}</strong></button> : null}
         </div>
       </header>
 
@@ -122,21 +131,22 @@ export function QuestionLibrary({ workspace, sources, initialCandidateId = null,
         </aside>
 
         <section className="question-library__results" aria-label="题目结果">
-          <header><strong>{candidates.data?.length ?? 0} 道题目</strong><span>{resultScope}</span></header>
+          <header><strong>{candidates.data?.length ?? 0} 道题目</strong><span>{resultScope}</span>{selectedIds.size > 0 ? <div className="question-library__bulk"><span>已选 {selectedIds.size} 道</span><Button size="sm" variant="danger" loading={remove.isPending} onClick={() => confirmDelete((candidates.data ?? []).filter((item) => selectedIds.has(item.id)))}><Trash2 size={14} />批量删除</Button></div> : null}</header>
           {candidates.isLoading ? <p className="status-note">正在读取候选题…</p> : null}
+          {deletionNotice ? <div className="question-library__notice" role="status"><span>{deletionNotice}</span><button type="button" aria-label="关闭删除结果" onClick={() => setDeletionNotice("")}><X size={14} /></button></div> : null}
           {!candidates.isLoading && candidates.data?.length === 0 ? <div className="question-library__empty"><Search size={22} /><strong>{hasFilters ? "没有匹配的题目" : "题目库还是空的"}</strong><p>{hasFilters ? "尝试清除部分筛选条件。" : "返回整理会话，选择资料后使用 AI 整理。"}</p>{hasFilters ? <button type="button" onClick={resetFilters}>清除筛选</button> : <button type="button" onClick={onBackToSessions}>返回整理会话</button>}</div> : null}
           <div className="question-library__list" role="list">
-            {(candidates.data ?? []).map((candidate) => <button type="button" role="listitem" key={candidate.id} aria-current={candidate.id === selected?.id} className="question-library__row" onClick={() => setSelectedId(candidate.id)}>
+            {(candidates.data ?? []).map((candidate) => <div role="listitem" key={candidate.id} aria-current={candidate.id === selected?.id} className="question-library__row"><label className="question-library__select"><input type="checkbox" aria-label={`选择 ${candidate.question.title}`} checked={selectedIds.has(candidate.id)} onChange={(event) => setSelectedIds((current) => { const next = new Set(current); event.target.checked ? next.add(candidate.id) : next.delete(candidate.id); return next; })} /></label><button type="button" className="question-library__row-main" onClick={() => setSelectedId(candidate.id)}>
               <span className={`question-library__dot question-library__dot--${candidate.status}`} aria-hidden="true" />
               <span className="question-library__row-copy"><strong title={candidate.question.title}>{candidate.question.title}</strong><span>{candidate.question.topics.slice(0, 2).map((item) => <em key={item}>{item}</em>)}</span></span>
               <span className="question-library__row-meta"><small>{difficultyLabels[candidate.question.difficulty]} · {updatedLabel(candidate.updatedAt)}</small><em className={`question-library__badge question-library__badge--${candidate.status}`}>{statusLabels[candidate.status]}</em></span>
-            </button>)}
+            </button></div>)}
           </div>
         </section>
 
-        <QuestionDetailPanel key={selected?.id ?? "empty"} candidate={selected} sourceLabels={sourceLabels} busy={busy} approvalPending={publicationRequest?.candidateId === selected?.id} onSave={(values) => save.mutate(values)} onRewrite={(feedback) => rewrite.mutate(feedback)} onConfirm={() => confirm.mutate()} onOpenSession={onOpenSession} />
+        <QuestionDetailPanel key={selected?.id ?? "empty"} candidate={selected} sourceLabels={sourceLabels} busy={busy} approvalPending={publicationRequest?.candidateId === selected?.id} onSave={(values) => save.mutate(values)} onRewrite={(feedback) => rewrite.mutate(feedback)} onConfirm={() => confirm.mutate()} onDelete={() => selected && confirmDelete([selected])} onOpenSession={onOpenSession} />
       </div>
     </section>
-    {publicationRequest && approvalOpen ? <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setApprovalOpen(false); }}><section className="publication-approval-dialog" role="dialog" aria-modal="true" aria-label="题目发布审批" onKeyDown={(event) => { if (event.key === "Escape") setApprovalOpen(false); }}><header><div className="publication-approval-dialog__icon"><ShieldCheck size={20} /></div><div><h2>发布审批</h2><p>确认题目内容无误后，将它加入可复习题库。</p></div><button type="button" aria-label="关闭发布审批" autoFocus onClick={() => setApprovalOpen(false)}><X size={18} /></button></header><ActionCenter workspaceId={workspace.id} showDiagnostic={false} actionType="knowledge.publish" watchExecutionId={publicationRequest.executionId} presentation="publication" onResolved={() => { setPublicationRequest(null); setApprovalOpen(false); void invalidate(); }} /></section></div> : null}
+    {approvalOpen && (publicationRequest || publicationPendingCount > 0) ? <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setApprovalOpen(false); }}><section className="publication-approval-dialog" role="dialog" aria-modal="true" aria-label="题目发布审批" onKeyDown={(event) => { if (event.key === "Escape") setApprovalOpen(false); }}><header><div className="publication-approval-dialog__icon"><ShieldCheck size={20} /></div><div><h2>发布审批</h2><p>{publicationRequest ? "确认题目内容无误后，将它加入可复习题库。" : "先选择一道待审批题目，再查看内容并决定是否入库。"}</p></div><button type="button" aria-label="关闭发布审批" autoFocus onClick={() => setApprovalOpen(false)}><X size={18} /></button></header><ActionCenter workspaceId={workspace.id} showDiagnostic={false} actionType="knowledge.publish" actionId={publicationRequest?.action.id} watchExecutionId={publicationRequest?.action.executionId} initialAction={publicationRequest?.action} requireSelection={!publicationRequest} presentation="publication" onResolved={() => { setPublicationRequest(null); setApprovalOpen(false); void invalidate(); }} /></section></div> : null}
   </>;
 }

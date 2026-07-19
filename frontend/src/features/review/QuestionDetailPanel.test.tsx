@@ -46,6 +46,21 @@ describe("QuestionDetailPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "查看生成会话" }));
 
-    expect(onOpenSession).toHaveBeenCalledWith("session-1");
+    expect(onOpenSession).toHaveBeenCalledWith("c1");
+  });
+
+  it("shows the rejection reason and carries it into the next revision", () => {
+    const onRewrite = vi.fn();
+    const onSave = vi.fn();
+    render(<QuestionDetailPanel candidate={{ ...candidate, status: "rejected", rejectionReason: "补充故障恢复步骤", rejectedAt: "2026-07-18T08:00:00Z", rejectionActionId: "action-1", draft: { ...candidate.draft!, status: "rejected" } }} sourceLabels={{}} busy={false} onSave={onSave} onRewrite={onRewrite} onConfirm={vi.fn()} onOpenSession={vi.fn()} />);
+
+    expect(screen.getByText("退回修改原因")).toBeInTheDocument();
+    expect(screen.getByText("补充故障恢复步骤")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "按退回原因让 AI 在原会话中重写" })).toHaveValue("补充故障恢复步骤");
+    fireEvent.click(screen.getByRole("button", { name: "重新整理" }));
+    expect(onRewrite).toHaveBeenCalledWith("补充故障恢复步骤");
+
+    fireEvent.click(screen.getByRole("button", { name: "手动修改" }));
+    expect(screen.getByRole("textbox", { name: "Markdown 原文" })).toBeInTheDocument();
   });
 });

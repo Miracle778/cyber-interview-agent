@@ -18,17 +18,20 @@
 | 10. 生成文件交互与自由意图 | 实现完成，浏览器待验收 | 文件卡默认 3 条/有界展开、右栏 Markdown 详情、单题发布、持久备注、结构化意图 Agent |
 | 11. Agent 上下文组装与命令解释收敛 | 已完成 | 通用 token-budget ContextAssembler、持久领域焦点、确定性命令优先、一次性结构化 classifier；301/109/build 与浏览器/重启验收通过 |
 | 12. 可取消流式执行、模型切换与批量发布 | 实现与自动验证已完成，完整浏览器验收待 Provider | 整理命令接统一 Execution Runtime、服务端停止/恢复、execution 模型快照、真实 SSE、候选题安全一键发布；普通问答绕过 classifier，溢出摘要移到首个 delta 之后 |
+| 13. 题目与 Session 生命周期解耦 | 业务实现与最小浏览器验收完成，待并入 R2 最终完整验收 | 会话归档/永久删除不级联题目、题目单删/批删/回收站、原会话缺失时创建 `question.revise` 修订会话 |
 
 ## 工作位置
 
 - 分支：`codex/r2-complete-review-agent`
-- worktree：`/private/tmp/cyber-interview-agent-r2-ui-design`
+- worktree：`/Users/miracle778/Project/cyber-interview-agent-new/.worktrees/r2-complete-review-agent`
 - 基线：`codex/r2-ui-design-guidance@e3d64b3`
 - R2 设计：`docs/superpowers/specs/2026-07-13-r2-complete-review-agent-design.md`
 - 补充实施计划：`docs/superpowers/plans/2026-07-14-r2-agent-session-interaction-redesign.md`
 - 当前补强设计：`docs/superpowers/specs/2026-07-16-r2-cancellable-streaming-execution-design.md`
 - 当前补强计划：`docs/superpowers/plans/2026-07-16-r2-cancellable-streaming-execution.md`
 - 架构选型：`docs/superpowers/architecture-decisions/2026-07-16-unified-cancellable-execution-runtime.md`
+- 题目生命周期选型：`docs/superpowers/architecture-decisions/2026-07-19-question-session-lifecycle-decoupling.md`
+- 题目生命周期计划：`docs/superpowers/plans/2026-07-19-r2-question-session-lifecycle-decoupling.md`
 - 总路线：`docs/superpowers/specs/2026-07-10-product-development-roadmap-design.md`
 
 ## 范围与约束
@@ -56,9 +59,8 @@
 阶段 12 的实现与自动门禁已完成，但不使用自动测试替代真实模型浏览器证据。接下来的执行顺序：
 
 1. 在已配置健康 Provider 的环境完成发送→流式→停止→刷新/重启→重试，以及批量发布停止/重试的浏览器验收。
-2. 记录真实 execution/event 标识和剩余限制，不复用旧浏览器证据。
-3. 接回阶段 8–10 尚未关闭的完整 R2 浏览器场景，刷新 verification/learning 七件套并运行文档门禁。
-4. 关闭 R2 后进入下一产品阶段；用户 ownership 练习继续非阻塞进行。
+2. 接回阶段 8–10 和阶段 13 的完整 R2 浏览器场景，补测真实题目删除/恢复、会话永久删除与修订 SSE，记录 execution/event 标识。
+3. 刷新 verification/learning 七件套并运行文档门禁；关闭 R2 后进入下一产品阶段。
 
 ## 所有权状态
 

@@ -23,7 +23,7 @@ from app.application.session_service import (
 )
 from app.hitl.models import CreatePendingAction, PendingActionRecord
 from app.infrastructure.checkpoints import AgentCheckpointer
-from app.knowledge.drafts import CreateDraftCommand, KnowledgeDraftRecord
+from app.knowledge.drafts import CreateDraftCommand, KnowledgeDraftRecord, UpdateDraftCommand
 from app.graphs.review_round import DraftRef
 from app.review.models import (
     CurationSummary,
@@ -106,6 +106,7 @@ class AgentExecutionService:
         mark_draft_review_pending: Callable[..., Awaitable[KnowledgeDraftRecord]],
         review_repository: ReviewRepository | None = None,
         get_draft: Callable[[str], Awaitable[KnowledgeDraftRecord]] | None = None,
+        update_draft: Callable[[str, UpdateDraftCommand], Awaitable[KnowledgeDraftRecord]] | None = None,
     ) -> None:
         self._workspace_id = workspace_id
         self._workspace_root = workspace_root
@@ -118,6 +119,7 @@ class AgentExecutionService:
         self._mark_draft_review_pending = mark_draft_review_pending
         self._review_repository = review_repository
         self._get_draft = get_draft
+        self._update_draft = update_draft
         self._checkpointer = AgentCheckpointer(workspace_root)
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._controls: dict[str, ExecutionControl] = {}
@@ -863,8 +865,8 @@ class AgentExecutionService:
                         return item.snapshot.question_id
                 return None
             persisted = []
+            revision_candidate_id = execution.input.get("revisionCandidateId")
             for index, raw in enumerate(raw_candidates, start=1):
-                question_id = str(uuid4())
                 markdown = (
                     f"# {raw['title']}\n\n"
                     f"## 题目\n\n{raw['question_text']}\n\n"
@@ -873,6 +875,55 @@ class AgentExecutionService:
                     + "\n".join(f"- {item}" for item in raw["key_points"])
                     + "\n"
                 )
+                if revision_candidate_id:
+                    if index > 1:
+                        break
+                    original = self._review_repository.get_candidate(str(revision_candidate_id))
+                    if original.draft_id is None or self._get_draft is None or self._update_draft is None:
+                        raise RuntimeError("question revision draft is not configured")
+                    current_draft = await self._get_draft(original.draft_id)
+                    if current_draft.status == "published":
+                        draft = await create_draft(
+                            document_type="question",
+                            document_id=current_draft.document_id,
+                            title=raw["title"],
+                            markdown=markdown,
+                            source_refs=original.source_refs,
+                            relation_refs=tuple(raw["topics"]),
+                        )
+                    else:
+                        draft = await self._update_draft(
+                            original.draft_id,
+                            UpdateDraftCommand(
+                                expected_version=current_draft.version,
+                                title=raw["title"],
+                                markdown=markdown,
+                            ),
+                        )
+                    snapshot = QuestionSnapshot(
+                        question_id=original.question.question_id,
+                        document_id=draft.document_id,
+                        content_hash=draft.content_hash,
+                        title=raw["title"],
+                        question_text=raw["question_text"],
+                        reference_answer=raw["reference_answer"],
+                        topics=tuple(raw["topics"]),
+                        difficulty=raw["difficulty"],
+                        key_points=tuple(raw["key_points"]),
+                        follow_ups=tuple(raw["follow_ups"]),
+                    )
+                    candidate = (
+                        self._review_repository.replace_candidate_draft(
+                            original.id, draft_id=draft.id, question=snapshot
+                        )
+                        if draft.id != original.draft_id
+                        else self._review_repository.update_candidate(
+                            original.id, question=snapshot, status="review_pending"
+                        )
+                    )
+                    persisted.append(candidate)
+                    continue
+                question_id = str(uuid4())
                 proposed_refs = tuple(
                     str(ref)
                     for ref in raw["source_refs"]
@@ -1223,7 +1274,7 @@ class AgentExecutionService:
                 )
                 return
 
-            if session.kind == "question.curate":
+            if session.kind in {"question.curate", "question.revise"}:
                 await persist_question_candidates(final_state)
 
             response = _assistant_content(final_state)
@@ -1352,7 +1403,7 @@ class AgentExecutionService:
             )
             try:
                 if (
-                    session.kind == "question.curate"
+                    session.kind in {"question.curate", "question.revise"}
                     and self._review_repository is not None
                     and execution.input.get("batchId")
                 ):

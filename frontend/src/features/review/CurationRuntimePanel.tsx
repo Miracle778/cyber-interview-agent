@@ -8,7 +8,7 @@ const candidateStatusLabels: Record<QuestionCandidate["status"], string> = {
   draft: "草稿",
   review_pending: "待确认",
   published: "已发布",
-  rejected: "已拒绝",
+  rejected: "待修改",
 };
 
 function tokenLabel(value: number) {

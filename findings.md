@@ -257,3 +257,32 @@
 - 题目确认后的 `ActionCenter` 原本位于题库主 section 之后，因此作为普通文档流内容出现在整页底部；发布审批应是当前题目的模态下一步，并按发起它的 execution ID 隔离，不能混入其他待发布动作。
 - 通用 `ActionCenter` 直接塞进模态会暴露内部 action type、字段表单和诊断式层级；题目发布需要专用 presentation：默认展示渲染后的题目预览，编辑和拒绝理由按需展开，只保留一个明确主动作。
 - 模态关闭不能等于丢失 HITL：关闭、Escape、点击遮罩都只收起界面，未决 action 继续保存在服务端，并通过固定的“发布审批待处理”入口恢复；页面刷新后也从 pending actions 恢复该入口。
+
+## 发布审批即时恢复
+
+- 发布 action 的幂等键只由 draft ID、版本和内容哈希决定；同一草稿已有 pending action 时，重新创建 execution 会因 session/run 身份不同触发幂等冲突，新的 execution 失败，而前端按失败 execution 轮询必然超时。
+- 正确契约是服务端“获取或创建待审批动作”：复用同键 pending action，首次创建则等待 Graph 到达持久化 interrupt 后再返回；响应同时携带 action 和是否复用，前端按 action ID 精确展示。
+- React Query 的列表请求可能在 mutation 写缓存后立即重新拉取旧快照，因此新 action 还需作为 ActionCenter 的直接输入；列表缓存仍负责跨页面恢复，不承担首屏正确性的唯一责任。
+- 单题“确认入库”和全局“待审批 N”不能复用同一默认选中语义：前者绑定当前 action 并直达详情，后者必须先列出全部题目且保持无默认选择，用户明确选中后才展示正文和发布动作。
+- 发布退回不能只终止 HITL action：receipt 是审计真相，candidate 是产品读模型，draft 是内容版本；退回处理必须一次同步三者。候选题保存理由、时间和 action ID，手动修订清空当前退回投影但保留历史 receipt，并通过新 draft 版本生成新的发布幂等键。
+
+## 候选题生成会话解析
+
+- 候选题到 batch、batch 到 Agent Session 有外键保护，正常运行中真正的底层会话断链概率很低；但 `review_curation_sessions` 是独立展示投影，开发期 migration 前生成的数据可以缺少该投影。
+- “查看生成会话”不能依赖当前最多 50 条的会话列表查找；旧会话超出列表或进入回收站时，关联仍然有效，但前端会误显示为空。
+- 正式读取按 candidate ID 在服务端解析 `available / recycled / projection_missing / missing`，可用会话返回完整资源，回收站会话显式恢复，缺失状态只解释、不隐式回填历史测试数据。
+
+## 题目与 Session 生命周期解耦决定
+
+- Session 是可清理的运行容器，题目是长期领域资产；永久删除 Session 不能再依赖会级联删除 batch/candidate/source evidence 的外键语义。
+- 题目删除默认可恢复；已发布题只停用 active catalog，Vault 文件、publication receipt 和复习快照继续保留。批量删除必须消费显式 candidate IDs 并由一个服务端领域操作逐项返回结果。
+- 原会话不存在时不能伪造原聊天，也不能把重写降级为不可恢复的临时调用；使用统一 Runtime 创建持久 `question.revise` 会话，并从题目版本、反馈、来源证据、相似题和发布状态组装有界上下文。
+
+## 题目与 Session 生命周期解耦实现
+
+- migration 014 将 batch/source link 的 Session 关系改为 `live nullable + immutable origin`；永久删除整理 Session 后，candidate、draft、evidence 和 publication 不再受 cascade 影响。
+- 题目删除是 candidate 软删除事实；普通题库、会话统计和复习选题默认排除，已发布题同步停用 active catalog，恢复时重新激活，Vault 文件不参与删除事务。
+- 单删与显式批删复用同一个事务入口和持久幂等 receipt；版本变化按题返回 `blocked`，不存在返回 `failed`，不会扩大到当前筛选结果。
+- `question.revise` 复用正式 Graph/Execution Runtime；原 Session 存在则复用（归档会自动恢复），不存在则创建持久修订 Session。输入只包含当前题目 Markdown、反馈/备注/退回原因、来源引用、重复关系和发布状态，并只接受一个候选输出。
+- 修订未发布题时递增原 draft version；已发布题创建同 document 的新 draft，旧 publication receipt 和 Vault 版本继续可追溯，新版本重新进入 review pending/HITL。
+- 浏览器发现并修复既有回调歧义：重写 API 返回的是 Session，不能再把 Session ID 当 candidate ID 调原会话解析接口；现在直接打开返回的修订 Session。

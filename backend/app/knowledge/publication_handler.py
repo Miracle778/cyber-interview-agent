@@ -19,6 +19,10 @@ from app.knowledge.publication import PublicationRecord, PublicationService
 AfterPublication = Callable[
     [KnowledgeDraftRecord, PublicationRecord], Awaitable[None] | None
 ]
+AfterRejection = Callable[
+    [KnowledgeDraftRecord, ResolutionReceipt, PendingActionRecord],
+    Awaitable[None] | None,
+]
 
 
 class EventPublisher(Protocol):
@@ -39,11 +43,13 @@ class KnowledgePublishActionHandler:
         publications: PublicationService,
         event_stream: EventPublisher,
         after_publication: AfterPublication | None = None,
+        after_rejection: AfterRejection | None = None,
     ) -> None:
         self._drafts = drafts
         self._publications = publications
         self._event_stream = event_stream
         self._after_publication = after_publication
+        self._after_rejection = after_rejection
 
     def apply_edit(
         self,
@@ -67,14 +73,18 @@ class KnowledgePublishActionHandler:
     async def after_resolution(
         self,
         action: PendingActionRecord,
-        _receipt: ResolutionReceipt,
+        receipt: ResolutionReceipt,
     ) -> None:
         if action.status == "rejected":
-            await self._drafts.mark_rejected(
+            draft = await self._drafts.mark_rejected(
                 str(action.payload["draftId"]),
                 expected_version=int(action.payload["draftVersion"]),
                 expected_hash=str(action.payload["contentHash"]),
             )
+            if self._after_rejection is not None:
+                callback_result = self._after_rejection(draft, receipt, action)
+                if isawaitable(callback_result):
+                    await callback_result
             return
 
         effective_action = action

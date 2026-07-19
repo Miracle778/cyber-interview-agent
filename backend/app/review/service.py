@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from app.knowledge.drafts import KnowledgeDraftRecord
 from app.knowledge.publication import PublicationRecord
+from app.hitl.models import PendingActionRecord, ResolutionReceipt
 from app.review.errors import PublicationProjectionError
 from app.review.models import (
     MasteryEntry,
@@ -166,6 +167,21 @@ class ReviewDomainService:
                 expected_version=proposal.expected_mastery_version,
             )
         return None
+
+    def reject_candidate_draft(
+        self,
+        draft: KnowledgeDraftRecord,
+        receipt: ResolutionReceipt,
+        action: PendingActionRecord,
+    ) -> None:
+        if draft.document_type != "question":
+            return
+        self._repository.reject_candidate_for_draft(
+            draft.id,
+            reason=receipt.reason or "未说明退回原因",
+            rejected_at=action.resolved_at or receipt.created_at,
+            action_id=action.id,
+        )
 
     @staticmethod
     def _validate_publication(

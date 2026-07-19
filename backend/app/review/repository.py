@@ -207,13 +207,14 @@ class ReviewRepository:
         with self._transaction():
             self._connection.execute(
                 "INSERT INTO review_question_source_links "
-                "(id, question_id, source_id, batch_id, session_id, "
-                "evidence_ref, merge_reason) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "(id, question_id, source_id, batch_id, session_id, origin_session_id, "
+                "evidence_ref, merge_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     identifier,
                     question_id,
                     source_id,
                     batch_id,
+                    session_id,
                     session_id,
                     evidence_ref,
                     merge_reason,
@@ -487,11 +488,12 @@ class ReviewRepository:
         with self._transaction():
             self._connection.execute(
                 "INSERT INTO review_question_batches "
-                "(id, workspace_id, session_id, run_id, source_refs_json, "
-                "rewrite_of_batch_id, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "(id, workspace_id, session_id, origin_session_id, run_id, source_refs_json, "
+                "rewrite_of_batch_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     identifier,
                     workspace_id,
+                    session_id,
                     session_id,
                     run_id,
                     _canonical_json(source_refs),
@@ -908,13 +910,16 @@ class ReviewRepository:
         difficulty: str | None = None,
         source_id: str | None = None,
         status: str | None = None,
+        deleted_only: bool = False,
         limit: int = 100,
         offset: int = 0,
     ) -> tuple[QuestionCandidateRecord, ...]:
         rows = self._connection.execute(
             "SELECT c.* FROM review_question_candidates c "
             "JOIN review_question_batches b ON b.id = c.batch_id "
-            "WHERE b.workspace_id = ? ORDER BY c.updated_at DESC, c.rowid DESC",
+            "WHERE b.workspace_id = ? AND "
+            + ("c.deleted_at IS NOT NULL " if deleted_only else "c.deleted_at IS NULL ")
+            + "ORDER BY c.updated_at DESC, c.rowid DESC",
             (workspace_id,),
         ).fetchall()
         records = [self._candidate_record(row) for row in rows]
@@ -942,6 +947,88 @@ class ReviewRepository:
             records = [item for item in records if item.status == status]
         return tuple(records[offset : offset + limit])
 
+    def delete_candidates(
+        self,
+        workspace_id: str,
+        *,
+        items: tuple[tuple[str, int | None], ...],
+        idempotency_key: str,
+        reason: str = "",
+    ) -> dict[str, object]:
+        request = {"items": items, "reason": reason}
+        request_hash = sha256(_canonical_json(request).encode()).hexdigest()
+        existing = self._connection.execute(
+            "SELECT request_hash, result_json FROM review_question_deletion_receipts "
+            "WHERE workspace_id = ? AND idempotency_key = ?",
+            (workspace_id, idempotency_key),
+        ).fetchone()
+        if existing is not None:
+            if existing["request_hash"] != request_hash:
+                raise ReviewConflictError("question deletion idempotency key changed")
+            return json.loads(existing["result_json"])
+        results: list[dict[str, object]] = []
+        with self._transaction():
+            for candidate_id, expected_version in items:
+                row = self._connection.execute(
+                    "SELECT c.*, d.version AS draft_version FROM review_question_candidates c "
+                    "JOIN review_question_batches b ON b.id = c.batch_id "
+                    "LEFT JOIN knowledge_drafts d ON d.id = c.draft_id "
+                    "WHERE c.id = ? AND b.workspace_id = ?",
+                    (candidate_id, workspace_id),
+                ).fetchone()
+                if row is None:
+                    results.append({"candidateId": candidate_id, "status": "failed", "reason": "not_found"})
+                    continue
+                if row["deleted_at"] is not None:
+                    results.append({"candidateId": candidate_id, "status": "already_deleted", "reason": None})
+                    continue
+                if expected_version is not None and row["draft_version"] != expected_version:
+                    results.append({"candidateId": candidate_id, "status": "blocked", "reason": "version_conflict"})
+                    continue
+                self._connection.execute(
+                    "UPDATE review_question_candidates SET deleted_at = CURRENT_TIMESTAMP, "
+                    "deletion_reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (reason, candidate_id),
+                )
+                if row["status"] == "published":
+                    self._connection.execute(
+                        "UPDATE review_question_catalog SET active = 0, updated_at = CURRENT_TIMESTAMP "
+                        "WHERE question_id = ?",
+                        (self._snapshot(row["question_json"]).question_id,),
+                    )
+                results.append({"candidateId": candidate_id, "status": "deleted", "reason": None})
+            result: dict[str, object] = {"items": results}
+            self._connection.execute(
+                "INSERT INTO review_question_deletion_receipts "
+                "(id, workspace_id, idempotency_key, request_hash, result_json) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (str(uuid4()), workspace_id, idempotency_key, request_hash, _canonical_json(result)),
+            )
+        return result
+
+    def restore_candidate(self, workspace_id: str, candidate_id: str) -> QuestionCandidateRecord:
+        with self._transaction():
+            row = self._connection.execute(
+                "SELECT c.* FROM review_question_candidates c "
+                "JOIN review_question_batches b ON b.id = c.batch_id "
+                "WHERE c.id = ? AND b.workspace_id = ?",
+                (candidate_id, workspace_id),
+            ).fetchone()
+            if row is None:
+                raise LookupError(candidate_id)
+            self._connection.execute(
+                "UPDATE review_question_candidates SET deleted_at = NULL, deletion_reason = '', "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (candidate_id,),
+            )
+            if row["status"] == "published":
+                self._connection.execute(
+                    "UPDATE review_question_catalog SET active = 1, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE question_id = ?",
+                    (self._snapshot(row["question_json"]).question_id,),
+                )
+        return self.get_candidate(candidate_id)
+
     def update_candidate(
         self,
         candidate_id: str,
@@ -952,9 +1039,41 @@ class ReviewRepository:
         with self._transaction():
             cursor = self._connection.execute(
                 "UPDATE review_question_candidates SET question_json = ?, "
-                "status = COALESCE(?, status), updated_at = CURRENT_TIMESTAMP "
+                "status = COALESCE(?, status), "
+                "rejection_reason = CASE WHEN ? = 'review_pending' "
+                "THEN NULL ELSE rejection_reason END, "
+                "rejected_at = CASE WHEN ? = 'review_pending' "
+                "THEN NULL ELSE rejected_at END, "
+                "rejection_action_id = CASE WHEN ? = 'review_pending' "
+                "THEN NULL ELSE rejection_action_id END, "
+                "updated_at = CURRENT_TIMESTAMP "
                 "WHERE id = ?",
-                (_canonical_json(asdict(question)), status, candidate_id),
+                (
+                    _canonical_json(asdict(question)),
+                    status,
+                    status,
+                    status,
+                    status,
+                    candidate_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise LookupError(candidate_id)
+        return self.get_candidate(candidate_id)
+
+    def replace_candidate_draft(
+        self,
+        candidate_id: str,
+        *,
+        draft_id: str,
+        question: QuestionSnapshot,
+    ) -> QuestionCandidateRecord:
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_question_candidates SET draft_id = ?, question_json = ?, "
+                "status = 'review_pending', rejection_reason = NULL, rejected_at = NULL, "
+                "rejection_action_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (draft_id, _canonical_json(asdict(question)), candidate_id),
             )
             if cursor.rowcount != 1:
                 raise LookupError(candidate_id)
@@ -972,6 +1091,25 @@ class ReviewRepository:
             if cursor.rowcount != 1:
                 raise LookupError(candidate_id)
         return self.get_candidate(candidate_id)
+
+    def reject_candidate_for_draft(
+        self,
+        draft_id: str,
+        *,
+        reason: str,
+        rejected_at: str,
+        action_id: str,
+    ) -> QuestionCandidateRecord | None:
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_question_candidates SET status = 'rejected', "
+                "rejection_reason = ?, rejected_at = ?, rejection_action_id = ?, "
+                "updated_at = CURRENT_TIMESTAMP WHERE draft_id = ?",
+                (reason, rejected_at, action_id, draft_id),
+            )
+        if cursor.rowcount == 0:
+            return None
+        return self.get_candidate_by_draft(draft_id)
 
     def update_candidate_review_note(
         self, candidate_id: str, *, review_note: str
@@ -1010,8 +1148,8 @@ class ReviewRepository:
 
             existing = self._connection.execute(
                 "SELECT * FROM review_question_catalog "
-                "WHERE draft_id = ? OR publication_id = ?",
-                (draft_id, publication_id),
+                "WHERE question_id = ? OR draft_id = ? OR publication_id = ?",
+                (candidate.question.question_id, draft_id, publication_id),
             ).fetchone()
             if existing is None:
                 self._connection.execute(
@@ -1030,15 +1168,22 @@ class ReviewRepository:
                     ),
                 )
             else:
-                if (
-                    existing["question_id"] != candidate.question.question_id
-                    or existing["draft_id"] != draft_id
-                    or existing["publication_id"] != publication_id
-                    or existing["content_hash"] != content_hash
-                ):
-                    raise ReviewConflictError(
-                        "publication already projects different question facts"
-                    )
+                if existing["question_id"] != candidate.question.question_id:
+                    raise ReviewConflictError("publication already projects different question facts")
+                self._connection.execute(
+                    "UPDATE review_question_catalog SET document_id = ?, draft_id = ?, "
+                    "publication_id = ?, question_json = ?, content_hash = ?, active = 1, "
+                    "published_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE question_id = ?",
+                    (
+                        document_id,
+                        draft_id,
+                        publication_id,
+                        candidate_row["question_json"],
+                        content_hash,
+                        candidate.question.question_id,
+                    ),
+                )
             self._connection.execute(
                 "UPDATE review_question_candidates SET status = 'published', "
                 "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -1878,6 +2023,7 @@ class ReviewRepository:
             id=row["id"],
             workspace_id=row["workspace_id"],
             session_id=row["session_id"],
+            origin_session_id=row["origin_session_id"],
             run_id=row["run_id"],
             source_refs=tuple(json.loads(row["source_refs_json"])),
             rewrite_of_batch_id=row["rewrite_of_batch_id"],
@@ -1896,8 +2042,13 @@ class ReviewRepository:
             correction_note=row["correction_note"],
             review_note=row["review_note"],
             review_note_updated_at=row["review_note_updated_at"],
+            rejection_reason=row["rejection_reason"],
+            rejected_at=row["rejected_at"],
+            rejection_action_id=row["rejection_action_id"],
             duplicate_of_question_id=row["duplicate_of_question_id"],
             status=row["status"],
+            deleted_at=row["deleted_at"],
+            deletion_reason=row["deletion_reason"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -1954,6 +2105,7 @@ class ReviewRepository:
             source_id=row["source_id"],
             batch_id=row["batch_id"],
             session_id=row["session_id"],
+            origin_session_id=row["origin_session_id"],
             evidence_ref=row["evidence_ref"],
             merge_reason=row["merge_reason"],
             created_at=row["created_at"],

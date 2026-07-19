@@ -5,10 +5,12 @@ import type {
   AcceptedCurationCommand,
   BulkPublication,
   BulkPublicationPreflight,
+  CandidateOriginSession,
   CurationSession,
   CreateReviewRoundRequest,
   QuestionBatch,
   QuestionCandidate,
+  QuestionDeletionResult,
   ReviewAnswerReceipt,
   ReviewRound,
 } from "./reviewTypes";
@@ -21,6 +23,10 @@ export function listCurationSessions(workspaceId: string, deletedOnly = false): 
 
 export function getCurationSession(id: string): Promise<CurationSession> {
   return apiGet(`/api/review/curation-sessions/${id}`);
+}
+
+export function getQuestionCandidateOriginSession(candidateId: string): Promise<CandidateOriginSession> {
+  return apiGet(`/api/review/question-candidates/${candidateId}/origin-session`);
 }
 
 export function createCurationSession(workspaceId: string, sourceRefs: string[]): Promise<CurationSession> {
@@ -98,7 +104,7 @@ export function createQuestionBatch(workspaceId: string, sourceRefs: string[]): 
 
 export function listQuestionCandidates(
   workspaceId: string,
-  filters: { query?: string; topic?: string; difficulty?: string; sourceId?: string; status?: string; page?: number } = {},
+  filters: { query?: string; topic?: string; difficulty?: string; sourceId?: string; status?: string; page?: number; deletedOnly?: boolean } = {},
 ): Promise<QuestionCandidate[]> {
   const query = new URLSearchParams({ workspaceId });
   Object.entries(filters).forEach(([key, value]) => value && query.set(key, String(value)));
@@ -107,7 +113,7 @@ export function listQuestionCandidates(
 
 export async function listAllQuestionCandidates(
   workspaceId: string,
-  filters: { query?: string; topic?: string; difficulty?: string; sourceId?: string; status?: string } = {},
+  filters: { query?: string; topic?: string; difficulty?: string; sourceId?: string; status?: string; deletedOnly?: boolean } = {},
 ): Promise<QuestionCandidate[]> {
   const items: QuestionCandidate[] = [];
   for (let page = 1; page <= 20; page += 1) {
@@ -139,6 +145,23 @@ export function updateQuestionCandidateNote(id: string, note: string): Promise<Q
 
 export function publishQuestionCandidate(id: string, idempotencyKey: string): Promise<QuestionCandidate> {
   return apiPost(`/api/review/question-candidates/${id}/publish`, { idempotencyKey });
+}
+
+export function deleteQuestionCandidate(id: string, expectedVersion: number | null, reason = ""): Promise<QuestionDeletionResult> {
+  return apiPost(`/api/review/question-candidates/${id}/delete`, { idempotencyKey: crypto.randomUUID(), expectedVersion, reason });
+}
+
+export function bulkDeleteQuestionCandidates(workspaceId: string, candidates: QuestionCandidate[], reason = ""): Promise<QuestionDeletionResult> {
+  return apiPost("/api/review/question-candidates/bulk-delete", {
+    workspaceId,
+    idempotencyKey: crypto.randomUUID(),
+    items: candidates.map((candidate) => ({ candidateId: candidate.id, expectedVersion: candidate.draft?.version ?? null })),
+    reason,
+  });
+}
+
+export function restoreQuestionCandidate(id: string): Promise<QuestionCandidate> {
+  return apiPost(`/api/review/question-candidates/${id}/restore`, {});
 }
 
 export function listActiveQuestions(workspaceId: string): Promise<ActiveQuestion[]> {

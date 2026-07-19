@@ -82,6 +82,14 @@ Graph 在展示题目后通过 input interrupt 暂停。应用层把 interrupt �
 
 题库整理 session 可以包含多个 execution：首次整理、重写和重新总结都在同一 session 留下消息，但每次执行遵守单 session 仅一个活动 execution 的约束。复习轮次继续使用一个长生命周期 execution。
 
+### 3.5 题目生命周期独立于 Session
+
+题目是长期领域资产，Session 是可归档或永久删除的运行容器。永久删除 Session 只清理消息、execution、event、checkpoint 和会话投影，不得级联删除 candidate、batch、draft、source/evidence、publication 或复习快照。题目保留不可变的 origin session 血缘和可空 live session reference。
+
+题目默认使用可恢复删除；已发布题删除时停用 active catalog，但保留 Vault Markdown、publication receipt 和历史复习快照。单题与批量删除必须复用服务端领域服务，批量范围来自显式 candidate IDs，不能由前端循环请求或隐式扩大为整个筛选结果。
+
+单题重新整理优先恢复原会话；原会话归档时先恢复，投影缺失时允许按需重建，原 Session 永久删除时创建持久的 `question.revise` 轻量会话。修订从当前题目、Markdown 版本、反馈、来源证据、相似题和发布状态组装有界上下文，只输出同一道 logical question 的新版本。完整决定见 `docs/superpowers/architecture-decisions/2026-07-19-question-session-lifecycle-decoupling.md`。
+
 ## 4. 用户流程
 
 ### 4.1 题库准备
@@ -443,7 +451,7 @@ Cyber Interview Agent
 
 #### 11.3.2 题目库
 
-题目库负责浏览和管理全部候选及已发布题目，保留搜索、topic、难度、来源、状态筛选和分页。列表展示来源数量和所在整理 session；详情默认渲染 Markdown，并提供原文、编辑、重写、重复对比以及所有 source/evidence links。题目库不展示 Agent runtime 对话，避免把运行过程和内容管理再次平铺。
+题目库负责浏览和管理全部候选及已发布题目，保留搜索、topic、难度、来源、状态筛选和分页。列表展示来源数量和所在整理 session；详情默认渲染 Markdown，并提供原文、编辑、重写、删除、重复对比以及所有 source/evidence links。列表支持显式勾选和批量删除，删除进入题目回收站；已发布题只停用 active catalog，不自动删除 Vault 文件。题目库不展示 Agent runtime 对话，避免把运行过程和内容管理再次平铺。
 
 本轮确认后的统一概念参考图：
 

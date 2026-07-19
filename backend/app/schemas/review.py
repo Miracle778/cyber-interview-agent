@@ -97,6 +97,24 @@ class RewriteQuestionCandidateCommand(ReviewModel):
     feedback: str = Field(min_length=1, max_length=5000)
 
 
+class DeleteQuestionCandidateCommand(ReviewModel):
+    idempotency_key: str = Field(min_length=8, max_length=200)
+    expected_version: int | None = Field(default=None, ge=1)
+    reason: str = Field(default="", max_length=1000)
+
+
+class BulkDeleteQuestionCandidateItem(ReviewModel):
+    candidate_id: str = Field(min_length=1)
+    expected_version: int | None = Field(default=None, ge=1)
+
+
+class BulkDeleteQuestionCandidatesCommand(ReviewModel):
+    workspace_id: str = Field(min_length=1)
+    idempotency_key: str = Field(min_length=8, max_length=200)
+    items: list[BulkDeleteQuestionCandidateItem] = Field(min_length=1, max_length=200)
+    reason: str = Field(default="", max_length=1000)
+
+
 class UpdateQuestionCandidateNoteCommand(ReviewModel):
     note: str = Field(max_length=5000)
 
@@ -158,14 +176,20 @@ class QuestionCandidateResource(ReviewModel):
     id: str
     batch_id: str
     curation_session_id: str
+    live_curation_session_id: str | None
     question: QuestionSnapshotResource
     source_refs: list[str]
     correction_note: str
     review_note: str
     review_note_updated_at: str | None
+    rejection_reason: str | None
+    rejected_at: str | None
+    rejection_action_id: str | None
     duplicate_of_question_id: str | None
     duplicate_question: QuestionSnapshotResource | None
     status: str
+    deleted_at: str | None
+    deletion_reason: str
     draft: DraftSummaryResource | None
     created_at: str
     updated_at: str
@@ -174,7 +198,8 @@ class QuestionCandidateResource(ReviewModel):
 class QuestionBatchResource(ReviewModel):
     id: str
     workspace_id: str
-    session_id: str
+    session_id: str | None
+    origin_session_id: str
     run_id: str | None
     source_refs: list[str]
     rewrite_of_batch_id: str | None
@@ -322,6 +347,22 @@ class CurationSessionResource(ReviewModel):
     usage: UsageResource
     created_at: str
     updated_at: str
+
+
+class CandidateOriginSessionResource(ReviewModel):
+    status: Literal["available", "recycled", "projection_missing", "missing"]
+    session_id: str
+    session: CurationSessionResource | None = None
+
+
+class QuestionDeletionItemResource(ReviewModel):
+    candidate_id: str
+    status: Literal["deleted", "already_deleted", "blocked", "failed"]
+    reason: str | None = None
+
+
+class QuestionDeletionResultResource(ReviewModel):
+    items: list[QuestionDeletionItemResource]
 
 
 class CurationCommandReceiptResource(ReviewModel):

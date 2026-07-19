@@ -47,23 +47,40 @@ export interface QuestionCandidate {
   id: string;
   batchId: string;
   curationSessionId: string;
+  liveCurationSessionId?: string | null;
   question: CandidateQuestion;
   sourceRefs: string[];
   correctionNote: string;
   reviewNote: string;
   reviewNoteUpdatedAt: string | null;
+  rejectionReason?: string | null;
+  rejectedAt?: string | null;
+  rejectionActionId?: string | null;
   duplicateOfQuestionId: string | null;
   duplicateQuestion: CandidateQuestion | null;
   status: "draft" | "review_pending" | "rejected" | "published";
+  deletedAt?: string | null;
+  deletionReason?: string;
   draft: CandidateDraft | null;
   createdAt: string;
   updatedAt: string;
 }
 
+export interface CandidateOriginSession {
+  status: "available" | "recycled" | "projection_missing" | "missing";
+  sessionId: string;
+  session: CurationSession | null;
+}
+
+export interface QuestionDeletionResult {
+  items: { candidateId: string; status: "deleted" | "already_deleted" | "blocked" | "failed"; reason: string | null }[];
+}
+
 export interface QuestionBatch {
   id: string;
   workspaceId: string;
-  sessionId: string;
+  sessionId: string | null;
+  originSessionId?: string;
   runId: string | null;
   sourceRefs: string[];
   rewriteOfBatchId: string | null;

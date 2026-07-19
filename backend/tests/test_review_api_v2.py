@@ -60,7 +60,7 @@ def _graph_factory(kind, **dependencies):
     graph = StateGraph(dict)
 
     async def complete(state):
-        if kind == "question.curate":
+        if kind in {"question.curate", "question.revise"}:
             return {
                 **state,
                 "candidates": [
@@ -272,6 +272,36 @@ async def test_active_catalog_and_round_answer_are_resource_driven(
             idempotency_key="different-answer-key",
             value="不同回答",
         )
+
+
+@pytest.mark.asyncio
+async def test_deleting_published_candidate_deactivates_and_restore_reactivates_catalog(
+    api, application
+) -> None:
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        deleted = await client.post(
+            "/api/review/question-candidates/candidate-q1/delete",
+            json={
+                "idempotencyKey": "delete-published-q1",
+                "expectedVersion": 1,
+            },
+        )
+        assert deleted.status_code == 200, deleted.text
+        assert deleted.json()["items"][0]["status"] == "deleted"
+        assert (await client.get(
+            "/api/review/questions?workspaceId=w1"
+        )).json() == []
+
+        restored = await client.post(
+            "/api/review/question-candidates/candidate-q1/restore"
+        )
+        assert restored.status_code == 200, restored.text
+        questions = (await client.get(
+            "/api/review/questions?workspaceId=w1"
+        )).json()
+        assert [question["id"] for question in questions] == ["q1"]
 
 
 @pytest.mark.asyncio

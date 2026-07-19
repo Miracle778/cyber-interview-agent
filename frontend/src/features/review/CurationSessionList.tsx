@@ -1,4 +1,4 @@
-import { ArrowRight, FileStack, Plus, Trash2 } from "lucide-react";
+import { Archive, ArrowRight, FileStack, Plus } from "lucide-react";
 import { useState } from "react";
 import { Button } from "../../shared/ui/Button";
 import type { CurationSession, QuestionCandidate } from "./reviewTypes";
@@ -25,7 +25,7 @@ export function CurationSessionList({ sessions, candidateCount, publishedCount, 
         const meta = stageMeta[session.stage] ?? { label: session.stage, tone: "neutral" };
         return <article key={session.id} className="curation-landing__item">
           <button type="button" className="curation-landing__open" title={session.title} onClick={() => onSelect(session.id)}><div><strong>{session.title}</strong><small>{session.sources.map((source) => source.filename).join(" · ")}</small></div><span className={`badge badge--${meta.tone}`}>{meta.label}</span><p>{session.sources.length} 份资料 · {session.candidateCount} 道候选 · {session.pendingCount} 道待确认</p><ArrowRight size={18} /></button>
-          <button type="button" className="curation-landing__delete" aria-label="删除当前会话" title={`删除 ${session.title}；按住 Shift 永久删除`} onClick={(event) => onDelete(session.id, event.shiftKey)}><Trash2 size={16} /></button>
+          <button type="button" className="curation-landing__delete" aria-label="归档当前会话" title={`归档 ${session.title}`} onClick={() => onDelete(session.id, false)}><Archive size={16} /></button>
         </article>;
       })}
     </section>

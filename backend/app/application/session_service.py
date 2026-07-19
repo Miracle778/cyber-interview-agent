@@ -184,12 +184,6 @@ class ProductRepository:
             )
             self.connection.commit()
             return
-        evidence = self.connection.execute(
-            "SELECT COUNT(*) FROM review_question_source_links WHERE session_id = ?",
-            (session_id,),
-        ).fetchone()[0]
-        if evidence:
-            raise ValueError("会话仍被题目来源证据引用，请使用软删除")
         self.connection.execute("DELETE FROM agent_sessions WHERE id = ?", (session_id,))
         self.connection.commit()
 

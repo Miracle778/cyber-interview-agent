@@ -87,6 +87,12 @@ class PendingActionRepository:
         async with self._connection() as connection:
             return await self._require_action(connection, action_id)
 
+    async def get_by_idempotency_key(
+        self, idempotency_key: str
+    ) -> PendingActionRecord | None:
+        async with self._connection() as connection:
+            return await self._find_by_idempotency_key(connection, idempotency_key)
+
     async def list_pending(
         self, workspace_id: str, *, session_id: str | None = None
     ) -> tuple[PendingActionRecord, ...]:

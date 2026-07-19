@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from collections.abc import AsyncIterator, Callable, Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -20,7 +21,12 @@ from app.application.session_service import (
     encode_sse_event,
 )
 from app.hitl.handlers import create_default_action_handler_registry
-from app.hitl.models import CreatePendingAction, ResolveActionCommand
+from app.graphs.publication import publication_action_key
+from app.hitl.models import (
+    CreatePendingAction,
+    PendingActionRecord,
+    ResolveActionCommand,
+)
 from app.hitl.repository import PendingActionNotFoundError, PendingActionRepository
 from app.hitl.service import HitlService
 from app.infrastructure.runtime_database import connect_runtime_database
@@ -159,6 +165,9 @@ class WorkspaceRuntime:
     drafts: KnowledgeDraftService
     publications: PublicationService
     review: ReviewApplication
+    publication_locks: dict[str, asyncio.Lock] = field(
+        default_factory=dict, repr=False
+    )
 
     @classmethod
     def create(
@@ -207,6 +216,7 @@ class WorkspaceRuntime:
             mark_draft_review_pending=drafts.mark_review_pending,
             review_repository=reviews,
             get_draft=drafts.get,
+            update_draft=drafts.update,
         )
         projection_service = ReviewDomainService(
             repository=reviews,
@@ -219,6 +229,7 @@ class WorkspaceRuntime:
                 publications=publications,
                 event_stream=events,
                 after_publication=projection_service.activate_published_draft,
+                after_rejection=projection_service.reject_candidate_draft,
             )
         )
         hitl = HitlService(
@@ -309,6 +320,13 @@ class WorkspaceRuntime:
     async def close(self) -> None:
         await self.executions.close()
         self.connection.close()
+
+
+@dataclass(frozen=True, slots=True)
+class DraftPublicationRequest:
+    execution: ExecutionRecord
+    action: PendingActionRecord
+    reused: bool
 
 
 class AgentApplication:
@@ -423,29 +441,61 @@ class AgentApplication:
         context, _action = await self._locate_action(action_id)
         return await context.hitl.reject(action_id, command)
 
-    async def request_draft_publication(self, draft_id: str) -> ExecutionRecord:
+    async def request_draft_publication(
+        self, draft_id: str
+    ) -> DraftPublicationRequest:
         context, draft = await self._locate_draft(draft_id)
-        session = await context.sessions.create(
-            workspace_id=context.workspace_id,
-            kind="knowledge.publish",
-            title=f"知识发布：{draft.title}",
-        )
-        execution = await context.executions.start(
-            session,
-            input={
-                "draftId": draft.id,
-                "draftVersion": draft.version,
-                "contentHash": draft.content_hash,
-                "title": draft.title,
-                "markdown": draft.markdown,
-            },
-        )
-        await context.drafts.mark_review_pending(
-            draft.id,
-            expected_version=draft.version,
-            expected_hash=draft.content_hash,
-        )
-        return execution
+        lock = context.publication_locks.setdefault(draft.id, asyncio.Lock())
+        async with lock:
+            # Re-read inside the lock so concurrent callers use the same version/hash.
+            draft = await context.drafts.get(draft.id)
+            action_key = publication_action_key(
+                draft_id=draft.id,
+                draft_version=draft.version,
+                content_hash=draft.content_hash,
+            )
+            existing = await context.actions.get_by_idempotency_key(action_key)
+            if existing is not None and existing.status == "pending":
+                return DraftPublicationRequest(
+                    execution=context.executions.execution(existing.run_id),
+                    action=existing,
+                    reused=True,
+                )
+
+            session = await context.sessions.create(
+                workspace_id=context.workspace_id,
+                kind="knowledge.publish",
+                title=f"知识发布：{draft.title}",
+            )
+            execution = await context.executions.start(
+                session,
+                input={
+                    "draftId": draft.id,
+                    "draftVersion": draft.version,
+                    "contentHash": draft.content_hash,
+                    "title": draft.title,
+                    "markdown": draft.markdown,
+                },
+            )
+            execution = await context.executions.wait(execution.id)
+            action = await context.actions.get_by_idempotency_key(action_key)
+            if (
+                execution.status != "waiting_for_approval"
+                or action is None
+                or action.status != "pending"
+                or action.run_id != execution.id
+            ):
+                raise RuntimeError("发布审批动作创建失败")
+            await context.drafts.mark_review_pending(
+                draft.id,
+                expected_version=draft.version,
+                expected_hash=draft.content_hash,
+            )
+            return DraftPublicationRequest(
+                execution=execution,
+                action=action,
+                reused=False,
+            )
 
     async def list_drafts(self, workspace_id: str):
         context = self._context(workspace_id)

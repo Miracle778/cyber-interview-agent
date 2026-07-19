@@ -898,6 +898,172 @@ async def test_candidate_rewrite_resumes_its_original_curation_session(
 
 
 @pytest.mark.asyncio
+async def test_hard_deleted_origin_session_preserves_question_and_creates_revision_session(
+    api, application
+) -> None:
+    app, source_ids = application
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = (await client.post(
+            "/api/review/curation-sessions",
+            json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+        )).json()
+        await app.wait_execution(created["executionId"])
+        detail = (await client.get(
+            f"/api/review/curation-sessions/{created['id']}"
+        )).json()
+        candidate_id = detail["summary"]["items"][0]["candidateId"]
+        before = (await client.get(
+            f"/api/review/question-candidates/{candidate_id}"
+        )).json()
+
+        app.delete_session(created["id"], hard=True)
+        preserved = (await client.get(
+            f"/api/review/question-candidates/{candidate_id}"
+        )).json()
+        assert preserved["curationSessionId"] == created["id"]
+        assert preserved["liveCurationSessionId"] is None
+        source_links = app.review("w1").repository.list_question_source_links(
+            preserved["question"]["questionId"]
+        )
+        assert source_links
+        assert source_links[0].session_id is None
+        assert source_links[0].origin_session_id == created["id"]
+        origin = (await client.get(
+            f"/api/review/question-candidates/{candidate_id}/origin-session"
+        )).json()
+        assert origin == {
+            "status": "missing",
+            "sessionId": created["id"],
+            "session": None,
+        }
+
+        rewritten = await client.post(
+            f"/api/review/question-candidates/{candidate_id}/rewrite",
+            json={"feedback": "只增加一次线上排障场景"},
+        )
+        assert rewritten.status_code == 202, rewritten.text
+        assert rewritten.json()["id"] != created["id"]
+        revision_session = app.list_sessions("w1")[0]
+        assert revision_session.kind == "question.revise"
+        await app.wait_execution(rewritten.json()["executionId"])
+        after = (await client.get(
+            f"/api/review/question-candidates/{candidate_id}"
+        )).json()
+        assert after["question"]["questionId"] == before["question"]["questionId"]
+        assert after["draft"]["version"] == before["draft"]["version"] + 1
+
+
+@pytest.mark.asyncio
+async def test_question_delete_bulk_receipt_and_restore_are_consistent(
+    api, application
+) -> None:
+    app, source_ids = application
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = (await client.post(
+            "/api/review/curation-sessions",
+            json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+        )).json()
+        await app.wait_execution(created["executionId"])
+        candidate = (await client.get(
+            "/api/review/question-candidates?workspaceId=w1"
+        )).json()[0]
+        command = {
+            "idempotencyKey": "delete-question-1",
+            "expectedVersion": candidate["draft"]["version"],
+            "reason": "测试删除",
+        }
+        first = await client.post(
+            f"/api/review/question-candidates/{candidate['id']}/delete",
+            json=command,
+        )
+        repeated = await client.post(
+            f"/api/review/question-candidates/{candidate['id']}/delete",
+            json=command,
+        )
+        assert first.status_code == repeated.status_code == 200
+        assert first.json() == repeated.json()
+        assert first.json()["items"][0]["status"] == "deleted"
+        assert (await client.get(
+            "/api/review/question-candidates?workspaceId=w1"
+        )).json() == []
+        trash = (await client.get(
+            "/api/review/question-candidates?workspaceId=w1&deletedOnly=true"
+        )).json()
+        assert trash[0]["deletionReason"] == "测试删除"
+
+        restored = await client.post(
+            f"/api/review/question-candidates/{candidate['id']}/restore"
+        )
+        assert restored.status_code == 200
+        bulk = await client.post(
+            "/api/review/question-candidates/bulk-delete",
+            json={
+                "workspaceId": "w1",
+                "idempotencyKey": "bulk-delete-question-1",
+                "items": [
+                    {"candidateId": candidate["id"], "expectedVersion": candidate["draft"]["version"]},
+                    {"candidateId": "missing-candidate", "expectedVersion": None},
+                ],
+            },
+        )
+        assert bulk.status_code == 200, bulk.text
+        assert [item["status"] for item in bulk.json()["items"]] == [
+            "deleted",
+            "failed",
+        ]
+
+
+@pytest.mark.asyncio
+async def test_candidate_origin_session_reports_available_recycled_and_missing_projection(
+    api, application
+) -> None:
+    app, source_ids = application
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = (await client.post(
+            "/api/review/curation-sessions",
+            json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+        )).json()
+        await app.wait_execution(created["executionId"])
+        detail = (await client.get(
+            f"/api/review/curation-sessions/{created['id']}"
+        )).json()
+        candidate_id = detail["summary"]["items"][0]["candidateId"]
+        origin_url = f"/api/review/question-candidates/{candidate_id}/origin-session"
+
+        available = await client.get(origin_url)
+        assert available.status_code == 200
+        assert available.json()["status"] == "available"
+        assert available.json()["session"]["id"] == created["id"]
+
+        app.delete_session(created["id"])
+        recycled = await client.get(origin_url)
+        assert recycled.status_code == 200
+        assert recycled.json()["status"] == "recycled"
+        assert recycled.json()["session"]["deletedAt"] is not None
+
+        app.restore_session(created["id"])
+        review = app.locate_review_candidate(candidate_id)
+        review.repository._connection.execute(
+            "DELETE FROM review_curation_sessions WHERE session_id = ?",
+            (created["id"],),
+        )
+        review.repository._connection.commit()
+        missing_projection = await client.get(origin_url)
+        assert missing_projection.status_code == 200
+        assert missing_projection.json() == {
+            "status": "projection_missing",
+            "sessionId": created["id"],
+            "session": None,
+        }
+
+
+@pytest.mark.asyncio
 async def test_deleted_curation_session_is_listed_only_in_trash(
     api, application
 ) -> None:

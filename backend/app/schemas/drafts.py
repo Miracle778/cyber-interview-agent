@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.hitl import PendingActionResource
+
 def _to_camel(value: str) -> str:
     head, *tail = value.split("_")
     return head + "".join(part.capitalize() for part in tail)
@@ -70,3 +72,5 @@ class PublishDraftExecutionResource(DraftModel):
     session_id: str
     execution_id: str
     status: str
+    action: PendingActionResource
+    reused: bool

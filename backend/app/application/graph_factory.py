@@ -77,11 +77,11 @@ class ProductionGraphFactory:
         )
 
     def __call__(self, kind: str, **dependencies):
-        if kind in {"question.curate", "review.round", "review.discussion"}:
+        if kind in {"question.curate", "question.revise", "review.round", "review.discussion"}:
             bindings = dependencies["model_bindings"]
             roles = (
                 ("question_generation", "report_summarization")
-                if kind == "question.curate"
+                if kind in {"question.curate", "question.revise"}
                 else ("answer_evaluation", "report_summarization", "agent_chat")
             )
             context_limit_tokens = min(
@@ -102,7 +102,7 @@ class ProductionGraphFactory:
                 budget_profile=REVIEW_ROUND_BUDGET,
                 context_limit_tokens=context_limit_tokens,
             )
-            if kind == "question.curate":
+            if kind in {"question.curate", "question.revise"}:
                 agent = QuestionCurationAgent.create(
                     self._agents,
                     model_bindings=bindings,

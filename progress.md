@@ -336,3 +336,39 @@
 - 题目库目录计数改为分面统计：主题数字会随搜索、状态、难度和来源联动，并按题目全部主题计数，点击后的结果数量与目录一致；“全部题目”同样展示当前非主题筛选范围。
 - 删除在所有主题下重复显示的全局“最近整理 N 道”，结果头改为“全部候选 / 当前筛选结果 / 某主题”范围说明；待发布审批入口收进筛选工具栏，使用“待审批 + 数量”的紧凑按钮复用原审批弹窗，不再遮挡正文或占据整行。
 - 新增筛选、跳转和统计一致性测试；`CurationSessionList` 与 `QuestionCatalog` 共 10 tests passed，production build 通过（保留既有 >500 kB chunk 提示）。
+
+## 2026-07-18：发布审批等待与空结果修复
+
+- 定位真实数据根因：同一草稿已有 pending action，重复点击却创建新 execution，action 幂等冲突使新 execution 失败；前端随后盲轮询 20 次并显示“暂无待确认动作”。
+- 发布接口改为幂等的 get-or-create：已有动作直接返回原 action/execution；首次请求等待 Graph 到达 `waiting_for_approval` 后返回 action，不再暴露中间竞态。
+- 题目库把接口返回的 action 直接交给审批弹窗，并以 action ID + execution ID 双重聚焦；后台列表刷新只用于恢复，不会让弹窗退回等待态。
+- 拆分发布入口语义：题目详情“确认入库”只打开当前题；工具栏“待审批 N”先展示全部待审批题目标题，未选择前不显示内容或发布按钮，选择后只操作该 action。
+- 完成“退回修改”闭环：HITL rejection 同步候选题与 draft，候选资源暴露退回理由/时间/action；详情页展示理由并预填 AI 重写反馈，手动修改会生成新版本、恢复待确认并允许创建新的审批 action。migration 013 会回填现有 rejected draft 对应的候选状态与理由。
+- 退回闭环新鲜验证：后端 migration + draft/publication routes 15 passed；前端 ActionCenter、题目详情、题库与整理卡片 30 passed；`tsc --noEmit` 通过。
+- 定向验证：后端 `test_draft_routes.py` 7 passed；前端 ActionCenter、QuestionCatalog、DraftReview 26 passed；`tsc --noEmit` 与 `git diff --check` 通过。
+
+## 2026-07-18：候选题生成会话可靠跳转
+
+- 新增候选题原会话解析资源，区分可用、回收站、整理投影缺失和底层会话缺失；没有批量回填既有开发测试数据。
+- 题目详情按 candidate ID 解析原会话，可用会话直接按 ID 打开，不再受整理会话列表 50 条上限影响；回收站会话提供“恢复并打开”，缺失状态显示明确提示而非空白工作区。
+- 针对性验证：后端 curation session API 22 passed；前端 QuestionCatalog/QuestionDetailPanel 16 passed；production build 与 compileall 通过（仅保留既有 >500 kB chunk 提示）。
+
+## 2026-07-19：题目与 Session 生命周期解耦 ADR
+
+- 用户确认会话可归档或永久删除且不级联删除题目；题目增加单删、显式勾选批删和回收站；原会话不存在时创建轻量修订会话。
+- 新增 Accepted ADR `2026-07-19-question-session-lifecycle-decoupling.md`，比较三种方案并固定 Session、Question、Publication、Review Round 的状态所有权。
+- R2 权威 spec 已补生命周期与 `question.revise` 规则；task plan 新增阶段 13，并把实施排在最终浏览器验收之前。本次只记录设计，未修改业务代码或开发测试数据。
+
+## 2026-07-19：题目与 Session 生命周期解耦实施启动
+
+- 已确认权威 worktree 为 `.worktrees/r2-complete-review-agent`，保留现有未提交改动，不另开 worktree、不创建 subagent。
+- 新增四任务实施计划：持久化边界、领域/API、单题修订解析、Web 闭环与验收；当前进入 Task 1。
+- `ui-ux-pro-max` 只采用与既有产品一致的显式勾选、危险确认、加载反馈、44px 点击区和有界滚动约束，不替换现有品牌视觉。
+
+## 2026-07-19：题目与 Session 生命周期解耦业务实现
+
+- migration 014、领域 repository/application、API 和 `question.revise` Graph 接线完成；会话归档/永久删除与题目资产不再级联。
+- 题目库增加单题删除、checkbox 显式批删、逐项结果反馈和题目回收站；会话列表统一称为归档，永久删除只在回收站提供并明确保留题目。
+- 新增跨层测试验证 Session 永久删除后题目/血缘保留、缺失会话创建修订 Session、logical question 不变、draft 版本推进，以及删除幂等/列表排除/恢复/部分失败。
+- 定向证据：后端 runtime migration + agent routes + curation/API/catalog `41 passed`；前端 QuestionCatalog/QuestionDetailPanel/CurationSessionList `18 passed`；production build 通过，`git diff --check` 与 compileall 通过。
+- 最小浏览器验收：本机真实 51 道题显示独立 checkbox；勾选后出现“已选 1 道/批量删除”；1280px 和 390px 均 `clientWidth == scrollWidth`，console warning/error 为 0。未执行真实删除，避免修改用户当前测试数据；删除副作用由自动化跨层测试覆盖。

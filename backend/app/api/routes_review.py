@@ -20,6 +20,7 @@ from app.schemas.review import (
     AcceptedBulkPublicationResource,
     BulkPublicationPreflightResource,
     BulkPublicationResource,
+    CandidateOriginSessionResource,
     DiscussionSessionResource,
     QuestionBatchResource,
     QuestionCandidateResource,
@@ -35,6 +36,9 @@ from app.schemas.review import (
     UpdateQuestionCandidateCommand,
     UpdateQuestionCandidateNoteCommand,
     PublishQuestionCandidateCommand,
+    DeleteQuestionCandidateCommand,
+    BulkDeleteQuestionCandidatesCommand,
+    QuestionDeletionResultResource,
 )
 
 
@@ -251,6 +255,7 @@ async def list_question_candidates(
     source_id: Annotated[str | None, Query(alias="sourceId")] = None,
     candidate_status: Annotated[str | None, Query(alias="status")] = None,
     page: int = Query(default=1, ge=1),
+    deleted_only: Annotated[bool, Query(alias="deletedOnly")] = False,
     application: AgentApplication = Depends(get_agent_application),
 ):
     return await application.review(workspace_id).list_candidate_resources(
@@ -259,6 +264,7 @@ async def list_question_candidates(
         difficulty=difficulty,
         source_id=source_id,
         status=candidate_status,
+        deleted_only=deleted_only,
         limit=50,
         offset=(page - 1) * 50,
     )
@@ -274,6 +280,62 @@ async def get_question_candidate(
 ):
     review = application.locate_review_candidate(candidate_id)
     return await review.candidate_resource(candidate_id)
+
+
+@router.get(
+    "/question-candidates/{candidate_id}/origin-session",
+    response_model=CandidateOriginSessionResource,
+)
+async def get_question_candidate_origin_session(
+    candidate_id: str,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_review_candidate(candidate_id)
+    return await review.candidate_origin_session_resource(candidate_id)
+
+
+@router.post(
+    "/question-candidates/{candidate_id}/delete",
+    response_model=QuestionDeletionResultResource,
+)
+async def delete_question_candidate(
+    candidate_id: str,
+    command: DeleteQuestionCandidateCommand,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_review_candidate(candidate_id)
+    return review.delete_candidates(
+        ((candidate_id, command.expected_version),),
+        idempotency_key=command.idempotency_key,
+        reason=command.reason,
+    )
+
+
+@router.post(
+    "/question-candidates/bulk-delete",
+    response_model=QuestionDeletionResultResource,
+)
+async def bulk_delete_question_candidates(
+    command: BulkDeleteQuestionCandidatesCommand,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    return application.review(command.workspace_id).delete_candidates(
+        tuple((item.candidate_id, item.expected_version) for item in command.items),
+        idempotency_key=command.idempotency_key,
+        reason=command.reason,
+    )
+
+
+@router.post(
+    "/question-candidates/{candidate_id}/restore",
+    response_model=QuestionCandidateResource,
+)
+async def restore_question_candidate(
+    candidate_id: str,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_review_candidate(candidate_id)
+    return await review.restore_candidate(candidate_id)
 
 
 @router.patch(

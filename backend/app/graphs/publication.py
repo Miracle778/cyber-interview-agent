@@ -22,6 +22,12 @@ class KnowledgePublicationState(TypedDict, total=False):
 ActionRequester = Callable[..., Awaitable[PendingActionRecord]]
 
 
+def publication_action_key(
+    *, draft_id: str, draft_version: int, content_hash: str
+) -> str:
+    return f"knowledge.publish:{draft_id}:{draft_version}:{content_hash}"
+
+
 def create_publication_graph(*, request_action: ActionRequester, checkpointer):
     async def request_approval(state: KnowledgePublicationState):
         payload = {
@@ -36,9 +42,10 @@ def create_publication_graph(*, request_action: ActionRequester, checkpointer):
             payload=payload,
             preview={"title": state["title"], "markdown": state["markdown"]},
             editable_fields=("title", "markdown"),
-            idempotency_key=(
-                f"knowledge.publish:{state['draftId']}:"
-                f"{state['draftVersion']}:{state['contentHash']}"
+            idempotency_key=publication_action_key(
+                draft_id=state["draftId"],
+                draft_version=state["draftVersion"],
+                content_hash=state["contentHash"],
             ),
         )
         decision = interrupt({"actionId": action.id})

@@ -1,4 +1,5 @@
 import { apiGet, apiPatch, apiPost } from "../../shared/api/client";
+import type { PendingAction } from "../agent/hitlTypes";
 import type { KnowledgeDraft } from "./draftTypes";
 
 export interface UpdateKnowledgeDraftRequest {
@@ -11,6 +12,8 @@ export interface PublishDraftExecutionResource {
   sessionId: string;
   executionId: string;
   status: string;
+  action: PendingAction;
+  reused: boolean;
 }
 
 export function listDrafts(workspaceId: string): Promise<KnowledgeDraft[]> {

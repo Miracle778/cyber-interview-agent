@@ -25,6 +25,7 @@ from app.agents.factory import ModelOverride
 from app.application.session_service import (
     AgentSessionService,
     MessageRecord,
+    ProductRecordNotFoundError,
     ProductEventStream,
     ReasoningEffort,
 )
@@ -1365,18 +1366,21 @@ class ReviewApplication:
         source_refs: tuple[str, ...],
         rewrite_feedback: str | None,
         rewrite_of_batch_id: str | None,
+        revision_candidate_id: str | None = None,
+        revision_context: str | None = None,
     ):
         session = self.sessions.get(session_id)
         source_service = KnowledgeSourceService(
             self.workspace_root, workspace_id=self.workspace_id
         )
-        excerpts = []
-        for source_id in source_refs:
-            source = await source_service.get(source_id)
-            text = extract_text(self.workspace_root / source.stored_path)
-            excerpts.append(
-                f"{source.id}:{source.original_filename}\n{text[:20_000]}"
-            )
+        excerpts = [revision_context] if revision_context is not None else []
+        if revision_context is None:
+            for source_id in source_refs:
+                source = await source_service.get(source_id)
+                text = extract_text(self.workspace_root / source.stored_path)
+                excerpts.append(
+                    f"{source.id}:{source.original_filename}\n{text[:20_000]}"
+                )
         batch = self.repository.create_batch(
             workspace_id=self.workspace_id,
             session_id=session_id,
@@ -1404,6 +1408,7 @@ class ReviewApplication:
                     )
                 ],
                 "rewrite_feedback": rewrite_feedback,
+                "revisionCandidateId": revision_candidate_id,
             },
             project_input_message=False,
         )
@@ -1587,17 +1592,23 @@ class ReviewApplication:
         return {
             "id": candidate.id,
             "batch_id": candidate.batch_id,
-            "curation_session_id": batch.session_id,
+            "curation_session_id": batch.origin_session_id,
+            "live_curation_session_id": batch.session_id,
             "question": asdict(candidate.question),
             "source_refs": candidate.source_refs,
             "correction_note": candidate.correction_note,
             "review_note": candidate.review_note,
             "review_note_updated_at": candidate.review_note_updated_at,
+            "rejection_reason": candidate.rejection_reason,
+            "rejected_at": candidate.rejected_at,
+            "rejection_action_id": candidate.rejection_action_id,
             "duplicate_of_question_id": candidate.duplicate_of_question_id,
             "duplicate_question": (
                 None if duplicate is None else asdict(duplicate)
             ),
             "status": candidate.status,
+            "deleted_at": candidate.deleted_at,
+            "deletion_reason": candidate.deletion_reason,
             "draft": (
                 None
                 if draft is None
@@ -1614,6 +1625,62 @@ class ReviewApplication:
             "created_at": candidate.created_at,
             "updated_at": candidate.updated_at,
         }
+
+    async def candidate_origin_session_resource(
+        self, candidate_id: str
+    ) -> dict[str, Any]:
+        candidate = self.repository.get_candidate(candidate_id)
+        batch = self.repository.get_batch(candidate.batch_id)
+        if batch.workspace_id != self.workspace_id:
+            raise LookupError(candidate_id)
+        session_id = batch.session_id
+        if session_id is None:
+            return {
+                "status": "missing",
+                "session_id": batch.origin_session_id,
+                "session": None,
+            }
+        try:
+            session = self.sessions.repository.get_session(
+                session_id, include_deleted=True
+            )
+        except ProductRecordNotFoundError:
+            return {
+                "status": "missing",
+                "session_id": session_id,
+                "session": None,
+            }
+        try:
+            self.repository.get_curation_session(session_id)
+        except LookupError:
+            return {
+                "status": "projection_missing",
+                "session_id": session_id,
+                "session": None,
+            }
+        return {
+            "status": "recycled" if session.deleted_at is not None else "available",
+            "session_id": session_id,
+            "session": await self.curation_resource(session_id),
+        }
+
+    def delete_candidates(
+        self,
+        items: tuple[tuple[str, int | None], ...],
+        *,
+        idempotency_key: str,
+        reason: str = "",
+    ) -> dict[str, object]:
+        return self.repository.delete_candidates(
+            self.workspace_id,
+            items=items,
+            idempotency_key=idempotency_key,
+            reason=reason.strip(),
+        )
+
+    async def restore_candidate(self, candidate_id: str) -> dict[str, Any]:
+        self.repository.restore_candidate(self.workspace_id, candidate_id)
+        return await self.candidate_resource(candidate_id)
 
     async def update_candidate_review_note(
         self, candidate_id: str, *, note: str
@@ -1648,20 +1715,63 @@ class ReviewApplication:
         batch = self.repository.get_batch(candidate.batch_id)
         if batch.workspace_id != self.workspace_id:
             raise LookupError(candidate_id)
-        try:
-            curation = self.repository.get_curation_session(batch.session_id)
-        except LookupError:
-            self.repository.create_curation_session(
-                workspace_id=self.workspace_id,
-                session_id=batch.session_id,
-                source_refs=batch.source_refs,
-            )
-            curation = self.repository.get_curation_session(batch.session_id)
         clean_feedback = feedback.strip()
         if not clean_feedback:
             raise ValueError("feedback must not be empty")
+        session_id = batch.session_id
+        session = None
+        if session_id is not None:
+            try:
+                session = self.sessions.repository.get_session(
+                    session_id, include_deleted=True
+                )
+            except ProductRecordNotFoundError:
+                session = None
+        if session is None:
+            session = await self.sessions.create(
+                workspace_id=self.workspace_id,
+                kind="question.revise",
+                title=f"修订：{candidate.question.title}",
+                parent_session_id=None,
+            )
+            session_id = session.id
+            self.repository.create_curation_session(
+                workspace_id=self.workspace_id,
+                session_id=session_id,
+                source_refs=batch.source_refs,
+            )
+        else:
+            if session.deleted_at is not None:
+                self.sessions.restore(session.id)
+            try:
+                self.repository.get_curation_session(session_id)
+            except LookupError:
+                self.repository.create_curation_session(
+                    workspace_id=self.workspace_id,
+                    session_id=session_id,
+                    source_refs=batch.source_refs,
+                )
+        curation = self.repository.get_curation_session(session_id)
+        draft = None if candidate.draft_id is None else await self.drafts.get(candidate.draft_id)
+        revision_context = "\n".join(
+            (
+                "只修订下面这一道题；只返回一个候选，并保持 logical question 不变。",
+                f"candidate_id: {candidate.id}",
+                f"origin_session_id: {batch.origin_session_id}",
+                f"当前题目: {candidate.question.question_text}",
+                f"当前答案: {candidate.question.reference_answer}",
+                f"关键点: {'；'.join(candidate.question.key_points)}",
+                f"当前 Markdown:\n{'' if draft is None else draft.markdown}",
+                f"持久备注: {candidate.review_note}",
+                f"退回原因: {candidate.rejection_reason or ''}",
+                f"来源引用: {'；'.join(candidate.source_refs)}",
+                f"重复题关联: {candidate.duplicate_of_question_id or '无'}",
+                f"发布状态: {candidate.status}",
+                f"本次修改要求: {clean_feedback}",
+            )
+        )
         await self.timeline.append(
-            session_id=batch.session_id,
+            session_id=session_id,
             execution_id=None,
             role="user",
             message_kind="text",
@@ -1673,12 +1783,14 @@ class ReviewApplication:
             },
         )
         await self._start_curation_execution(
-            session_id=batch.session_id,
+            session_id=session_id,
             source_refs=curation.source_refs,
             rewrite_feedback=clean_feedback,
             rewrite_of_batch_id=candidate.batch_id,
+            revision_candidate_id=candidate.id,
+            revision_context=revision_context,
         )
-        return await self.curation_resource(batch.session_id)
+        return await self.curation_resource(session_id)
 
     async def update_candidate(
         self,
