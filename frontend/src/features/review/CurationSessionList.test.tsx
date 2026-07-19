@@ -37,7 +37,7 @@ describe("CurationSessionList", () => {
     const onOpenLibrary = vi.fn();
     render(<CurationSessionList sessions={[session("active", "waiting_for_command", 4, 1)]} candidateCount={4} publishedCount={1} onSelect={vi.fn()} onCreate={vi.fn()} onDelete={vi.fn()} onOpenLibrary={onOpenLibrary} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /累计候选/ }));
+    fireEvent.click(screen.getByRole("button", { name: /题目总数/ }));
     expect(onOpenLibrary).toHaveBeenLastCalledWith(null);
     fireEvent.click(screen.getByRole("button", { name: /已发布/ }));
     expect(onOpenLibrary).toHaveBeenLastCalledWith("published");

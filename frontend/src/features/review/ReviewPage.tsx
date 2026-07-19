@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, ArrowLeft, MoreHorizontal, Pause, StopCircle } from "lucide-react";
+import { AlertCircle, ArrowLeft, MoreHorizontal, RotateCcw, StopCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "../../shared/ui/Button";
@@ -7,9 +7,10 @@ import { toActionableError } from "../../shared/api/errorAdvice";
 import { ActionCenter } from "../agent/ActionCenter";
 import { useAgentEvents } from "../agent/useAgentEvents";
 import type { WorkspaceConfig } from "../settings/settingsApi";
-import { cancelReviewRound, createReviewDiscussion, createReviewRound, getReviewRound, listActiveQuestions, listReviewRounds, retryReviewEvaluation, skipReviewQuestion, submitReviewAnswer } from "./reviewApi";
+import { archiveReviewRound, cancelReviewRound, createReviewDiscussion, createReviewRound, getReviewRound, listActiveQuestions, listReviewRounds, restoreReviewRound, retryReviewEvaluation, retryReviewRound, skipReviewQuestion, submitReviewAnswer } from "./reviewApi";
 import { QuestionCatalog } from "./QuestionCatalog";
 import { ReviewConversation } from "./ReviewConversation";
+import { ReviewDiscussion } from "./ReviewDiscussion";
 import { ReviewLanding } from "./ReviewLanding";
 import { ReviewResults } from "./ReviewResults";
 import { ReviewRuntimePanel } from "./ReviewRuntimePanel";
@@ -42,6 +43,15 @@ function ReviewQuestionStepper({ round }: { round: ReviewRound }) {
   </nav>;
 }
 
+function ReviewTerminalState({ round, recovering, onRecover }: { round: ReviewRound; recovering: boolean; onRecover: () => void }) {
+  const recoverable = round.executionStatus === "failed" && !["completed", "cancelled", "failed"].includes(round.status);
+  return <section className={`review-terminal-state${recoverable ? " is-recoverable" : ""}`} role="status" aria-label={recoverable ? "复习轮次需要恢复" : "复习轮次已结束"}>
+    <span aria-hidden="true">{recoverable ? <RotateCcw size={22} /> : <StopCircle size={22} />}</span>
+    <div><h2>{recoverable ? "本轮执行中断" : "本轮已结束"}</h2><p>{recoverable ? "回答和评价记录都已保留，可以从中断位置继续。" : round.attempts.length ? `已保留 ${round.attempts.length} 道题的回答与评价记录。` : "本轮尚未产生回答记录。"}</p></div>
+    {recoverable ? <Button loading={recovering} onClick={onRecover}><RotateCcw size={16} />恢复本轮</Button> : null}
+  </section>;
+}
+
 export function ReviewPage({ workspace }: ReviewPageProps) {
   const client = useQueryClient();
   const workspaceId = workspace?.id ?? "";
@@ -49,6 +59,7 @@ export function ReviewPage({ workspace }: ReviewPageProps) {
   const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [optimisticMessage, setOptimisticMessage] = useState<ReviewTimelineMessage | null>(null);
+  const [discussionSessionId, setDiscussionSessionId] = useState<string | null>(null);
   const focusedWorkspaceRef = useRef<HTMLElement | null>(null);
   const rounds = useQuery({ queryKey: ["review-rounds", workspaceId], queryFn: () => listReviewRounds(workspaceId), enabled: Boolean(workspace) });
   const questions = useQuery({ queryKey: ["active-review-questions", workspaceId], queryFn: () => listActiveQuestions(workspaceId), enabled: Boolean(workspace) });
@@ -71,11 +82,14 @@ export function ReviewPage({ workspace }: ReviewPageProps) {
     onError: () => setOptimisticMessage(null),
   });
   const retry = useMutation({ mutationFn: () => retryReviewEvaluation(round.data!.id, commandId("retry")), onSuccess: async (receipt) => invalidateRound(receipt.roundId) });
+  const recover = useMutation({ mutationFn: () => retryReviewRound(round.data!.id), onSuccess: async (value) => invalidateRound(value.id) });
   const skip = useMutation({ mutationFn: () => skipReviewQuestion(round.data!, commandId("skip")), onSuccess: async (value) => invalidateRound(value.id) });
   const cancel = useMutation({ mutationFn: () => cancelReviewRound(round.data!.id), onSuccess: async (value) => invalidateRound(value.id) });
-  const discuss = useMutation({ mutationFn: (ordinal: number) => createReviewDiscussion(round.data!.id, ordinal, "请结合本次回答解释遗漏点，并给一个迁移应用示例。") });
-  const busy = create.isPending || answer.isPending || skip.isPending || cancel.isPending || retry.isPending;
-  const caught = create.error ?? answer.error ?? retry.error ?? skip.error ?? cancel.error ?? discuss.error ?? rounds.error ?? round.error;
+  const discuss = useMutation({ mutationFn: (ordinal: number) => createReviewDiscussion(round.data!.id, ordinal, "请结合本次回答解释遗漏点，并给一个迁移应用示例。"), onSuccess: (session) => setDiscussionSessionId(session.id) });
+  const archive = useMutation({ mutationFn: (value: ReviewRound) => archiveReviewRound(value.sessionId), onSuccess: () => client.invalidateQueries({ queryKey: ["review-rounds", workspaceId] }) });
+  const restore = useMutation({ mutationFn: (value: ReviewRound) => restoreReviewRound(value.sessionId), onSuccess: () => client.invalidateQueries({ queryKey: ["review-rounds", workspaceId] }) });
+  const busy = create.isPending || answer.isPending || skip.isPending || cancel.isPending || retry.isPending || recover.isPending;
+  const caught = create.error ?? answer.error ?? retry.error ?? recover.error ?? skip.error ?? cancel.error ?? discuss.error ?? archive.error ?? restore.error ?? rounds.error ?? round.error;
   const error = caught ? toActionableError(caught, "复习操作失败") : null;
 
   if (!workspace) return <div className="empty-state"><p>请先初始化工作区</p><Link className="text-link" to="/settings">前往设置</Link></div>;
@@ -89,18 +103,18 @@ export function ReviewPage({ workspace }: ReviewPageProps) {
 
   const showRoundMenu = round.data && !["completed", "cancelled", "failed"].includes(round.data.status);
   const toolbarActions = selectedRoundId || creating ? <>
-    <Button variant="ghost" className="review-back" onClick={() => { setSelectedRoundId(null); setCreating(false); }}><ArrowLeft size={16} />返回历史</Button>
-    {showRoundMenu ? <details className="review-round-menu"><summary aria-label="更多轮次操作"><MoreHorizontal size={19} /></summary><div><button type="button" onClick={() => setSelectedRoundId(null)}><Pause size={16} />稍后继续</button><button type="button" className="is-danger" disabled={busy} onClick={() => cancel.mutate()}><StopCircle size={16} />结束本轮</button></div></details> : null}
+    <Button variant="ghost" className="review-back" onClick={() => { setSelectedRoundId(null); setCreating(false); setDiscussionSessionId(null); }}><ArrowLeft size={16} />返回历史</Button>
+    {showRoundMenu ? <details className="review-round-menu"><summary aria-label="更多轮次操作"><MoreHorizontal size={19} /></summary><div><button type="button" className="is-danger" disabled={busy} onClick={() => cancel.mutate()}><StopCircle size={16} />结束本轮</button></div></details> : null}
   </> : null;
 
-  return <ReviewShell section={section} actions={toolbarActions} onSectionChange={(value) => { setSection(value); setSelectedRoundId(null); setCreating(false); }}>
-    {section === "catalog" ? <QuestionCatalog workspace={workspace} /> : !selectedRoundId && !creating ? <ReviewLanding rounds={rounds.data ?? []} questionCount={questions.isPending ? null : questions.data?.length ?? 0} onCreate={() => setCreating(true)} onOpen={setSelectedRoundId} onCatalog={() => setSection("catalog")} /> : <section className="review-workbench" aria-label="复习工作台">
+  return <ReviewShell section={section} actions={toolbarActions} onSectionChange={(value) => { setSection(value); setSelectedRoundId(null); setCreating(false); setDiscussionSessionId(null); }}>
+    {section === "catalog" ? <QuestionCatalog workspace={workspace} /> : !selectedRoundId && !creating ? <ReviewLanding rounds={rounds.data ?? []} questionCount={questions.isPending ? null : questions.data?.length ?? 0} onCreate={() => setCreating(true)} onOpen={(id) => { setSelectedRoundId(id); setDiscussionSessionId(null); }} onCatalog={() => setSection("catalog")} onArchive={(value) => archive.mutate(value)} onRestore={(value) => restore.mutate(value)} /> : <section className="review-workbench" aria-label="复习工作台">
       <main className="review-workbench__main">
         {creating ? <ReviewSetup workspace={workspace} questions={questions.data ?? []} onCreate={(request) => create.mutate(request)} onCatalog={() => { setSection("catalog"); setCreating(false); }} busy={create.isPending} /> : null}
         {round.isPending && selectedRoundId ? <p className="status-note" role="status">正在恢复复习轮次…</p> : null}
-        {round.data && ["waiting_for_input", "running"].includes(round.data.status) ? <><ReviewQuestionStepper round={round.data} /><section ref={focusedWorkspaceRef} className="review-focus-workspace"><ReviewConversation round={round.data} optimisticMessage={optimisticMessage} busy={busy} onSubmit={submitAnswer} onSkip={() => skip.mutate()} onRetry={() => retry.mutate()} /><div className="review-insight-column"><ReviewRuntimePanel round={round.data} />{round.data.executionStatus === "waiting_for_approval" ? <ActionCenter workspaceId={workspace.id} showDiagnostic={false} actionType="knowledge.publish" watchExecutionId={round.data.executionId} onResolved={() => void invalidateRound(round.data!.id)} /> : null}</div></section></> : null}
-        {round.data && ["report_pending", "completed"].includes(round.data.status) ? <ReviewResults round={round.data} onDiscuss={(ordinal) => discuss.mutate(ordinal)} /> : null}
-        {error || stream.executionError ? <div className="error-banner" role="alert"><AlertCircle size={16} /><span>错误：{error?.message ?? stream.executionError?.message}</span><span>{error?.advice ?? "刷新轮次后重试"}</span></div> : null}
+        {round.data && ["waiting_for_input", "running"].includes(round.data.status) && round.data.executionStatus !== "failed" ? <><ReviewQuestionStepper round={round.data} /><section ref={focusedWorkspaceRef} className="review-focus-workspace"><ReviewConversation round={round.data} optimisticMessage={optimisticMessage} busy={busy} onSubmit={submitAnswer} onSkip={() => skip.mutate()} onRetry={() => retry.mutate()} /><div className="review-insight-column"><ReviewRuntimePanel round={round.data} />{round.data.executionStatus === "waiting_for_approval" ? <ActionCenter workspaceId={workspace.id} showDiagnostic={false} actionType="knowledge.publish" watchExecutionId={round.data.executionId} onResolved={() => void invalidateRound(round.data!.id)} /> : null}</div></section></> : null}
+        {discussionSessionId ? <ReviewDiscussion sessionId={discussionSessionId} onClose={() => setDiscussionSessionId(null)} /> : <>{round.data && (round.data.executionStatus === "failed" || ["cancelled", "failed"].includes(round.data.status)) ? <><ReviewTerminalState round={round.data} recovering={recover.isPending} onRecover={() => recover.mutate()} />{round.data.attempts.length ? <ReviewResults round={round.data} onDiscuss={(ordinal) => discuss.mutate(ordinal)} /> : null}</> : null}{round.data && ["report_pending", "completed"].includes(round.data.status) ? <ReviewResults round={round.data} onDiscuss={(ordinal) => discuss.mutate(ordinal)} /> : null}</>}
+        {error || (stream.executionError && round.data?.executionStatus !== "failed") ? <div className="error-banner" role="alert"><AlertCircle size={16} /><span>错误：{error?.message ?? stream.executionError?.message}</span><span>{error?.advice ?? "刷新轮次后重试"}</span></div> : null}
       </main>
     </section>}
   </ReviewShell>;

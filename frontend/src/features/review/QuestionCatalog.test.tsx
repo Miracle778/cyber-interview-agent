@@ -165,7 +165,9 @@ describe("QuestionCatalog", () => {
 
   it("uses the same global candidate facts for overview counts and library results", async () => {
     const candidate = (id: string, status: "published" | "review_pending") => ({ id, batchId: "b1", curationSessionId: "cs1", sourceRefs: ["s1"], correctionNote: "", reviewNote: "", reviewNoteUpdatedAt: null, duplicateOfQuestionId: null, duplicateQuestion: null, status, draft: null, createdAt: "now", updatedAt: "now", question: { questionId: `q-${id}`, documentId: `d-${id}`, contentHash: `h-${id}`, title: `题目 ${id}`, questionText: `题目 ${id}`, referenceAnswer: "答案", topics: ["database"], difficulty: "medium", keyPoints: [], followUps: [] } });
-    const allCandidates = [candidate("1", "published"), candidate("2", "published"), candidate("3", "review_pending")];
+    const published = candidate("1", "published");
+    const historicalVersion = { ...candidate("2", "published"), duplicateOfQuestionId: published.question.questionId };
+    const allCandidates = [published, historicalVersion, candidate("3", "review_pending")];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.includes("/api/knowledge/sources")) return Response.json([]);
@@ -180,14 +182,19 @@ describe("QuestionCatalog", () => {
     });
 
     render(<QuestionCatalog workspace={workspace} />, { wrapper });
+    const totalSummary = await screen.findByRole("button", { name: /题目总数/ });
+    await waitFor(() => expect(totalSummary).toHaveTextContent("2"));
     const publishedSummary = await screen.findByRole("button", { name: /已发布/ });
-    await waitFor(() => expect(publishedSummary).toHaveTextContent("2"));
-    fireEvent.click(publishedSummary);
-    expect(await screen.findByRole("button", { name: "已入库 2" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("region", { name: "题目结果" })).toHaveTextContent("2 道逻辑题目");
-    const topic = screen.getByRole("button", { name: "database 2" });
-    fireEvent.click(topic);
+    await waitFor(() => expect(publishedSummary).toHaveTextContent("1"));
+    fireEvent.click(totalSummary);
     await waitFor(() => expect(screen.getByRole("region", { name: "题目结果" })).toHaveTextContent("2 道逻辑题目"));
+    fireEvent.click(screen.getByRole("button", { name: "返回整理会话" }));
+    fireEvent.click(screen.getByRole("button", { name: /已发布/ }));
+    expect(await screen.findByRole("button", { name: "已入库 1" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("region", { name: "题目结果" })).toHaveTextContent("1 道逻辑题目");
+    const topic = screen.getByRole("button", { name: "database 1" });
+    fireEvent.click(topic);
+    await waitFor(() => expect(screen.getByRole("region", { name: "题目结果" })).toHaveTextContent("1 道逻辑题目"));
     expect(screen.getByRole("region", { name: "题目结果" })).toHaveTextContent("database主题");
   });
 

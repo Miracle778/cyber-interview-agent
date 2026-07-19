@@ -1344,7 +1344,8 @@ class ReviewRepository:
 
     def get_round(self, round_id: str) -> ReviewRoundRecord:
         row = self._connection.execute(
-            "SELECT * FROM review_rounds WHERE id = ?", (round_id,)
+            "SELECT r.*, s.deleted_at AS archived_at FROM review_rounds r "
+            "JOIN agent_sessions s ON s.id = r.session_id WHERE r.id = ?", (round_id,)
         ).fetchone()
         if row is None:
             raise ReviewRoundNotFoundError(round_id)
@@ -1352,7 +1353,8 @@ class ReviewRepository:
 
     def get_round_by_session(self, session_id: str) -> ReviewRoundRecord:
         row = self._connection.execute(
-            "SELECT * FROM review_rounds WHERE session_id = ?", (session_id,)
+            "SELECT r.*, s.deleted_at AS archived_at FROM review_rounds r "
+            "JOIN agent_sessions s ON s.id = r.session_id WHERE r.session_id = ?", (session_id,)
         ).fetchone()
         if row is None:
             raise ReviewRoundNotFoundError(session_id)
@@ -1360,8 +1362,9 @@ class ReviewRepository:
 
     def list_rounds(self, workspace_id: str) -> tuple[ReviewRoundRecord, ...]:
         rows = self._connection.execute(
-            "SELECT * FROM review_rounds WHERE workspace_id = ? "
-            "ORDER BY updated_at DESC, rowid DESC",
+            "SELECT r.*, s.deleted_at AS archived_at FROM review_rounds r "
+            "JOIN agent_sessions s ON s.id = r.session_id "
+            "WHERE r.workspace_id = ? ORDER BY r.updated_at DESC, r.rowid DESC",
             (workspace_id,),
         ).fetchall()
         return tuple(self._round_record(row) for row in rows)
@@ -1431,6 +1434,13 @@ class ReviewRepository:
         if row is None:
             raise LookupError(request_id)
         return self._input_request_record(row)
+
+    def get_input_receipt(self, request_id: str) -> ReviewInputReceipt | None:
+        row = self._connection.execute(
+            "SELECT * FROM review_input_receipts WHERE input_request_id = ?",
+            (request_id,),
+        ).fetchone()
+        return None if row is None else self._input_receipt(row)
 
     def resolve_input(
         self,
@@ -1768,6 +1778,20 @@ class ReviewRepository:
             )
             if cursor.rowcount != 1:
                 raise ReviewConflictError("attempt is not awaiting evaluation")
+        return self.get_attempt(attempt_id)
+
+    def complete_attempt_without_follow_up(
+        self, attempt_id: str
+    ) -> ReviewAttemptRecord:
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_attempts SET status = 'completed', "
+                "updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND status = 'waiting_for_follow_up'",
+                (attempt_id,),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError("attempt is not waiting for follow-up")
         return self.get_attempt(attempt_id)
 
     def retry_attempt_evaluation(
@@ -2281,6 +2305,7 @@ class ReviewRepository:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             completed_at=row["completed_at"],
+            archived_at=row["archived_at"],
         )
 
     @staticmethod

@@ -523,6 +523,22 @@ class AgentExecutionService:
         )
         self._spawn(execution.id, graph_input=None)
 
+    async def retry_failed_review_round(self, execution_id: str) -> ExecutionRecord:
+        execution = self._repository.transition_execution(
+            execution_id,
+            expected=("failed",),
+            target="running",
+            increment_resume=True,
+        )
+        await self._events.publish(
+            execution.session_id,
+            execution.id,
+            "execution.started",
+            {"executionId": execution.id, "resumed": True, "recovery": True},
+        )
+        self._spawn(execution.id, graph_input=None)
+        return execution
+
     def _round_model_override(self, session_id: str) -> ModelOverride:
         if self._review_repository is None:
             raise RuntimeError("review model override is not configured")
@@ -1472,7 +1488,7 @@ class AgentExecutionService:
 
 
 def _user_content(input: dict[str, Any]) -> str:
-    for key in ("userAnswer", "user_answer", "text"):
+    for key in ("userAnswer", "user_answer", "text", "message"):
         value = input.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()

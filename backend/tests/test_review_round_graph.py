@@ -419,3 +419,97 @@ async def test_review_round_skip_persists_without_model_evaluation(
     assert attempts[0].evaluation is None
     assert agents.evaluations == []
     connection.close()
+
+
+@pytest.mark.asyncio
+async def test_skipping_follow_up_keeps_first_evaluation_and_advances(
+    tmp_path: Path,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+    product = ProductRepository(connection)
+    product.create_session(
+        workspace_id="w1", kind="review.round", title="Round", session_id="s1"
+    )
+    product.create_execution("s1", input={}, model_bindings={}, execution_id="r1")
+    repository = ReviewRepository(connection)
+    repository.create_round(
+        workspace_id="w1",
+        session_id="s1",
+        execution_id="r1",
+        settings=ReviewRoundSettings(
+            topics=(), difficulties=("medium",), mode="random-mixed",
+            question_count=2, allow_follow_up=True, seed=1,
+            answer_model_id="model-1", reasoning_effort="none",
+        ),
+        question_snapshots=(_round_question("q1"), _round_question("q2")),
+        mastery_before=MasteryProjection("w1", 0, (), ()),
+        round_id="round-1",
+    )
+    agents = SequencedRoundAgents()
+
+    async def drafts(**_values):
+        raise AssertionError("reports should not be generated yet")
+
+    async def action(_draft):
+        raise AssertionError("publication should not be requested yet")
+
+    graph = create_review_round_graph(
+        agents,
+        repository=repository,
+        create_report_drafts=drafts,
+        request_publication_action=action,
+        checkpointer=InMemorySaver(),
+    )
+    config = {"configurable": {"thread_id": "s1"}}
+    first = await graph.ainvoke(
+        {"round_id": "round-1"}, config, context=_context()
+    )
+    answer_request = first["__interrupt__"][0].value
+    product.transition_execution(
+        "r1", expected=("running",), target="waiting_for_input"
+    )
+    repository.accept_review_answer(
+        request_id=answer_request["inputRequestId"],
+        expected_version=answer_request["version"],
+        idempotency_key="answer-q1",
+        value="answer 1",
+    )
+    follow_up = await graph.ainvoke(
+        Command(
+            resume={
+                "inputRequestId": answer_request["inputRequestId"],
+                "value": "answer 1",
+                "receiptId": "answer-q1",
+            }
+        ),
+        config,
+        context=_context(),
+    )
+    follow_up_request = follow_up["__interrupt__"][0].value
+    repository.resolve_input(
+        follow_up_request["inputRequestId"],
+        idempotency_key="skip-follow-up-q1",
+        value="__skip__",
+        receipt={"accepted": True, "operation": "skip"},
+    )
+
+    second = await graph.ainvoke(
+        Command(
+            resume={
+                "inputRequestId": follow_up_request["inputRequestId"],
+                "operation": "skip",
+                "value": "",
+                "receiptId": "skip-follow-up-q1",
+            }
+        ),
+        config,
+        context=_context(),
+    )
+
+    assert second["__interrupt__"][0].value["ordinal"] == 2
+    attempt = repository.list_attempts("round-1")[0]
+    assert attempt.status == "completed"
+    assert attempt.evaluation is not None
+    assert attempt.follow_up_answer is None
+    assert len(agents.evaluations) == 1
+    connection.close()

@@ -371,6 +371,30 @@ def test_round_persists_frozen_question_snapshots(tmp_path: Path) -> None:
     connection.close()
 
 
+def test_round_list_projects_session_archive_state(tmp_path: Path) -> None:
+    connection = _connection(tmp_path)
+    repository = ReviewRepository(connection)
+    repository.create_round(
+        workspace_id="w1",
+        session_id="s1",
+        execution_id="r1",
+        settings=_settings(),
+        question_snapshots=(_snapshot(),),
+        mastery_before=_mastery(),
+        round_id="round-1",
+    )
+    connection.execute(
+        "UPDATE agent_sessions SET deleted_at = '2026-07-19 10:00:00' WHERE id = 's1'"
+    )
+    connection.commit()
+
+    rounds = repository.list_rounds("w1")
+
+    assert len(rounds) == 1
+    assert rounds[0].archived_at == "2026-07-19 10:00:00"
+    connection.close()
+
+
 def test_input_resolution_is_idempotent_for_the_same_key(
     tmp_path: Path,
 ) -> None:

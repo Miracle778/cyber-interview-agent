@@ -35,6 +35,7 @@ class ReviewRoundState(TypedDict, total=False):
     current_answer: str
     current_evaluation: dict
     current_follow_up: str
+    follow_up_skipped: bool
     skipped: bool
     attempt_ids: list[str]
     report_draft_ids: list[str]
@@ -123,11 +124,25 @@ def create_review_round_graph(
     def after_answer(state: ReviewRoundState) -> str:
         return "persist_attempt" if state.get("skipped") else "evaluate_answer"
 
+    def follow_up_was_skipped(state: ReviewRoundState) -> bool:
+        if state.get("follow_up_skipped"):
+            return True
+        request = state.get("current_input_request", {})
+        if request.get("kind") != "follow_up" or not request.get("id"):
+            return False
+        receipt = repository.get_input_receipt(str(request["id"]))
+        return bool(receipt and receipt.receipt.get("operation") == "skip")
+
     async def evaluate_answer(
         state: ReviewRoundState,
         config: RunnableConfig,
         runtime: Runtime[AgentContext],
     ) -> dict[str, Any]:
+        if follow_up_was_skipped(state):
+            return {
+                "current_evaluation": state["current_evaluation"],
+                "follow_up_skipped": True,
+            }
         round_record = repository.get_round(state["round_id"])
         question = round_record.question_snapshots[state["current_index"]]
         evaluation = await agents.evaluate(
@@ -168,7 +183,11 @@ def create_review_round_graph(
         return {
             "current_input_request": asdict(request),
             "current_follow_up": str(value["value"]),
+            "follow_up_skipped": value.get("operation") == "skip",
         }
+
+    def after_follow_up(state: ReviewRoundState) -> str:
+        return "persist_attempt" if state.get("follow_up_skipped") else "evaluate_answer"
 
     async def persist_attempt(state: ReviewRoundState) -> dict[str, Any]:
         round_record = repository.get_round(state["round_id"])
@@ -199,6 +218,15 @@ def create_review_round_graph(
                 attempt_id=identifier,
             )
             attempt_status = "completed"
+        elif follow_up_was_skipped(state):
+            attempt = next(
+                item
+                for item in repository.list_attempts(round_record.id)
+                if item.ordinal == ordinal
+            )
+            completed = repository.complete_attempt_without_follow_up(attempt.id)
+            attempt_id = completed.id
+            attempt_status = completed.status
         else:
             attempt = next(
                 item
@@ -252,6 +280,7 @@ def create_review_round_graph(
             "current_answer": "",
             "current_evaluation": {},
             "current_follow_up": "",
+            "follow_up_skipped": False,
             "skipped": False,
             "attempt_status": "",
             "status": status,
@@ -351,7 +380,7 @@ def create_review_round_graph(
     graph.add_edge("load_round", "request_answer")
     graph.add_conditional_edges("request_answer", after_answer)
     graph.add_edge("evaluate_answer", "persist_attempt")
-    graph.add_edge("request_follow_up", "evaluate_answer")
+    graph.add_conditional_edges("request_follow_up", after_follow_up)
     graph.add_conditional_edges("persist_attempt", after_persist_attempt)
     graph.add_conditional_edges("advance", after_advance)
     graph.add_edge("generate_reports", "save_report_drafts")

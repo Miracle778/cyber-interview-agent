@@ -448,6 +448,7 @@ class ReviewRoundResource(ReviewModel):
     created_at: str
     updated_at: str
     completed_at: str | None
+    archived_at: str | None
 
 
 class DiscussionSessionResource(ReviewModel):

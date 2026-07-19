@@ -2024,6 +2024,15 @@ class ReviewApplication:
         )
         return receipt
 
+    async def retry_round(self, round_id: str):
+        round_record = self.repository.get_round(round_id)
+        if round_record.status in {"completed", "cancelled", "failed"}:
+            raise ReviewConflictError("round is already terminal")
+        if round_record.execution_id is None:
+            raise ReviewConflictError("round has no execution")
+        await self.executions.retry_failed_review_round(round_record.execution_id)
+        return self.repository.get_round(round_id)
+
     async def skip(
         self, round_id: str, *, request_id: str, version: int, idempotency_key: str
     ):
@@ -2081,9 +2090,8 @@ class ReviewApplication:
                 "message": message,
                 "parent_round_id": round_id,
             },
-            project_input_message=False,
+            project_input_message=True,
         )
-        await self.executions.wait(execution.id)
         return session
 
     async def round_resource(self, round_id: str) -> dict[str, Any]:
@@ -2158,6 +2166,7 @@ class ReviewApplication:
             "created_at": round_record.created_at,
             "updated_at": round_record.updated_at,
             "completed_at": round_record.completed_at,
+            "archived_at": round_record.archived_at,
         }
 
     async def list_round_resources(self) -> tuple[dict[str, Any], ...]:

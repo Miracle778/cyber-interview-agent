@@ -46,8 +46,9 @@ function activeQuestions(count: number): ActiveQuestion[] {
 }
 
 function mockApi(rounds: ReviewRound[], questions: ActiveQuestion[] = []) {
-  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
+    if (url === "/api/review/rounds/round-1/retry" && init?.method === "POST") return Response.json({ ...rounds[0], executionStatus: "running" }, { status: 202 });
     if (url.includes("/api/review/rounds?")) return Response.json(rounds);
     if (url === "/api/review/rounds/round-1") return Response.json(rounds[0]);
     if (url.includes("/api/review/questions?")) return Response.json(questions);
@@ -103,7 +104,27 @@ describe("R2 ReviewPage", () => {
     await screen.findByRole("heading", { name: "复习历史" });
     fireEvent.click(await screen.findByRole("button", { name: /2 题/ }));
     expect(await screen.findByText("本轮复习结果")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "复习报告" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "会话回放" })).toBeInTheDocument();
     expect(screen.queryByText("创建复习轮次")).toBeNull();
+  });
+
+  it("shows a recovery action instead of a broken active conversation", async () => {
+    const failed = { ...waitingRound, executionStatus: "failed", currentInput: null } as ReviewRound;
+    const fetch = mockApi([failed]);
+    render(<ReviewPage workspace={workspace} />, { wrapper });
+    fireEvent.click(await screen.findByRole("button", { name: /2 题/ }));
+    expect(await screen.findByRole("status", { name: "复习轮次需要恢复" })).toHaveTextContent("回答和评价记录都已保留");
+    fireEvent.click(screen.getByRole("button", { name: "恢复本轮" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/review/rounds/round-1/retry", expect.objectContaining({ method: "POST" })));
+  });
+
+  it("shows an explicit ended state for an empty cancelled round", async () => {
+    const ended = { ...waitingRound, status: "cancelled", executionStatus: "cancelled", currentQuestion: null, currentInput: null } as ReviewRound;
+    mockApi([ended]);
+    render(<ReviewPage workspace={workspace} />, { wrapper });
+    fireEvent.click(await screen.findByRole("button", { name: /2 题/ }));
+    expect(await screen.findByRole("status", { name: "复习轮次已结束" })).toHaveTextContent("尚未产生回答记录");
   });
 
   it("opens and closes creation as a distinct panel", async () => {

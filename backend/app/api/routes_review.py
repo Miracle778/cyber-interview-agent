@@ -527,6 +527,20 @@ async def retry_review_evaluation(
     return review.answer_receipt_resource(receipt)
 
 
+@router.post(
+    "/rounds/{round_id}/retry",
+    response_model=ReviewRoundResource,
+    status_code=202,
+)
+async def retry_review_round(
+    round_id: str,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_review_round(round_id)
+    await review.retry_round(round_id)
+    return await review.round_resource(round_id)
+
+
 @router.post("/rounds/{round_id}/skip", response_model=ReviewRoundResource)
 async def skip_review_question(
     round_id: str,

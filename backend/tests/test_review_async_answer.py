@@ -304,3 +304,76 @@ async def test_failed_evaluation_preserves_answer_and_retry_resumes_checkpoint(
         assert "private provider response" not in caplog.text
     finally:
         await application.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_round_execution_can_resume_its_checkpoint(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    agents = BlockingRoundAgents()
+    agents.release.set()
+
+    def graph_factory(kind, **dependencies):
+        assert kind == "review.round"
+        return create_review_round_graph(
+            agents,
+            repository=dependencies["review_repository"],
+            create_report_drafts=dependencies["create_report_drafts"],
+            request_publication_action=dependencies["request_publication_action"],
+            checkpointer=dependencies["checkpointer"],
+        )
+
+    application = AgentApplication(
+        workspace_resolver=lambda _workspace_id: workspace,
+        workspace_ids=lambda: ("w1",),
+        model_bindings=lambda _workspace_id: {},
+        graph_factory=graph_factory,
+    )
+    review = application.review("w1")
+    session = await review.sessions.create(
+        workspace_id="w1", kind="review.round", title="Recover round"
+    )
+    execution = await review.executions.prepare(
+        session, input={"roundId": "round-recover"}
+    )
+    review.repository.create_round(
+        workspace_id="w1", session_id=session.id, execution_id=execution.id,
+        settings=ReviewRoundSettings(
+            topics=(), difficulties=("medium",), mode="random-mixed",
+            question_count=1, allow_follow_up=False, seed=1,
+            answer_model_id="model-1", reasoning_effort="none",
+        ),
+        question_snapshots=(_question("q1"),),
+        mastery_before=MasteryProjection("w1", 0, (), ()),
+        round_id="round-recover",
+    )
+    review.executions.run_prepared(
+        execution, graph_input={"round_id": "round-recover"}
+    )
+    await review.executions.wait(execution.id)
+    review.sessions.repository.transition_execution(
+        execution.id,
+        expected=("waiting_for_input",),
+        target="failed",
+        error_code="agent_execution_failed",
+        error_message="Agent 执行失败",
+    )
+    api = FastAPI()
+    api.include_router(review_router)
+    api.dependency_overrides[get_agent_application] = lambda: application
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=api), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/review/rounds/round-recover/retry", json={}
+            )
+            assert response.status_code == 202, response.text
+            await application.wait_execution(execution.id)
+            restored = (await client.get(
+                "/api/review/rounds/round-recover"
+            )).json()
+            assert restored["executionStatus"] == "waiting_for_input"
+            assert restored["currentInput"]["kind"] == "answer"
+    finally:
+        await application.close()

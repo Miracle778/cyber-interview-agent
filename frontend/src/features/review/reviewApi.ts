@@ -14,6 +14,7 @@ import type {
   ReviewAnswerReceipt,
   ReviewRound,
 } from "./reviewTypes";
+import type { AgentSession } from "../agent/agentTypes";
 
 export function listCurationSessions(workspaceId: string, deletedOnly = false): Promise<CurationSession[]> {
   const query = new URLSearchParams({ workspaceId });
@@ -198,6 +199,10 @@ export function retryReviewEvaluation(roundId: string, idempotencyKey: string): 
   return apiPost(`/api/review/rounds/${roundId}/retry-evaluation`, { idempotencyKey });
 }
 
+export function retryReviewRound(roundId: string): Promise<ReviewRound> {
+  return apiPost(`/api/review/rounds/${roundId}/retry`, {});
+}
+
 export function skipReviewQuestion(round: ReviewRound, idempotencyKey: string): Promise<ReviewRound> {
   if (!round.currentInput) throw new Error("当前轮次没有待跳过输入");
   return apiPost(`/api/review/rounds/${round.id}/skip`, {
@@ -211,6 +216,14 @@ export function cancelReviewRound(id: string): Promise<ReviewRound> {
   return apiPost(`/api/review/rounds/${id}/cancel`, {});
 }
 
-export function createReviewDiscussion(roundId: string, ordinal: number, message: string) {
+export function createReviewDiscussion(roundId: string, ordinal: number, message: string): Promise<AgentSession> {
   return apiPost(`/api/review/rounds/${roundId}/discussions`, { ordinal, message });
+}
+
+export function archiveReviewRound(sessionId: string): Promise<void> {
+  return apiDelete(`/api/agent/sessions/${sessionId}`);
+}
+
+export function restoreReviewRound(sessionId: string): Promise<unknown> {
+  return apiPost(`/api/agent/sessions/${sessionId}/restore`, {});
 }
