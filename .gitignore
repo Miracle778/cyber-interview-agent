@@ -1,13 +1,27 @@
 node_modules/
+/frontend/node_modules
 dist/
 .vite/
 test-results/
 playwright-report/
+.playwright-mcp/
+.design-qa/
+.design-audit/
 
 .venv/
 .pytest_cache/
 __pycache__/
 *.py[cod]
+
+# 本地配置、凭据与运行数据
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-*
+*.db
+*.log
+.cyber-interview-agent/
 
 .DS_Store
 .idea/

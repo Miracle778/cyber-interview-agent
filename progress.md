@@ -1,5 +1,12 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-07-20：主分支合并与远程发布准备
+
+- 产品分支重命名为 `feature/review-agent-workspace`，不再使用工具或阶段编号前缀。
+- 推送前扫描当前树和 `main..HEAD` 历史，未发现私钥、GitHub/OpenAI Token、运行数据库、日志或 `node_modules` 被跟踪；Langfuse `.env.example` 仅包含本地示例配置。
+- 11 张约 9.5 MB 的 `.design-qa/`、`.design-audit/` 本地截图已从当前 Git 索引移除但保留磁盘文件，并补充环境文件、数据库、日志和本地工具目录忽略规则。
+- 远程发布仍待恢复 GitHub 认证或提供可访问的私有仓库 URL；本机 `gh` 的 `Miracle778` token 已失效，SSH 访问同名仓库失败。
+
 ## 2026-07-19：Agent 代码结构整理第一阶段
 
 - 完成 Agent、Factory、模型解析器和 Middleware 文件的显式语义命名，所有生产代码与测试导入已迁移，旧含糊模块不再存在。

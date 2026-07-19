@@ -32,7 +32,7 @@
 
 ## 工作位置
 
-- 分支：`codex/r2-complete-review-agent`
+- 分支：`feature/review-agent-workspace`
 - worktree：`/Users/miracle778/Project/cyber-interview-agent-new/.worktrees/r2-complete-review-agent`
 - 基线：`codex/r2-ui-design-guidance@e3d64b3`
 - R2 设计：`docs/superpowers/specs/2026-07-13-r2-complete-review-agent-design.md`
