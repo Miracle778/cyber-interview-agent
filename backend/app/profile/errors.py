@@ -56,6 +56,10 @@ class ProfileClaimVersionConflict(ProfileDomainError):
     code = "profile_claim_version_conflict"
 
 
+class ProfileIdempotencyConflict(ProfileDomainError):
+    code = "profile_idempotency_conflict"
+
+
 class ProfileSnapshotChanged(ProfileDomainError):
     code = "profile_snapshot_changed"
 

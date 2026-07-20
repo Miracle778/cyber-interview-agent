@@ -7,7 +7,11 @@ import pytest
 from docx import Document
 from pypdf import PdfWriter
 
-from app.profile.errors import ProfileEncryptedDocument, ProfileParseError
+from app.profile.errors import (
+    ProfileEncryptedDocument,
+    ProfileNoExtractableText,
+    ProfileParseError,
+)
 from app.profile.parsers import ExtractedSegment, parse_document
 
 
@@ -126,11 +130,25 @@ def test_parse_text_normalizes_line_endings() -> None:
     assert "line1" in joined and "line2" in joined
 
 
-def test_parse_empty_text_returns_no_segments() -> None:
-    segments = parse_document(
-        file_name="empty.txt", mime_type="text/plain", content=b""
-    )
-    assert segments == ()
+@pytest.mark.parametrize(
+    ("file_name", "mime_type", "content"),
+    [
+        ("empty.txt", "text/plain", b""),
+        ("empty.md", "text/markdown", b"\n  \n"),
+        (
+            "empty.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            _make_docx(["", "  "]),
+        ),
+    ],
+)
+def test_parse_empty_document_raises_no_extractable_text(
+    file_name: str, mime_type: str, content: bytes
+) -> None:
+    with pytest.raises(ProfileNoExtractableText) as caught:
+        parse_document(file_name=file_name, mime_type=mime_type, content=content)
+
+    assert caught.value.code == "profile_no_extractable_text"
 
 
 def test_parse_corrupt_pdf_raises_redacted_error() -> None:

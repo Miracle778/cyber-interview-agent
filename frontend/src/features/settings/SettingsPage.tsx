@@ -108,7 +108,7 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
         id: "bindings",
         title: "模型用途绑定",
         status: bindingsQuery.isError ? "读取失败" : `${bindingCount}/6 已绑定`,
-        description: bindingsQuery.isError ? "进入模型服务查看绑定状态" : bindingCount === 6 ? "六种用途均已有模型" : "完成六种用途绑定后才能运行复习",
+        description: bindingsQuery.isError ? "进入模型服务查看绑定状态" : bindingCount === 6 ? "六种用途均已有模型" : "补齐对应用途后即可运行相关 Agent 功能",
         tone: bindingsQuery.isError ? "danger" : bindingCount === 6 ? "success" : "warning",
         section: "models",
       },

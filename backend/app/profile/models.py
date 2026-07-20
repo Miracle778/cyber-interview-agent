@@ -248,6 +248,7 @@ class DecideProposalCommand:
     decision: ProposalDecision
     expected_status: ProposalStatus = "pending"
     edited_value: dict[str, object] | None = None
+    idempotency_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,6 +288,7 @@ class CreatePublicationSelectionCommand:
     profile_version: str
     claim_version_ids: tuple[str, ...]
     excluded_sensitive_fields: tuple[str, ...] = ()
+    idempotency_key: str | None = None
 
 
 # --- Results ---

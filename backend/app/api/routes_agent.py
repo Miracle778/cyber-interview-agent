@@ -109,7 +109,10 @@ async def cancel_execution(
     execution_id: str,
     application: AgentApplication = Depends(get_agent_application),
 ) -> ExecutionRecord:
-    return await application.cancel_execution(execution_id)
+    try:
+        return await application.cancel_execution(execution_id)
+    except ProductRecordNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @router.get("/sessions/{session_id}/events")

@@ -302,3 +302,48 @@ async def test_hidden_ingest_session_excluded_from_generic_list_and_detail(
 
         detail = await client.get("/api/agent/sessions/hidden-ingest-1")
         assert detail.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_hidden_ingest_session_cannot_be_mutated_by_generic_routes(
+    api, application
+):
+    context = application._context("w1")
+    context.repository.create_session(
+        workspace_id="w1",
+        kind="profile.ingest",
+        title="hidden ingest",
+        session_id="hidden-ingest-2",
+        visibility="system",
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=api), base_url="http://test") as client:
+        deleted = await client.delete("/api/agent/sessions/hidden-ingest-2")
+        restored = await client.post("/api/agent/sessions/hidden-ingest-2/restore")
+
+    assert deleted.status_code == 404
+    assert restored.status_code == 404
+    assert context.repository.get_session("hidden-ingest-2").visibility == "system"
+
+
+@pytest.mark.asyncio
+async def test_hidden_ingest_execution_cannot_be_cancelled_by_generic_route(
+    api, application
+):
+    context = application._context("w1")
+    context.repository.create_session(
+        workspace_id="w1",
+        kind="profile.ingest",
+        title="hidden ingest",
+        session_id="hidden-ingest-3",
+        visibility="system",
+    )
+    execution = context.repository.create_execution(
+        "hidden-ingest-3", input={}, model_bindings={}
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=api), base_url="http://test") as client:
+        response = await client.post(f"/api/agent/executions/{execution.id}/cancel")
+
+    assert response.status_code == 404
+    assert context.repository.get_execution(execution.id).status == "running"

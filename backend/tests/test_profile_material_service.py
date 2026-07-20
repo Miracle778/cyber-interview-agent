@@ -4,7 +4,9 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from langgraph.graph import END, START, StateGraph
 
+from app.application.workspace_runtime import AgentApplication
 from app.application.session_service import (
     ProductRecordNotFoundError,
     ProductRepository,
@@ -13,6 +15,8 @@ from app.application.session_service import (
 from app.infrastructure.runtime_database import connect_runtime_database
 from app.knowledge.workspace_layout import initialize_knowledge_artifacts
 from app.profile.repository import ProfileRepository
+from app.profile.errors import ProfileMaterialNotFound
+from app.profile.models import CreateMaterialCommand
 from app.profile.service import MaterialUploadResult, ProfileService
 from app.profile.storage import MaterialStorage
 
@@ -81,6 +85,26 @@ def test_add_material_version_increments_monotonically(service: ProfileService) 
 
     assert second.version.version_number == 2
     assert second.version.material_id == first.material.id
+
+
+def test_material_service_rejects_cross_workspace_material_id(
+    service: ProfileService,
+) -> None:
+    foreign = service.repository.create_material(
+        CreateMaterialCommand(
+            workspace_id="w2",
+            type="resume",
+            title="Foreign resume",
+            primary_role="resume",
+        )
+    )
+
+    with pytest.raises(ProfileMaterialNotFound):
+        service.add_material_version(
+            material_id=foreign.id,
+            file_name="foreign.txt",
+            content=b"must not cross workspace",
+        )
 
 
 def test_duplicate_content_reuses_blob_but_creates_new_version(
@@ -186,3 +210,32 @@ def test_restart_recovers_material_and_hidden_session(
     assert session.visibility == "system"
     assert session.kind == "profile.ingest"
     reopened.close()
+
+
+@pytest.mark.asyncio
+async def test_workspace_runtime_initializes_profile_artifacts_before_upload(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "runtime-workspace"
+    root.mkdir()
+
+    def graph_factory(_kind: str, **_dependencies):
+        graph = StateGraph(dict)
+        graph.add_node("done", lambda state: state)
+        graph.add_edge(START, "done")
+        graph.add_edge("done", END)
+        return graph.compile()
+
+    application = AgentApplication(
+        workspace_resolver=lambda _workspace_id: root,
+        workspace_ids=lambda: ("w1",),
+        model_bindings=lambda _workspace_id: {},
+        graph_factory=graph_factory,
+    )
+    try:
+        result = application._context("w1").profile.upload_material(
+            file_name="resume.txt", content=b"hello", title="Resume"
+        )
+        assert result.version.storage_ref.startswith("blobs/")
+    finally:
+        await application.close()

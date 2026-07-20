@@ -9,6 +9,17 @@
 - 已确认规格的 Tool allowlist 是八个只读业务查询；Tool 产品 Event 只有 started/completed/failed，denied 作为 Audit 状态并投影为 failed + `tool_not_allowed`，原始参数和结果不进入 SSE。
 - 实施计划按 18 个顺序 TDD Task 拆成 R3.1-R3.4 四个检查点，状态真相保留在领域表，默认 AgentState/checkpoint 只持有可恢复编排状态。
 
+## 2026-07-20 R3 Task 1-5 实现审查修正
+
+- Profile Repository 的所有外部稳定 ID 都必须重新校验 Workspace 归属；仅验证 Evidence 属于当前材料版本不足以阻止 Proposal 指向另一 Workspace 的 Claim/ClaimVersion，PublicationSelection 也必须只接受当前 Workspace 的当前 confirmed ClaimVersion。
+- “同一 Workspace + primary_role 只有一个 active Material”需要数据库 partial unique index和 restore 前显式冲突检查双保险；archive、restore、切换当前版本同时推进 aggregate version。
+- Claim Proposal 创建、决定和 PublicationSelection 使用统一 `profile_idempotency_receipts`：同 key/同请求返回原结果，同 key/异请求返回稳定冲突，不能把“已经决定”误写成幂等。
+- 内容寻址存储不能自行判断数据库引用；`delete_ref` 必须要求调用方提供剩余引用数，有引用时拒绝 unlink。实际永久删除仍由后续 deletion service 先查询引用、再调用存储。
+- `profile.ingest` system Session 不仅要从 list/detail 隐藏，也必须从通用 delete/restore/cancel 定位器隔离；内部摄入服务继续通过 Workspace Runtime repository 访问。
+- Workspace Runtime 创建 ProfileService 前必须初始化 `artifacts/profile/materials/{blobs,text}`；测试 fixture 手工建目录不能替代生产初始化。
+- 空 PDF、DOCX、Markdown 和 text 使用同一 `profile_no_extractable_text` 语义；Action Plan status SQL 只能更新 schema 中真实存在的列，Item 执行必须校验 Claim expected version。
+- Claude 在 Task 3 提交中加入的两个非 R3 ADR 含未确认结论和过期路径，已从本分支移除；架构决定只保留用户确认且路径有效的正式 ADR。
+
 ## 2026-07-20 Agent State 与 Context Offload 边界
 
 - 自定义 `state_schema` 只用于单一 `create_agent` 循环中产生、被后续步骤消费、需随 checkpoint 恢复且不属于领域事实的可变工作状态；输入、输出、可信权限、业务状态和跨 Session 记忆分别归消息/response、`context_schema`、领域层和 Store。

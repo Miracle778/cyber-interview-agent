@@ -95,12 +95,24 @@ def test_write_text_normalizes_line_endings_without_rewriting_source(
 
 def test_delete_ref_removes_blob(storage: MaterialStorage) -> None:
     blob = storage.persist_upload(file_name="r.txt", content=b"temp")
-    storage.delete_ref(blob.storage_ref)
+    storage.delete_ref(blob.storage_ref, remaining_references=0)
     assert not storage.blob_exists(blob.storage_ref)
 
 
 def test_delete_ref_is_idempotent_for_missing(storage: MaterialStorage) -> None:
-    storage.delete_ref("blobs/ab/missing.txt")  # no error
+    storage.delete_ref("blobs/ab/missing.txt", remaining_references=0)  # no error
+
+
+def test_delete_ref_preserves_blob_still_used_by_another_version(
+    storage: MaterialStorage,
+) -> None:
+    first = storage.persist_upload(file_name="r.txt", content=b"shared")
+    second = storage.persist_upload(file_name="copy.txt", content=b"shared")
+
+    removed = storage.delete_ref(first.storage_ref, remaining_references=1)
+
+    assert removed is False
+    assert storage.read_blob(second.storage_ref) == b"shared"
 
 
 def test_storage_rejects_symlink_blob(

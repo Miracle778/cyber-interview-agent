@@ -11,7 +11,7 @@ from app.profile.errors import (
     ProfileClaimVersionConflict,
     ProfileEvidenceMismatch,
     ProfileMaterialNotFound,
-    ProfileProposalAlreadyDecided,
+    ProfileIdempotencyConflict,
     ProfileSnapshotChanged,
 )
 from app.profile.models import (
@@ -60,8 +60,9 @@ def _version(repository: ProfileRepository, material_id: str, sha: str = "a" * 6
 
 
 def _parsed_version(repository: ProfileRepository, version_id: str):
+    source_hash = repository.get_material_version(version_id).content_sha256
     return repository.mark_version_parsed(
-        version_id, text_path="text/v1.txt", content_sha256="b" * 64
+        version_id, text_path="text/v1.txt", content_sha256=source_hash
     )
 
 
@@ -100,6 +101,22 @@ def test_create_material_and_add_version_is_monotonic(repository: ProfileReposit
     assert [v.version_number for v in versions] == [2, 1]
 
 
+def test_mark_version_parsed_rejects_changed_input_hash(
+    repository: ProfileRepository,
+) -> None:
+    material = _material(repository)
+    version = _version(repository, material.id)
+
+    with pytest.raises(ProfileClaimVersionConflict):
+        repository.mark_version_parsed(
+            version.id,
+            text_path="text/v1.txt",
+            content_sha256="b" * 64,
+        )
+
+    assert repository.get_material_version(version.id).processing_status == "uploaded"
+
+
 def test_only_one_active_material_per_primary_role(repository: ProfileRepository) -> None:
     _material(repository, role="resume")
     with pytest.raises(Exception):
@@ -119,6 +136,19 @@ def test_archive_and_restore_material(repository: ProfileRepository) -> None:
     repository.restore_material(material.id)
     active = repository.list_materials(material.workspace_id)
     assert material.id in {m.id for m in active}
+
+
+def test_restore_refuses_second_active_material_for_same_workspace_role(
+    repository: ProfileRepository,
+) -> None:
+    archived = _material(repository, role="resume")
+    repository.archive_material(archived.id)
+    current = _material(repository, role="resume")
+
+    with pytest.raises(ProfileClaimVersionConflict):
+        repository.restore_material(archived.id)
+
+    assert {item.id for item in repository.list_materials("w1")} == {current.id}
 
 
 def test_replace_version_evidence_is_immutable_and_tombstones_previous(
@@ -182,6 +212,64 @@ def test_create_claim_proposals_validates_evidence_belongs_to_version(
     )
     assert len(proposals) == 1
     assert proposals[0].status == "pending"
+
+
+def test_create_claim_proposals_is_idempotent_for_same_extraction_receipt(
+    repository: ProfileRepository,
+) -> None:
+    material = _material(repository)
+    version = _version(repository, material.id)
+    _parsed_version(repository, version.id)
+    evidence = _evidence(repository, version.id)
+    specs = (
+        CreateClaimProposalSpec(
+            proposal_type="create",
+            proposed_value={"category": "skill", "text": "Python"},
+            reason="mentioned",
+            evidence_ids=(evidence.id,),
+        ),
+    )
+
+    first = repository.create_claim_proposals(
+        version.id, specs, idempotency_key="extract:1"
+    )
+    repeated = repository.create_claim_proposals(
+        version.id, specs, idempotency_key="extract:1"
+    )
+
+    assert repeated == first
+    assert len(repository.list_proposals("w1")) == 1
+
+
+def test_create_claim_proposals_rejects_reused_key_with_changed_request(
+    repository: ProfileRepository,
+) -> None:
+    material = _material(repository)
+    version = _version(repository, material.id)
+    repository.create_claim_proposals(
+        version.id,
+        (
+            CreateClaimProposalSpec(
+                proposal_type="create",
+                proposed_value={"category": "skill", "text": "Python"},
+                reason="first",
+            ),
+        ),
+        idempotency_key="extract:1",
+    )
+
+    with pytest.raises(ProfileIdempotencyConflict):
+        repository.create_claim_proposals(
+            version.id,
+            (
+                CreateClaimProposalSpec(
+                    proposal_type="create",
+                    proposed_value={"category": "skill", "text": "Go"},
+                    reason="changed",
+                ),
+            ),
+            idempotency_key="extract:1",
+        )
 
 
 def test_create_claim_proposals_rejects_foreign_evidence(
@@ -263,14 +351,54 @@ def test_decide_proposal_is_idempotent(repository: ProfileRepository) -> None:
         ),
     )[0]
 
+    command = DecideProposalCommand(
+        proposal_id=proposal.id,
+        decision="accepted",
+        expected_status="pending",
+        idempotency_key="decision:1",
+    )
+    first = repository.decide_proposal(
+        proposal.id,
+        command,
+    )
+    repeated = repository.decide_proposal(proposal.id, command)
+
+    assert repeated == first
+    assert len(repository.list_claim_versions(first.claim_id)) == 1
+
+
+def test_decide_proposal_rejects_reused_key_with_changed_decision(
+    repository: ProfileRepository,
+) -> None:
+    material = _material(repository)
+    version = _version(repository, material.id)
+    proposal = repository.create_claim_proposals(
+        version.id,
+        (
+            CreateClaimProposalSpec(
+                proposal_type="create",
+                proposed_value={"category": "skill", "text": "Python"},
+                reason="mentioned",
+            ),
+        ),
+    )[0]
     repository.decide_proposal(
         proposal.id,
-        DecideProposalCommand(proposal_id=proposal.id, decision="accepted", expected_status="pending"),
+        DecideProposalCommand(
+            proposal_id=proposal.id,
+            decision="accepted",
+            idempotency_key="decision:1",
+        ),
     )
-    with pytest.raises(ProfileProposalAlreadyDecided):
+
+    with pytest.raises(ProfileIdempotencyConflict):
         repository.decide_proposal(
             proposal.id,
-            DecideProposalCommand(proposal_id=proposal.id, decision="rejected", expected_status="pending"),
+            DecideProposalCommand(
+                proposal_id=proposal.id,
+                decision="rejected",
+                idempotency_key="decision:1",
+            ),
         )
 
 
@@ -300,6 +428,45 @@ def test_optimistic_claim_version_conflict(repository: ProfileRepository) -> Non
                 expected_status="accepted",  # stale: still pending
             ),
         )
+
+
+def test_batch_decision_reports_completed_and_conflicted_items(
+    repository: ProfileRepository,
+) -> None:
+    material = _material(repository)
+    version = _version(repository, material.id)
+    proposals = repository.create_claim_proposals(
+        version.id,
+        (
+            CreateClaimProposalSpec(
+                proposal_type="create",
+                proposed_value={"category": "skill", "text": "Python"},
+                reason="first",
+            ),
+            CreateClaimProposalSpec(
+                proposal_type="create",
+                proposed_value={"category": "skill", "text": "Go"},
+                reason="second",
+            ),
+        ),
+    )
+
+    result = repository.batch_decide_proposals(
+        (
+            DecideProposalCommand(
+                proposal_id=proposals[0].id, decision="accepted"
+            ),
+            DecideProposalCommand(
+                proposal_id=proposals[1].id,
+                decision="accepted",
+                expected_status="accepted",
+            ),
+        )
+    )
+
+    assert [item.proposal_id for item in result.completed] == [proposals[0].id]
+    assert result.conflicts == (proposals[1].id,)
+    assert result.failed == ()
 
 
 def test_conflicting_proposal_records_conflict_without_overwriting(
@@ -345,6 +512,45 @@ def test_conflicting_proposal_records_conflict_without_overwriting(
     # Confirmed version untouched.
     claim = repository.get_claim(accepted.claim_id)
     assert claim.current_confirmed_version_id == accepted.claim_version_id
+
+
+def test_proposal_target_and_base_version_cannot_cross_workspace(
+    repository: ProfileRepository,
+) -> None:
+    material_a = _material(repository, workspace_id="w1", role="resume")
+    version_a = _version(repository, material_a.id)
+    evidence_a = _evidence(repository, version_a.id)
+    material_b = _material(repository, workspace_id="w2", role="resume")
+    version_b = _version(repository, material_b.id, sha="f" * 64)
+    proposal_b = repository.create_claim_proposals(
+        version_b.id,
+        (
+            CreateClaimProposalSpec(
+                proposal_type="create",
+                proposed_value={"category": "skill", "text": "Go"},
+                reason="mentioned",
+            ),
+        ),
+    )[0]
+    accepted_b = repository.decide_proposal(
+        proposal_b.id,
+        DecideProposalCommand(proposal_id=proposal_b.id, decision="accepted"),
+    )
+
+    with pytest.raises(ProfileClaimVersionConflict):
+        repository.create_claim_proposals(
+            version_a.id,
+            (
+                CreateClaimProposalSpec(
+                    proposal_type="update",
+                    target_claim_id=accepted_b.claim_id,
+                    base_claim_version_id=accepted_b.claim_version_id,
+                    proposed_value={"category": "skill", "text": "Rust"},
+                    reason="cross workspace",
+                    evidence_ids=(evidence_a.id,),
+                ),
+            ),
+        )
 
 
 def test_confirmed_claim_can_be_unsupported(repository: ProfileRepository) -> None:
@@ -483,6 +689,75 @@ def test_create_action_plan_with_ordered_items(repository: ProfileRepository) ->
     assert reloaded.status == "proposed"
 
 
+def test_action_plan_status_update_uses_declared_schema_columns(
+    repository: ProfileRepository,
+) -> None:
+    material = _material(repository)
+    plan = repository.create_action_plan(
+        CreateActionPlanCommand(
+            workspace_id=material.workspace_id,
+            session_id=None,
+            execution_id=None,
+            request_summary="polish",
+            base_profile_version="",
+        )
+    )
+
+    updated = repository.update_action_plan_status(plan.id, status="validated")
+
+    assert updated.status == "validated"
+    assert updated.version == plan.version + 1
+
+
+def test_action_plan_item_validates_expected_claim_version(
+    repository: ProfileRepository,
+) -> None:
+    material = _material(repository)
+    version = _version(repository, material.id)
+    proposal = repository.create_claim_proposals(
+        version.id,
+        (
+            CreateClaimProposalSpec(
+                proposal_type="create",
+                proposed_value={"category": "skill", "text": "Python"},
+                reason="mentioned",
+            ),
+        ),
+    )[0]
+    accepted = repository.decide_proposal(
+        proposal.id,
+        DecideProposalCommand(proposal_id=proposal.id, decision="accepted"),
+    )
+    plan = repository.create_action_plan(
+        CreateActionPlanCommand(
+            workspace_id="w1",
+            session_id=None,
+            execution_id=None,
+            request_summary="change claim",
+            base_profile_version=repository.profile_snapshot("w1").profile_version or "",
+            items=(
+                ActionPlanItemSpec(
+                    item_id="i1",
+                    ordinal=1,
+                    operation="propose_claim_update",
+                    target={"claimId": accepted.claim_id},
+                    after={"text": "Rust"},
+                    expected_version=1,
+                ),
+            ),
+        )
+    )
+
+    with pytest.raises(ProfileClaimVersionConflict):
+        repository.apply_action_plan_item(
+            plan.items[0].item_id,
+            expected_claim_version=999,
+            receipt_id="receipt-1",
+        )
+
+    assert repository.get_action_plan(plan.id).items[0].status == "pending"
+
+
 def test_action_plan_rejects_stale_base_profile(repository: ProfileRepository) -> None:
     material = _material(repository)
     version = _version(repository, material.id)
@@ -570,6 +845,70 @@ def test_publication_selection_is_versioned(repository: ProfileRepository) -> No
     assert replaced.version == 2
     previous = repository.get_publication_selection(selection.id)
     assert previous.status == "superseded"
+
+
+def test_publication_selection_rejects_foreign_workspace_claim_version(
+    repository: ProfileRepository,
+) -> None:
+    material_a = _material(repository, workspace_id="w1", role="resume")
+    material_b = _material(repository, workspace_id="w2", role="resume")
+    version_b = _version(repository, material_b.id, sha="f" * 64)
+    proposal_b = repository.create_claim_proposals(
+        version_b.id,
+        (
+            CreateClaimProposalSpec(
+                proposal_type="create",
+                proposed_value={"category": "skill", "text": "Go"},
+                reason="mentioned",
+            ),
+        ),
+    )[0]
+    accepted_b = repository.decide_proposal(
+        proposal_b.id,
+        DecideProposalCommand(proposal_id=proposal_b.id, decision="accepted"),
+    )
+
+    with pytest.raises(ProfileClaimVersionConflict):
+        repository.create_publication_selection(
+            CreatePublicationSelectionCommand(
+                workspace_id=material_a.workspace_id,
+                profile_version="stale-or-foreign",
+                claim_version_ids=(accepted_b.claim_version_id,),
+            )
+        )
+
+
+def test_publication_selection_is_idempotent_for_same_snapshot_receipt(
+    repository: ProfileRepository,
+) -> None:
+    material = _material(repository)
+    version = _version(repository, material.id)
+    proposal = repository.create_claim_proposals(
+        version.id,
+        (
+            CreateClaimProposalSpec(
+                proposal_type="create",
+                proposed_value={"category": "skill", "text": "Python"},
+                reason="mentioned",
+            ),
+        ),
+    )[0]
+    accepted = repository.decide_proposal(
+        proposal.id,
+        DecideProposalCommand(proposal_id=proposal.id, decision="accepted"),
+    )
+    command = CreatePublicationSelectionCommand(
+        workspace_id="w1",
+        profile_version=repository.profile_snapshot("w1").profile_version or "",
+        claim_version_ids=(accepted.claim_version_id,),
+        idempotency_key="selection:1",
+    )
+
+    first = repository.create_publication_selection(command)
+    repeated = repository.create_publication_selection(command)
+
+    assert repeated == first
+    assert repository.get_publication_selection(first.id).status == "draft"
 
 
 def test_workspace_isolation(repository: ProfileRepository) -> None:

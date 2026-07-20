@@ -7,6 +7,15 @@
 - 自审纠正了 Evidence 定位与敏感 tombstone、PublicationSelection 版本快照、Claim 决定/证据支持双状态、编辑后接受、派生简历版本、删除三选语义和独立 `profile.assess` Graph，确保没有用简化实现偏离已确认规格。
 - 明确执行继续由同一 Agent 端到端承担；Task 之间共享 migration/domain/runtime 状态，不适合并行 subagent。下一步从 Task 1 的 schema、六模型用途和共享 registry 开始。
 
+## 2026-07-20：R3 Task 1-5 实现审查修正
+
+- 审阅 Claude 的五个本地提交并复现 8 类阻断问题：跨 Workspace Proposal/PublicationSelection、Profile 目录未初始化、Proposal/Decision 非幂等、restore 破坏 active 唯一性、Action Plan SQL 列不存在、共享 blob 可被误删、system Session 可被通用 API 修改、空 DOCX/text 被当作成功。
+- TDD 增加 regression coverage，并新增 migration 017：active Material partial unique index与 `profile_idempotency_receipts`。Proposal 创建/决定和 PublicationSelection 现在支持同 key/同请求返回原结果、异请求稳定冲突。
+- Repository/Service 同步补强 Workspace 所有权、材料 aggregate version、derived version 来源、parse input hash、结构化 batch decision、Action Plan expected Claim version和公开 connection 边界。
+- Runtime 初始化 Profile 私有目录；generic session/execution 定位器隔离 system Session；MaterialStorage 删除必须显式提供剩余引用数；所有空可解析文档统一失败为 `profile_no_extractable_text`。
+- 移除 Claude 越界加入且未经本轮确认的两个 ADR；修正设置页“六用途未齐就不能复习”的误导文案。未修改或纳入 Claude 尚未提交的 Task 6 两个 RED 测试。
+- 修复后完整 Task 1-5 后端定向门禁 `181 passed`（仅 1 条既有 Starlette 弃用 warning）；相关前端 `13 passed`；TypeScript、Python compileall、`git diff --check` 通过。下一步从 Task 6 继续。
+
 ## 2026-07-20：补充 Agent State 与 Context Offload ADR
 
 - 将 `state_schema` 的五项准入条件、状态归属表、R2 现状和 R3-R6 采用边界补入全路线 Agent 能力 ADR。

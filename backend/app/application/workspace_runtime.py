@@ -39,6 +39,7 @@ from app.knowledge.drafts import (
 )
 from app.knowledge.publication import PublicationService
 from app.knowledge.publication_handler import KnowledgePublishActionHandler
+from app.knowledge.workspace_layout import initialize_knowledge_artifacts
 from app.middleware.usage_projection_middleware import ContextUsageProjection, UsageProjection
 from app.review.application import ReviewApplication
 from app.review.service import ReviewDomainService
@@ -307,6 +308,7 @@ class WorkspaceRuntime:
             curation_context_projection=projection,
             curation_context_factory=curation_context_factory,
         )
+        initialize_knowledge_artifacts(root, domain="profile")
         profile_repository = ProfileRepository(connection)
         profile = ProfileService(
             workspace_id=workspace_id,
@@ -660,9 +662,12 @@ class AgentApplication:
         for workspace_id in self._workspace_ids():
             context = self._context(workspace_id)
             try:
-                return context, context.repository.get_session(
+                session = context.repository.get_session(
                     session_id, include_deleted=True
                 )
+                if session.visibility == "system":
+                    continue
+                return context, session
             except ProductRecordNotFoundError:
                 continue
         raise ProductRecordNotFoundError("Agent Session 不存在")
@@ -671,7 +676,10 @@ class AgentApplication:
         for workspace_id in self._workspace_ids():
             context = self._context(workspace_id)
             try:
-                context.repository.get_execution(execution_id)
+                execution = context.repository.get_execution(execution_id)
+                session = context.repository.get_session(execution.session_id)
+                if session.visibility == "system":
+                    continue
                 return context
             except ProductRecordNotFoundError:
                 continue

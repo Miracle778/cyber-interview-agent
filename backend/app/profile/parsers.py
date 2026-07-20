@@ -102,6 +102,8 @@ def _parse_docx(content: bytes) -> tuple[ExtractedSegment, ...]:
             segments.append(
                 ExtractedSegment(text=text, locator={"paragraph": index})
             )
+    if not segments:
+        raise ProfileNoExtractableText("document has no extractable text")
     return tuple(segments)
 
 
@@ -138,4 +140,6 @@ def _parse_text(content: bytes) -> tuple[ExtractedSegment, ...]:
                 locator={"lineStart": start, "lineEnd": len(lines)},
             )
         )
+    if not segments:
+        raise ProfileNoExtractableText("document has no extractable text")
     return tuple(segments)

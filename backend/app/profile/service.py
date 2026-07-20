@@ -49,7 +49,7 @@ class ProfileService:
         self.repository = repository
         self.storage = storage
         self.product_repository = product_repository
-        self.connection: sqlite3.Connection = repository._connection  # type: ignore[attr-defined]
+        self.connection: sqlite3.Connection = repository.connection
 
     def upload_material(
         self,
@@ -88,8 +88,10 @@ class ProfileService:
     def add_material_version(
         self, *, material_id: str, file_name: str, content: bytes
     ) -> MaterialUploadResult:
+        material = self.repository.get_material(
+            material_id, workspace_id=self.workspace_id
+        )
         stored = self.storage.persist_upload(file_name=file_name, content=content)
-        material = self.repository.get_material(material_id)
         version = self.repository.add_material_version(
             material_id=material.id,
             source_type="upload",
@@ -138,7 +140,7 @@ class ProfileService:
         return execution.id
 
     def retry_version_ingest(self, version_id: str) -> object:
-        version = self.repository.get_material_version(version_id)
+        version = self._require_workspace_version(version_id)
         latest = self.product_repository.latest_execution(version_id)
         if latest is not None and latest.status in _ACTIVE_EXECUTION_STATUSES:
             raise SessionBusyError("该材料版本仍有进行中的摄入任务，请稍后重试")
@@ -182,12 +184,24 @@ class ProfileService:
             )
 
     def archive_material(self, material_id: str) -> ProfileMaterialRecord:
+        self.repository.get_material(material_id, workspace_id=self.workspace_id)
         return self.repository.archive_material(material_id)
 
     def restore_material(self, material_id: str) -> ProfileMaterialRecord:
+        self.repository.get_material(material_id, workspace_id=self.workspace_id)
         return self.repository.restore_material(material_id)
 
     def set_primary_version(
         self, material_id: str, version_id: str
     ) -> ProfileMaterialRecord:
+        self.repository.get_material(material_id, workspace_id=self.workspace_id)
         return self.repository.set_primary_version(material_id, version_id)
+
+    def _require_workspace_version(
+        self, version_id: str
+    ) -> ProfileMaterialVersionRecord:
+        version = self.repository.get_material_version(version_id)
+        self.repository.get_material(
+            version.material_id, workspace_id=self.workspace_id
+        )
+        return version

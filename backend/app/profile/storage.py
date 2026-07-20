@@ -91,14 +91,25 @@ class MaterialStorage:
             return False
         return path.is_file()
 
-    def delete_ref(self, ref: str) -> None:
+    def delete_ref(self, ref: str, *, remaining_references: int) -> bool:
+        """Delete a private artifact only after the caller proves it is unshared.
+
+        Reference counting belongs to the profile repository/service because the
+        content-addressed storage layer has no database access.  Requiring the
+        count makes an unsafe blind unlink impossible.
+        """
+        if remaining_references < 0:
+            raise ValueError("remaining_references must be non-negative")
+        if remaining_references:
+            return False
         try:
             path = self._policy.resolve_for_read(_PROFILE_SCOPE, ref)
         except PathPolicyError:
-            return
+            return False
         if path.is_symlink() or not path.is_file():
-            return
+            return False
         path.unlink()
+        return True
 
     def _ensure_blob_dir(self, prefix: str) -> None:
         blobs_root = self._policy.scope_root(_PROFILE_SCOPE) / "blobs"

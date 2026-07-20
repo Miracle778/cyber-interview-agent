@@ -14,6 +14,7 @@ from app.profile.errors import (
     ProfileClaimVersionConflict,
     ProfileDomainError,
     ProfileEvidenceMismatch,
+    ProfileIdempotencyConflict,
     ProfileMaterialNotFound,
     ProfileMaterialVersionNotFound,
     ProfileProposalAlreadyDecided,
@@ -24,6 +25,7 @@ from app.profile.errors import (
 from app.profile.models import (
     ActionPlanItemRecord,
     ActionPlanItemSpec,
+    BatchClaimDecisionResult,
     ClaimConflictRecord,
     ClaimDecisionResult,
     ClaimProposalRecord,
@@ -69,6 +71,10 @@ class ProfileRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self._connection = connection
         self._connection.row_factory = sqlite3.Row
+
+    @property
+    def connection(self) -> sqlite3.Connection:
+        return self._connection
 
     @contextmanager
     def _transaction(self) -> Iterator[None]:
@@ -134,17 +140,32 @@ class ProfileRepository:
             self._require_material(material_id)
             self._connection.execute(
                 "UPDATE profile_materials SET lifecycle_status = 'archived', "
-                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                "version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (material_id,),
             )
         return self.get_material(material_id)
 
     def restore_material(self, material_id: str) -> ProfileMaterialRecord:
         with self._transaction():
-            self._require_material(material_id)
+            material = self._connection.execute(
+                "SELECT * FROM profile_materials WHERE id = ?", (material_id,)
+            ).fetchone()
+            if material is None:
+                raise ProfileMaterialNotFound(material_id)
+            if material["lifecycle_status"] == "active":
+                return self._material_record(material)
+            occupied = self._connection.execute(
+                "SELECT id FROM profile_materials WHERE workspace_id = ? "
+                "AND primary_role = ? AND lifecycle_status = 'active' AND id != ?",
+                (material["workspace_id"], material["primary_role"], material_id),
+            ).fetchone()
+            if occupied is not None:
+                raise ProfileClaimVersionConflict(
+                    "another active material already owns this workspace role"
+                )
             self._connection.execute(
                 "UPDATE profile_materials SET lifecycle_status = 'active', "
-                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                "version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (material_id,),
             )
         return self.get_material(material_id)
@@ -163,7 +184,7 @@ class ProfileRepository:
                 raise ProfileMaterialVersionNotFound(version_id)
             self._connection.execute(
                 "UPDATE profile_materials SET current_version_id = ?, "
-                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                "version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (version_id, material_id),
             )
         return self.get_material(material_id)
@@ -192,6 +213,14 @@ class ProfileRepository:
     ) -> ProfileMaterialVersionRecord:
         with self._transaction():
             self._require_material(material_id)
+            if derived_from_version_id is not None:
+                source = self._connection.execute(
+                    "SELECT id FROM profile_material_versions "
+                    "WHERE id = ? AND material_id = ?",
+                    (derived_from_version_id, material_id),
+                ).fetchone()
+                if source is None:
+                    raise ProfileMaterialVersionNotFound(derived_from_version_id)
             next_number = self._next_version_number(material_id)
             version_id = _new_id()
             self._connection.execute(
@@ -248,12 +277,26 @@ class ProfileRepository:
         self, version_id: str, *, text_path: str, content_sha256: str
     ) -> ProfileMaterialVersionRecord:
         with self._transaction():
-            self._connection.execute(
+            version = self._connection.execute(
+                "SELECT content_sha256 FROM profile_material_versions WHERE id = ?",
+                (version_id,),
+            ).fetchone()
+            if version is None:
+                raise ProfileMaterialVersionNotFound(version_id)
+            if version["content_sha256"] != content_sha256:
+                raise ProfileClaimVersionConflict(
+                    "material version content hash changed before parse commit"
+                )
+            cursor = self._connection.execute(
                 "UPDATE profile_material_versions "
                 "SET processing_status = 'parsed', text_ref = ? "
                 "WHERE id = ? AND processing_status IN ('uploaded', 'parsing', 'parse_failed')",
                 (text_path, version_id),
             )
+            if cursor.rowcount != 1:
+                raise ProfileClaimVersionConflict(
+                    "material version processing state changed before parse commit"
+                )
         return self.get_material_version(version_id)
 
     def set_version_processing_status(
@@ -343,7 +386,27 @@ class ProfileRepository:
         self,
         version_id: str,
         proposals: Sequence[CreateClaimProposalSpec],
+        *,
+        idempotency_key: str | None = None,
     ) -> tuple[ClaimProposalRecord, ...]:
+        request = {
+            "versionId": version_id,
+            "proposals": [
+                {
+                    "proposalType": item.proposal_type,
+                    "targetClaimId": item.target_claim_id,
+                    "baseClaimVersionId": item.base_claim_version_id,
+                    "proposedValue": item.proposed_value,
+                    "reason": item.reason,
+                    "evidenceIds": list(item.evidence_ids),
+                    "source": item.source,
+                }
+                for item in proposals
+            ],
+        }
+        request_hash = self._request_hash(request)
+        receipt_key = idempotency_key
+        operation = f"claim_proposals.create:{version_id}"
         with self._transaction():
             version = self._connection.execute(
                 "SELECT m.workspace_id AS workspace_id "
@@ -355,6 +418,20 @@ class ProfileRepository:
             if version is None:
                 raise ProfileMaterialVersionNotFound(version_id)
             workspace_id = version["workspace_id"]
+            if receipt_key is not None:
+                existing = self._load_idempotency_receipt(
+                    workspace_id, operation, receipt_key, request_hash
+                )
+                if existing is not None:
+                    return tuple(
+                        self._proposal_record(
+                            self._connection.execute(
+                                "SELECT * FROM profile_claim_proposals WHERE id = ?",
+                                (proposal_id,),
+                            ).fetchone()
+                        )
+                        for proposal_id in existing["proposalIds"]
+                    )
             valid_evidence = self._evidence_ids_for_version(version_id)
 
             created: list[ClaimProposalRecord] = []
@@ -364,6 +441,12 @@ class ProfileRepository:
                     raise ProfileEvidenceMismatch(
                         "proposal references evidence outside its material version"
                     )
+                self._validate_proposal_target(
+                    workspace_id=workspace_id,
+                    proposal_type=spec.proposal_type,
+                    target_claim_id=spec.target_claim_id,
+                    base_claim_version_id=spec.base_claim_version_id,
+                )
                 # An update against an already-confirmed claim records a conflict
                 # edge but never overwrites the confirmed version.
                 proposal_id = _new_id()
@@ -392,7 +475,51 @@ class ProfileRepository:
                         (proposal_id,),
                     ).fetchone()
                 ))
+            if receipt_key is not None:
+                self._store_idempotency_receipt(
+                    workspace_id,
+                    operation,
+                    receipt_key,
+                    request_hash,
+                    {"proposalIds": [item.id for item in created]},
+                )
         return tuple(created)
+
+    def _validate_proposal_target(
+        self,
+        *,
+        workspace_id: str,
+        proposal_type: str,
+        target_claim_id: str | None,
+        base_claim_version_id: str | None,
+    ) -> None:
+        if proposal_type == "create":
+            if target_claim_id is not None or base_claim_version_id is not None:
+                raise ProfileClaimVersionConflict(
+                    "create proposal cannot target an existing claim version"
+                )
+            return
+        if target_claim_id is None:
+            raise ProfileClaimVersionConflict(
+                "non-create proposal requires a target claim"
+            )
+        claim = self._connection.execute(
+            "SELECT workspace_id FROM profile_claims WHERE id = ?",
+            (target_claim_id,),
+        ).fetchone()
+        if claim is None or claim["workspace_id"] != workspace_id:
+            raise ProfileClaimVersionConflict(
+                "proposal target claim is outside the material workspace"
+            )
+        if base_claim_version_id is not None:
+            base = self._connection.execute(
+                "SELECT claim_id FROM profile_claim_versions WHERE id = ?",
+                (base_claim_version_id,),
+            ).fetchone()
+            if base is None or base["claim_id"] != target_claim_id:
+                raise ProfileClaimVersionConflict(
+                    "proposal base version does not belong to its target claim"
+                )
 
     def _link_pending_conflict(self, proposal_id: str, claim_id: str) -> None:
         row = self._connection.execute(
@@ -445,6 +572,15 @@ class ProfileRepository:
     def decide_proposal(
         self, proposal_id: str, command: DecideProposalCommand
     ) -> ClaimDecisionResult:
+        request = {
+            "proposalId": proposal_id,
+            "decision": command.decision,
+            "expectedStatus": command.expected_status,
+            "editedValue": command.edited_value,
+        }
+        request_hash = self._request_hash(request)
+        receipt_key = command.idempotency_key
+        operation = f"claim_proposal.decision:{proposal_id}"
         with self._transaction():
             row = self._connection.execute(
                 "SELECT * FROM profile_claim_proposals WHERE id = ?",
@@ -452,6 +588,18 @@ class ProfileRepository:
             ).fetchone()
             if row is None:
                 raise ProfileProposalNotFound(proposal_id)
+            if receipt_key is not None:
+                existing = self._load_idempotency_receipt(
+                    row["workspace_id"], operation, receipt_key, request_hash
+                )
+                if existing is not None:
+                    return ClaimDecisionResult(
+                        proposal_id=existing["proposalId"],
+                        status=existing["status"],
+                        claim_id=existing.get("claimId"),
+                        claim_version_id=existing.get("claimVersionId"),
+                        support_status=existing.get("supportStatus"),
+                    )
             current_status = row["status"]
             if current_status != command.expected_status:
                 if current_status in _TERMINAL_PROPOSAL_STATUSES:
@@ -477,7 +625,14 @@ class ProfileRepository:
                     "decided_at = CURRENT_TIMESTAMP WHERE id = ?",
                     (proposal_id,),
                 )
-                return ClaimDecisionResult(proposal_id=proposal_id, status="rejected")
+                result = ClaimDecisionResult(
+                    proposal_id=proposal_id, status="rejected"
+                )
+                if receipt_key is not None:
+                    self._store_decision_receipt(
+                        row["workspace_id"], operation, receipt_key, request_hash, result
+                    )
+                return result
 
             # Acceptance path.
             if row["proposal_type"] == "create":
@@ -558,24 +713,37 @@ class ProfileRepository:
                 "decided_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (proposal_id,),
             )
-            return ClaimDecisionResult(
+            result = ClaimDecisionResult(
                 proposal_id=proposal_id,
                 status="accepted",
                 claim_id=claim_id,
                 claim_version_id=version_id,
                 support_status=support,
             )
+            if receipt_key is not None:
+                self._store_decision_receipt(
+                    row["workspace_id"], operation, receipt_key, request_hash, result
+                )
+            return result
 
     def batch_decide_proposals(
         self, commands: Sequence[DecideProposalCommand]
-    ) -> tuple[ClaimDecisionResult, ...]:
+    ) -> BatchClaimDecisionResult:
         completed: list[ClaimDecisionResult] = []
+        conflicts: list[str] = []
+        failed: list[str] = []
         for command in commands:
             try:
                 completed.append(self.decide_proposal(command.proposal_id, command))
             except (ProfileProposalAlreadyDecided, ProfileClaimVersionConflict):
-                continue
-        return tuple(completed)
+                conflicts.append(command.proposal_id)
+            except ProfileDomainError:
+                failed.append(command.proposal_id)
+        return BatchClaimDecisionResult(
+            completed=tuple(completed),
+            conflicts=tuple(conflicts),
+            failed=tuple(failed),
+        )
 
     # --- Claim read ---
 
@@ -807,7 +975,7 @@ class ProfileRepository:
         with self._transaction():
             self._connection.execute(
                 "UPDATE profile_action_plans SET status = ?, "
-                "version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                "version = version + 1 WHERE id = ?",
                 (status, plan_id),
             )
         return self.get_action_plan(plan_id)
@@ -832,6 +1000,29 @@ class ProfileRepository:
                 raise ProfileDomainError(
                     f"action plan item {item_id} already {row['status']}"
                 )
+            declared_expected = row["expected_version"]
+            if (
+                expected_claim_version is not None
+                and declared_expected != expected_claim_version
+            ):
+                raise ProfileClaimVersionConflict(
+                    "action plan item expected claim version changed"
+                )
+            target = json.loads(row["target_json"])
+            claim_id = target.get("claimId") or target.get("claim_id")
+            if declared_expected is not None:
+                if not claim_id:
+                    raise ProfileClaimVersionConflict(
+                        "versioned action plan item is missing its target claim"
+                    )
+                claim = self._connection.execute(
+                    "SELECT version FROM profile_claims WHERE id = ?",
+                    (claim_id,),
+                ).fetchone()
+                if claim is None or int(claim["version"]) != int(declared_expected):
+                    raise ProfileClaimVersionConflict(
+                        "target claim changed after action plan creation"
+                    )
             self._connection.execute(
                 "UPDATE profile_action_plan_items SET status = ?, receipt_id = ?, "
                 "error_code = ? WHERE id = ?",
@@ -848,7 +1039,44 @@ class ProfileRepository:
     def create_publication_selection(
         self, command: CreatePublicationSelectionCommand
     ) -> PublicationSelectionRecord:
+        request = {
+            "workspaceId": command.workspace_id,
+            "profileVersion": command.profile_version,
+            "claimVersionIds": list(command.claim_version_ids),
+            "excludedSensitiveFields": list(command.excluded_sensitive_fields),
+        }
+        request_hash = self._request_hash(request)
+        receipt_key = command.idempotency_key
+        operation = "publication_selection.create"
         with self._transaction():
+            if receipt_key is not None:
+                existing = self._load_idempotency_receipt(
+                    command.workspace_id, operation, receipt_key, request_hash
+                )
+                if existing is not None:
+                    return self.get_publication_selection(existing["selectionId"])
+            for claim_version_id in command.claim_version_ids:
+                claim_version = self._connection.execute(
+                    "SELECT c.workspace_id, c.current_confirmed_version_id "
+                    "FROM profile_claim_versions v "
+                    "JOIN profile_claims c ON c.id = v.claim_id WHERE v.id = ?",
+                    (claim_version_id,),
+                ).fetchone()
+                if (
+                    claim_version is None
+                    or claim_version["workspace_id"] != command.workspace_id
+                    or claim_version["current_confirmed_version_id"] != claim_version_id
+                ):
+                    raise ProfileClaimVersionConflict(
+                        "publication selection contains a foreign or unconfirmed claim version"
+                    )
+            current_profile_version = (
+                self.profile_snapshot(command.workspace_id).profile_version or ""
+            )
+            if current_profile_version != command.profile_version:
+                raise ProfileSnapshotChanged(
+                    "publication selection profile snapshot is stale"
+                )
             next_version = self._next_selection_version(command.workspace_id)
             selection_id = _new_id()
             self._connection.execute(
@@ -877,7 +1105,83 @@ class ProfileRepository:
                 "WHERE workspace_id = ? AND id != ? AND status = 'draft'",
                 (command.workspace_id, selection_id),
             )
+            if receipt_key is not None:
+                self._store_idempotency_receipt(
+                    command.workspace_id,
+                    operation,
+                    receipt_key,
+                    request_hash,
+                    {"selectionId": selection_id},
+                )
         return self.get_publication_selection(selection_id)
+
+    @staticmethod
+    def _request_hash(request: object) -> str:
+        return sha256(_canonical_json(request).encode("utf-8")).hexdigest()
+
+    def _load_idempotency_receipt(
+        self,
+        workspace_id: str,
+        operation: str,
+        idempotency_key: str,
+        request_hash: str,
+    ) -> dict[str, Any] | None:
+        row = self._connection.execute(
+            "SELECT request_hash, result_json FROM profile_idempotency_receipts "
+            "WHERE workspace_id = ? AND operation = ? AND idempotency_key = ?",
+            (workspace_id, operation, idempotency_key),
+        ).fetchone()
+        if row is None:
+            return None
+        if row["request_hash"] != request_hash:
+            raise ProfileIdempotencyConflict(
+                "profile idempotency key was reused with a different request"
+            )
+        return json.loads(row["result_json"])
+
+    def _store_idempotency_receipt(
+        self,
+        workspace_id: str,
+        operation: str,
+        idempotency_key: str,
+        request_hash: str,
+        result: object,
+    ) -> None:
+        self._connection.execute(
+            "INSERT INTO profile_idempotency_receipts "
+            "(id, workspace_id, operation, idempotency_key, request_hash, result_json) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                _new_id(),
+                workspace_id,
+                operation,
+                idempotency_key,
+                request_hash,
+                _canonical_json(result),
+            ),
+        )
+
+    def _store_decision_receipt(
+        self,
+        workspace_id: str,
+        operation: str,
+        idempotency_key: str,
+        request_hash: str,
+        result: ClaimDecisionResult,
+    ) -> None:
+        self._store_idempotency_receipt(
+            workspace_id,
+            operation,
+            idempotency_key,
+            request_hash,
+            {
+                "proposalId": result.proposal_id,
+                "status": result.status,
+                "claimId": result.claim_id,
+                "claimVersionId": result.claim_version_id,
+                "supportStatus": result.support_status,
+            },
+        )
 
     def _next_selection_version(self, workspace_id: str) -> int:
         row = self._connection.execute(

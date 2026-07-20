@@ -49,6 +49,7 @@ R3_TABLES = {
     "profile_publication_selections",
     "profile_publication_selection_items",
     "profile_publications",
+    "profile_idempotency_receipts",
 }
 
 
@@ -62,6 +63,38 @@ def _tables(connection) -> set[str]:
     }
 
 
+def _create_runtime_at_version(workspace_root: Path, version: int) -> sqlite3.Connection:
+    path = runtime_database_path(workspace_root)
+    path.parent.mkdir(parents=True)
+    migrations = Path(__file__).parents[1] / "app/db/migrations/runtime"
+    connection = sqlite3.connect(path)
+    connection.row_factory = sqlite3.Row
+    connection.executescript((migrations / "001_current.sql").read_text(encoding="utf-8"))
+    connection.execute(
+        "CREATE TABLE runtime_schema_migrations ("
+        "version INTEGER PRIMARY KEY CHECK (version > 0), "
+        "name TEXT NOT NULL, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+    )
+    connection.execute(
+        "INSERT INTO runtime_schema_migrations(version, name) VALUES (1, '001_current.sql')"
+    )
+    connection.commit()
+    for migration in sorted(migrations.glob("[0-9][0-9][0-9]_*.sql")):
+        migration_version = int(migration.name.split("_", 1)[0])
+        if migration_version <= 1 or migration_version > version:
+            continue
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.executescript(
+            "BEGIN IMMEDIATE;\n"
+            f"{migration.read_text(encoding='utf-8')}\n"
+            "INSERT INTO runtime_schema_migrations(version, name) "
+            f"VALUES ({migration_version}, '{migration.name}');\n"
+            "COMMIT;"
+        )
+        connection.execute("PRAGMA foreign_keys = ON")
+    return connection
+
+
 def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
     connection = connect_runtime_database(tmp_path)
 
@@ -71,7 +104,7 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
     assert "agent_context_usage" in _tables(connection)
     connection.close()
 
@@ -111,7 +144,7 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
     reopened.close()
 
 
@@ -431,7 +464,7 @@ def test_r3_migration_adds_revocable_publication_state(tmp_path: Path) -> None:
 def test_r3_migration_preserves_existing_tool_audits_and_messages(
     tmp_path: Path,
 ) -> None:
-    connection = connect_runtime_database(tmp_path)
+    connection = _create_runtime_at_version(tmp_path, 15)
     connection.execute(
         "INSERT INTO agent_sessions (id, workspace_id, graph_id, graph_version, title) "
         "VALUES ('s', 'w1', 'review.single', 1, 'S')"
