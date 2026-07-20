@@ -10,7 +10,7 @@ _SUPPORTED_DOMAINS = frozenset({"review", "profile"})
 
 _DOMAIN_SUBDIRS = {
     "review": ("sources", "drafts"),
-    "profile": ("materials/blobs", "materials/text"),
+    "profile": ("materials", "materials/blobs", "materials/text"),
 }
 
 

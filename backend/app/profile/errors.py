@@ -90,3 +90,34 @@ class ProfileAssessmentNotFound(ProfileDomainError):
     def __init__(self, assessment_id: str) -> None:
         self.assessment_id = assessment_id
         super().__init__(f"profile assessment not found: {assessment_id}")
+
+
+# --- Upload / storage / parsing ---
+
+
+class ProfileUploadTooLarge(ProfileDomainError):
+    code = "profile_upload_too_large"
+
+
+class ProfileUnsupportedFileType(ProfileDomainError):
+    code = "profile_unsupported_file_type"
+
+
+class ProfileFileNameInvalid(ProfileDomainError):
+    code = "profile_filename_invalid"
+
+
+class ProfileStorageError(ProfileDomainError):
+    code = "profile_storage_error"
+
+
+class ProfileParseError(ProfileDomainError):
+    code = "profile_parse_failed"
+
+
+class ProfileEncryptedDocument(ProfileParseError):
+    code = "profile_encrypted_document"
+
+
+class ProfileNoExtractableText(ProfileParseError):
+    code = "profile_no_extractable_text"

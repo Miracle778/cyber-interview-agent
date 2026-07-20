@@ -501,3 +501,11 @@
 - 不变量：材料版本号单调递增；同一 workspace+primary_role 仅一个 active 材料；Evidence 不可变（replace 时旧记录 tombstone 并清空敏感正文）；Proposal 接受原子化（校验 Evidence 属不可变版本、追加 ClaimVersion、更新 current_confirmed_version_id、标记 proposal accepted 同事务）；决策态与证据支持态独立（confirmed 可转 unsupported）；冲突 proposal 记录冲突边不覆盖已确认版本；profile_version 由有序 (claim_id, version) 确定；stale Action Plan 被 reject。
 - TDD：先写 20 个失败测试（ImportError），再实现；`test_profile_repository.py` `20 passed`，`compileall` 通过，`PRAGMA foreign_key_check` 无违规。
 - Reviewer gate：所有写操作在 BEGIN IMMEDIATE 事务内并带 state/version 谓词；get_material 强制 workspace 归属；profile_snapshot/list_materials 均按 workspace 过滤。
+
+## 2026-07-20：R3 Task 3 - 私有内容寻址存储与解析器
+
+- 新增 `app/profile/storage.py`：`MaterialStorage` 在 `artifacts/profile/materials` 下内容寻址存储；blob 路径 `blobs/<sha[:2]>/<sha>.<ext>`，提取文本 `text/<version_id>.txt`；10 MiB 上限、扩展名白名单（pdf/docx/md/markdown/txt）、文件名穿越校验、fsync+atomic replace、写后哈希校验检测短写、重复内容复用 blob、删除幂等、符号链拒绝。
+- 新增 `app/profile/parsers.py`：`parse_document` 按扩展名分发（不信任浏览器 mime）；PDF 按 `{page}`、DOCX 按 `{paragraph}`、Markdown/text 按 `{lineStart,lineEnd}` 定位；行尾归一化不改源字节；加密 PDF -> `profile_encrypted_document`，损坏 -> `profile_parse_failed`，扫描无文本 -> `profile_no_extractable_text`，错误信息仅含 code/ID 不含正文/路径。
+- 扩展 `WorkspacePathPolicy.scope_root(scope)` 供 storage 安全创建 blob 前缀目录；`workspace_layout` profile 子目录改为有序创建 materials/blobs/text。
+- TDD：先写 21 个失败测试，再实现；`test_profile_storage.py` + `test_profile_parsers.py` `21 passed`，关联回归 `73 passed`，`compileall` 通过。
+- Reviewer gate：失败路径用 temp+os.replace+finally 清理不留部分文件；异常串与日志只含 code/ID，`"broken"` 等正文不入错误消息，绝对路径不泄漏。

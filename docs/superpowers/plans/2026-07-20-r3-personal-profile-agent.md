@@ -172,13 +172,13 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
 - Test: `backend/tests/test_profile_storage.py`
 - Test: `backend/tests/test_profile_parsers.py`
 
-- [ ] Write failing tests for maximum upload size, allowed media types/extensions, duplicate bytes, filename traversal, symlinks, short writes, hash verification, PDF page locators, DOCX paragraph locators, Markdown line locators, empty/corrupt/encrypted documents, and redacted error messages.
-- [ ] Implement a 10 MiB streaming upload limit and accept only PDF, DOCX, Markdown, and UTF-8 plain text. Detect type from validated extension plus parser success; never trust the browser's media type alone.
-- [ ] Store bytes as `artifacts/profile/materials/blobs/<sha256-prefix>/<sha256>.<ext>` and extracted normalized UTF-8 text as `artifacts/profile/materials/text/<version_id>.txt` using fsync + atomic replace and `WorkspacePathPolicy`.
-- [ ] Return parser segments as `ExtractedSegment(text, locator)` where locator is `{page}` for PDF, `{paragraph}` for DOCX, and `{lineStart,lineEnd}` for Markdown/text; normalize line endings without rewriting source bytes.
-- [ ] Ensure duplicate content reuses the blob but creates a new immutable MaterialVersion record; deleting one version must not remove a blob still referenced by another version.
-- [ ] Run `cd backend && uv run pytest -q tests/test_profile_storage.py tests/test_profile_parsers.py`. Expected: all storage, parser, corruption, and path-security tests pass.
-- [ ] Reviewer gate: inspect failure paths for partial files and raw-content leakage; confirm exception strings/log records contain IDs and error codes only.
+- [x] Write failing tests for maximum upload size, allowed media types/extensions, duplicate bytes, filename traversal, symlinks, short writes, hash verification, PDF page locators, DOCX paragraph locators, Markdown line locators, empty/corrupt/encrypted documents, and redacted error messages.
+- [x] Implement a 10 MiB streaming upload limit and accept only PDF, DOCX, Markdown, and UTF-8 plain text. Detect type from validated extension plus parser success; never trust the browser's media type alone.
+- [x] Store bytes as `artifacts/profile/materials/blobs/<sha256-prefix>/<sha256>.<ext>` and extracted normalized UTF-8 text as `artifacts/profile/materials/text/<version_id>.txt` using fsync + atomic replace and `WorkspacePathPolicy`.
+- [x] Return parser segments as `ExtractedSegment(text, locator)` where locator is `{page}` for PDF, `{paragraph}` for DOCX, and `{lineStart,lineEnd}` for Markdown/text; normalize line endings without rewriting source bytes.
+- [x] Ensure duplicate content reuses the blob but creates a new immutable MaterialVersion record; deleting one version must not remove a blob still referenced by another version.
+- [x] Run `cd backend && uv run pytest -q tests/test_profile_storage.py tests/test_profile_parsers.py`. Expected: all storage, parser, corruption, and path-security tests pass.
+- [x] Reviewer gate: inspect failure paths for partial files and raw-content leakage; confirm exception strings/log records contain IDs and error codes only.
 
 ## Task 4: Add Material Lifecycle Services and Hidden Ingest Sessions
 

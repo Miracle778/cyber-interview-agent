@@ -37,6 +37,22 @@ class WorkspacePathPolicy:
             raise PathPolicyError(scope, relative_path)
         return target.resolve(strict=True)
 
+    def scope_root(self, scope: str) -> Path:
+        """Return the resolved directory for a scope, validating it is a real
+        directory inside the workspace. Used to create safe subdirectories."""
+        scope_relative = SCOPE_PATHS.get(scope)
+        if scope_relative is None:
+            raise PathPolicyError(scope)
+        root = self._walk_existing(
+            scope, None, self.workspace_root, scope_relative.parts
+        )
+        if not root.is_dir():
+            raise PathPolicyError(scope)
+        self._assert_within(
+            scope, None, self.workspace_root, root.resolve(strict=True)
+        )
+        return root
+
     def resolve_for_create(self, scope: str, relative_path: str) -> Path:
         scope_root, parts = self._resolve_scope_and_parts(scope, relative_path)
         parent_parts = parts[:-1]
