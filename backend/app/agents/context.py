@@ -13,3 +13,4 @@ class AgentContext:
     allowed_tools: frozenset[str]
     allowed_scopes: frozenset[str]
     progress_scope: tuple[str, ...] = ()
+    agent_role: str | None = None

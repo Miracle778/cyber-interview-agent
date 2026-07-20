@@ -23,6 +23,7 @@ class RecordingAudit:
         self.started = []
         self.completed = []
         self.failed = []
+        self.denied = []
 
     async def start(self, context, **values):
         self.started.append((context, values))
@@ -33,6 +34,17 @@ class RecordingAudit:
 
     async def fail(self, audit_id, **values):
         self.failed.append((audit_id, values))
+
+    async def deny(self, context, **values):
+        self.denied.append((context, values))
+
+
+class RecordingPublisher:
+    def __init__(self):
+        self.events: list[tuple[str, str | None, str, dict]] = []
+
+    async def __call__(self, session_id, execution_id, event_type, payload):
+        self.events.append((session_id, execution_id, event_type, dict(payload)))
 
 
 class ToolCallingModel(GenericFakeChatModel):
@@ -49,6 +61,7 @@ def _context(workspace: Path, *, allowed=True):
         run_id="r1",
         allowed_tools=frozenset({"read_source"}) if allowed else frozenset(),
         allowed_scopes=frozenset({"review.sources"}) if allowed else frozenset(),
+        agent_role="profile_chat",
     )
 
 
@@ -78,9 +91,11 @@ def _request(workspace: Path, *, allowed=True):
 @pytest.mark.asyncio
 async def test_tool_policy_denies_scope_without_calling_handler(tmp_path):
     audit = RecordingAudit()
+    publisher = RecordingPublisher()
     middleware = ToolPolicyMiddleware(
         audit=audit,
         required_scopes={"read_source": "review.sources"},
+        publish_event=publisher,
     )
     called = False
 
@@ -97,6 +112,30 @@ async def test_tool_policy_denies_scope_without_calling_handler(tmp_path):
     assert result.content == "tool_not_allowed"
     assert called is False
     assert audit.started == []
+    assert len(audit.denied) == 1
+    denied_kwargs = audit.denied[0][1]
+    assert denied_kwargs["tool_name"] == "read_source"
+    assert denied_kwargs["tool_call_id"] == "call-1"
+    assert denied_kwargs["agent_role"] == "profile_chat"
+    assert denied_kwargs["input_digest"] is not None
+    assert "must-not-leak" not in repr(denied_kwargs)
+    # Denial projects as agent.tool.failed with tool_not_allowed.
+    assert publisher.events == [
+        (
+            "s1",
+            "r1",
+            "agent.tool.failed",
+            {
+                "executionId": "r1",
+                "toolCallId": "call-1",
+                "toolName": "read_source",
+                "purpose": "read_source",
+                "status": "failed",
+                "resultCount": 0,
+                "errorCode": "tool_not_allowed",
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio
@@ -114,13 +153,81 @@ async def test_tool_policy_audits_safe_metadata_once(tmp_path):
 
     assert result.content == "ok"
     assert len(audit.started) == 1
-    assert audit.started[0][1] == {
-        "tool_name": "read_source",
-        "resource_scope": "review.sources",
-        "resource_path": "notes.md",
-    }
-    assert "must-not-leak" not in repr(audit.started)
+    started_kwargs = audit.started[0][1]
+    assert started_kwargs["tool_name"] == "read_source"
+    assert started_kwargs["resource_scope"] == "review.sources"
+    assert started_kwargs["resource_path"] == "notes.md"
+    assert started_kwargs["tool_call_id"] == "call-1"
+    assert started_kwargs["agent_role"] == "profile_chat"
+    assert started_kwargs["input_digest"] is not None
+    assert "must-not-leak" not in repr(started_kwargs)
     assert len(audit.completed) == 1
+
+
+@pytest.mark.asyncio
+async def test_tool_policy_publishes_safe_lifecycle_events(tmp_path):
+    audit = RecordingAudit()
+    publisher = RecordingPublisher()
+    middleware = ToolPolicyMiddleware(
+        audit=audit,
+        required_scopes={"read_source": "review.sources"},
+        publish_event=publisher,
+    )
+
+    async def handler(_request):
+        return ToolMessage(content="ok", tool_call_id="call-1")
+
+    await middleware.awrap_tool_call(_request(tmp_path), handler)
+
+    types = [event[2] for event in publisher.events]
+    assert types == ["agent.tool.started", "agent.tool.completed"]
+    for _session, _exec, event_type, payload in publisher.events:
+        assert set(payload) == {
+            "executionId",
+            "toolCallId",
+            "toolName",
+            "purpose",
+            "status",
+            "resultCount",
+            "errorCode",
+        }
+        assert payload["toolName"] == "read_source"
+        assert payload["toolCallId"] == "call-1"
+        # Raw arguments/results must not leak into the event payload.
+        assert "must-not-leak" not in repr(payload)
+        assert "notes.md" not in repr(payload)
+        assert "ok" not in repr(payload)
+    assert publisher.events[0][3]["status"] == "started"
+    assert publisher.events[1][3]["status"] == "completed"
+    assert publisher.events[0][3]["errorCode"] is None
+
+
+@pytest.mark.asyncio
+async def test_tool_policy_failed_call_publishes_failed_event(tmp_path):
+    audit = RecordingAudit()
+    publisher = RecordingPublisher()
+    middleware = ToolPolicyMiddleware(
+        audit=audit,
+        required_scopes={"read_source": "review.sources"},
+        publish_event=publisher,
+    )
+
+    class ToolError(RuntimeError):
+        code = "tool_execution_failed"
+
+    async def handler(_request):
+        raise ToolError("boom")
+
+    with pytest.raises(ToolError):
+        await middleware.awrap_tool_call(_request(tmp_path), handler)
+
+    types = [event[2] for event in publisher.events]
+    assert types == ["agent.tool.started", "agent.tool.failed"]
+    failed_payload = publisher.events[1][3]
+    assert failed_payload["status"] == "failed"
+    assert failed_payload["errorCode"] == "tool_execution_failed"
+    assert "boom" not in repr(failed_payload)
+    assert len(audit.failed) == 1
 
 
 @pytest.mark.asyncio

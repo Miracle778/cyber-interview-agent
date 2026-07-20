@@ -202,6 +202,7 @@ class WorkspaceRuntime:
                 projection=projection,
                 audit=audit,
                 observability=observability,
+                publish_event=events.publish,
                 **dependencies,
             )
 

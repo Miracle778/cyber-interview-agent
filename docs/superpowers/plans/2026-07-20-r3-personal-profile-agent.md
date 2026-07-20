@@ -210,12 +210,12 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
 - Test: `backend/tests/test_tool_policy_middleware.py`
 - Test: `backend/tests/test_agent_routes_v2.py`
 
-- [ ] Write failing tests for `agent.tool.started`, `agent.tool.completed`, and `agent.tool.failed`; assert payloads contain only `executionId`, `toolCallId`, `toolName`, purpose, status, result count, and error code, never raw arguments/results. Denials use `agent.tool.failed` with `tool_not_allowed` while the audit state is `denied`.
-- [ ] Extend `ToolPolicyMiddleware` to audit denied calls, compute canonical SHA-256 input/result digests, persist `tool_call_id` and `agent_role`, and publish lifecycle Events through an injected safe projection callback.
-- [ ] Add the three Event types to `ProductEventStream._allowed` and frontend event unions. Keep `ToolMessage` internal; do not project it into `agent_messages`.
-- [ ] Preserve current middleware callers by making the Event projection dependency explicit in `build_default_middleware`; update every construction site and test fixture.
-- [ ] Run `cd backend && uv run pytest -q tests/test_tool_policy_middleware.py tests/test_agent_routes_v2.py tests/test_approval_execution.py`. Expected: safe lifecycle Events and all prior Tool-policy behavior pass.
-- [ ] Reviewer gate: inspect serialized Events and audits using sensitive sample arguments; confirm neither source text nor Tool result bodies are present.
+- [x] Write failing tests for `agent.tool.started`, `agent.tool.completed`, and `agent.tool.failed`; assert payloads contain only `executionId`, `toolCallId`, `toolName`, purpose, status, result count, and error code, never raw arguments/results. Denials use `agent.tool.failed` with `tool_not_allowed` while the audit state is `denied`.
+- [x] Extend `ToolPolicyMiddleware` to audit denied calls, compute canonical SHA-256 input/result digests, persist `tool_call_id` and `agent_role`, and publish lifecycle Events through an injected safe projection callback.
+- [x] Add the three Event types to `ProductEventStream._allowed` and frontend event unions. Keep `ToolMessage` internal; do not project it into `agent_messages`.
+- [x] Preserve current middleware callers by making the Event projection dependency explicit in `build_default_middleware`; update every construction site and test fixture.
+- [x] Run `cd backend && uv run pytest -q tests/test_tool_policy_middleware.py tests/test_agent_routes_v2.py tests/test_approval_execution.py`. Expected: safe lifecycle Events and all prior Tool-policy behavior pass.
+- [x] Reviewer gate: inspect serialized Events and audits using sensitive sample arguments; confirm neither source text nor Tool result bodies are present.
 
 ## Task 6: Build Read-Only Profile Tools and Context Budgets
 

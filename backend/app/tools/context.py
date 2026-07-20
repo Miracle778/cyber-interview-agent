@@ -12,3 +12,4 @@ class ToolExecutionContext:
     graph_version: int
     allowed_tools: frozenset[str]
     allowed_scopes: frozenset[str]
+    agent_role: str | None = None

@@ -61,7 +61,10 @@ class ProductionGraphFactory:
         middleware = build_default_middleware(
             summary_model=summary_model,
             projection=projection,
-            policy=ToolPolicyMiddleware(audit=audit, required_scopes={}),
+            policy=ToolPolicyMiddleware(
+                audit=audit, required_scopes={},
+                publish_event=dependencies.get("publish_event"),
+            ),
             observability=observability,
             interrupt_on={},
             budget_profile=REVIEW_ROUND_BUDGET,
@@ -95,7 +98,8 @@ class ProductionGraphFactory:
                 summary_model=summary_model,
                 projection=dependencies["projection"],
                 policy=ToolPolicyMiddleware(
-                    audit=dependencies["audit"], required_scopes={}
+                    audit=dependencies["audit"], required_scopes={},
+                    publish_event=dependencies.get("publish_event"),
                 ),
                 observability=dependencies["observability"],
                 interrupt_on={},
@@ -148,7 +152,8 @@ class ProductionGraphFactory:
                 summary_model=summary_model,
                 projection=dependencies["projection"],
                 policy=ToolPolicyMiddleware(
-                    audit=dependencies["audit"], required_scopes={}
+                    audit=dependencies["audit"], required_scopes={},
+                    publish_event=dependencies.get("publish_event"),
                 ),
                 observability=dependencies["observability"],
                 interrupt_on={},

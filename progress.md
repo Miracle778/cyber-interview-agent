@@ -517,3 +517,11 @@
 - `WorkspaceRuntime` 注入 `profile: ProfileService`（共享 connection/repository，不新建数据库句柄）。
 - TDD：先写 9 个失败测试，再实现；`test_profile_material_service.py` `8 passed` + `test_agent_routes_v2.py` 隐藏会话过滤 `1 passed`；回归 `58 passed`（agent routes/restart/profile/migrations）。
 - Reviewer gate：直查 Runtime SQLite 确认每版本一个 system Session、无用户消息、通用 Agent 端点不返回 system Session。
+
+## 2026-07-20：R3 Task 5 - Tool 审计与安全 Tool 可见性事件
+
+- 扩展 `ToolAuditRepository`：`deny()` 记录 `denied` 状态；`start()` 接收 `tool_call_id/agent_role/input_digest`；`complete()/fail()` 接收 `result_digest`；`ToolAuditRecord` 增加四列；`canonical_digest` 提供稳定 SHA-256（不持久化原始参数/结果）。
+- 扩展 `ToolPolicyMiddleware`：注入 `publish_event` 回调；拒绝路径 audit.deny + 发布 `agent.tool.failed`(tool_not_allowed)；start/complete/fail 分别发布 `agent.tool.started/completed/failed`，payload 仅含 executionId/toolCallId/toolName/purpose/status/resultCount/errorCode，不含原始参数/结果/模型推理；计算 input/result digest。
+- `AgentContext`/`ToolExecutionContext` 增加 `agent_role`（默认 None，向后兼容）；`ProductEventStream._allowed` 增加三个 agent.tool.* 事件；`graph_factory` 三处构造点与 `WorkspaceRuntime.build` 串接 `publish_event=events.publish`（用 `.get` 保持既有 fixture 兼容）；前端 `useAgentEvents` 事件联合增加三个事件。
+- TDD：先写 5 个失败测试，再实现；`test_tool_policy_middleware.py` `5 passed`；前端 `useAgentEvents.test.tsx` `8 passed`，`tsc --noEmit` 0 错误；回归 `46 passed`。
+- Reviewer gate：用含 `api_key`/路径/正文的样本参数验证事件 payload 与 audit 仅含哈希与安全字段，无源文本/Tool 结果体泄漏。

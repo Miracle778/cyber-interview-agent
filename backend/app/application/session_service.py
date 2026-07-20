@@ -501,6 +501,9 @@ class ProductEventStream:
             "execution.completed",
             "execution.failed",
             "execution.cancelled",
+            "agent.tool.started",
+            "agent.tool.completed",
+            "agent.tool.failed",
         }
     )
 

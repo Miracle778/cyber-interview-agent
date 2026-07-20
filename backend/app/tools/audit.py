@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from typing import Literal, TypeAlias
 from uuid import uuid4
@@ -13,7 +15,7 @@ from app.infrastructure.runtime_database import runtime_database_path
 from app.tools.context import ToolExecutionContext
 
 
-ToolAuditStatus: TypeAlias = Literal["started", "completed", "failed"]
+ToolAuditStatus: TypeAlias = Literal["started", "completed", "failed", "denied"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,8 +30,19 @@ class ToolAuditRecord:
     resource_scope: str | None
     resource_path: str | None
     resource_sha256: str | None
+    tool_call_id: str | None
+    agent_role: str | None
+    input_digest: str | None
+    result_digest: str | None
     created_at: str
     finished_at: str | None
+
+
+def canonical_digest(value: object) -> str:
+    """Stable SHA-256 digest of a JSON-serializable value, used for audit
+    correlation without persisting raw tool arguments or results."""
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    return sha256(encoded.encode("utf-8")).hexdigest()
 
 
 class ToolAuditRepository:
@@ -43,6 +56,9 @@ class ToolAuditRepository:
         tool_name: str,
         resource_scope: str | None,
         resource_path: str | None,
+        tool_call_id: str | None = None,
+        agent_role: str | None = None,
+        input_digest: str | None = None,
     ) -> ToolAuditRecord:
         audit_id = str(uuid4())
         async with self._connection() as connection:
@@ -51,7 +67,8 @@ class ToolAuditRepository:
                 await connection.execute(
                     "INSERT INTO tool_audits "
                     "(id, session_id, run_id, tool_name, status, resource_scope, "
-                    "resource_path) VALUES (?, ?, ?, ?, 'started', ?, ?)",
+                    "resource_path, tool_call_id, agent_role, input_digest) "
+                    "VALUES (?, ?, ?, ?, 'started', ?, ?, ?, ?, ?)",
                     (
                         audit_id,
                         context.session_id,
@@ -59,6 +76,50 @@ class ToolAuditRepository:
                         tool_name,
                         resource_scope,
                         resource_path,
+                        tool_call_id,
+                        agent_role,
+                        input_digest,
+                    ),
+                )
+                record = await self._require(connection, audit_id)
+                await connection.commit()
+                return record
+            except Exception:
+                await connection.rollback()
+                raise
+
+    async def deny(
+        self,
+        context: ToolExecutionContext,
+        *,
+        tool_name: str,
+        resource_scope: str | None,
+        resource_path: str | None,
+        tool_call_id: str | None = None,
+        agent_role: str | None = None,
+        input_digest: str | None = None,
+    ) -> ToolAuditRecord:
+        audit_id = str(uuid4())
+        async with self._connection() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+            try:
+                await connection.execute(
+                    "INSERT INTO tool_audits "
+                    "(id, session_id, run_id, tool_name, status, resource_scope, "
+                    "resource_path, tool_call_id, agent_role, input_digest, "
+                    "error_code, finished_at) "
+                    "VALUES (?, ?, ?, ?, 'denied', ?, ?, ?, ?, ?, "
+                    "'tool_not_allowed', CURRENT_TIMESTAMP)",
+                    (
+                        audit_id,
+                        context.session_id,
+                        context.run_id,
+                        tool_name,
+                        resource_scope,
+                        resource_path,
+                        tool_call_id,
+                        agent_role,
+                        input_digest,
                     ),
                 )
                 record = await self._require(connection, audit_id)
@@ -74,6 +135,7 @@ class ToolAuditRepository:
         *,
         latency_ms: int,
         resource_sha256: str | None,
+        result_digest: str | None = None,
     ) -> ToolAuditRecord:
         return await self._finish(
             audit_id,
@@ -81,10 +143,16 @@ class ToolAuditRepository:
             error_code=None,
             latency_ms=latency_ms,
             resource_sha256=resource_sha256,
+            result_digest=result_digest,
         )
 
     async def fail(
-        self, audit_id: str, *, error_code: str, latency_ms: int
+        self,
+        audit_id: str,
+        *,
+        error_code: str,
+        latency_ms: int,
+        result_digest: str | None = None,
     ) -> ToolAuditRecord:
         return await self._finish(
             audit_id,
@@ -92,6 +160,7 @@ class ToolAuditRepository:
             error_code=error_code,
             latency_ms=latency_ms,
             resource_sha256=None,
+            result_digest=result_digest,
         )
 
     async def list_for_run(self, run_id: str) -> tuple[ToolAuditRecord, ...]:
@@ -112,13 +181,14 @@ class ToolAuditRepository:
         error_code: str | None,
         latency_ms: int,
         resource_sha256: str | None,
+        result_digest: str | None = None,
     ) -> ToolAuditRecord:
         async with self._connection() as connection:
             await connection.execute("BEGIN IMMEDIATE")
             try:
                 cursor = await connection.execute(
                     "UPDATE tool_audits SET status = ?, error_code = ?, "
-                    "latency_ms = ?, resource_sha256 = ?, "
+                    "latency_ms = ?, resource_sha256 = ?, result_digest = ?, "
                     "finished_at = CURRENT_TIMESTAMP "
                     "WHERE id = ? AND status = 'started'",
                     (
@@ -126,6 +196,7 @@ class ToolAuditRepository:
                         error_code,
                         latency_ms,
                         resource_sha256,
+                        result_digest,
                         audit_id,
                     ),
                 )
@@ -171,6 +242,10 @@ class ToolAuditRepository:
             resource_scope=row["resource_scope"],
             resource_path=row["resource_path"],
             resource_sha256=row["resource_sha256"],
+            tool_call_id=row["tool_call_id"],
+            agent_role=row["agent_role"],
+            input_digest=row["input_digest"],
+            result_digest=row["result_digest"],
             created_at=row["created_at"],
             finished_at=row["finished_at"],
         )
