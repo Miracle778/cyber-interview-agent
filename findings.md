@@ -1,5 +1,13 @@
 # Agent Runtime 框架收敛关键发现
 
+## 2026-07-20 全路线 Agent 能力分配
+
+- R0-R8 不应统一启用 Tool、Time Travel 或自主 Planner：已知上下文的提取、评价、分类和总结保持无业务工具，只有 R3-R6 跨材料探索角色按 role 启用有界只读工具。
+- 所有领域写入、删除、发布、掌握度、Todo 和外部消息继续由应用服务或显式 Graph 执行；复杂变更采用结构化 proposal、版本校验、差异确认和幂等 receipt，不给模型自由写工具。
+- 全路线核心产品均不需要通用 Time Travel；长流程使用 checkpoint 恢复与产品事件回放，长期资产使用领域版本，重做通过绑定不可变快照的新 Session/execution 表达。
+- Plan-and-Execute 分为固定领域 Graph、结构化变更计划、有界只读探索和 R6 固定单子 Agent 委派；不建设通用自主 Planner 或任意动态 supervisor。
+- 正式决定记录为 `docs/superpowers/architecture-decisions/2026-07-20-agent-capability-allocation-across-roadmap.md`。
+
 ## 2026-07-20 领域 Agent 工具与写入边界
 
 - R2 生产 Agent 当前均未启用业务工具：题目整理、命令解释、评价、报告和讨论接收应用层组装的有界输入；`ToolStrategy` 只负责结构化输出，不等同于领域工具。

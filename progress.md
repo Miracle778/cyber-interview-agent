@@ -1,5 +1,12 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-07-20：全路线 Agent 能力矩阵 ADR
+
+- 盘点 R2 生产 Agent、跨领域基础辅助模型和 R3-R8 路线角色，区分 ToolStrategy、业务 Tool、领域 Graph、checkpoint 恢复、事件回放、领域版本和真正 Time Travel。
+- 新增 `docs/superpowers/architecture-decisions/2026-07-20-agent-capability-allocation-across-roadmap.md`，逐组件记录 Tool、Plan-and-Execute、恢复和 Time Travel 默认能力。
+- 决定全路线不启用模型自由写工具或通用 Time Travel；R3-R6 探索角色只用有界只读工具；R2/R3/R4 的复杂变更采用受控计划，R6 采用固定主从委派。
+- 本次只修改正式架构文档与本地 current-state 记录，不修改业务代码或 `docs/my_idea.md`。
+
 ## 2026-07-20：领域 Agent 工具与写入边界 ADR
 
 - 核对 R2 当前生产代码，确认全部领域 Agent 的业务 tool/scope allowlist 为空；候选只读工具和写草稿工具只存在于 Harness 基础设施、测试或预留注入点，未接入 R2 生产执行。
