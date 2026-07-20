@@ -1,5 +1,14 @@
 # Agent Runtime 框架收敛关键发现
 
+## 2026-07-20 R3 实施扩展点
+
+- R3 应建立独立 `app/profile` 领域包，但复用现有 Workspace Runtime、Session/Execution/Event、Middleware、HITL 和 Knowledge Publication；另建 Graph registry 或执行引擎会制造第二套恢复与审计语义。
+- 现有 `agent_runs`、`agent_events` 和 `tool_audits` 都强制依赖 Session。为满足无上传对话又保留恢复能力，每个材料版本使用 `session_id == material_version_id` 的隐藏 system Session，并从通用列表/详情中隔离。
+- 当前模型绑定只有四个用途；R3 新增 `profile_extraction` 和 `profile_assessment`，Planner 首版复用 assessment，Chat 复用 `agent_chat`，因此设置页和完整绑定校验必须同步变为六项。
+- 当前 Knowledge Publication 只支持发布，不支持撤回；R3 需要基于已发布哈希的可恢复 revoke 状态机，同时删除 active 文件和搜索索引，保留无敏感正文的历史与 Receipt。
+- 已确认规格的 Tool allowlist 是八个只读业务查询；Tool 产品 Event 只有 started/completed/failed，denied 作为 Audit 状态并投影为 failed + `tool_not_allowed`，原始参数和结果不进入 SSE。
+- 实施计划按 18 个顺序 TDD Task 拆成 R3.1-R3.4 四个检查点，状态真相保留在领域表，默认 AgentState/checkpoint 只持有可恢复编排状态。
+
 ## 2026-07-20 Agent State 与 Context Offload 边界
 
 - 自定义 `state_schema` 只用于单一 `create_agent` 循环中产生、被后续步骤消费、需随 checkpoint 恢复且不属于领域事实的可变工作状态；输入、输出、可信权限、业务状态和跨 Session 记忆分别归消息/response、`context_schema`、领域层和 Store。

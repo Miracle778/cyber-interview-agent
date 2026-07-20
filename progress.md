@@ -1,5 +1,12 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-07-20：R3 第一里程碑实施计划完成
+
+- 用户确认 R3 完整规格后，创建 `docs/superpowers/plans/2026-07-20-r3-personal-profile-agent.md`，本轮未修改业务代码、数据库或前端实现。
+- 计划把 R3.1-R3.4 拆成 18 个顺序 TDD Task，覆盖 migration、私有存储/解析、Evidence/Claim/Proposal、四个 Agent、三个 Graph、八个只读 Tool、Action Plan、六个页面、发布/撤回及最终文档门禁。
+- 自审纠正了 Evidence 定位与敏感 tombstone、PublicationSelection 版本快照、Claim 决定/证据支持双状态、编辑后接受、派生简历版本、删除三选语义和独立 `profile.assess` Graph，确保没有用简化实现偏离已确认规格。
+- 明确执行继续由同一 Agent 端到端承担；Task 之间共享 migration/domain/runtime 状态，不适合并行 subagent。下一步从 Task 1 的 schema、六模型用途和共享 registry 开始。
+
 ## 2026-07-20：补充 Agent State 与 Context Offload ADR
 
 - 将 `state_schema` 的五项准入条件、状态归属表、R2 现状和 R3-R6 采用边界补入全路线 Agent 能力 ADR。

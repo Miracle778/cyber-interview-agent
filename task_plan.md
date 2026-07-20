@@ -1,6 +1,28 @@
 # Cyber Interview Agent 当前任务规划
 
-## 当前任务：R2 题库与 Agent 可用性补强
+## 当前任务：R3 个人画像 Agent 第一里程碑
+
+目标是在现有 R2 Runtime 和知识发布边界上交付 R3.1-R3.4：私有简历版本与 Evidence、经确认的 Claim 画像、受约束评估/对话/Action Plan，以及可选择、可撤销的知识发布闭环。
+
+| 阶段 | 状态 | 产出 |
+|---|---|---|
+| R3 产品与架构规格 | 已确认 | `2026-07-20-r3-personal-profile-agent-design.md`、6 张页面参考图、Agent 能力 ADR |
+| R3 实施计划 | 已完成，待进入执行 | `2026-07-20-r3-personal-profile-agent.md`，18 个 TDD Task、R3.1-R3.4 四个检查点 |
+| R3.1 材料与 Evidence | 未开始 | 私有内容寻址存储、版本/解析/提取、隐藏 ingest Session、材料与 Evidence UI |
+| R3.2 Claim 审核 | 未开始 | Claim/Proposal/冲突/删除影响、审核工作台 |
+| R3.3 评估与连续对话 | 未开始 | profile.assess/manage、只读 Tool loop、Action Plan/Diff/Receipt、Agent UI |
+| R3.4 知识发布闭环 | 未开始 | 选择、独立 HITL、发布/撤回、R4-R6 查询、完整验收与文档门禁 |
+
+当前权威输入：
+
+- 规格：`docs/superpowers/specs/2026-07-20-r3-personal-profile-agent-design.md`
+- 计划：`docs/superpowers/plans/2026-07-20-r3-personal-profile-agent.md`
+- 工作分支：`feature/review-agent-workspace`
+- 工作树：`/Users/miracle778/Project/cyber-interview-agent-new/.worktrees/r2-complete-review-agent`
+
+下一步：按同一 Agent 端到端执行 Task 1，先完成 migration、共享 registry、六模型用途和路径安全门禁；不创建并行 subagent。
+
+## 前置阶段：R2 题库与 Agent 可用性补强
 
 目标是在现有 R2 闭环上补齐失败恢复、可观察过程、候选题管理、删除生命周期、分层题库、上下文续写和可审计相似题合并。
 
