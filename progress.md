@@ -493,3 +493,11 @@
 - 共享边界：`ModelRole`/`MODEL_ROLES` 增加 `profile_extraction`、`profile_assessment`，校验文案 four->six，读绑定容忍部分历史绑定、仅显式保存要求六角色；`profile -> 50_profile` 文档类型与 Vault 目录；`domain="profile"` 创建 `artifacts/profile/materials/{blobs,text}`；`profile.materials` scope 与 `knowledge.active` 隔离；`python-docx>=1.1.0` 入依赖。
 - TDD：先写失败测试（14 red），再实现；后端定向 `54 passed`，关联绑定 `43 passed`，前端 `ModelBindings.test.tsx` `2 passed`，`tsc --noEmit` 0 错误，`git diff --check` 通过。
 - Reviewer gate：重建表逐列拷贝既有行（旧 tool_audits/agent_messages 行保留验证通过）；Runtime 迁移 runner `PRAGMA foreign_key_check` 无违规；`profile.materials` 穿越到 `knowledge-vault` 被拒。
+
+## 2026-07-20：R3 Task 2 - Profile 领域契约与 Repository 不变量
+
+- 新增 `app/profile/` 领域包：`models.py`（frozen dataclass 记录、Literal 状态、命令/结果类型）、`errors.py`（稳定错误码：profile_material_not_found/evidence_mismatch/proposal_already_decided/claim_version_conflict/snapshot_changed 等）、`repository.py`（ProfileRepository）。
+- 仓库方法：create_material/add_material_version/mark_version_parsed/replace_version_evidence/create_claim_proposals/decide_proposal/batch_decide_proposals/save_assessment/create_action_plan/apply_action_plan_item/create_publication_selection/profile_snapshot 及配套读方法。
+- 不变量：材料版本号单调递增；同一 workspace+primary_role 仅一个 active 材料；Evidence 不可变（replace 时旧记录 tombstone 并清空敏感正文）；Proposal 接受原子化（校验 Evidence 属不可变版本、追加 ClaimVersion、更新 current_confirmed_version_id、标记 proposal accepted 同事务）；决策态与证据支持态独立（confirmed 可转 unsupported）；冲突 proposal 记录冲突边不覆盖已确认版本；profile_version 由有序 (claim_id, version) 确定；stale Action Plan 被 reject。
+- TDD：先写 20 个失败测试（ImportError），再实现；`test_profile_repository.py` `20 passed`，`compileall` 通过，`PRAGMA foreign_key_check` 无违规。
+- Reviewer gate：所有写操作在 BEGIN IMMEDIATE 事务内并带 state/version 谓词；get_material 强制 workspace 归属；profile_snapshot/list_materials 均按 workspace 过滤。

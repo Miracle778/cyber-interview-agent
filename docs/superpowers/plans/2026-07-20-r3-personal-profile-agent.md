@@ -137,9 +137,9 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
 - Create: `backend/app/profile/repository.py`
 - Test: `backend/tests/test_profile_repository.py`
 
-- [ ] Write repository tests for material version monotonicity, one active material per `primary_role`, immutable Evidence/tombstones, accepted Claim version monotonicity, independent decision/support states, proposal idempotency, optimistic claim-version conflicts, assessment snapshots, ordered plan items, versioned publication selection, archive/restore, and workspace isolation. Confirm imports or tests fail before implementation.
-- [ ] Define Literal-backed status types and frozen dataclasses/Pydantic value objects. Use JSON only for typed values/locators/receipts; never store raw LLM envelopes as the source of truth.
-- [ ] Implement `ProfileRepository` methods with explicit transactions, including:
+- [x] Write repository tests for material version monotonicity, one active material per `primary_role`, immutable Evidence/tombstones, accepted Claim version monotonicity, independent decision/support states, proposal idempotency, optimistic claim-version conflicts, assessment snapshots, ordered plan items, versioned publication selection, archive/restore, and workspace isolation. Confirm imports or tests fail before implementation.
+- [x] Define Literal-backed status types and frozen dataclasses/Pydantic value objects. Use JSON only for typed values/locators/receipts; never store raw LLM envelopes as the source of truth.
+- [x] Implement `ProfileRepository` methods with explicit transactions, including:
 
   ```python
   create_material(command) -> ProfileMaterialRecord
@@ -156,12 +156,12 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
   profile_snapshot(workspace_id) -> ConfirmedProfileSnapshot
   ```
 
-- [ ] Make acceptance atomic: validate every referenced Evidence belongs to an immutable material version, append a ClaimVersion, update `current_confirmed_version_id`, and mark the proposal accepted in the same transaction. Support edited acceptance by recording the edited ClaimVersion and retaining its source Proposal relation.
-- [ ] Model Claim decision and evidence support independently: confirmed Claims may be `supported`, `conflicted`, or `unsupported`; a conflicting new proposal records a conflict edge and never overwrites the confirmed version.
-- [ ] Compute a deterministic `profile_version` from the ordered `(claim_id, current_version)` pairs; return it with every confirmed snapshot and reject stale Action Plans against it.
-- [ ] Return stable domain errors such as `profile_material_not_found`, `profile_evidence_mismatch`, `profile_proposal_already_decided`, `profile_claim_version_conflict`, and `profile_snapshot_changed`.
-- [ ] Run `cd backend && uv run pytest -q tests/test_profile_repository.py`. Expected: all repository invariant and concurrency tests pass.
-- [ ] Reviewer gate: use `PRAGMA foreign_key_check`; verify no repository update bypasses expected state/version predicates and no query omits `workspace_id` where cross-workspace IDs could be supplied.
+- [x] Make acceptance atomic: validate every referenced Evidence belongs to an immutable material version, append a ClaimVersion, update `current_confirmed_version_id`, and mark the proposal accepted in the same transaction. Support edited acceptance by recording the edited ClaimVersion and retaining its source Proposal relation.
+- [x] Model Claim decision and evidence support independently: confirmed Claims may be `supported`, `conflicted`, or `unsupported`; a conflicting new proposal records a conflict edge and never overwrites the confirmed version.
+- [x] Compute a deterministic `profile_version` from the ordered `(claim_id, current_version)` pairs; return it with every confirmed snapshot and reject stale Action Plans against it.
+- [x] Return stable domain errors such as `profile_material_not_found`, `profile_evidence_mismatch`, `profile_proposal_already_decided`, `profile_claim_version_conflict`, and `profile_snapshot_changed`.
+- [x] Run `cd backend && uv run pytest -q tests/test_profile_repository.py`. Expected: all repository invariant and concurrency tests pass.
+- [x] Reviewer gate: use `PRAGMA foreign_key_check`; verify no repository update bypasses expected state/version predicates and no query omits `workspace_id` where cross-workspace IDs could be supplied.
 
 ## Task 3: Implement Private Content-Addressed Storage and Parsers
 
