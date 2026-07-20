@@ -485,3 +485,11 @@
 - 新鲜验证：后端 round projection/restart `7 passed`；前端会话、讨论、页面 `11 passed`；`tsc --noEmit` 与 production build 通过（仅保留既有 >500 kB chunk 提示）。浏览器连接连续两次返回失效 tab，已按门禁停止无变化重试，未将其写成浏览器验收通过。
 - 二次比例校正：普通复习与深入讨论的聊天区/状态栏均显式占满同一 Grid 行；两个右栏移除整体 `overflow-y` 和滚动槽。普通复习的长关键点限制在剩余高度内滚动，移动端恢复自然文档流。最新 production build 与 `git diff --check` 通过。
 - 单屏滚动边界修正：桌面普通复习和深入讨论的 shell 固定为 `100dvh` 并禁止整页溢出，移除聊天工作台/会话的 520px 最低高度；对话记录内部继续滚动，composer 和右栏固定可见。移动端在 899px 以下恢复页面自然滚动。最新 production build 与 `git diff --check` 通过。
+
+## 2026-07-20：R3 Task 1 — Runtime Schema 与共享 Registry
+
+- 新增 Runtime migration 016：`agent_sessions.visibility`（user/system）、重建 `agent_messages` 接受 profile 卡片/Receipt kind、重建 `tool_audits` 增加 `tool_call_id/agent_role/input_digest/result_digest` 与 `denied` 状态、重建 `knowledge_drafts` 接受 `profile`、重建 `publication_runs` 接受 `revoked`，并新建 13 张 R3 领域表（材料/版本/Evidence/Claim/ClaimVersion/Proposal/Conflict/Assessment/ActionPlan/Item/PublicationSelection/SelectionItem/Publication）。
+- 新增 App migration 003：重建 `workspace_model_bindings` 接受六个角色，保留既有四角色绑定。
+- 共享边界：`ModelRole`/`MODEL_ROLES` 增加 `profile_extraction`、`profile_assessment`，校验文案 four->six，读绑定容忍部分历史绑定、仅显式保存要求六角色；`profile -> 50_profile` 文档类型与 Vault 目录；`domain="profile"` 创建 `artifacts/profile/materials/{blobs,text}`；`profile.materials` scope 与 `knowledge.active` 隔离；`python-docx>=1.1.0` 入依赖。
+- TDD：先写失败测试（14 red），再实现；后端定向 `54 passed`，关联绑定 `43 passed`，前端 `ModelBindings.test.tsx` `2 passed`，`tsc --noEmit` 0 错误，`git diff --check` 通过。
+- Reviewer gate：重建表逐列拷贝既有行（旧 tool_audits/agent_messages 行保留验证通过）；Runtime 迁移 runner `PRAGMA foreign_key_check` 无违规；`profile.materials` 穿越到 `knowledge-vault` 被拒。

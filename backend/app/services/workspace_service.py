@@ -89,7 +89,7 @@ class WorkspaceService:
     ) -> WorkspaceModelBindingsResource:
         self._require_workspace(workspace_id)
         if set(bindings) != MODEL_ROLES:
-            raise WorkspaceBindingError("all four model roles are required")
+            raise WorkspaceBindingError("all six model roles are required")
 
         for model_id in bindings.values():
             model = self.providers.get_model(model_id)

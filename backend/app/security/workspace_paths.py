@@ -7,6 +7,7 @@ from pathlib import Path, PureWindowsPath
 SCOPE_PATHS = {
     "review.sources": Path("artifacts/review/sources"),
     "review.drafts": Path("artifacts/review/drafts"),
+    "profile.materials": Path("artifacts/profile/materials"),
     "knowledge.active": Path("knowledge-vault"),
     "diagnostics.security": Path(".cyber-interview-agent/diagnostics"),
 }

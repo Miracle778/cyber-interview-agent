@@ -59,6 +59,17 @@ def _create_model(client: TestClient, provider_id: str) -> dict:
     return response.json()
 
 
+def _all_roles(model_id: str) -> dict:
+    return {
+        "question_generation": model_id,
+        "answer_evaluation": model_id,
+        "report_summarization": model_id,
+        "agent_chat": model_id,
+        "profile_extraction": model_id,
+        "profile_assessment": model_id,
+    }
+
+
 def test_create_provider_returns_redacted_camel_case_resource(client):
     provider = _create_provider(client)
 
@@ -103,12 +114,7 @@ def test_delete_bound_model_returns_conflict(client, tmp_path):
         "/api/settings/workspaces",
         json={"rootPath": str(tmp_path / "workspace")},
     ).json()
-    bindings = {
-        "question_generation": model["id"],
-        "answer_evaluation": model["id"],
-        "report_summarization": model["id"],
-        "agent_chat": model["id"],
-    }
+    bindings = _all_roles(model["id"])
     response = client.put(
         f"/api/settings/workspaces/{workspace['id']}/model-bindings",
         json={"bindings": bindings},
@@ -148,12 +154,7 @@ def test_workspace_register_relink_and_replace_bindings(client, tmp_path):
     response = client.get("/api/settings/workspaces")
     assert [item["id"] for item in response.json()] == [workspace["id"]]
 
-    initial = {
-        "question_generation": first_model["id"],
-        "answer_evaluation": first_model["id"],
-        "report_summarization": first_model["id"],
-        "agent_chat": first_model["id"],
-    }
+    initial = _all_roles(first_model["id"])
     response = client.put(
         f"/api/settings/workspaces/{workspace['id']}/model-bindings",
         json={"bindings": initial},
@@ -196,7 +197,7 @@ def test_legacy_workspace_endpoints_use_persistent_service(client, tmp_path):
     assert response.json()["workspacePath"] == str(root.resolve())
 
 
-def test_workspace_bindings_require_all_four_roles(client, tmp_path):
+def test_workspace_bindings_require_all_six_roles(client, tmp_path):
     workspace = client.post(
         "/api/settings/workspaces",
         json={"rootPath": str(tmp_path / "workspace")},
@@ -207,3 +208,20 @@ def test_workspace_bindings_require_all_four_roles(client, tmp_path):
         json={"bindings": {"agent_chat": "model-1"}},
     )
     assert response.status_code == 422
+
+
+def test_workspace_bindings_read_tolerates_partial_legacy_bindings(
+    client, tmp_path
+):
+    """Reading bindings must not fail when a legacy workspace stored fewer than
+    six roles; only an explicit save requires all six."""
+    workspace = client.post(
+        "/api/settings/workspaces",
+        json={"rootPath": str(tmp_path / "workspace")},
+    ).json()
+
+    response = client.get(
+        f"/api/settings/workspaces/{workspace['id']}/model-bindings"
+    )
+    assert response.status_code == 200
+    assert response.json()["bindings"] == {}

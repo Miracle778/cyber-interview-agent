@@ -6,7 +6,12 @@ from pathlib import Path
 from app.security.workspace_paths import PathPolicyError
 
 
-_SUPPORTED_DOMAINS = frozenset({"review"})
+_SUPPORTED_DOMAINS = frozenset({"review", "profile"})
+
+_DOMAIN_SUBDIRS = {
+    "review": ("sources", "drafts"),
+    "profile": ("materials/blobs", "materials/text"),
+}
 
 
 def initialize_knowledge_artifacts(
@@ -26,7 +31,7 @@ def initialize_knowledge_artifacts(
         current = target
 
     domain_root = current
-    for part in ("sources", "drafts"):
+    for part in _DOMAIN_SUBDIRS[domain]:
         _ensure_directory(domain_root / part)
 
     return domain_root

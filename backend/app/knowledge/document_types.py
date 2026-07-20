@@ -47,6 +47,7 @@ def create_document_type_registry() -> DocumentTypeRegistry:
         ("session_report", "20_review_sessions"),
         ("mastery_report", "30_mastery"),
         ("concept", "40_concepts"),
+        ("profile", "50_profile"),
     ):
         registry.register(DocumentTypeDefinition(name=name, directory=directory))
     return registry

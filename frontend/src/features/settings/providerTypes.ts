@@ -72,7 +72,9 @@ export type ModelRole =
   | "question_generation"
   | "answer_evaluation"
   | "report_summarization"
-  | "agent_chat";
+  | "agent_chat"
+  | "profile_extraction"
+  | "profile_assessment";
 
 export interface WorkspaceResource {
   id: string;

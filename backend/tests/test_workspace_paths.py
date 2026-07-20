@@ -11,6 +11,7 @@ def workspace(tmp_path: Path) -> Path:
     for relative in (
         "artifacts/review/sources",
         "artifacts/review/drafts",
+        "artifacts/profile/materials",
         "knowledge-vault",
         ".cyber-interview-agent/diagnostics",
     ):
@@ -123,3 +124,32 @@ def test_error_does_not_expose_workspace_absolute_path(
     assert str(workspace) not in str(caught.value)
     assert "review.sources" in str(caught.value)
     assert "missing.md" in str(caught.value)
+
+
+def test_profile_materials_scope_resolves_private_blob(
+    policy: WorkspacePathPolicy, workspace: Path
+) -> None:
+    blobs = workspace / "artifacts/profile/materials/blobs/ab"
+    blobs.mkdir(parents=True)
+    blob = blobs / "abc123.txt"
+    blob.write_text("resume bytes", encoding="utf-8")
+
+    resolved = policy.resolve_for_read(
+        "profile.materials", "blobs/ab/abc123.txt"
+    )
+
+    assert resolved == blob.resolve()
+
+
+def test_profile_materials_scope_rejects_traversal_to_vault(
+    policy: WorkspacePathPolicy, workspace: Path
+) -> None:
+    (workspace / "knowledge-vault/50_profile/secret.md").parent.mkdir(parents=True)
+    (workspace / "knowledge-vault/50_profile/secret.md").write_text("no", encoding="utf-8")
+
+    with pytest.raises(PathPolicyError) as caught:
+        policy.resolve_for_read(
+            "profile.materials", "../../knowledge-vault/50_profile/secret.md"
+        )
+
+    assert caught.value.code == "workspace_path_denied"

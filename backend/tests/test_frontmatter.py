@@ -18,6 +18,7 @@ from app.knowledge.frontmatter import (
         ("session_report", "20_review_sessions"),
         ("mastery_report", "30_mastery"),
         ("concept", "40_concepts"),
+        ("profile", "50_profile"),
     ],
 )
 def test_document_types_use_canonical_vault_directories(

@@ -7,6 +7,8 @@ const roles = {
   answer_evaluation: "m1",
   report_summarization: "m1",
   agent_chat: "m1",
+  profile_extraction: "m1",
+  profile_assessment: "m1",
 };
 
 const provider = {
@@ -53,7 +55,7 @@ afterEach(() => {
 });
 
 describe("ModelBindings", () => {
-  it("loads four roles and saves a complete binding payload", async () => {
+  it("loads six roles and saves a complete binding payload", async () => {
     let putBody: unknown;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = typeof input === "string" ? input : (input as Request).url;
@@ -78,6 +80,8 @@ describe("ModelBindings", () => {
     expect(screen.getByLabelText("回答评估模型")).toHaveValue("m1");
     expect(screen.getByLabelText("报告总结模型")).toHaveValue("m1");
     expect(screen.getByLabelText("Agent 对话模型")).toHaveValue("m1");
+    expect(screen.getByLabelText("简历结构化提取模型")).toHaveValue("m1");
+    expect(screen.getByLabelText("画像评估模型")).toHaveValue("m1");
 
     fireEvent.change(screen.getByLabelText("Agent 对话模型"), {
       target: { value: "m2" },

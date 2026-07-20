@@ -8,6 +8,7 @@ VAULT_DIRS = [
     "20_review_sessions",
     "30_mastery",
     "40_concepts",
+    "50_profile",
     "80_manifests",
     "90_exports",
     ".cyber-interview-agent",

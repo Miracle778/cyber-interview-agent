@@ -1,6 +1,8 @@
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from app.agents.context import AgentContext
 from app.application.session_service import ProductRepository
 from app.application.workspace_runtime import SqliteMiddlewareProjection
@@ -33,6 +35,22 @@ R2_SESSION_EXPERIENCE_TABLES = {
     "review_question_source_links",
 }
 
+R3_TABLES = {
+    "profile_materials",
+    "profile_material_versions",
+    "profile_evidence",
+    "profile_claims",
+    "profile_claim_versions",
+    "profile_claim_proposals",
+    "profile_claim_conflicts",
+    "profile_assessments",
+    "profile_action_plans",
+    "profile_action_plan_items",
+    "profile_publication_selections",
+    "profile_publication_selection_items",
+    "profile_publications",
+}
+
 
 def _tables(connection) -> set[str]:
     return {
@@ -53,7 +71,7 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     assert "agent_context_usage" in _tables(connection)
     connection.close()
 
@@ -93,7 +111,7 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     reopened.close()
 
 
@@ -260,4 +278,188 @@ def test_session_experience_migration_preserves_existing_r2_rows(
     ).fetchone()
 
     assert tuple(row) == ("Keep me", "text", "{}")
+    reopened.close()
+
+
+def test_r3_migration_creates_profile_tables(tmp_path: Path) -> None:
+    connection = connect_runtime_database(tmp_path)
+
+    assert R3_TABLES <= _tables(connection)
+    connection.close()
+
+
+def test_r3_migration_adds_session_visibility(tmp_path: Path) -> None:
+    connection = connect_runtime_database(tmp_path)
+
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(agent_sessions)")}
+    assert "visibility" in columns
+
+    connection.execute(
+        "INSERT INTO agent_sessions "
+        "(id, workspace_id, graph_id, graph_version, title, visibility) "
+        "VALUES ('sys', 'w1', 'profile.ingest', 1, 'hidden', 'system')"
+    )
+    connection.execute(
+        "INSERT INTO agent_sessions "
+        "(id, workspace_id, graph_id, graph_version, title) "
+        "VALUES ('usr', 'w1', 'profile.manage', 1, 'user session')"
+    )
+    connection.commit()
+
+    rows = connection.execute(
+        "SELECT id, visibility FROM agent_sessions ORDER BY id"
+    ).fetchall()
+    assert [(row[0], row[1]) for row in rows] == [("sys", "system"), ("usr", "user")]
+    connection.close()
+
+
+def test_r3_migration_rejects_invalid_session_visibility(tmp_path: Path) -> None:
+    connection = connect_runtime_database(tmp_path)
+
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            "INSERT INTO agent_sessions "
+            "(id, workspace_id, graph_id, graph_version, title, visibility) "
+            "VALUES ('bad', 'w1', 'profile.ingest', 1, 'hidden', 'public')"
+        )
+    connection.close()
+
+
+def test_r3_migration_extends_tool_audits_with_denied_and_correlation(
+    tmp_path: Path,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+    connection.execute(
+        "INSERT INTO agent_sessions (id, workspace_id, graph_id, graph_version, title) "
+        "VALUES ('s', 'w1', 'profile.manage', 1, 'S')"
+    )
+    connection.execute(
+        "INSERT INTO agent_runs (id, session_id, status) VALUES ('r', 's', 'running')"
+    )
+    connection.execute(
+        "INSERT INTO tool_audits "
+        "(id, session_id, run_id, tool_name, status, tool_call_id, agent_role, "
+        "input_digest, result_digest) "
+        "VALUES ('a', 's', 'r', 'read_personal_evidence', 'denied', 'call-1', "
+        "'profile_chat', 'abc', 'def')"
+    )
+    connection.commit()
+
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(tool_audits)")}
+    assert {"tool_call_id", "agent_role", "input_digest", "result_digest"} <= columns
+    row = connection.execute(
+        "SELECT status, tool_call_id, agent_role, input_digest, result_digest "
+        "FROM tool_audits WHERE id = 'a'"
+    ).fetchone()
+    assert tuple(row) == ("denied", "call-1", "profile_chat", "abc", "def")
+    connection.close()
+
+
+def test_r3_migration_adds_profile_card_message_kinds(tmp_path: Path) -> None:
+    connection = connect_runtime_database(tmp_path)
+    connection.execute(
+        "INSERT INTO agent_sessions (id, workspace_id, graph_id, graph_version, title) "
+        "VALUES ('s', 'w1', 'profile.manage', 1, 'S')"
+    )
+    for index, kind in enumerate(
+        (
+            "claim_card",
+            "proposal_card",
+            "assessment_card",
+            "action_plan_card",
+            "receipt",
+        )
+    ):
+        connection.execute(
+            "INSERT INTO agent_messages "
+            "(id, session_id, role, content, message_kind, payload_json) "
+            "VALUES (?, 's', 'assistant', ?, ?, ?)",
+            (f"m{index}", kind, kind, '{"id":"x"}'),
+        )
+    connection.commit()
+    connection.close()
+
+
+def test_r3_migration_allows_profile_knowledge_drafts(tmp_path: Path) -> None:
+    connection = connect_runtime_database(tmp_path)
+    connection.execute(
+        "INSERT INTO agent_sessions (id, workspace_id, graph_id, graph_version, title) "
+        "VALUES ('s', 'w1', 'profile.manage', 1, 'S')"
+    )
+    connection.execute(
+        "INSERT INTO knowledge_drafts "
+        "(id, workspace_id, session_id, domain, document_type, document_id, title, "
+        "content_path, content_hash) "
+        "VALUES ('d', 'w1', 's', 'profile', 'profile', 'profile-1', 'Profile', "
+        "'50_profile/profile-1.md', 'hash')"
+    )
+    connection.commit()
+    connection.close()
+
+
+def test_r3_migration_adds_revocable_publication_state(tmp_path: Path) -> None:
+    connection = connect_runtime_database(tmp_path)
+    connection.execute(
+        "INSERT INTO agent_sessions (id, workspace_id, graph_id, graph_version, title) "
+        "VALUES ('s', 'w1', 'knowledge.publish', 1, 'S')"
+    )
+    connection.execute(
+        "INSERT INTO agent_runs (id, session_id, status) VALUES ('r', 's', 'running')"
+    )
+    connection.execute(
+        "INSERT INTO pending_actions "
+        "(id, workspace_id, session_id, run_id, action_type, payload_json, "
+        "preview_json, idempotency_key) "
+        "VALUES ('pa', 'w1', 's', 'r', 'publish', '{}', '{}', 'k-1')"
+    )
+    connection.execute(
+        "INSERT INTO knowledge_drafts "
+        "(id, workspace_id, domain, document_type, document_id, title, content_path, "
+        "content_hash) "
+        "VALUES ('d', 'w1', 'profile', 'profile', 'p1', 'P', '50_profile/p1.md', 'h')"
+    )
+    connection.execute(
+        "INSERT INTO publication_runs "
+        "(id, action_id, draft_id, expected_draft_version, expected_content_hash, "
+        "document_id, target_path, state) "
+        "VALUES ('pr', 'pa', 'd', 1, 'h', 'p1', '50_profile/p1.md', 'revoked')"
+    )
+    connection.commit()
+    connection.close()
+
+
+def test_r3_migration_preserves_existing_tool_audits_and_messages(
+    tmp_path: Path,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+    connection.execute(
+        "INSERT INTO agent_sessions (id, workspace_id, graph_id, graph_version, title) "
+        "VALUES ('s', 'w1', 'review.single', 1, 'S')"
+    )
+    connection.execute(
+        "INSERT INTO agent_runs (id, session_id, status) VALUES ('r', 's', 'running')"
+    )
+    connection.execute(
+        "INSERT INTO tool_audits "
+        "(id, session_id, run_id, tool_name, status, resource_scope) "
+        "VALUES ('a', 's', 'r', 'legacy_tool', 'completed', 'review.sources')"
+    )
+    connection.execute(
+        "INSERT INTO agent_messages "
+        "(id, session_id, role, content, message_kind, payload_json) "
+        "VALUES ('m', 's', 'assistant', 'keep', 'question_card', '{}')"
+    )
+    connection.commit()
+    connection.close()
+
+    reopened = connect_runtime_database(tmp_path)
+    audit = reopened.execute(
+        "SELECT status, resource_scope, tool_call_id, agent_role FROM tool_audits "
+        "WHERE id = 'a'"
+    ).fetchone()
+    assert tuple(audit) == ("completed", "review.sources", None, None)
+    message = reopened.execute(
+        "SELECT content, message_kind FROM agent_messages WHERE id = 'm'"
+    ).fetchone()
+    assert tuple(message) == ("keep", "question_card")
     reopened.close()

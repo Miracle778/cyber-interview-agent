@@ -107,9 +107,9 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
       {
         id: "bindings",
         title: "模型用途绑定",
-        status: bindingsQuery.isError ? "读取失败" : `${bindingCount}/4 已绑定`,
-        description: bindingsQuery.isError ? "进入模型服务查看绑定状态" : bindingCount === 4 ? "四种用途均已有模型" : "完成四种用途绑定后才能运行复习",
-        tone: bindingsQuery.isError ? "danger" : bindingCount === 4 ? "success" : "warning",
+        status: bindingsQuery.isError ? "读取失败" : `${bindingCount}/6 已绑定`,
+        description: bindingsQuery.isError ? "进入模型服务查看绑定状态" : bindingCount === 6 ? "六种用途均已有模型" : "完成六种用途绑定后才能运行复习",
+        tone: bindingsQuery.isError ? "danger" : bindingCount === 6 ? "success" : "warning",
         section: "models",
       },
       {
@@ -127,7 +127,7 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
     ? "workspace"
     : (providersQuery.data?.length ?? 0) === 0
       ? "models"
-      : Object.values(bindingsQuery.data?.bindings ?? {}).filter(Boolean).length < 4
+      : Object.values(bindingsQuery.data?.bindings ?? {}).filter(Boolean).length < 6
         ? "models"
         : "diagnostics";
 

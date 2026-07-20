@@ -99,8 +99,8 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
 - Test: `backend/tests/test_workspace_paths.py`
 - Test: `frontend/src/features/settings/ModelBindings.test.tsx`
 
-- [ ] Write migration tests that expect schema version 16, user/system Session visibility, correlated Tool audits, typed profile card Messages, the R3 tables/indexes, `profile` knowledge drafts, and revocable publication state. Confirm they fail because migration 016 does not exist.
-- [ ] Define the normalized R3 tables with foreign keys and constrained states:
+- [x] Write migration tests that expect schema version 16, user/system Session visibility, correlated Tool audits, typed profile card Messages, the R3 tables/indexes, `profile` knowledge drafts, and revocable publication state. Confirm they fail because migration 016 does not exist.
+- [x] Define the normalized R3 tables with foreign keys and constrained states:
 
   ```sql
   profile_materials(id, workspace_id, type, title, primary_role, current_version_id, lifecycle_status, version, created_at, updated_at)
@@ -118,14 +118,14 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
   profile_publications(id, workspace_id, draft_id, publication_run_id, profile_version, state, published_hash, revoked_at, created_at, updated_at)
   ```
 
-- [ ] Add `visibility TEXT NOT NULL DEFAULT 'user' CHECK (visibility IN ('user','system'))` to `agent_sessions`; add `tool_call_id`, `agent_role`, `input_digest`, and `result_digest` plus audit state `denied` to `tool_audits`; add Message kinds `claim_card`, `proposal_card`, `assessment_card`, `action_plan_card`, and `receipt`; rebuild only tables whose existing CHECK constraint must accept the new values, preserving all rows and indexes inside one transaction.
-- [ ] Add `profile_extraction` and `profile_assessment` to the backend `ModelRole`/`MODEL_ROLES` contract and change validation text from “four” to “six”; preserve existing bindings during migration but require all six on the next explicit settings save.
-- [ ] Add the two model roles and Chinese labels to frontend settings, update empty/complete binding state, and revise tests/error copy to six roles.
-- [ ] Register document type `profile -> 50_profile`, add the Vault directory, allow `initialize_knowledge_artifacts(..., domain="profile")`, and add private scope `profile.materials -> artifacts/profile/materials`.
-- [ ] Add `python-docx>=1.1.0` to backend dependencies and update the lock file using the repository's existing package workflow.
-- [ ] Run `cd backend && uv run pytest -q tests/test_runtime_migrations.py tests/test_provider_routes.py tests/test_frontmatter.py tests/test_workspace_paths.py`. Expected: all focused schema, role, registry, and path-policy tests pass.
-- [ ] Run `cd frontend && npm test -- --run src/features/settings/ModelBindings.test.tsx`. Expected: all six roles load and save as one complete payload.
-- [ ] Reviewer gate: inspect migration rollback safety, table rebuild copy columns, foreign-key checks, and confirm no raw material path can resolve into `knowledge-vault`.
+- [x] Add `visibility TEXT NOT NULL DEFAULT 'user' CHECK (visibility IN ('user','system'))` to `agent_sessions`; add `tool_call_id`, `agent_role`, `input_digest`, and `result_digest` plus audit state `denied` to `tool_audits`; add Message kinds `claim_card`, `proposal_card`, `assessment_card`, `action_plan_card`, and `receipt`; rebuild only tables whose existing CHECK constraint must accept the new values, preserving all rows and indexes inside one transaction.
+- [x] Add `profile_extraction` and `profile_assessment` to the backend `ModelRole`/`MODEL_ROLES` contract and change validation text from “four” to “six”; preserve existing bindings during migration but require all six on the next explicit settings save.
+- [x] Add the two model roles and Chinese labels to frontend settings, update empty/complete binding state, and revise tests/error copy to six roles.
+- [x] Register document type `profile -> 50_profile`, add the Vault directory, allow `initialize_knowledge_artifacts(..., domain="profile")`, and add private scope `profile.materials -> artifacts/profile/materials`.
+- [x] Add `python-docx>=1.1.0` to backend dependencies and update the lock file using the repository's existing package workflow.
+- [x] Run `cd backend && uv run pytest -q tests/test_runtime_migrations.py tests/test_provider_routes.py tests/test_frontmatter.py tests/test_workspace_paths.py`. Expected: all focused schema, role, registry, and path-policy tests pass.
+- [x] Run `cd frontend && npm test -- --run src/features/settings/ModelBindings.test.tsx`. Expected: all six roles load and save as one complete payload.
+- [x] Reviewer gate: inspect migration rollback safety, table rebuild copy columns, foreign-key checks, and confirm no raw material path can resolve into `knowledge-vault`.
 
 ## Task 2: Define Profile Domain Contracts and Repository Invariants
 
