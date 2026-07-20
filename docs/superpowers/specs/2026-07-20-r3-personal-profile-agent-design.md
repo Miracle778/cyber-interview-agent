@@ -2,7 +2,7 @@
 
 日期：2026-07-20
 
-状态：方案已确认，待文档复核
+状态：方案已确认，视觉设计契约已补充，待文档复核
 产品阶段：R3 个人材料、结构化画像与知识发布
 
 ## 1. 背景
@@ -502,9 +502,161 @@ Audit 保存摘要和哈希，不保存敏感 Tool 原始输入输出。
 
 支持 Claim 级选择、敏感字段排除、发布预览、Knowledge Draft、独立 HITL、发布版本和撤销 Active Knowledge。
 
-## 14. API 设计
+## 14. 前端视觉与交互设计契约
 
-### 14.1 材料与版本
+### 14.1 视觉方向
+
+R3 采用已经确认的 `light + professional + data-dense + evidence-centered workspace`，设计旋钮为 `variance 4 / motion 3 / density 8`。
+
+- **浅色优先**：延续当前生产页面的浅灰 Canvas、白色 Surface、蓝色主操作和克制的语义状态色，不把 R3 做成独立主题；
+- **内容与证据优先**：页面层级依靠布局、留白、字号、分隔和选中态表达，颜色只辅助状态；
+- **高密度但不拥挤**：列表、Claim、Evidence 和版本比较允许高信息密度，正文阅读区和操作区仍保留清晰呼吸空间；
+- **工具型产品而非展示型网站**：禁止 Landing Page 构图、紫粉营销渐变、重玻璃拟态、装饰性 ambient glow、超大标题和无意义动画；
+- **与 R0-R2 连续**：复用现有 App Shell、导航、Button、Badge、Card、Dialog、Composer、Focus 和响应式 primitives，不引入第二套 UI 框架。
+
+`ui-ux-pro-max` 检索给出的 Modern Dark、紫粉配色、Review/Rating 电商模式与已确认方向和当前代码不符，明确拒绝；采用其适用于本项目的轻动效、高密度、渐进披露、44px 目标、可见 Focus、异步反馈和响应式规则。
+
+视觉权威顺序：
+
+1. `frontend/src/app/global.css` 已有语义 Token 与基础组件；
+2. 本节定义的信息层级、交互和响应式契约；
+3. R3 概念效果图。
+
+效果图用于页面区域职责、信息层级、状态显隐和主要操作顺序，不作为固定数据、固定文案或逐像素截图基线。若效果图与服务端事实、可访问性或本节 Token 冲突，以前两项为准。
+
+### 14.2 设计 Token
+
+R3 首版直接继承现有 Token，不新建 R3 专属 raw hex：
+
+| 语义 | Token | 当前值/规则 |
+|---|---|---|
+| 页面背景 | `--canvas` | `#f4f6f8` |
+| 主表面 | `--surface` | `#ffffff` |
+| 次级表面 | `--surface-subtle` | `#f8fafc` |
+| 选中/聚焦表面 | `--surface-active` | `#eef2ff` |
+| 主文字 | `--text` | `#172033` |
+| 次级文字 | `--text-muted` | `#5f6b7a` |
+| 辅助文字 | `--text-soft` | `#7b8794` |
+| 边框 | `--border` / `--border-strong` | `#dfe4ea` / `#c8d0da` |
+| 主操作 | `--primary` / `--primary-hover` | `#4056b4` / `#34489a` |
+| 主操作浅底 | `--primary-soft` | `#e8ecff` |
+| 成功/已确认 | `--success` / `--success-soft` | 现有绿色语义对 |
+| 待确认/冲突 | `--warning` / `--warning-soft` | 现有琥珀语义对 |
+| 失败/拒绝/删除 | `--danger` / `--danger-soft` | 现有红色语义对 |
+| 键盘焦点 | `--focus` | 3px 可见 Focus Ring |
+| 圆角 | `--radius-sm/md/lg` | 4 / 6 / 8px |
+| 阴影 | `--shadow-sm/md` | 仅用于可交互卡片、浮层和层级分离 |
+| 间距 | `--space-1` 至 `--space-12` | 4px 基础、8px 节奏 |
+| Motion | `--duration-fast` / `--duration` | 150 / 220ms |
+
+组件只能消费语义 Token，不在页面内新增任意颜色、圆角、阴影、间距或 z-index。状态色必须同时配合图标、文字或 Badge，不得只用颜色表达 supported、conflicted、unsupported、confirmed 或 rejected。
+
+### 14.3 字体与内容层级
+
+- 字体继续使用 `Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`；代码、哈希和固定宽度数据使用现有 `--font-mono`；
+- 页面 H1 使用现有 28px 级别，区块 H2 约 18px，卡片/字段 H3 16px；不为 R3 引入营销型 Display 字号；
+- 正文基线 16px、行高约 1.55；密集列表和元数据可以使用 12-14px，但主要阅读文本不得低于 14px；移动端表单输入保持至少 16px；
+- 时间、版本号、计数和 Token 使用 tabular figures，避免流式更新引起宽度跳动；
+- Evidence 和长文本优先换行或展开查看，截断必须提供可键盘访问的完整内容入口。
+
+### 14.4 Shell、导航与页面布局
+
+桌面继续使用现有 240px 左侧 App Shell；“个人资料”作为一级入口，页内固定使用以下二级标签：
+
+```text
+资料总览 | 简历版本 | 画像与经历 | Agent 会话
+```
+
+知识发布范围从总览和画像审核中的显式操作进入，属于可深链页面；返回时恢复原筛选、滚动和选择状态。
+
+页面布局契约：
+
+| 页面 | ≥1200px | 768-1199px | ≤767px |
+|---|---|---|---|
+| 资料总览 | 主画像区 + 320-360px 待确认侧栏 | 主区 + 可折叠建议区 | 单列，建议置于画像摘要之后 |
+| 简历版本 | 版本列表 + 文档预览 + 差异/操作栏 | 版本列表 + 文档，差异进入抽屉 | 单列版本卡；预览和差异为全宽子页面 |
+| Evidence 详情 | 文档大纲 + 原文定位 + 结构化检查栏 | 大纲折叠，检查栏可替换/抽屉 | 原文、结构化字段、操作按步骤纵向排列 |
+| 画像审核 | 分类树 + Claim 编辑区 + Evidence 栏 | 分类树 + Claim；Evidence 抽屉 | 分类列表 → Claim 详情 → Evidence 子页面 |
+| Agent 会话 | 会话列表 + 对话主区 + 运行/授权栏 | 会话列表 + 对话；运行栏抽屉 | 单列对话；会话和运行信息从顶部入口打开 |
+| 发布范围 | 分类筛选 + Claim 表格 + Markdown 预览 | 筛选折叠，列表 + 预览 | Claim 卡片列表；预览为确认前独立步骤 |
+
+宽屏三栏使用 `minmax(0, ...)`，主任务区域始终最大。右栏负责 Evidence、运行信息、Diff 或发布预览，不和中栏重复展示同一份可编辑状态。页面只保留一个主滚动区；侧栏需要独立滚动时必须有明确高度边界，不能形成互相争抢的多层滚动。
+
+### 14.5 核心组件规范
+
+- **Material/Version Row**：文件类型、版本、时间、处理状态和主简历状态同层展示；当前版本使用左侧强调线或浅蓝背景，不用大面积渐变；
+- **Claim Row/Card**：字段值是主层级，Claim 类型、Evidence 数量和支持状态为辅助层级；编辑、接受、拒绝均绑定稳定资源 ID；
+- **Evidence Card**：显示来源材料、版本、页/章节、引用片段和“查看原文”；敏感正文默认裁剪，展开属于显式操作；
+- **Conflict Card**：并列显示来源、值和时间，警告使用琥珀色边框加图标/文字，不使用红色模拟系统故障；
+- **Proposal Card**：明确区分“当前值”和“AI 建议”，默认展示理由与 Evidence；确认按钮不得写成模糊的“应用全部”；
+- **Action Plan Card**：逐项显示 before/after、expected version、选择状态和执行结果；部分成功不能只显示一个全局 Toast；
+- **Tool Stage Row**：只显示安全的“读取授权资料”“对照项目证据”等公开阶段、数量和完成状态；默认可折叠，不展示 Tool 原始参数、结果或模型推理；
+- **Publication Scope Row**：Checkbox、Claim、分类、Evidence 数量、当前发布范围和更新时间对齐；敏感或无证据项有文字说明；
+- **Composer**：复用现有紧凑聊天 Dock，输入为主层级，模型/思考强度渐进披露，发送/停止状态明确；
+- **Dialog/Drawer**：仅用于确认、差异、Evidence 和窄屏辅助信息，不承载一级导航；有标题、关闭、Esc、Focus Trap 和返回焦点。
+
+每个页面只保留一个 Primary CTA。删除、拒绝、撤销发布与普通操作在颜色和空间上分离；永久删除必须通过影响预检，不把危险操作藏在无标签图标菜单中。
+
+### 14.6 状态、反馈与 Motion
+
+- 点击、键盘提交和选择在 100ms 内产生视觉反馈；异步等待超过 300ms 显示 Skeleton、Stage 或 Progress，不允许空白等待；
+- 上传和 `profile.ingest` 展示确定性阶段：上传、文本提取、脱敏、Claim 提取、等待审核；失败阶段提供原因和重试入口；
+- `agent.tool.*` Event 只投影安全 Tool Stage，不能模拟 Chain of Thought；
+- 流式回答使用临时气泡；`session.message.created` 对账后替换为正式消息，避免双份内容；
+- Motion 使用现有 150/220ms Token，以 opacity/transform 为主，只表达打开、关闭、选中、完成和内容替换；禁止装饰性循环动画；
+- `prefers-reduced-motion` 下取消非必要位移、Pulse 和自动滚动动画，但保留即时状态变化；
+- 错误信息在对应字段、卡片或 Execution 附近显示“发生了什么 + 如何恢复”，不能只在页面顶部 Toast。
+
+### 14.7 响应式与无障碍
+
+验收宽度至少覆盖 390、768、1024 和 1440px，并补充移动横屏检查：
+
+- 390px 无页面级横向滚动；宽表格改为卡片或字段列表，不能要求用户横向拖动完成主要任务；
+- 触控/点击目标至少 44×44px，相邻危险操作保持至少 8px 间距；
+- 普通文本对比度至少 4.5:1，大型图标和非文本 UI 至少 3:1；
+- 键盘可完成标签导航、版本选择、Claim 审核、Evidence 展开、Action Plan 选择、发布确认和 Dialog 关闭；
+- 路由切换后 Focus 移到页面 H1/主内容，关闭抽屉或 Dialog 后返回触发控件；
+- 动态进度和 Tool Stage 使用适当 `aria-live`，Toast 不抢占焦点；
+- 展开、选中、待确认、冲突、只读和禁用状态具有正确语义属性；
+- 50 项以上列表使用分页、渐进加载或虚拟化；异步内容预留空间，避免明显 Layout Shift。
+
+### 14.8 概念参考图
+
+资料总览：
+
+![R3 个人画像总览参考](../assets/r3/profile-overview-reference.png)
+
+简历版本管理：
+
+![R3 简历版本管理参考](../assets/r3/resume-version-reference.png)
+
+简历 Evidence 定位与结构化详情：
+
+![R3 Evidence 详情参考](../assets/r3/evidence-detail-reference.png)
+
+Claim 审核工作台：
+
+![R3 Claim 审核参考](../assets/r3/claim-review-reference.png)
+
+个人画像 Agent 会话：
+
+![R3 个人画像 Agent 会话参考](../assets/r3/profile-agent-reference.png)
+
+知识发布范围：
+
+![R3 知识发布范围参考](../assets/r3/publication-scope-reference.png)
+
+### 14.9 UI/UX 实施门禁
+
+1. **实施前**：基于本节和现有 `global.css` 输出页面区域矩阵、共享组件清单、状态矩阵和响应式折叠规则；不得先写各页面私有 CSS 再统一；
+2. **实施中**：优先完成 Profile Shell、Tabs、三栏 Workspace、Claim/Evidence/Proposal/ActionPlan、Tool Stage、Drawer 和 Composer primitives；每个纵向切片同时完成桌面与窄屏，不把响应式留到最后；
+3. **切片审查**：在真实数据和长文本下检查区域职责、Loading、Empty、Error、Conflict、Partial Success、Interrupted 和 Permission Denied；
+4. **最终审查**：使用 accessibility、loading、navigation、responsive 和 performance 清单检查真实页面，再执行完整浏览器验收；
+5. **还原边界**：视觉结果必须达到参考图的信息层级和感知质量，但不做逐像素截图匹配，也不为参考图中的示例数字伪造前端状态。
+
+## 15. API 设计
+
+### 15.1 材料与版本
 
 ```http
 POST /api/workspaces/{workspaceId}/profile/materials
@@ -519,7 +671,7 @@ POST /api/profile/materials/{materialId}/primary
 
 上传返回 `202 Accepted`，包含 materialId、versionId、executionId 和 processingStatus。
 
-### 14.2 Claim 与 Proposal
+### 15.2 Claim 与 Proposal
 
 ```http
 GET  /api/workspaces/{workspaceId}/profile/claims
@@ -532,7 +684,7 @@ POST /api/profile/claim-proposals/batch-decide
 
 写请求必须携带 `Idempotency-Key` 和目标 `expectedVersion`。版本不一致返回 `409 Conflict` 并重新展示 Diff。
 
-### 14.3 Action Plan
+### 15.3 Action Plan
 
 ```http
 GET  /api/profile/action-plans/{planId}
@@ -543,7 +695,7 @@ POST /api/profile/action-plans/{planId}/retry
 
 确认请求提交计划版本和显式 `selectedItemIds`，不得使用漂移的页面当前选择语义。
 
-### 14.4 删除预检
+### 15.4 删除预检
 
 ```http
 POST /api/profile/materials/{materialId}/deletion-preview
@@ -552,7 +704,7 @@ POST /api/profile/materials/{materialId}/permanent-delete
 
 预检返回 deletionPlanId、materialVersion、受影响 Evidence/Claim、将变为 unsupported 的 Claim、Active Publication 和 expiresAt。永久删除必须引用未过期计划并携带精确选择。
 
-## 15. 删除、撤销与隐私语义
+## 16. 删除、撤销与隐私语义
 
 归档隐藏默认列表和 Agent 检索，但保留版本、Evidence、Claim 关系和审计；恢复后不重新解析。
 
@@ -569,7 +721,7 @@ POST /api/profile/materials/{materialId}/permanent-delete
 
 普通撤销发布可以保留历史知识版本和 Receipt；隐私性质的永久清除不能保留可恢复敏感正文，只保留无正文 tombstone、哈希和审计事实。
 
-## 16. 幂等、并发与取消
+## 17. 幂等、并发与取消
 
 所有领域写操作同时使用 `Idempotency-Key`、`expectedVersion`、不可变输入快照和 Item 级 Receipt。
 
@@ -577,7 +729,7 @@ POST /api/profile/materials/{materialId}/permanent-delete
 
 模型等待和只读 Tool 可以尽快取消；单个领域写事务开始后完成当前 Item，取消阻止后续 Item。用户取消落 `cancelled`；无用户取消请求的进程退出落 `interrupted`；恢复或重试复用快照和幂等键，不重放已完成副作用。
 
-## 17. 失败恢复
+## 18. 失败恢复
 
 | 失败位置 | 处理 |
 |---|---|
@@ -592,7 +744,7 @@ POST /api/profile/materials/{materialId}/permanent-delete
 | Claim 并发变更 | `409 Conflict`，旧计划 `expired` |
 | 发布 | 保留 Knowledge Draft，不进入 Active Knowledge |
 
-## 18. 实施切片
+## 19. 实施切片
 
 ### R3.1 材料与 Evidence 基础设施
 
@@ -618,13 +770,13 @@ GitHub 接入另行设计授权、同步游标、速率限制、数据撤销和�
 
 R3 第一可验收里程碑完成 R3.1-R3.4；R3.5 是第二里程碑。
 
-## 19. 测试策略
+## 20. 测试策略
 
-### 19.1 领域单元测试
+### 20.1 领域单元测试
 
 覆盖 Material、Version、Claim、Proposal、Action Plan 状态机，Evidence 引用，删除影响，发布选择，幂等 Receipt，乐观并发和敏感字段过滤。
 
-### 19.2 Agent 契约测试
+### 20.2 Agent 契约测试
 
 - Extraction 输出满足 Schema，不合法 Evidence ID 被拒绝；
 - Assessment 不能直接生成正式 Claim；
@@ -636,17 +788,17 @@ R3 第一可验收里程碑完成 R3.1-R3.4；R3.5 是第二里程碑。
 - `ToolStrategy` 不计入业务 Tool Audit；
 - Planner 只生成计划。
 
-### 19.3 集成测试
+### 20.3 集成测试
 
 覆盖上传到 Claim 候选、migration、幂等、并发、checkpoint、停止、重启、显式重试、批量部分成功、Session 删除解耦、材料删除、Evidence 失效、Active Knowledge 撤销和发布历史隔离。
 
-### 19.4 API 与前端测试
+### 20.4 API 与前端测试
 
 覆盖 `202 Accepted`、Event cursor 重放、刷新恢复、Proposal 编辑确认、Action Plan 过期、删除预检、发布确认、390px 无横向溢出、键盘/Focus/错误/Loading。
 
 任务期间运行针对性测试；跨层集成后按需运行一次全量；最终验收前运行一次全量。
 
-## 20. 浏览器与真实 Provider 验收
+## 21. 浏览器与真实 Provider 验收
 
 第一里程碑至少覆盖：
 
@@ -667,7 +819,7 @@ R3 第一可验收里程碑完成 R3.1-R3.4；R3.5 是第二里程碑。
 
 真实 Provider 至少分别验证结构化提取、简历评估、带只读 Tool 的连续对话和结构化 Action Plan。
 
-## 21. 验收标准
+## 22. 验收标准
 
 - 原始简历、版本、Evidence、Claim、Proposal 和发布版本可追溯；
 - 未确认候选和已确认画像严格分离；
@@ -683,7 +835,7 @@ R3 第一可验收里程碑完成 R3.1-R3.4；R3.5 是第二里程碑。
 - 已确认发布画像可供 R4-R6 稳定查询；
 - 自动测试、真实 Provider 和浏览器验收均有新鲜证据。
 
-## 22. 产品成熟度边界
+## 23. 产品成熟度边界
 
 R3 第一里程碑完成后，产品具备“有证据、经确认、可发布、可撤销”的个人简历画像闭环，但仍不是任意个人数据自治平台。
 
