@@ -385,7 +385,7 @@ PublicationSelection
 
 Tool Schema 只包含业务查询参数。`workspace_id`、`session_id`、`run_id`、`allowed_tools` 和 `allowed_scopes` 由服务端 `AgentContext` 注入，模型不能覆盖。Tool 必须验证稳定资源 ID 属于当前 Workspace。
 
-每个 `profile_chat` Execution 默认最多 6 次 Tool Call；相同 Tool 与规范化参数最多 2 次；单次结果有条目数和正文长度上限；超限后必须回答、澄清或安全失败。No Progress Middleware 将 Tool 名称和规范化参数纳入指纹。
+每个 `profile_chat` Execution 默认最多 6 次 Tool Call；相同 Tool 与规范化参数最多 2 次；单次结果最多 50 项，单条正文摘录最多 2,000 字符；超限后必须回答、澄清或安全失败。No Progress Middleware 将 Tool 名称和规范化参数纳入指纹。
 
 Tool 返回统一 envelope：
 

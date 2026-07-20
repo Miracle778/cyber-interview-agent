@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from langchain.agents.middleware import (
+    AgentMiddleware,
     ContextEditingMiddleware,
     HumanInTheLoopMiddleware,
     ModelCallLimitMiddleware,
@@ -40,6 +41,9 @@ REVIEW_ROUND_BUDGET = MiddlewareBudgetProfile(
     tool_run_limit=20,
     include_progress_scope=True,
 )
+PROFILE_CHAT_BUDGET_PROFILE = MiddlewareBudgetProfile(
+    tool_run_limit=6,
+)
 
 
 def build_default_middleware(
@@ -50,6 +54,7 @@ def build_default_middleware(
     observability: ObservabilitySink,
     interrupt_on: Mapping[str, bool | dict],
     budget_profile: MiddlewareBudgetProfile = DEFAULT_BUDGET,
+    tool_guards: tuple[AgentMiddleware, ...] = (),
     context_limit_tokens: int = 128000,
 ):
     """Build the one explicit default stack using official middleware hooks."""
@@ -82,6 +87,7 @@ def build_default_middleware(
             run_limit=budget_profile.tool_run_limit,
             exit_behavior="error",
         ),
+        *tool_guards,
         policy,
         HumanInTheLoopMiddleware(interrupt_on=dict(interrupt_on)),
         UsageProjectionMiddleware(projection),

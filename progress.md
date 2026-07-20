@@ -16,6 +16,14 @@
 - 移除 Claude 越界加入且未经本轮确认的两个 ADR；修正设置页“六用途未齐就不能复习”的误导文案。未修改或纳入 Claude 尚未提交的 Task 6 两个 RED 测试。
 - 修复后完整 Task 1-5 后端定向门禁 `181 passed`（仅 1 条既有 Starlette 弃用 warning）；相关前端 `13 passed`；TypeScript、Python compileall、`git diff --check` 通过。下一步从 Task 6 继续。
 
+## 2026-07-20：R3 Task 6 - 有界只读 Profile Tool
+
+- 完成规格允许的八个只读 Tool；所有业务输入使用 strict/extra-forbid Pydantic Schema，Workspace、Session、Run、Tool/Scope allowlist 仅由 `AgentContext` 注入，handler 内再次校验 Workspace 与 Scope。
+- Tool 只返回材料/版本/Claim/Evidence/发布的稳定 ID、结构化字段、定位信息和短摘录；统一 envelope 最多 50 项、单条摘录最多 2,000 字符，不返回整份私有材料、storage/text ref 或数据库异常。
+- 新增每个 Execution 最多 6 次、相同规范化 `(tool_name,args)` 最多 2 次的预算中间件；耗尽后返回终止 Tool loop 的安全指引。统一 middleware stack 支持显式插入 Tool guard，Profile budget profile 同步收紧为 6 次。
+- Claude 的 RED 夹具最初用不同 content hash 提交 parse，触发既有仓储不变量；修正夹具后补齐 Scope、Workspace、截断、顺序、归档、strict schema 与参数键顺序规范化覆盖。
+- 新鲜定向证据：Profile Tool/预算与受影响 middleware stack `29 passed`；Python compileall 与 `git diff --check` 通过。Ruff 不在项目依赖中，未声称 Ruff 门禁。
+
 ## 2026-07-20：补充 Agent State 与 Context Offload ADR
 
 - 将 `state_schema` 的五项准入条件、状态归属表、R2 现状和 R3-R6 采用边界补入全路线 Agent 能力 ADR。

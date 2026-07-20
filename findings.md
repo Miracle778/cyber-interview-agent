@@ -20,6 +20,13 @@
 - 空 PDF、DOCX、Markdown 和 text 使用同一 `profile_no_extractable_text` 语义；Action Plan status SQL 只能更新 schema 中真实存在的列，Item 执行必须校验 Claim expected version。
 - Claude 在 Task 3 提交中加入的两个非 R3 ADR 含未确认结论和过期路径，已从本分支移除；架构决定只保留用户确认且路径有效的正式 ADR。
 
+## 2026-07-20 R3 Task 6 Tool 边界
+
+- Profile Tool 不能复用通用任意路径 reader：即使有 `ToolPolicyMiddleware`，稳定资源 ID 的 handler 仍需通过关联查询验证当前 Workspace、active material 和非 tombstone Evidence，形成纵深防御。
+- 预算必须同时约束总调用次数与规范化重复调用；仅使用官方 `ToolCallLimitMiddleware(run_limit=6)` 无法识别参数键顺序等价的重复调用，因此增加 Profile 专用 guard，并在统一 stack 中保留显式插槽。
+- Tool 输出上限属于服务端上下文契约，不应交给模型自报；R3 固定为最多 50 项、单条摘录 2,000 字符，并通过 `AgentContext` 只允许服务端进一步收紧。
+- 发布状态读取来自 `profile_publications` 领域事实；未发布返回显式 `unpublished`，不把 PublicationSelection draft 伪装成已发布事实。
+
 ## 2026-07-20 Agent State 与 Context Offload 边界
 
 - 自定义 `state_schema` 只用于单一 `create_agent` 循环中产生、被后续步骤消费、需随 checkpoint 恢复且不属于领域事实的可变工作状态；输入、输出、可信权限、业务状态和跨 Session 记忆分别归消息/response、`context_schema`、领域层和 Store。

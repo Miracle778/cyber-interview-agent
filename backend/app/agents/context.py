@@ -14,3 +14,5 @@ class AgentContext:
     allowed_scopes: frozenset[str]
     progress_scope: tuple[str, ...] = ()
     agent_role: str | None = None
+    tool_result_item_limit: int = 50
+    tool_excerpt_char_limit: int = 2000

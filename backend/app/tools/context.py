@@ -13,3 +13,5 @@ class ToolExecutionContext:
     allowed_tools: frozenset[str]
     allowed_scopes: frozenset[str]
     agent_role: str | None = None
+    tool_result_item_limit: int = 50
+    tool_excerpt_char_limit: int = 2000

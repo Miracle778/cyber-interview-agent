@@ -228,8 +228,8 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
 - Test: `backend/tests/test_profile_tools.py`
 - Test: `backend/tests/test_profile_tool_budget.py`
 
-- [ ] Write failing tests for scope denial, workspace isolation, item/text limits, deterministic ordering, absent/archived records, repeated normalized arguments, six-call budget exhaustion, and two-identical-call no-progress handling.
-- [ ] Implement exactly these read-only Tools:
+- [x] Write failing tests for scope denial, workspace isolation, item/text limits, deterministic ordering, absent/archived records, repeated normalized arguments, six-call budget exhaustion, and two-identical-call no-progress handling.
+- [x] Implement exactly these read-only Tools:
 
   ```text
   list_personal_materials
@@ -242,11 +242,11 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
   get_profile_publication_status
   ```
 
-- [ ] Give every Tool a strict Pydantic input schema and bounded result schema. Return identifiers, locators, selected structured values, and short excerpts; cap lists at 50 and excerpts at the spec's context budget.
-- [ ] Add `PROFILE_CHAT_BUDGET` with maximum six Tool calls per Execution and two calls for the same normalized `(tool_name,args)` fingerprint. On exhaustion, require answer/clarification/safe failure rather than another call.
-- [ ] Keep write verbs out of tool names and functions. Add a structural test that the profile Tool module imports no repositories' mutation commands and exposes no `create/update/delete/publish/accept/apply` Tool.
-- [ ] Run `cd backend && uv run pytest -q tests/test_profile_tools.py tests/test_profile_tool_budget.py`. Expected: bounded read-only behavior and loop termination tests pass.
-- [ ] Reviewer gate: compare the exported Tool names with the R3 ADR/spec allowlist and confirm every result can be shown in audit-safe UI without exposing an entire source document.
+- [x] Give every Tool a strict Pydantic input schema and bounded result schema. Return identifiers, locators, selected structured values, and short excerpts; cap lists at 50 and excerpts at the spec's context budget.
+- [x] Add `PROFILE_CHAT_BUDGET` with maximum six Tool calls per Execution and two calls for the same normalized `(tool_name,args)` fingerprint. On exhaustion, require answer/clarification/safe failure rather than another call.
+- [x] Keep write verbs out of tool names and functions. Add a structural test that the profile Tool module imports no repositories' mutation commands and exposes no `create/update/delete/publish/accept/apply` Tool.
+- [x] Run `cd backend && uv run pytest -q tests/test_profile_tools.py tests/test_profile_tool_budget.py`. Expected: bounded read-only behavior and loop termination tests pass.
+- [x] Reviewer gate: compare the exported Tool names with the R3 ADR/spec allowlist and confirm every result can be shown in audit-safe UI without exposing an entire source document.
 
 ## Task 7: Implement Structured Profile Agents and the Ingest Graph
 
