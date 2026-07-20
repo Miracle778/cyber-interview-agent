@@ -46,6 +46,9 @@ from app.review.selector import QuestionSelector
 from app.review.repository import ReviewRepository
 from app.tools.audit import ToolAuditRepository
 from app.agents.context import AgentContext
+from app.profile.repository import ProfileRepository
+from app.profile.service import ProfileService
+from app.profile.storage import MaterialStorage
 
 
 class SqliteMiddlewareProjection:
@@ -165,6 +168,7 @@ class WorkspaceRuntime:
     drafts: KnowledgeDraftService
     publications: PublicationService
     review: ReviewApplication
+    profile: ProfileService
     publication_locks: dict[str, asyncio.Lock] = field(
         default_factory=dict, repr=False
     )
@@ -302,6 +306,14 @@ class WorkspaceRuntime:
             curation_context_projection=projection,
             curation_context_factory=curation_context_factory,
         )
+        profile_repository = ProfileRepository(connection)
+        profile = ProfileService(
+            workspace_id=workspace_id,
+            root=root,
+            repository=profile_repository,
+            storage=MaterialStorage(root),
+            product_repository=repository,
+        )
         return cls(
             workspace_id=workspace_id,
             root=root,
@@ -315,6 +327,7 @@ class WorkspaceRuntime:
             drafts=drafts,
             publications=publications,
             review=review,
+            profile=profile,
         )
 
     async def close(self) -> None:
@@ -630,9 +643,14 @@ class AgentApplication:
         for workspace_id in self._workspace_ids():
             context = self._context(workspace_id)
             try:
-                return context, context.repository.get_session(session_id)
+                session = context.repository.get_session(session_id)
             except ProductRecordNotFoundError:
                 continue
+            # Generic API routes must not expose hidden profile.ingest system
+            # sessions; internal Runtime services access them via the repository.
+            if session.visibility == "system":
+                continue
+            return context, session
         raise ProductRecordNotFoundError("Agent Session 不存在")
 
     def _locate_session_including_deleted(

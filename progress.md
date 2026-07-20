@@ -509,3 +509,11 @@
 - 扩展 `WorkspacePathPolicy.scope_root(scope)` 供 storage 安全创建 blob 前缀目录；`workspace_layout` profile 子目录改为有序创建 materials/blobs/text。
 - TDD：先写 21 个失败测试，再实现；`test_profile_storage.py` + `test_profile_parsers.py` `21 passed`，关联回归 `73 passed`，`compileall` 通过。
 - Reviewer gate：失败路径用 temp+os.replace+finally 清理不留部分文件；异常串与日志只含 code/ID，`"broken"` 等正文不入错误消息，绝对路径不泄漏。
+
+## 2026-07-20：R3 Task 4 - 材料生命周期服务与隐藏摄入 Session
+
+- 新增 `app/profile/service.py`：`ProfileService` 复用共享 Runtime 的 ProductRepository/AgentSessionService；`upload_material`/`add_material_version` 持久化字节、创建不可变版本、创建隐藏 `profile.ingest` system Session（id==version_id）、启动仅含 ID/定位符的 Execution，不创建用户消息；`retry_version_ingest` 拒绝活跃 Execution 并在同一隐藏 Session 上新建 Execution；`record_ingest_failure/success` 推进 Execution 终态与版本状态；archive/restore/primary 委托 repository。
+- 扩展 `SessionRecord.visibility`（默认 user）、`ProductRepository.create_session(visibility=)`、`list_sessions(include_system=)` 默认仅 user、`AgentSessionService.create(visibility=)`；`_locate_session` 对 system 会话 continue（通用 API 不可见），内部 Runtime 仍经 repository 直接访问；`get_session` 路由补 404 映射。
+- `WorkspaceRuntime` 注入 `profile: ProfileService`（共享 connection/repository，不新建数据库句柄）。
+- TDD：先写 9 个失败测试，再实现；`test_profile_material_service.py` `8 passed` + `test_agent_routes_v2.py` 隐藏会话过滤 `1 passed`；回归 `58 passed`（agent routes/restart/profile/migrations）。
+- Reviewer gate：直查 Runtime SQLite 确认每版本一个 system Session、无用户消息、通用 Agent 端点不返回 system Session。

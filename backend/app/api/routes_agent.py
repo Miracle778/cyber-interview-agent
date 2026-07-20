@@ -76,7 +76,10 @@ async def restore_session(
 async def get_session(
     session_id: str, application: AgentApplication = Depends(get_agent_application)
 ):
-    return await application.session_detail(session_id)
+    try:
+        return await application.session_detail(session_id)
+    except ProductRecordNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @router.post(

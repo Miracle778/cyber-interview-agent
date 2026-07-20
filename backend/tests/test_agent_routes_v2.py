@@ -274,3 +274,31 @@ async def test_review_draft_is_pending_as_soon_as_execution_requests_approval(ap
 
     drafts = await application.list_drafts("w1")
     assert drafts[0]["status"] == "review_pending"
+
+
+@pytest.mark.asyncio
+async def test_hidden_ingest_session_excluded_from_generic_list_and_detail(
+    api, application
+):
+    context = application._context("w1")
+    context.repository.create_session(
+        workspace_id="w1",
+        kind="profile.ingest",
+        title="hidden ingest",
+        session_id="hidden-ingest-1",
+        visibility="system",
+    )
+    await application.create_session(
+        workspace_id="w1", kind="diagnostic.echo", title="User session"
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=api), base_url="http://test") as client:
+        listed = (
+            await client.get("/api/agent/sessions", params={"workspaceId": "w1"})
+        ).json()
+        ids = [item["id"] for item in listed]
+        assert "hidden-ingest-1" not in ids
+        assert any(item["title"] == "User session" for item in listed)
+
+        detail = await client.get("/api/agent/sessions/hidden-ingest-1")
+        assert detail.status_code == 404

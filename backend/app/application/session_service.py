@@ -69,6 +69,7 @@ class SessionRecord:
     latest_execution_id: str | None
     deleted_at: str | None
     parent_session_id: str | None = None
+    visibility: str = "user"
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,12 +132,13 @@ class ProductRepository:
         title_source: str = "user",
         session_id: str | None = None,
         parent_session_id: str | None = None,
+        visibility: str = "user",
     ) -> SessionRecord:
         session_id = session_id or str(uuid4())
         self.connection.execute(
             "INSERT INTO agent_sessions "
             "(id, workspace_id, graph_id, graph_version, title, title_source, "
-            "parent_session_id) VALUES (?, ?, ?, 1, ?, ?, ?)",
+            "parent_session_id, visibility) VALUES (?, ?, ?, 1, ?, ?, ?, ?)",
             (
                 session_id,
                 workspace_id,
@@ -144,6 +146,7 @@ class ProductRepository:
                 title,
                 title_source,
                 parent_session_id,
+                visibility,
             ),
         )
         self.connection.commit()
@@ -159,13 +162,23 @@ class ProductRepository:
             raise ProductRecordNotFoundError("Agent Session 不存在")
         return _session(row)
 
-    def list_sessions(self, workspace_id: str) -> tuple[SessionRecord, ...]:
-        rows = self.connection.execute(
-            "SELECT * FROM agent_sessions WHERE workspace_id = ? "
-            "AND deleted_at IS NULL "
-            "ORDER BY updated_at DESC, rowid DESC",
-            (workspace_id,),
-        ).fetchall()
+    def list_sessions(
+        self, workspace_id: str, *, include_system: bool = False
+    ) -> tuple[SessionRecord, ...]:
+        if include_system:
+            rows = self.connection.execute(
+                "SELECT * FROM agent_sessions WHERE workspace_id = ? "
+                "AND deleted_at IS NULL "
+                "ORDER BY updated_at DESC, rowid DESC",
+                (workspace_id,),
+            ).fetchall()
+        else:
+            rows = self.connection.execute(
+                "SELECT * FROM agent_sessions WHERE workspace_id = ? "
+                "AND deleted_at IS NULL AND visibility = 'user' "
+                "ORDER BY updated_at DESC, rowid DESC",
+                (workspace_id,),
+            ).fetchall()
         return tuple(_session(row) for row in rows)
 
     def delete_session(self, session_id: str, *, hard: bool = False) -> None:
@@ -553,6 +566,7 @@ class AgentSessionService:
         title: str | None,
         parent_session_id: str | None = None,
         session_id: str | None = None,
+        visibility: str = "user",
     ) -> SessionRecord:
         clean_title = (title or "").strip()
         session = self.repository.create_session(
@@ -562,6 +576,7 @@ class AgentSessionService:
             title_source="user" if clean_title else "placeholder",
             parent_session_id=parent_session_id,
             session_id=session_id,
+            visibility=visibility,
         )
         await self.events.publish(
             session.id, None, "session.created", {"title": session.title, "kind": kind}
@@ -612,6 +627,7 @@ def _session(row) -> SessionRecord:
         latest_execution_id=row["last_run_id"],
         deleted_at=row["deleted_at"],
         parent_session_id=row["parent_session_id"],
+        visibility=row["visibility"],
     )
 
 

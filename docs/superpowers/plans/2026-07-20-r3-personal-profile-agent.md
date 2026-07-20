@@ -190,14 +190,14 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
 - Test: `backend/tests/test_profile_material_service.py`
 - Test: `backend/tests/test_agent_routes_v2.py`
 
-- [ ] Write failing service tests for first upload, new version upload, duplicate content, retry after parse failure, archive/restore, primary selection, hidden Session creation, generic session-list filtering, generic detail denial, and restart recovery.
-- [ ] Extend `SessionRecord`, `ProductRepository.create_session`, and `AgentSessionService.create` with `visibility`; make list queries default to `visibility='user'` and add an internal `include_system=True` path used only by Runtime services.
-- [ ] Add `ProfileService.upload_material` and `add_material_version`: persist source bytes, create the immutable version, create a hidden `profile.ingest` system Session whose ID equals the version ID, and start an Execution with IDs/locators only and `project_input_message=False`.
-- [ ] Make retry create a new Execution on the same hidden Session and immutable version. Refuse retry while one Execution is active; never create an upload/chat Message.
-- [ ] Make archive/restore reversible and primary selection explicit. An archived material remains addressable by existing Evidence and Claims but is excluded from default lists and new assessment context.
-- [ ] Add `profile: ProfileService` to `WorkspaceRuntime`, construct it from the shared connection/repository/execution service, and close no new standalone database handles.
-- [ ] Run `cd backend && uv run pytest -q tests/test_profile_material_service.py tests/test_agent_routes_v2.py`. Expected: lifecycle tests pass and existing user sessions remain unchanged.
-- [ ] Reviewer gate: query Runtime SQLite directly to verify one system Session per version, no user-visible Message, and no system Session returned by generic Agent endpoints.
+- [x] Write failing service tests for first upload, new version upload, duplicate content, retry after parse failure, archive/restore, primary selection, hidden Session creation, generic session-list filtering, generic detail denial, and restart recovery.
+- [x] Extend `SessionRecord`, `ProductRepository.create_session`, and `AgentSessionService.create` with `visibility`; make list queries default to `visibility='user'` and add an internal `include_system=True` path used only by Runtime services.
+- [x] Add `ProfileService.upload_material` and `add_material_version`: persist source bytes, create the immutable version, create a hidden `profile.ingest` system Session whose ID equals the version ID, and start an Execution with IDs/locators only and `project_input_message=False`.
+- [x] Make retry create a new Execution on the same hidden Session and immutable version. Refuse retry while one Execution is active; never create an upload/chat Message.
+- [x] Make archive/restore reversible and primary selection explicit. An archived material remains addressable by existing Evidence and Claims but is excluded from default lists and new assessment context.
+- [x] Add `profile: ProfileService` to `WorkspaceRuntime`, construct it from the shared connection/repository/execution service, and close no new standalone database handles.
+- [x] Run `cd backend && uv run pytest -q tests/test_profile_material_service.py tests/test_agent_routes_v2.py`. Expected: lifecycle tests pass and existing user sessions remain unchanged.
+- [x] Reviewer gate: query Runtime SQLite directly to verify one system Session per version, no user-visible Message, and no system Session returned by generic Agent endpoints.
 
 ## Task 5: Extend Tool Audit and Product Events for Safe Tool Visibility
 
