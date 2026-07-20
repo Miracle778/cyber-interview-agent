@@ -1,5 +1,12 @@
 # Agent Runtime 框架收敛关键发现
 
+## 2026-07-20 Agent State 与 Context Offload 边界
+
+- 自定义 `state_schema` 只用于单一 `create_agent` 循环中产生、被后续步骤消费、需随 checkpoint 恢复且不属于领域事实的可变工作状态；输入、输出、可信权限、业务状态和跨 Session 记忆分别归消息/response、`context_schema`、领域层和 Store。
+- R2 role Agent 只需要默认 `AgentState`；轮次和发布状态由外层 Graph/领域 repository 拥有，因此 `AgentFactory` 未传 `state_schema` 是明确分层结果。
+- 当前具备摘要 compaction、ToolMessage 清理和领域 ContextAssembler，但没有“持久 artifact ref + 可重读”的通用 Context Offload；把 ToolMessage 变成 `[cleared]` 不算完整 Offload。
+- R3 先落领域 Evidence Offload：个人材料正文留在版本化 evidence store，上下文保存 ID、版本、摘要和 evidence ref，通过 `T1` Tool 有界读取；通用 Runtime Artifact Offload 等三个以上真实角色出现共同需求后再建设。
+
 ## 2026-07-20 全路线 Agent 能力分配
 
 - R0-R8 不应统一启用 Tool、Time Travel 或自主 Planner：已知上下文的提取、评价、分类和总结保持无业务工具，只有 R3-R6 跨材料探索角色按 role 启用有界只读工具。

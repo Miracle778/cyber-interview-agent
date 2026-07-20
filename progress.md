@@ -1,5 +1,12 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-07-20：补充 Agent State 与 Context Offload ADR
+
+- 将 `state_schema` 的五项准入条件、状态归属表、R2 现状和 R3-R6 采用边界补入全路线 Agent 能力 ADR。
+- 区分摘要 compaction、ToolMessage 清理、领域 evidence 外置和可重读 Runtime Artifact Offload，避免把 `[cleared]` 或数据库持久化泛称为完整 Offload。
+- 决定 R3 首先建设个人材料 Evidence Offload，通用 Runtime Artifact Offload 等真实复用证据；Context Editing 阈值在工具型 Agent 启用前按模型窗口和 role 预算配置。
+- 本次只更新正式 ADR 与本地 current-state 记录，不修改业务代码、数据库或 `docs/my_idea.md`。
+
 ## 2026-07-20：全路线 Agent 能力矩阵 ADR
 
 - 盘点 R2 生产 Agent、跨领域基础辅助模型和 R3-R8 路线角色，区分 ToolStrategy、业务 Tool、领域 Graph、checkpoint 恢复、事件回放、领域版本和真正 Time Travel。

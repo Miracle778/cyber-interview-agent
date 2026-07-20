@@ -32,6 +32,8 @@
 - 重试、取消、恢复和分支不能重复已完成的副作用；
 - 用户可理解并审核模型产生的多项变更计划；
 - 长流程可恢复，但不把内部 checkpoint 变成用户可直接编辑的业务历史；
+- Agent 内部工作状态、可信运行上下文和领域事实具有不同 schema 与持久化所有者；
+- 大材料和 Tool 结果可以按引用重载，不通过清空正文制造不可恢复的“假 Offload”；
 - R8 Channel 复用 Web 的应用服务和权限，不通过传输层扩大 Agent 能力；
 - 能力按真实需求启用，不为了“更 Agentic”而增加成本、延迟和失败面。
 
@@ -115,6 +117,81 @@ R0-R8 核心产品均不需要通用 Time Travel。长流程需要 checkpoint �
 原因是 checkpoint 可能位于发布、掌握度更新、Todo、文件写入或 Channel 消息之前。重新执行历史节点无法仅凭 checkpoint 证明副作用 exactly-once，也会让当前领域事实与历史 Graph state 分叉。
 
 如果未来确有历史分叉需求，只允许实现“安全派生”：从不可变领域快照创建新的 Session、execution 和 lineage，绝不倒退活动 Session，也不复制 pending action、receipt、active publication、Todo 状态或已发送 Channel 消息。所有新副作用重新走当前版本校验和用户确认。该能力是新的产品功能，不得直接暴露 LangGraph 内部 checkpoint API。
+
+#### 1.4 `state_schema` 准入边界
+
+`create_agent` 未传 `state_schema` 时使用默认 `AgentState`，其核心字段是模型消息、内部跳转和可选结构化响应。多轮消息、普通 Tool call、checkpoint 和 `response_format` 本身不构成自定义 `state_schema` 的理由。
+
+只有一个字段同时满足以下条件时，才进入 role Agent 的自定义 `state_schema`：
+
+1. 字段在同一个 `create_agent` 循环中产生或更新，不是调用前已确定的输入；
+2. 后续模型、Tool 或 middleware 步骤必须再次读取它；
+3. execution 中断或进程恢复后必须从该值继续，而不是安全地重新计算；
+4. 字段只属于该 role Agent 的内部工作过程，不是用户可见领域事实；
+5. 字段具有明确的覆盖、追加、去重或计数 reducer，以及可序列化、可脱敏的 checkpoint 表达。
+
+状态归属固定为：
+
+| 数据性质 | 所有者 | 不使用 `state_schema` 的原因 |
+|---|---|---|
+| 本次问题、简历片段、回答、重写意见 | Agent 输入消息 | 调用前已知，不需要 Agent 内部更新 |
+| 最终提取、评价、分类或报告 | `response_format` / 节点返回值 | 它是输出契约，不是循环工作状态 |
+| workspace、session、execution、权限和 Tool scope | `context_schema=AgentContext` | 可信、只读、由服务端注入，不允许模型修改 |
+| 轮次进度、画像版本、Action Plan、Todo、publication | 外层领域 `StateGraph` 与领域数据库 | 属于产品业务真相，需要版本、事务、HITL 和 receipt |
+| 跨 Session 偏好、长期记忆和共享资料 | 领域 Store/repository | 生命周期超出单一 Agent thread |
+| 搜索游标、已加载 evidence refs、临时剩余预算、内部 step cursor | 自定义 `state_schema`，仅在满足上述五项时 | 属于可恢复的 Agent 内部循环状态 |
+
+当前 R2 role Agent 不需要自定义 `state_schema`：题目、回答、attempts 和来源片段由应用层组装；轮次、input interrupt、报告和发布进度属于外层 Graph/领域 repository；role Agent 只需默认消息与结构化响应。`AgentFactory` 传入 `context_schema=AgentContext`，但不传 `state_schema`，这是当前状态所有权设计的结果，不是遗漏。
+
+后续阶段按以下规则采用：
+
+- R3-R5 的一次提取、评价、清洗和总结 Agent 继续使用默认 `AgentState`；
+- R3-R5 的只读探索 Agent 先使用默认消息 + `T1` Tool；只有真实用例要求在 checkpoint 后恢复搜索游标、已加载 evidence refs 或 unresolved conflicts 时，才新增 role state；
+- R3 `ProfileActionPlan`、R4 Todo 和 R5 复盘候选始终是领域资源，不得只保存在 Agent state；
+- R6 面试进度、题量、rubric 和终止条件属于外层 `MockInterviewState`；面试子 Agent 默认仍不需要自定义 state；
+- 如果字段仅服务一个 middleware，例如 Context Offload 的临时引用或预算，优先由该 middleware 声明自己的 state schema；只有多个 role 节点共同读写时，才由 `AgentSpec` 向 `create_agent(state_schema=...)` 暴露可选 schema。
+
+自定义 Agent state 禁止保存 secret、整份个人材料、完整 Vault 文档、可由 ID 重载的大正文或正式业务状态。checkpoint 中优先只保存稳定引用、游标和恢复必需的紧凑结果。
+
+#### 1.5 Context Offload 边界
+
+Context Offload 定义为：把当前模型上下文中的大段材料、历史消息或 Tool 结果持久化到受控存储，在消息/state 中保留摘要和稳定引用，并允许 Agent 在授权范围内按引用分段重新读取。
+
+当前实现只具备相关基础，不宣称已经完成通用 Context Offload：
+
+- `ProjectingSummarizationMiddleware` 在达到 token/message 阈值时压缩早期消息；这是 compaction，不能按原文引用重载；
+- `ContextEditingMiddleware` 默认在高 token 阈值后把旧 ToolMessage 替换为 `[cleared]` 并保留最近结果；它不创建持久 artifact ref，也不能恢复被清理正文；
+- R2 生产 Agent 的业务 Tool allowlist 为空，因此旧 Tool 结果清理目前基本不会触发；
+- `ContextAssembler` 已把领域事实留在 repository，只按预算组装摘要、最近完整 turn、轻量索引和聚焦资源；这是领域级外置与按需注入，也是 R3 Offload 的直接基础。
+
+采用两层方案：
+
+1. **领域 Evidence Offload，R3 首次落地**：简历、项目文档、博客、研究材料和解析文本保存在 `personal_materials`、材料版本与 evidence span/store 中；Agent 上下文只携带材料 ID、版本、内容哈希、摘要和 evidence ref；`T1` Tool 按稳定 ref 返回有界脱敏片段。
+2. **通用 Runtime Artifact Offload，按证据延后**：只有三个以上工具型 Agent 反复产生超预算 Tool 结果，或 R3 真实验收证明领域 evidence ref 无法覆盖中间产物时，才建设共享 artifact 协议。
+
+领域 Evidence Offload 必须满足：
+
+- evidence ref 绑定 workspace、材料 ID、不可变版本、内容哈希和片段范围；
+- Tool schema 不接受绝对路径、任意 workspace/scope 或未授权文件名；
+- 搜索结果先返回轻量摘要和 refs，精确读取再返回受长度限制的片段；
+- 原始敏感正文不进入 trace、产品 event、session metadata 或 Agent title；
+- 材料归档、删除和权限变化后，旧 ref 按领域生命周期拒绝读取或只允许审计读取；
+- Agent state/checkpoint 只保存 refs、游标和必要摘要，不复制大正文；
+- 同一 ref 的重复读取可缓存，但缓存不成为新的领域真相源。
+
+如果未来实现 Runtime Artifact Offload，固定流程为：
+
+```text
+large Tool/model intermediate result
+  -> server-owned artifact store + content hash
+  -> short summary + artifact ref in ToolMessage/Agent state
+  -> bounded read_context_artifact(ref, range)
+  -> scope, audit, size, TTL and deletion policy
+```
+
+Agent 不获得任意 `write_file` scratchpad Tool；artifact 由 middleware 或 Tool handler 依据策略写入。正式画像、题目、Todo、知识文档和用户上传材料不进入临时 artifact store。
+
+启用 `T1` Tool 前必须调整 Context Editing 配置：清理/Offload 阈值按实际模型 context limit 和 role 预算计算，不能继续依赖固定 100k token；工具型 Agent 应优先外置旧 Tool 大结果，再触发整段会话摘要。仅把正文替换为 `[cleared]` 而没有可重读 ref，不计为完成 Offload。
 
 ### 2. 已实现 Agent 能力矩阵
 
@@ -258,6 +335,8 @@ Time Travel 只保留为未来开发诊断或“安全派生新 Session”的候
 - `P2` Action Plan 一旦跨 execution、需要用户确认或具有逐项结果，就必须保存到领域表；
 - `P3` 临时读取顺序不得被宣传为 Chain of Thought，也不得进入可观测性正文；
 - 历史 fork 不复制 secret、临时工具结果、pending action、receipt 或 active side effect；
+- 自定义 `state_schema` 只保存 role Agent 内部可变工作状态；业务事实、可信权限和跨 Session 记忆分别归领域层、`context_schema` 和 Store；
+- Context Offload 优先使用领域 evidence ref；通用 artifact store 未满足复用触发条件前不建设；
 - 每个 `T1` role 必须有独立 allowlist、scope、调用/结果/token/时间上限、审计和 no-progress 保护；
 - Tool 结果只能返回完成当前任务所需字段，并优先返回 evidence ref 而不是整份个人材料；
 - 任何模型 plan 都不能扩大用户在提交时选择的资源集合或权限 scope。
@@ -271,12 +350,16 @@ Time Travel 只保留为未来开发诊断或“安全派生新 Session”的候
 - 写入、发布、Todo 和外部消息继续具有稳定版本、确认、幂等和恢复边界；
 - checkpoint 恢复、领域版本、派生 Session 和 Time Travel 的语义不再混用；
 - R6 获得足够的主从编排能力，但不会引入通用 supervisor；
+- `state_schema`、`context_schema`、外层 Graph state 和领域事实形成明确准入规则；
+- R3 可以通过 evidence ref 控制个人材料上下文，不需要先建设通用 Agent scratchpad；
 - 每个未来阶段 spec 可以直接引用矩阵，再根据真实用例收窄 role allowlist。
 
 负向结果与风险：
 
 - R3-R6 需要建设多组 ID/evidence-ref 驱动的只读工具和领域 adapter；
 - `P2` 会增加 Action Plan、逐项结果、版本冲突和部分失败测试；
+- R3 Evidence Offload 需要材料版本、片段引用、脱敏查询和引用失效测试；
+- 不预建通用 Artifact Offload 意味着首批工具型 Agent 仍需通过领域 adapter 控制中间结果大小；
 - 不提供通用 Time Travel 后，用户不能任意回退 Agent 对话并改变历史结果，需要通过新版本或新 Session 表达重做；
 - 如果未来统一入口需要跨 Agent 路由，仍需单独设计，不能把现有 classifier 扩成万能 supervisor；
 - 矩阵是阶段默认值，未来 spec 仍需用真实用例验证，不能仅凭本 ADR 自动授予 Tool。
@@ -287,6 +370,9 @@ Time Travel 只保留为未来开发诊断或“安全派生新 Session”的候
 
 - 某个 `T0` role 的真实验收反复证明，应用层无法在合理 token 预算内确定相关证据；
 - 三个以上 `T1` role 出现相同安全查询，需要提取共享只读资源协议；
+- 三个以上工具型 Agent 产生无法由领域 evidence ref 表达的大型中间结果，需要共享 Runtime Artifact Offload；
+- 某个 role 在 checkpoint 恢复时必须延续消息之外的 Agent 内部可变状态，需要给 `AgentSpec` 增加可选 `state_schema`；
+- 固定 Context Editing 阈值在真实模型窗口下频繁晚于 hard limit 或早于有效摘要时，需要按 role/model 重新校准；
 - 官方 Runtime 提供可验证的事务化、exactly-once Tool 副作用和恢复协议；
 - 用户对“从某个历史状态创建分支”的需求无法由领域版本 + 新 Session 满足；
 - R6 固定单子 Agent 无法覆盖真实模拟面试，而必须出现多个独立、并行、可审计的专业面试角色；
