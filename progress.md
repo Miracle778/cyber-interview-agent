@@ -1,5 +1,12 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-07-20：领域 Agent 工具与写入边界 ADR
+
+- 核对 R2 当前生产代码，确认全部领域 Agent 的业务 tool/scope allowlist 为空；候选只读工具和写草稿工具只存在于 Harness 基础设施、测试或预留注入点，未接入 R2 生产执行。
+- 接受跨阶段决策：已知上下文 Agent 默认无工具；探索型 Agent 仅获角色级最小只读工具；正式修改、删除和发布由结构化 proposal、领域服务、显式用户确认和 receipt 驱动。
+- R3 个人信息 Agent 将使用 ID/evidence-ref 驱动的材料与画像只读工具，不复用允许模型传任意路径的通用 source reader；画像确认不自动推导为知识发布。
+- 新增 ADR `2026-07-20-domain-agent-tool-and-write-boundaries.md`；本次只记录正式架构决定，未修改业务代码、数据库或测试。
+
 ## 2026-07-20：主分支合并与远程发布准备
 
 - 产品分支重命名为 `feature/review-agent-workspace`，不再使用工具或阶段编号前缀。

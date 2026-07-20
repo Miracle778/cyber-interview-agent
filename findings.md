@@ -1,5 +1,13 @@
 # Agent Runtime 框架收敛关键发现
 
+## 2026-07-20 领域 Agent 工具与写入边界
+
+- R2 生产 Agent 当前均未启用业务工具：题目整理、命令解释、评价、报告和讨论接收应用层组装的有界输入；`ToolStrategy` 只负责结构化输出，不等同于领域工具。
+- `question_tools`、`discussion_tools` 是扩展点，Runtime 仍具备 BaseTool、ToolPolicy、Workspace scope 与审计能力，但实际 execution context 的 allowlist 为空。
+- R3 不能简单复制“全部无工具”：跨多份个人材料探索证据时允许角色级最小只读工具，并使用稳定资源 ID/evidence ref，禁止任意路径和未授权 scope。
+- 修改画像、删除材料、设置主简历和发布知识不进入自由 ReAct 工具集；模型生成结构化 proposal，领域服务执行 `Validate -> Confirm -> Execute`，画像确认和知识发布保持两次独立授权。
+- 正式决定记录为 `docs/superpowers/architecture-decisions/2026-07-20-domain-agent-tool-and-write-boundaries.md`。
+
 ## 2026-07-19 Agent 代码结构整理第一阶段
 
 - 原 `agents/review.py`、`review_round.py`、`curation_command.py` 不能从文件名判断是单个 Agent 还是多个 runnable 聚合；现改为显式单数/复数 Agent 模块名，并将 `AgentFactory`、模型解析器和所有 Middleware 模块改为可搜索的语义名称。
