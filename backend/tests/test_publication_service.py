@@ -9,10 +9,16 @@ from app.hitl.repository import PendingActionRepository
 from app.knowledge.atomic_writer import ExternalDocumentChangedError
 from app.knowledge.drafts import (
     CreateDraftCommand,
+    DraftContentChangedError,
     DraftNotEditableError,
     DraftVersionChangedError,
     KnowledgeDraftService,
     UpdateDraftCommand,
+)
+from app.knowledge.frontmatter import (
+    PublishedDocument,
+    PublishedProvenance,
+    render_published_document,
 )
 from app.knowledge.publication import PublicationRepository, PublicationService
 from app.knowledge.publication_handler import KnowledgePublishActionHandler
@@ -55,6 +61,23 @@ async def _draft(workspace: Path):
     ))
 
 
+def _rendered_publication(draft, action) -> str:
+    return render_published_document(PublishedDocument(
+        id=draft.document_id,
+        type=draft.document_type,
+        title=draft.title,
+        markdown=draft.markdown,
+        source_refs=draft.source_refs,
+        relation_refs=draft.relation_refs,
+        published_at=action.resolved_at or action.created_at,
+        provenance=PublishedProvenance(
+            agent_type=draft.agent_type,
+            session_id=draft.session_id,
+            run_id=draft.run_id,
+        ),
+    ))
+
+
 @pytest.mark.asyncio
 async def test_publish_is_idempotent_and_marks_draft_published(tmp_path: Path) -> None:
     draft = await _draft(tmp_path)
@@ -90,6 +113,139 @@ async def test_prepared_claim_resumes_after_service_restart(
     assert (
         tmp_path / "knowledge-vault/10_question_bank/question-1.md"
     ).is_file()
+
+
+@pytest.mark.asyncio
+async def test_source_mutation_after_claim_fails_before_vault_write_and_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    draft = await _draft(tmp_path)
+    action = await _resolved_action(tmp_path, draft)
+    service = PublicationService(tmp_path, workspace_id="w1")
+    original_prepare = service._repository.prepare
+    source = tmp_path / draft.content_path
+
+    async def prepare_then_mutate(*args, **kwargs):
+        publication = await original_prepare(*args, **kwargs)
+        source.write_text("# mutated after claim\n", encoding="utf-8")
+        return publication
+
+    monkeypatch.setattr(service._repository, "prepare", prepare_then_mutate)
+
+    with pytest.raises(DraftContentChangedError):
+        await service.publish_approved_action(action)
+
+    target = tmp_path / "knowledge-vault/10_question_bank/question-1.md"
+    assert not target.exists()
+    assert not (
+        tmp_path / "knowledge-vault/.cyber-interview-agent/index.sqlite"
+    ).exists()
+    connection = connect_runtime_database(tmp_path)
+    assert connection.execute(
+        "SELECT status FROM knowledge_drafts WHERE id = ?", (draft.id,)
+    ).fetchone()[0] == "draft"
+    publication = connection.execute(
+        "SELECT id, state, result_hash FROM publication_runs WHERE draft_id = ?",
+        (draft.id,),
+    ).fetchone()
+    assert tuple(publication)[1:] == ("prepared", None)
+    connection.close()
+
+    source.write_text(draft.markdown, encoding="utf-8")
+    monkeypatch.setattr(service._repository, "prepare", original_prepare)
+    retried = await PublicationService(
+        tmp_path, workspace_id="w1"
+    ).publish_approved_action(action)
+    assert retried.id == publication[0]
+    assert retried.state == "completed"
+
+
+@pytest.mark.asyncio
+async def test_mark_failure_preserves_preexisting_matching_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    draft = await _draft(tmp_path)
+    action = await _resolved_action(tmp_path, draft)
+    vault = initialize_vault(tmp_path)
+    target = vault / "10_question_bank/question-1.md"
+    rendered = _rendered_publication(draft, action)
+    target.write_text(rendered, encoding="utf-8")
+    service = PublicationService(tmp_path, workspace_id="w1")
+
+    async def fail_mark(*_args, **_kwargs):
+        raise DraftVersionChangedError("forced mark failure")
+
+    monkeypatch.setattr(service._drafts, "mark_published", fail_mark)
+
+    with pytest.raises(DraftVersionChangedError, match="forced mark failure"):
+        await service.publish_approved_action(action)
+
+    assert target.read_text(encoding="utf-8") == rendered
+    publication = await service.latest_for_draft(draft.id)
+    assert publication is not None
+    assert publication.state == "prepared"
+    assert publication.result_hash is None
+
+
+@pytest.mark.asyncio
+async def test_source_mutation_after_new_target_compensates_matching_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    draft = await _draft(tmp_path)
+    action = await _resolved_action(tmp_path, draft)
+    service = PublicationService(tmp_path, workspace_id="w1")
+    source = tmp_path / draft.content_path
+    target = tmp_path / "knowledge-vault/10_question_bank/question-1.md"
+    original_mark = service._drafts.mark_published
+
+    async def mutate_source_then_mark(*args, **kwargs):
+        source.write_text("# mutated after Vault write\n", encoding="utf-8")
+        return await original_mark(*args, **kwargs)
+
+    monkeypatch.setattr(
+        service._drafts, "mark_published", mutate_source_then_mark
+    )
+
+    with pytest.raises(DraftContentChangedError):
+        await service.publish_approved_action(action)
+
+    assert not target.exists()
+    publication = await service.latest_for_draft(draft.id)
+    assert publication is not None
+    assert publication.state == "prepared"
+    assert publication.result_hash is None
+    connection = connect_runtime_database(tmp_path)
+    assert connection.execute(
+        "SELECT status FROM knowledge_drafts WHERE id = ?", (draft.id,)
+    ).fetchone()[0] == "draft"
+    connection.close()
+
+
+@pytest.mark.asyncio
+async def test_compensation_preserves_new_target_when_its_hash_changed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    draft = await _draft(tmp_path)
+    action = await _resolved_action(tmp_path, draft)
+    service = PublicationService(tmp_path, workspace_id="w1")
+    target = tmp_path / "knowledge-vault/10_question_bank/question-1.md"
+
+    async def replace_target_then_fail(*_args, **_kwargs):
+        target.write_text("external replacement", encoding="utf-8")
+        raise DraftVersionChangedError("forced mark failure")
+
+    monkeypatch.setattr(
+        service._drafts, "mark_published", replace_target_then_fail
+    )
+
+    with pytest.raises(DraftVersionChangedError, match="forced mark failure"):
+        await service.publish_approved_action(action)
+
+    assert target.read_text(encoding="utf-8") == "external replacement"
+    publication = await service.latest_for_draft(draft.id)
+    assert publication is not None
+    assert publication.state == "failed"
+    assert publication.error_code == "publication_compensation_conflict"
 
 
 @pytest.mark.asyncio

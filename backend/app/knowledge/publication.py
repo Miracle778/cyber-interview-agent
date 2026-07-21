@@ -108,6 +108,39 @@ class PublicationRepository:
             await connection.commit()
         return self._record(row)
 
+    async def recover_after_draft_failure(
+        self,
+        publication_id: str,
+        *,
+        expected_result_hash: str,
+        retryable: bool,
+    ) -> PublicationRecord:
+        target_state = "prepared" if retryable else "failed"
+        error_code = (
+            "publication_draft_changed"
+            if retryable
+            else "publication_compensation_conflict"
+        )
+        async with self._connection() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+            cursor = await connection.execute(
+                "UPDATE publication_runs SET state = ?, "
+                "result_hash = CASE WHEN ? = 'prepared' THEN NULL "
+                "ELSE result_hash END, error_code = ?, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? "
+                "AND state = 'file_written' AND result_hash = ?",
+                (
+                    target_state,
+                    target_state,
+                    error_code,
+                    publication_id,
+                    expected_result_hash,
+                ),
+            )
+            row = await self._require(connection, publication_id)
+            await connection.commit()
+        return self._record(row)
+
     async def list_by_state(self, state: PublicationState) -> tuple[PublicationRecord, ...]:
         async with self._connection() as connection:
             cursor = await connection.execute(
@@ -180,8 +213,12 @@ class PublicationService:
             provenance=PublishedProvenance(agent_type=draft.agent_type, session_id=draft.session_id, run_id=draft.run_id),
         )
         rendered = render_published_document(document)
+        self._drafts.validate_curation_artifact(
+            draft.id, draft.content_path, draft.content_hash
+        )
         vault = initialize_vault(self._root)
         target = WorkspacePathPolicy(self._root).resolve_for_create("knowledge.active", target_path)
+        created_target = False
 
         if publication.state == "prepared":
             if target.exists():
@@ -192,11 +229,20 @@ class PublicationService:
                 result_hash = expected_result
             else:
                 result_hash = atomic_write_text(target, rendered, expected_existing_hash=None)
+                created_target = True
             publication = await self._repository.transition(publication.id, expected=("prepared",), target="file_written", result_hash=result_hash)
 
-        if publication.result_hash is None or not target.exists() or hash_file(target) != publication.result_hash:
-            raise ExternalDocumentChangedError("published target changed externally")
-        await self._drafts.mark_published(draft.id, expected_version=draft.version, expected_hash=draft.content_hash)
+        try:
+            if publication.result_hash is None or not target.exists() or hash_file(target) != publication.result_hash:
+                raise ExternalDocumentChangedError("published target changed externally")
+            await self._drafts.mark_published(draft.id, expected_version=draft.version, expected_hash=draft.content_hash)
+        except Exception:
+            await self._compensate_draft_failure(
+                publication,
+                target=target,
+                created_target=created_target,
+            )
+            raise
         try:
             self._index_document(vault, document, rendered, target_path)
         except Exception:
@@ -227,6 +273,36 @@ class PublicationService:
         self, draft_id: str
     ) -> PublicationRecord | None:
         return await self._repository.latest_for_draft(draft_id)
+
+    async def _compensate_draft_failure(
+        self,
+        publication: PublicationRecord,
+        *,
+        target: Path,
+        created_target: bool,
+    ) -> None:
+        if publication.state != "file_written" or publication.result_hash is None:
+            return
+        retryable = not created_target
+        if created_target:
+            try:
+                if target.is_symlink():
+                    retryable = False
+                elif not target.exists():
+                    retryable = True
+                elif (
+                    target.is_file()
+                    and hash_file(target) == publication.result_hash
+                ):
+                    target.unlink()
+                    retryable = True
+            except OSError:
+                retryable = False
+        await self._repository.recover_after_draft_failure(
+            publication.id,
+            expected_result_hash=publication.result_hash,
+            retryable=retryable,
+        )
 
 
 def _index_document(vault: Path, document: PublishedDocument, rendered: str, target_path: str) -> None:
