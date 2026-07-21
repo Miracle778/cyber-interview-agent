@@ -1,7 +1,7 @@
 export type KnowledgeDraftStatus = "draft" | "review_pending" | "rejected" | "published" | "superseded";
 
 export interface PublicationSummary {
-  state: "prepared" | "file_written" | "indexed" | "completed" | "index_stale" | "failed";
+  state: "prepared" | "file_written" | "committing" | "compensating" | "indexed" | "completed" | "index_stale" | "failed";
   targetPath: string;
   errorCode: string | null;
 }

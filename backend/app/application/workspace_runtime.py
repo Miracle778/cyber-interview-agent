@@ -635,6 +635,7 @@ class AgentApplication:
             recovered.extend(context.executions.recover())
             context.review.repository.reconcile_abandoned_work()
             await context.drafts.reconcile_curation_staging()
+            await context.publications.recover_transient_runs()
             await context.executions.resume_evaluating_attempts()
             await context.hitl.reconcile()
         return tuple(recovered)

@@ -12,7 +12,12 @@ import aiosqlite
 from app.db.connection import connect_index
 from app.infrastructure.runtime_database import runtime_database_path
 from app.hitl.models import PendingActionRecord
-from app.knowledge.atomic_writer import ExternalDocumentChangedError, atomic_write_text, hash_file
+from app.knowledge.atomic_writer import (
+    ExternalDocumentChangedError,
+    atomic_write_text,
+    hash_file,
+    quarantine_remove_owned_file,
+)
 from app.knowledge.document_types import create_document_type_registry
 from app.knowledge.drafts import (
     DraftNotEditableError,
@@ -26,7 +31,10 @@ from app.services.search_index import IndexedDocument, upsert_document
 from app.services.vault import initialize_vault
 
 
-PublicationState: TypeAlias = Literal["prepared", "file_written", "indexed", "completed", "index_stale", "failed"]
+PublicationState: TypeAlias = Literal[
+    "prepared", "file_written", "committing", "compensating", "indexed",
+    "completed", "index_stale", "failed", "revoked",
+]
 IndexDocument = Callable[[Path, PublishedDocument, str, str], None]
 
 
@@ -108,6 +116,24 @@ class PublicationRepository:
             await connection.commit()
         return self._record(row)
 
+    async def claim(
+        self,
+        publication_id: str,
+        *,
+        expected: PublicationState,
+        target: PublicationState,
+    ) -> tuple[PublicationRecord, bool]:
+        async with self._connection() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+            cursor = await connection.execute(
+                "UPDATE publication_runs SET state = ?, error_code = NULL, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND state = ?",
+                (target, publication_id, expected),
+            )
+            row = await self._require(connection, publication_id)
+            await connection.commit()
+        return self._record(row), cursor.rowcount == 1
+
     async def recover_after_draft_failure(
         self,
         publication_id: str,
@@ -128,7 +154,7 @@ class PublicationRepository:
                 "result_hash = CASE WHEN ? = 'prepared' THEN NULL "
                 "ELSE result_hash END, error_code = ?, "
                 "updated_at = CURRENT_TIMESTAMP WHERE id = ? "
-                "AND state = 'file_written' AND result_hash = ?",
+                "AND state = 'compensating' AND result_hash = ?",
                 (
                     target_state,
                     target_state,
@@ -149,6 +175,18 @@ class PublicationRepository:
             )
             rows = await cursor.fetchall()
         return tuple(self._record(row) for row in rows)
+
+    async def draft_status(self, draft_id: str) -> str:
+        """Read recovery state without materializing the draft artifact."""
+        async with self._connection() as connection:
+            cursor = await connection.execute(
+                "SELECT status FROM knowledge_drafts WHERE id = ?",
+                (draft_id,),
+            )
+            row = await cursor.fetchone()
+        if row is None:
+            raise LookupError(draft_id)
+        return str(row["status"])
 
     async def latest_for_draft(
         self, draft_id: str
@@ -232,13 +270,59 @@ class PublicationService:
                 created_target = True
             publication = await self._repository.transition(publication.id, expected=("prepared",), target="file_written", result_hash=result_hash)
 
+        if publication.state in {"committing", "compensating"}:
+            raise RuntimeError("publication completion is already in progress")
+        if publication.state == "indexed":
+            return await self._repository.transition(
+                publication.id, expected=("indexed",), target="completed"
+            )
+        if publication.state == "index_stale":
+            return publication
+        if publication.state == "failed":
+            raise ExternalDocumentChangedError(
+                "publication requires manual conflict recovery"
+            )
+
+        target_valid = (
+            publication.result_hash is not None
+            and target.exists()
+            and hash_file(target) == publication.result_hash
+        )
+        if not target_valid:
+            compensation, claimed = await self._repository.claim(
+                publication.id,
+                expected="file_written",
+                target="compensating",
+            )
+            if not claimed:
+                return self._settled_or_in_progress(compensation)
+            await self._compensate_draft_failure(
+                compensation,
+                target=target,
+                created_target=created_target,
+            )
+            raise ExternalDocumentChangedError("published target changed externally")
+
+        committing, claimed = await self._repository.claim(
+            publication.id,
+            expected="file_written",
+            target="committing",
+        )
+        if not claimed:
+            return self._settled_or_in_progress(committing)
+        publication = committing
         try:
-            if publication.result_hash is None or not target.exists() or hash_file(target) != publication.result_hash:
-                raise ExternalDocumentChangedError("published target changed externally")
             await self._drafts.mark_published(draft.id, expected_version=draft.version, expected_hash=draft.content_hash)
         except Exception:
+            compensating, compensation_claimed = await self._repository.claim(
+                publication.id,
+                expected="committing",
+                target="compensating",
+            )
+            if not compensation_claimed:
+                raise
             await self._compensate_draft_failure(
-                publication,
+                compensating,
                 target=target,
                 created_target=created_target,
             )
@@ -246,8 +330,8 @@ class PublicationService:
         try:
             self._index_document(vault, document, rendered, target_path)
         except Exception:
-            return await self._repository.transition(publication.id, expected=("file_written", "index_stale"), target="index_stale", error_code="publication_index_failed")
-        publication = await self._repository.transition(publication.id, expected=("file_written", "index_stale"), target="indexed")
+            return await self._repository.transition(publication.id, expected=("committing", "index_stale"), target="index_stale", error_code="publication_index_failed")
+        publication = await self._repository.transition(publication.id, expected=("committing", "index_stale"), target="indexed")
         return await self._repository.transition(publication.id, expected=("indexed",), target="completed")
 
     async def repair_index_stale_after_rescan(self) -> int:
@@ -269,6 +353,72 @@ class PublicationService:
                 repaired += 1
         return repaired
 
+    async def recover_transient_runs(self) -> int:
+        """Resolve durable completion claims left behind by an interrupted process.
+
+        Recovery never removes a target. A compensator may resume only when its
+        target is already absent; any extant path is preserved as a conflict.
+        """
+        recovered = 0
+        policy = WorkspacePathPolicy(self._root)
+        for publication in await self._repository.list_by_state("committing"):
+            try:
+                draft_status = await self._repository.draft_status(
+                    publication.draft_id
+                )
+                target = policy.resolve_for_create(
+                    "knowledge.active", publication.target_path
+                )
+                target_matches = (
+                    publication.result_hash is not None
+                    and target.exists()
+                    and hash_file(target) == publication.result_hash
+                )
+            except Exception:
+                draft_status = "unknown"
+                target_matches = False
+
+            if draft_status == "published" and target_matches:
+                target_state: PublicationState = "index_stale"
+                error_code = "publication_recovery_requires_rescan"
+            elif draft_status == "published":
+                target_state = "failed"
+                error_code = "publication_recovery_conflict"
+            else:
+                target_state = "file_written"
+                error_code = "publication_completion_interrupted"
+            updated = await self._repository.transition(
+                publication.id,
+                expected=("committing",),
+                target=target_state,
+                error_code=error_code,
+            )
+            recovered += updated.state == target_state
+
+        for publication in await self._repository.list_by_state("compensating"):
+            if publication.result_hash is None:
+                updated = await self._repository.transition(
+                    publication.id,
+                    expected=("compensating",),
+                    target="failed",
+                    error_code="publication_compensation_conflict",
+                )
+            else:
+                try:
+                    target = policy.resolve_for_create(
+                        "knowledge.active", publication.target_path
+                    )
+                    target_absent = not target.exists() and not target.is_symlink()
+                except Exception:
+                    target_absent = False
+                updated = await self._repository.recover_after_draft_failure(
+                    publication.id,
+                    expected_result_hash=publication.result_hash,
+                    retryable=target_absent,
+                )
+            recovered += updated.state in {"prepared", "failed"}
+        return recovered
+
     async def latest_for_draft(
         self, draft_id: str
     ) -> PublicationRecord | None:
@@ -281,28 +431,27 @@ class PublicationService:
         target: Path,
         created_target: bool,
     ) -> None:
-        if publication.state != "file_written" or publication.result_hash is None:
+        if publication.state != "compensating" or publication.result_hash is None:
             return
         retryable = not created_target
         if created_target:
-            try:
-                if target.is_symlink():
-                    retryable = False
-                elif not target.exists():
-                    retryable = True
-                elif (
-                    target.is_file()
-                    and hash_file(target) == publication.result_hash
-                ):
-                    target.unlink()
-                    retryable = True
-            except OSError:
-                retryable = False
+            removal = quarantine_remove_owned_file(
+                target,
+                publication.result_hash,
+                path_hash_func=hash_file,
+            )
+            retryable = removal in {"removed", "missing"}
         await self._repository.recover_after_draft_failure(
             publication.id,
             expected_result_hash=publication.result_hash,
             retryable=retryable,
         )
+
+    @staticmethod
+    def _settled_or_in_progress(publication: PublicationRecord) -> PublicationRecord:
+        if publication.state in {"completed", "indexed", "index_stale"}:
+            return publication
+        raise RuntimeError("publication completion is already in progress")
 
 
 def _index_document(vault: Path, document: PublishedDocument, rendered: str, target_path: str) -> None:

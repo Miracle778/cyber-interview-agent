@@ -1,3 +1,5 @@
+import asyncio
+import os
 from pathlib import Path
 
 import pytest
@@ -6,7 +8,7 @@ from app.infrastructure.runtime_database import connect_runtime_database
 from app.db.connection import connect_index
 from app.hitl.models import CreatePendingAction
 from app.hitl.repository import PendingActionRepository
-from app.knowledge.atomic_writer import ExternalDocumentChangedError
+from app.knowledge.atomic_writer import ExternalDocumentChangedError, hash_file
 from app.knowledge.drafts import (
     CreateDraftCommand,
     DraftContentChangedError,
@@ -113,6 +115,93 @@ async def test_prepared_claim_resumes_after_service_restart(
     assert (
         tmp_path / "knowledge-vault/10_question_bank/question-1.md"
     ).is_file()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("published", "expected_state"),
+    ((False, "file_written"), (True, "index_stale")),
+)
+async def test_restart_recovers_committing_publication(
+    tmp_path: Path, published: bool, expected_state: str,
+) -> None:
+    draft = await _draft(tmp_path)
+    action = await _resolved_action(tmp_path, draft)
+    repository = PublicationRepository(tmp_path)
+    publication = await repository.prepare(
+        action, draft, "10_question_bank/question-1.md"
+    )
+    vault = initialize_vault(tmp_path)
+    target = vault / publication.target_path
+    target.write_text(_rendered_publication(draft, action), encoding="utf-8")
+    publication = await repository.transition(
+        publication.id,
+        expected=("prepared",),
+        target="file_written",
+        result_hash=hash_file(target),
+    )
+    publication, claimed = await repository.claim(
+        publication.id, expected="file_written", target="committing"
+    )
+    assert claimed is True
+    if published:
+        await KnowledgeDraftService(
+            tmp_path, workspace_id="w1"
+        ).mark_published(
+            draft.id,
+            expected_version=draft.version,
+            expected_hash=draft.content_hash,
+        )
+
+    recovered = await PublicationService(
+        tmp_path, workspace_id="w1"
+    ).recover_transient_runs()
+
+    assert recovered == 1
+    latest = await repository.latest_for_draft(draft.id)
+    assert latest is not None
+    assert latest.state == expected_state
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("target_exists", "expected_state"),
+    ((False, "prepared"), (True, "failed")),
+)
+async def test_restart_recovers_compensating_publication(
+    tmp_path: Path, target_exists: bool, expected_state: str,
+) -> None:
+    draft = await _draft(tmp_path)
+    action = await _resolved_action(tmp_path, draft)
+    repository = PublicationRepository(tmp_path)
+    publication = await repository.prepare(
+        action, draft, "10_question_bank/question-1.md"
+    )
+    vault = initialize_vault(tmp_path)
+    target = vault / publication.target_path
+    target.write_text(_rendered_publication(draft, action), encoding="utf-8")
+    publication = await repository.transition(
+        publication.id,
+        expected=("prepared",),
+        target="file_written",
+        result_hash=hash_file(target),
+    )
+    publication, claimed = await repository.claim(
+        publication.id, expected="file_written", target="compensating"
+    )
+    assert claimed is True
+    if not target_exists:
+        target.unlink()
+
+    recovered = await PublicationService(
+        tmp_path, workspace_id="w1"
+    ).recover_transient_runs()
+
+    assert recovered == 1
+    latest = await repository.latest_for_draft(draft.id)
+    assert latest is not None
+    assert latest.state == expected_state
+    assert (latest.result_hash is None) is (expected_state == "prepared")
 
 
 @pytest.mark.asyncio
@@ -237,6 +326,131 @@ async def test_compensation_preserves_new_target_when_its_hash_changed(
     monkeypatch.setattr(
         service._drafts, "mark_published", replace_target_then_fail
     )
+
+    with pytest.raises(DraftVersionChangedError, match="forced mark failure"):
+        await service.publish_approved_action(action)
+
+    assert target.read_text(encoding="utf-8") == "external replacement"
+    publication = await service.latest_for_draft(draft.id)
+    assert publication is not None
+    assert publication.state == "failed"
+    assert publication.error_code == "publication_compensation_conflict"
+
+
+@pytest.mark.asyncio
+async def test_stale_delivery_cannot_compensate_completed_winner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    draft = await _draft(tmp_path)
+    action = await _resolved_action(tmp_path, draft)
+    stale = PublicationService(tmp_path, workspace_id="w1")
+    winner = PublicationService(tmp_path, workspace_id="w1")
+    file_written = asyncio.Event()
+    release_stale = asyncio.Event()
+    original_transition = stale._repository.transition
+    mark_attempted = False
+
+    async def pause_after_file_written(*args, **kwargs):
+        publication = await original_transition(*args, **kwargs)
+        if kwargs.get("target") == "file_written":
+            file_written.set()
+            await release_stale.wait()
+        return publication
+
+    async def stale_mark_must_not_run(*_args, **_kwargs):
+        nonlocal mark_attempted
+        mark_attempted = True
+        raise DraftVersionChangedError("stale delivery must not compensate")
+
+    monkeypatch.setattr(stale._repository, "transition", pause_after_file_written)
+    monkeypatch.setattr(stale._drafts, "mark_published", stale_mark_must_not_run)
+
+    stale_task = asyncio.create_task(stale.publish_approved_action(action))
+    await file_written.wait()
+    completed = await winner.publish_approved_action(action)
+    release_stale.set()
+    replayed = await stale_task
+
+    target = tmp_path / "knowledge-vault/10_question_bank/question-1.md"
+    assert completed.state == replayed.state == "completed"
+    assert target.is_file()
+    assert mark_attempted is False
+    index = connect_index(
+        tmp_path / "knowledge-vault/.cyber-interview-agent/index.sqlite"
+    )
+    assert index.execute(
+        "SELECT status FROM manifest_documents WHERE id = 'question-1'"
+    ).fetchone()[0] == "ingested"
+    index.close()
+
+
+@pytest.mark.asyncio
+async def test_post_transition_artifact_read_failure_rolls_back_published_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    draft = await _draft(tmp_path)
+    action = await _resolved_action(tmp_path, draft)
+    service = PublicationService(tmp_path, workspace_id="w1")
+    original_record = service._drafts._record_from_row
+    reads = 0
+
+    def fail_post_transition_read(row):
+        nonlocal reads
+        reads += 1
+        if reads == 3:
+            raise DraftContentChangedError("forced post-transition read failure")
+        return original_record(row)
+
+    monkeypatch.setattr(service._drafts, "_record_from_row", fail_post_transition_read)
+
+    with pytest.raises(
+        DraftContentChangedError, match="forced post-transition read failure"
+    ):
+        await service.publish_approved_action(action)
+
+    connection = connect_runtime_database(tmp_path)
+    assert connection.execute(
+        "SELECT status FROM knowledge_drafts WHERE id = ?", (draft.id,)
+    ).fetchone()[0] == "draft"
+    assert tuple(connection.execute(
+        "SELECT state, result_hash FROM publication_runs WHERE draft_id = ?",
+        (draft.id,),
+    ).fetchone()) == ("prepared", None)
+    connection.close()
+    assert not (
+        tmp_path / "knowledge-vault/10_question_bank/question-1.md"
+    ).exists()
+
+
+@pytest.mark.asyncio
+async def test_compensation_swap_after_hash_preserves_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    draft = await _draft(tmp_path)
+    action = await _resolved_action(tmp_path, draft)
+    service = PublicationService(tmp_path, workspace_id="w1")
+    target = tmp_path / "knowledge-vault/10_question_bank/question-1.md"
+    replacement = target.with_name("replacement.md")
+    from app.knowledge import publication as publication_module
+
+    original_hash = publication_module.hash_file
+    hash_calls = 0
+
+    def swap_after_hash(path: Path) -> str:
+        nonlocal hash_calls
+        digest = original_hash(path)
+        if path == target:
+            hash_calls += 1
+            if hash_calls == 2:
+                replacement.write_text("external replacement", encoding="utf-8")
+                os.replace(replacement, target)
+        return digest
+
+    async def fail_mark(*_args, **_kwargs):
+        raise DraftVersionChangedError("forced mark failure")
+
+    monkeypatch.setattr(publication_module, "hash_file", swap_after_hash)
+    monkeypatch.setattr(service._drafts, "mark_published", fail_mark)
 
     with pytest.raises(DraftVersionChangedError, match="forced mark failure"):
         await service.publish_approved_action(action)

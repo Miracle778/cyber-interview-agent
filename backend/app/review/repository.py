@@ -884,7 +884,8 @@ class ReviewRepository:
                         "AND p.expected_draft_version = d.version "
                         "AND p.expected_content_hash = d.content_hash "
                         "AND p.state IN "
-                        "('prepared', 'file_written', 'indexed', 'index_stale')"
+                        "('prepared', 'file_written', 'committing', "
+                        "'compensating', 'indexed', 'index_stale')"
                         ")",
                         (
                             candidate_id,

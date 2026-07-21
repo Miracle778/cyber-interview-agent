@@ -545,25 +545,29 @@ class KnowledgeDraftService:
     ) -> KnowledgeDraftRecord:
         async with self._connection() as connection:
             await connection.execute("BEGIN IMMEDIATE")
-            row = await self._require_row(connection, draft_id)
-            current = self._record_from_row(row)
-            if (
-                current.version != expected_version
-                or current.content_hash != expected_hash
-            ):
+            try:
+                row = await self._require_row(connection, draft_id)
+                current = self._record_from_row(row)
+                if (
+                    current.version != expected_version
+                    or current.content_hash != expected_hash
+                ):
+                    raise DraftVersionChangedError(
+                        f"draft {draft_id!r} changed before publication"
+                    )
+                if current.status != "published":
+                    await connection.execute(
+                        "UPDATE knowledge_drafts SET status = 'published', "
+                        "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (draft_id,),
+                    )
+                published_row = await self._require_row(connection, draft_id)
+                published = self._record_from_row(published_row)
+                await connection.commit()
+            except Exception:
                 await connection.rollback()
-                raise DraftVersionChangedError(
-                    f"draft {draft_id!r} changed before publication"
-                )
-            if current.status != "published":
-                await connection.execute(
-                    "UPDATE knowledge_drafts SET status = 'published', "
-                    "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    (draft_id,),
-                )
-            published_row = await self._require_row(connection, draft_id)
-            await connection.commit()
-        return self._record_from_row(published_row)
+                raise
+        return published
 
     async def mark_review_pending(
         self, draft_id: str, *, expected_version: int, expected_hash: str
@@ -637,7 +641,8 @@ class KnowledgeDraftService:
         cursor = await connection.execute(
             "SELECT 1 FROM publication_runs WHERE draft_id = ? "
             "AND expected_draft_version = ? AND expected_content_hash = ? "
-            "AND state IN ('prepared', 'file_written', 'indexed', 'index_stale') "
+            "AND state IN ('prepared', 'file_written', 'committing', "
+            "'compensating', 'indexed', 'index_stale') "
             "LIMIT 1",
             (draft.id, draft.version, draft.content_hash),
         )

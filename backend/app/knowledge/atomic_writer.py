@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import stat
 from collections.abc import Callable
 from hashlib import sha256
 from pathlib import Path
@@ -17,6 +18,61 @@ def hash_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(64 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def quarantine_remove_owned_file(
+    target: Path,
+    expected_hash: str,
+    *,
+    path_hash_func: Callable[[Path], str] = hash_file,
+) -> str:
+    """Remove only the same regular file that was opened and hashed."""
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(target, os.O_RDONLY | nofollow)
+    except FileNotFoundError:
+        return "missing"
+    except OSError:
+        return "conflict"
+    quarantine = target.parent / f".{target.name}.{uuid4().hex}.quarantine"
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            return "conflict"
+        digest = sha256()
+        while True:
+            chunk = os.read(descriptor, 64 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+        if digest.hexdigest() != expected_hash:
+            return "conflict"
+        try:
+            if path_hash_func(target) != expected_hash:
+                return "conflict"
+            os.replace(target, quarantine)
+        except FileNotFoundError:
+            return "missing"
+        except OSError:
+            return "conflict"
+        moved = os.stat(quarantine, follow_symlinks=False)
+        if (moved.st_dev, moved.st_ino) != (opened.st_dev, opened.st_ino):
+            _restore_quarantine(quarantine, target)
+            return "conflict"
+        quarantine.unlink()
+        return "removed"
+    finally:
+        os.close(descriptor)
+
+
+def _restore_quarantine(quarantine: Path, target: Path) -> None:
+    try:
+        os.link(quarantine, target, follow_symlinks=False)
+    except FileExistsError:
+        return
+    except OSError:
+        return
+    quarantine.unlink()
 
 
 def atomic_write_text(

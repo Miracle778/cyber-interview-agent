@@ -112,7 +112,7 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
+        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
     assert "agent_context_usage" in _tables(connection)
     connection.close()
 
@@ -282,6 +282,59 @@ def test_migration_022_preserves_drafts_and_references_and_adds_superseded(
     reopened.close()
 
 
+def test_migration_023_preserves_publications_and_adds_transient_claim_states(
+    tmp_path: Path,
+) -> None:
+    connection = _create_runtime_at_version(tmp_path, 22)
+    connection.execute(
+        "INSERT INTO agent_sessions "
+        "(id, workspace_id, graph_id, graph_version, title) "
+        "VALUES ('s23', 'w1', 'knowledge.publish', 1, 'S')"
+    )
+    connection.execute(
+        "INSERT INTO agent_runs (id, session_id, status) "
+        "VALUES ('r23', 's23', 'completed')"
+    )
+    connection.execute(
+        "INSERT INTO knowledge_drafts "
+        "(id, workspace_id, session_id, run_id, domain, document_type, "
+        "document_id, title, content_path, content_hash) VALUES "
+        "('d23', 'w1', 's23', 'r23', 'review', 'question', 'q23', 'Q', "
+        "'artifacts/review/drafts/d23.md', 'hash23')"
+    )
+    connection.execute(
+        "INSERT INTO pending_actions "
+        "(id, workspace_id, session_id, run_id, action_type, payload_json, "
+        "preview_json, status, idempotency_key) VALUES "
+        "('a23', 'w1', 's23', 'r23', 'knowledge.publish', '{}', '{}', "
+        "'approved', 'publish-d23')"
+    )
+    connection.execute(
+        "INSERT INTO publication_runs "
+        "(id, action_id, draft_id, expected_draft_version, "
+        "expected_content_hash, document_id, target_path, state) VALUES "
+        "('p23', 'a23', 'd23', 1, 'hash23', 'q23', "
+        "'10_question_bank/q23.md', 'file_written')"
+    )
+    connection.commit()
+    connection.close()
+
+    reopened = connect_runtime_database(tmp_path)
+    reopened.execute(
+        "UPDATE publication_runs SET state = 'committing' WHERE id = 'p23'"
+    )
+    reopened.execute(
+        "UPDATE publication_runs SET state = 'compensating' WHERE id = 'p23'"
+    )
+    reopened.commit()
+
+    assert tuple(reopened.execute(
+        "SELECT draft_id, state FROM publication_runs WHERE id = 'p23'"
+    ).fetchone()) == ("d23", "compensating")
+    assert reopened.execute("PRAGMA foreign_key_check").fetchall() == []
+    reopened.close()
+
+
 def test_migration_019_preserves_version_18_batch_session_and_work_item_rows(
     tmp_path: Path,
 ) -> None:
@@ -390,7 +443,7 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
+        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
     reopened.close()
 
 
