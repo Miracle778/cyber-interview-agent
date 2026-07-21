@@ -106,7 +106,10 @@ class QuestionCurationAgent:
 
 
 _NUMBERED_ITEM = re.compile(r"^\s*\d{1,3}[.、)]\s+")
+_PARAGRAPH_SEPARATOR = re.compile(r"\n\s*\n")
 _MAX_NUMBERED_ITEMS_PER_CALL = 6
+_MAX_PARAGRAPHS_PER_CALL = 3
+_MAX_CHUNK_CHARS = 4000
 
 
 def _generation_units(
@@ -124,16 +127,53 @@ def _split_numbered_source(source: str) -> tuple[str, ...]:
         index for index, line in enumerate(lines) if _NUMBERED_ITEM.match(line)
     ]
     if len(starts) <= _MAX_NUMBERED_ITEMS_PER_CALL:
-        return (source,)
+        return _split_paragraph_source(source)
     prefix = lines[: starts[0]]
     items = [
         lines[start : starts[index + 1] if index + 1 < len(starts) else None]
         for index, start in enumerate(starts)
     ]
-    return tuple(
+    chunks = tuple(
         "\n".join(
             [*prefix, *[line for item in group for line in item]]
         ).strip()
         for offset in range(0, len(items), _MAX_NUMBERED_ITEMS_PER_CALL)
         for group in (items[offset : offset + _MAX_NUMBERED_ITEMS_PER_CALL],)
     )
+    return _cap_chunks_by_chars(chunks)
+
+
+def _split_paragraph_source(source: str) -> tuple[str, ...]:
+    blocks = [
+        block.strip()
+        for block in _PARAGRAPH_SEPARATOR.split(source)
+        if block.strip()
+    ]
+    if len(blocks) <= _MAX_PARAGRAPHS_PER_CALL:
+        return _cap_chunks_by_chars((source,))
+    chunks = tuple(
+        "\n\n".join(blocks[offset : offset + _MAX_PARAGRAPHS_PER_CALL])
+        for offset in range(0, len(blocks), _MAX_PARAGRAPHS_PER_CALL)
+    )
+    return _cap_chunks_by_chars(chunks)
+
+
+def _cap_chunks_by_chars(chunks: tuple[str, ...]) -> tuple[str, ...]:
+    if all(len(chunk) <= _MAX_CHUNK_CHARS for chunk in chunks):
+        return chunks
+    capped: list[str] = []
+    for chunk in chunks:
+        if len(chunk) <= _MAX_CHUNK_CHARS:
+            capped.append(chunk)
+            continue
+        acc: list[str] = []
+        acc_len = 0
+        for line in chunk.splitlines():
+            if acc and acc_len + len(line) + 1 > _MAX_CHUNK_CHARS:
+                capped.append("\n".join(acc))
+                acc, acc_len = [], 0
+            acc.append(line)
+            acc_len += len(line) + 1
+        if acc:
+            capped.append("\n".join(acc))
+    return tuple(capped)
