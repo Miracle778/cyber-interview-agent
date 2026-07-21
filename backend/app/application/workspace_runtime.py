@@ -632,7 +632,10 @@ class AgentApplication:
         recovered = []
         for workspace_id in self._workspace_ids():
             context = self._context(workspace_id)
-            recovered.extend(context.executions.recover())
+            interrupted_executions = context.executions.recover()
+            recovered.extend(interrupted_executions)
+            # Domain reconciliation observes durable interrupted executions;
+            # it never schedules Provider work without an explicit resume.
             context.review.repository.reconcile_abandoned_work()
             await context.drafts.reconcile_curation_staging()
             await context.publications.recover_transient_runs()

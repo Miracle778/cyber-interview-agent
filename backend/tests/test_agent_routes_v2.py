@@ -152,6 +152,41 @@ async def test_cancel_and_replay_cursor_are_product_level(api, application):
 
 
 @pytest.mark.asyncio
+async def test_curation_control_event_is_safe_and_replayable(application):
+    session = await application.create_session(
+        workspace_id="w1", kind="diagnostic.echo", title="Control event"
+    )
+    context = application._context("w1")
+    event = await context.events.publish(
+        session.id,
+        None,
+        "curation.control.changed",
+        {
+            "resourceId": session.id,
+            "batchId": "batch-1",
+            "status": "pausing",
+            "operation": "pause",
+            "version": 2,
+        },
+    )
+
+    replayed = application.replay_events(session.id, after_id=event.id - 1)
+
+    assert [(item.type, item.payload) for item in replayed] == [
+        (
+            "curation.control.changed",
+            {
+                "resourceId": session.id,
+                "batchId": "batch-1",
+                "status": "pausing",
+                "operation": "pause",
+                "version": 2,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_completed_execution_wins_race_with_late_cancel(application):
     session = await application.create_session(
         workspace_id="w1", kind="diagnostic.echo", title="Echo"

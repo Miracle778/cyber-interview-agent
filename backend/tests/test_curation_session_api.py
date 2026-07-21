@@ -7,6 +7,7 @@ import json
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from httpx import ASGITransport, AsyncClient
 
 from app.api.dependencies import get_agent_application
@@ -334,6 +335,517 @@ def api(application):
     api.include_router(review_router)
     api.dependency_overrides[get_agent_application] = lambda: app
     return api
+
+
+def _api_with_review_conflicts(application: AgentApplication) -> FastAPI:
+    api = FastAPI()
+    api.include_router(review_router)
+    api.dependency_overrides[get_agent_application] = lambda: application
+
+    @api.exception_handler(ReviewConflictError)
+    async def review_conflict_handler(_request, _error):
+        return JSONResponse(
+            status_code=409,
+            content={"code": "review_conflict", "message": "conflict"},
+        )
+
+    return api
+
+
+async def _seed_running_curation(review, source_id: str):
+    session = await review.sessions.create(
+        workspace_id="w1", kind="question.curate", title="Controlled curation"
+    )
+    review.repository.create_curation_session(
+        workspace_id="w1",
+        session_id=session.id,
+        source_refs=(source_id,),
+    )
+    batch = review.repository.create_batch(
+        workspace_id="w1",
+        session_id=session.id,
+        run_id=None,
+        source_refs=(source_id,),
+    )
+    execution_input = {
+        "batchId": batch.id,
+        "batch_id": batch.id,
+        "sourceRefs": [source_id],
+        "source_refs": [source_id],
+        "source_excerpts": [f"{source_id}:source.md\nQuestion?"],
+        "similar_questions": [],
+        "rewrite_feedback": None,
+    }
+    execution = await review.executions.prepare(
+        session, input=execution_input, project_input_message=False
+    )
+    batch = review.repository.attach_batch_run(batch.id, execution.id)
+    review.repository.record_curation_attempt(
+        batch.id, execution.id, reason="initial"
+    )
+    review.repository.update_curation_progress(
+        session.id,
+        stage="generating",
+        completed_units=0,
+        total_units=1,
+        active_batch_id=batch.id,
+    )
+    return session, batch, execution
+
+
+def _provisional_candidate(title: str, source_ref: str) -> dict[str, object]:
+    return {
+        "title": title,
+        "question_text": f"Explain {title}",
+        "reference_answer": f"Reference for {title}",
+        "topics": ["runtime"],
+        "difficulty": "medium",
+        "key_points": ["durability"],
+        "follow_ups": [],
+        "source_refs": [source_ref],
+        "correction_note": "No correction required",
+    }
+
+
+@pytest.mark.asyncio
+async def test_curation_control_api_uses_header_and_resumes_same_batch(
+    application, monkeypatch
+) -> None:
+    app, source_ids = application
+    api = _api_with_review_conflicts(app)
+    review = app.review("w1")
+    session, batch, execution = await _seed_running_curation(
+        review, source_ids[0]
+    )
+    completed_item = review.repository.plan_curation_work_item(
+        batch_id=batch.id,
+        stage="discovery",
+        unit_index=0,
+        input_digest="d" * 64,
+        source_refs=(f"{source_ids[0]}#section-0001",),
+        processor_kind="deterministic",
+    )
+    review.repository.complete_deterministic_curation_work_item(
+        completed_item.id,
+        output={
+            "seeds": [
+                {
+                    "question_text": "What is durable control?",
+                    "source_ref": f"{source_ids[0]}#section-0001",
+                    "source_refs": [f"{source_ids[0]}#section-0001"],
+                }
+            ]
+        },
+    )
+    running_item = review.repository.plan_curation_work_item(
+        batch_id=batch.id,
+        stage="discovery",
+        unit_index=1,
+        input_digest="e" * 64,
+        source_refs=(f"{source_ids[0]}#section-0002",),
+    )
+    review.repository.start_curation_work_item(running_item.id)
+    scheduled: list[str] = []
+    monkeypatch.setattr(
+        review.executions,
+        "run_prepared",
+        lambda prepared, *, graph_input: scheduled.append(prepared.id),
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        body_key = await client.post(
+            f"/api/review/curation-sessions/{session.id}/pause",
+            headers={"Idempotency-Key": "pause-request-body-0001"},
+            json={
+                "expectedBatchVersion": batch.version,
+                "idempotencyKey": "must-not-be-in-body",
+            },
+        )
+        missing_header = await client.post(
+            f"/api/review/curation-sessions/{session.id}/pause",
+            json={"expectedBatchVersion": batch.version},
+        )
+        paused = await client.post(
+            f"/api/review/curation-sessions/{session.id}/pause",
+            headers={"Idempotency-Key": "pause-request-0001"},
+            json={"expectedBatchVersion": batch.version},
+        )
+        repeated_pause = await client.post(
+            f"/api/review/curation-sessions/{session.id}/pause",
+            headers={"Idempotency-Key": "pause-request-0001"},
+            json={"expectedBatchVersion": batch.version},
+        )
+        stale_pause = await client.post(
+            f"/api/review/curation-sessions/{session.id}/pause",
+            headers={"Idempotency-Key": "pause-request-stale-0001"},
+            json={"expectedBatchVersion": batch.version},
+        )
+        resumed = await client.post(
+            f"/api/review/curation-sessions/{session.id}/resume",
+            headers={"Idempotency-Key": "resume-request-0001"},
+            json={"expectedBatchVersion": paused.json()["batchVersion"]},
+        )
+        repeated_resume = await client.post(
+            f"/api/review/curation-sessions/{session.id}/resume",
+            headers={"Idempotency-Key": "resume-request-0001"},
+            json={"expectedBatchVersion": paused.json()["batchVersion"]},
+        )
+
+    assert body_key.status_code == 422
+    assert missing_header.status_code == 422
+    assert paused.status_code == 202, paused.text
+    assert paused.json()["batchStatus"] == "paused"
+    assert paused.json()["controls"] == {
+        "canPause": False,
+        "canResume": True,
+        "canTerminate": True,
+    }
+    assert paused.json()["progress"] == {
+        "phase": "discovery",
+        "completed": 1,
+        "total": 2,
+        "generatedCandidateCount": 0,
+        "activeWorkers": 0,
+    }
+    assert repeated_pause.status_code == 202
+    assert repeated_pause.json()["batchVersion"] == paused.json()["batchVersion"]
+    assert stale_pause.status_code == 409
+    assert resumed.status_code == 202, resumed.text
+    assert resumed.json()["executionId"] != execution.id
+    assert resumed.json()["activeBatchId"] == batch.id
+    assert resumed.json()["batchStatus"] == "generating"
+    assert repeated_resume.status_code == 202
+    assert repeated_resume.json()["executionId"] == resumed.json()["executionId"]
+    assert scheduled == [resumed.json()["executionId"]]
+
+    control_event = next(
+        event
+        for event in app.replay_events(session.id, after_id=None)
+        if event.type == "curation.control.changed"
+        and event.payload["operation"] == "pause"
+    )
+    assert control_event.payload == {
+        "resourceId": session.id,
+        "batchId": batch.id,
+        "status": "pausing",
+        "operation": "pause",
+        "version": batch.version + 1,
+    }
+    assert control_event.id in {
+        event.id
+        for event in app.replay_events(session.id, after_id=control_event.id - 1)
+    }
+
+
+@pytest.mark.asyncio
+async def test_terminate_is_idempotent_and_cannot_resume(
+    application
+) -> None:
+    app, source_ids = application
+    api = _api_with_review_conflicts(app)
+    review = app.review("w1")
+    session, batch, _execution = await _seed_running_curation(
+        review, source_ids[0]
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        terminated = await client.post(
+            f"/api/review/curation-sessions/{session.id}/terminate",
+            headers={"Idempotency-Key": "terminate-request-0001"},
+            json={"expectedBatchVersion": batch.version},
+        )
+        repeated = await client.post(
+            f"/api/review/curation-sessions/{session.id}/terminate",
+            headers={"Idempotency-Key": "terminate-request-0001"},
+            json={"expectedBatchVersion": batch.version},
+        )
+        resumed = await client.post(
+            f"/api/review/curation-sessions/{session.id}/resume",
+            headers={"Idempotency-Key": "resume-terminated-0001"},
+            json={"expectedBatchVersion": terminated.json()["batchVersion"]},
+        )
+
+    assert terminated.status_code == 202
+    assert terminated.json()["batchStatus"] == "terminated"
+    assert terminated.json()["controls"] == {
+        "canPause": False,
+        "canResume": False,
+        "canTerminate": False,
+    }
+    assert repeated.status_code == 202
+    assert repeated.json()["batchVersion"] == terminated.json()["batchVersion"]
+    assert resumed.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_natural_completion_wins_late_pause(
+    api, application
+) -> None:
+    app, source_ids = application
+    review = app.review("w1")
+    session, batch, execution = await _seed_running_curation(
+        review, source_ids[0]
+    )
+    review.sessions.repository.transition_execution(
+        execution.id, expected=("running",), target="completed"
+    )
+    completed = review.repository.update_batch_status(
+        batch.id, "completed", expected_run_id=execution.id
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            f"/api/review/curation-sessions/{session.id}/pause",
+            headers={"Idempotency-Key": "pause-after-complete-0001"},
+            json={"expectedBatchVersion": batch.version},
+        )
+
+    assert response.status_code == 202, response.text
+    assert response.json()["batchStatus"] == "completed"
+    assert response.json()["batchVersion"] == completed.version
+    assert response.json()["controls"] == {
+        "canPause": False,
+        "canResume": False,
+        "canTerminate": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_curation_resource_projects_timing_workers_and_read_only_provisional(
+    api, application
+) -> None:
+    app, source_ids = application
+    review = app.review("w1")
+    session, batch, execution = await _seed_running_curation(
+        review, source_ids[0]
+    )
+    completed_item = review.repository.plan_curation_work_item(
+        batch_id=batch.id,
+        stage="enrichment",
+        unit_index=0,
+        input_digest="a" * 64,
+        source_refs=(f"{source_ids[0]}#section-0001",),
+    )
+    review.repository.complete_curation_work_item(
+        review.repository.start_curation_work_item(completed_item.id).id,
+        output={
+            "candidates": [
+                _provisional_candidate(
+                    "Durable pause", f"{source_ids[0]}#section-0001"
+                ),
+                _provisional_candidate(
+                    "Durable resume", f"{source_ids[0]}#section-0001"
+                ),
+            ]
+        },
+    )
+    running_item = review.repository.plan_curation_work_item(
+        batch_id=batch.id,
+        stage="enrichment",
+        unit_index=1,
+        input_digest="b" * 64,
+        source_refs=(f"{source_ids[0]}#section-0002",),
+    )
+    review.repository.start_curation_work_item(running_item.id)
+    review.sessions.repository.connection.execute(
+        "UPDATE agent_runs SET started_at = '2026-07-22 00:00:00', "
+        "finished_at = '2026-07-22 00:00:10' WHERE id = ?",
+        (execution.id,),
+    )
+    review.sessions.repository.connection.commit()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        detail = await client.get(
+            f"/api/review/curation-sessions/{session.id}"
+        )
+        formal_candidates = await client.get(
+            "/api/review/question-candidates",
+            params={"workspaceId": "w1"},
+        )
+
+    assert detail.status_code == 200, detail.text
+    resource = detail.json()
+    assert resource["batchStatus"] == "generating"
+    assert resource["batchVersion"] == batch.version
+    assert resource["progress"] == {
+        "phase": "enrichment",
+        "completed": 1,
+        "total": 2,
+        "generatedCandidateCount": 2,
+        "activeWorkers": 1,
+    }
+    assert resource["timing"] == {
+        "currentElapsedMs": 10_000,
+        "cumulativeElapsedMs": 10_000,
+    }
+    assert resource["controls"] == {
+        "canPause": True,
+        "canResume": False,
+        "canTerminate": True,
+    }
+    assert resource["provisionalCandidates"] == [
+        {
+            "id": f"{completed_item.id}:0",
+            "title": "Durable pause",
+            "questionText": "Explain Durable pause",
+            "sourceRefs": [f"{source_ids[0]}#section-0001"],
+        },
+        {
+            "id": f"{completed_item.id}:1",
+            "title": "Durable resume",
+            "questionText": "Explain Durable resume",
+            "sourceRefs": [f"{source_ids[0]}#section-0001"],
+        },
+    ]
+    assert formal_candidates.status_code == 200
+    assert formal_candidates.json() == []
+    assert "draft" not in resource["provisionalCandidates"][0]
+
+
+@pytest.mark.asyncio
+async def test_provisional_candidates_are_stable_and_capped_at_200(
+    application,
+) -> None:
+    app, source_ids = application
+    review = app.review("w1")
+    session, batch, _execution = await _seed_running_curation(
+        review, source_ids[0]
+    )
+    source_ref = f"{source_ids[0]}#section-0001"
+    for unit_index in range(67):
+        item = review.repository.plan_curation_work_item(
+            batch_id=batch.id,
+            stage="enrichment",
+            unit_index=unit_index,
+            input_digest=f"{unit_index:064x}",
+            source_refs=(source_ref,),
+        )
+        review.repository.complete_curation_work_item(
+            review.repository.start_curation_work_item(item.id).id,
+            output={
+                "candidates": [
+                    _provisional_candidate(
+                        f"Candidate {unit_index * 3 + ordinal}", source_ref
+                    )
+                    for ordinal in range(3)
+                ]
+            },
+        )
+
+    first = await review.curation_resource(session.id)
+    second = await review.curation_resource(session.id)
+
+    assert len(first["provisional_candidates"]) == 200
+    assert first["provisional_candidates"] == second["provisional_candidates"]
+    assert len({item["id"] for item in first["provisional_candidates"]}) == 200
+
+
+@pytest.mark.asyncio
+async def test_graph_failure_atomically_fails_batch_session_and_keeps_completed_work(
+    application,
+) -> None:
+    app, source_ids = application
+    review = app.review("w1")
+    session, batch, execution = await _seed_running_curation(
+        review, source_ids[0]
+    )
+    item = review.repository.plan_curation_work_item(
+        batch_id=batch.id,
+        stage="discovery",
+        unit_index=0,
+        input_digest="c" * 64,
+        source_refs=(f"{source_ids[0]}#section-0001",),
+        processor_kind="deterministic",
+    )
+    completed = review.repository.complete_deterministic_curation_work_item(
+        item.id,
+        output={
+            "seeds": [
+                {
+                    "question_text": "What survives failure?",
+                    "source_ref": f"{source_ids[0]}#section-0001",
+                    "source_refs": [f"{source_ids[0]}#section-0001"],
+                }
+            ]
+        },
+    )
+
+    failed = review.repository.fail_curation_batch(
+        batch.id, expected_run_id=execution.id
+    )
+
+    assert failed.status == "failed"
+    assert review.repository.get_curation_session(session.id).stage == "failed"
+    assert review.repository.get_curation_work_item(item.id) == completed
+
+
+@pytest.mark.asyncio
+async def test_initial_attempt_and_legacy_retry_reuse_failed_batch(
+    api, application, monkeypatch
+) -> None:
+    app, source_ids = application
+    review = app.review("w1")
+    created = await review.create_curation_session(source_refs=(source_ids[0],))
+    await app.wait_execution(created["execution_id"])
+    batch_id = created["active_batch_id"]
+    initial_attempts = review.sessions.repository.connection.execute(
+        "SELECT execution_id, reason FROM review_curation_batch_attempts "
+        "WHERE batch_id = ? ORDER BY ordinal",
+        (batch_id,),
+    ).fetchall()
+    assert [(row[0], row[1]) for row in initial_attempts] == [
+        (created["execution_id"], "initial")
+    ]
+
+    failed_execution = review.sessions.repository.latest_execution(created["id"])
+    assert failed_execution is not None
+    review.sessions.repository.connection.execute(
+        "UPDATE agent_runs SET status = 'failed', finished_at = CURRENT_TIMESTAMP "
+        "WHERE id = ?",
+        (failed_execution.id,),
+    )
+    review.sessions.repository.connection.execute(
+        "UPDATE review_question_batches SET status = 'failed', version = version + 1 "
+        "WHERE id = ?",
+        (batch_id,),
+    )
+    review.sessions.repository.connection.execute(
+        "UPDATE review_curation_sessions SET stage = 'failed' WHERE session_id = ?",
+        (created["id"],),
+    )
+    review.sessions.repository.connection.commit()
+    scheduled: list[str] = []
+    monkeypatch.setattr(
+        review.executions,
+        "run_prepared",
+        lambda prepared, *, graph_input: scheduled.append(prepared.id),
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        retried = await client.post(
+            f"/api/review/curation-sessions/{created['id']}/retry"
+        )
+
+    assert retried.status_code == 202, retried.text
+    assert retried.json()["activeBatchId"] == batch_id
+    assert retried.json()["executionId"] != failed_execution.id
+    receipt = review.sessions.repository.connection.execute(
+        "SELECT idempotency_key FROM review_curation_control_receipts "
+        "WHERE batch_id = ? AND operation = 'resume'",
+        (batch_id,),
+    ).fetchone()
+    assert receipt[0] == f"legacy-retry:{failed_execution.id}"
+    assert scheduled == [retried.json()["executionId"]]
 
 
 @pytest.mark.asyncio

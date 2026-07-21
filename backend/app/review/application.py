@@ -5,7 +5,7 @@ from contextlib import nullcontext
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 from uuid import uuid4
 
 from app.application.execution_service import (
@@ -21,6 +21,7 @@ from app.agents.context_assembly import (
     ContextSummary,
 )
 from app.agents.curation_command_agents import CurationCommandAgents
+from app.agents.question_curation_contracts import QuestionCandidateChunk
 from app.agents.agent_factory import ModelOverride
 from app.application.session_service import (
     AgentSessionService,
@@ -209,7 +210,7 @@ class ReviewApplication:
             total_units=max(1, len(excerpts)),
             active_batch_id=batch.id,
         )
-        execution = await self.executions.start(
+        execution = await self.executions.prepare(
             session,
             input={
                 "batchId": batch.id,
@@ -226,6 +227,10 @@ class ReviewApplication:
             project_input_message=False,
         )
         self.repository.attach_batch_run(batch.id, execution.id)
+        self.repository.record_curation_attempt(
+            batch.id, execution.id, reason="initial"
+        )
+        self.executions.run_prepared(execution, graph_input=execution.input)
         await self.timeline.append(
             session_id=session.id,
             execution_id=execution.id,
@@ -267,6 +272,64 @@ class ReviewApplication:
             session_id
         )
         latest = self.sessions.repository.latest_execution(session_id)
+        batch = (
+            None
+            if record.active_batch_id is None
+            else self.repository.get_batch(record.active_batch_id)
+        )
+        work_items = (
+            ()
+            if batch is None
+            else self.repository.list_curation_work_items(batch.id)
+        )
+        phase = self._active_curation_phase(record)
+        phase_items = (
+            tuple(item for item in work_items if item.stage == phase)
+            if phase is not None
+            else ()
+        )
+        provisional_candidates: list[dict[str, object]] = []
+        generated_candidate_count = 0
+        for item in work_items:
+            if (
+                item.stage != "enrichment"
+                or item.status != "completed"
+                or item.output is None
+            ):
+                continue
+            chunk = QuestionCandidateChunk.model_validate(item.output)
+            generated_candidate_count += len(chunk.candidates)
+            if batch is None or batch.status not in {
+                "generating",
+                "paused",
+                "interrupted",
+                "failed",
+            }:
+                continue
+            for ordinal, candidate in enumerate(chunk.candidates):
+                if len(provisional_candidates) >= 200:
+                    break
+                provisional_candidates.append(
+                    {
+                        "id": f"{item.id}:{ordinal}",
+                        "title": candidate.title,
+                        "question_text": candidate.question_text,
+                        "source_refs": candidate.source_refs,
+                    }
+                )
+        timing = (
+            None
+            if batch is None
+            else self.repository.curation_batch_timing(batch.id)
+        )
+        controls = self._curation_controls(batch)
+        projected_stage = (
+            "pausing"
+            if batch is not None
+            and batch.status == "generating"
+            and batch.control_intent == "pause"
+            else record.stage
+        )
         warnings_by_source = {
             str(item["sourceId"]): str(item["code"])
             for item in record.warnings
@@ -296,6 +359,8 @@ class ReviewApplication:
             "source_refs": record.source_refs,
             "sources": source_resources,
             "active_batch_id": record.active_batch_id,
+            "batch_status": None if batch is None else batch.status,
+            "batch_version": None if batch is None else batch.version,
             "execution_id": None if latest is None else latest.id,
             "execution_status": None if latest is None else latest.status,
             "execution_started_at": None if latest is None else latest.started_at,
@@ -306,12 +371,30 @@ class ReviewApplication:
                 session_id
             ),
             "context_usage": self.sessions.repository.context_usage(session_id),
-            "stage": record.stage,
+            "stage": projected_stage,
             "progress": {
-                "phase": self._active_curation_phase(record),
-                "completed": record.completed_units,
-                "total": record.total_units,
+                "phase": phase,
+                "completed": (
+                    sum(item.status == "completed" for item in phase_items)
+                    if phase_items
+                    else record.completed_units
+                ),
+                "total": len(phase_items) if phase_items else record.total_units,
+                "generated_candidate_count": generated_candidate_count,
+                "active_workers": sum(
+                    item.status == "running" for item in work_items
+                ),
             },
+            "timing": {
+                "current_elapsed_ms": (
+                    0 if timing is None else timing.current_elapsed_ms
+                ),
+                "cumulative_elapsed_ms": (
+                    0 if timing is None else timing.cumulative_elapsed_ms
+                ),
+            },
+            "controls": controls,
+            "provisional_candidates": provisional_candidates,
             "summary": asdict(record.summary),
             "summary_version": record.summary_version,
             "warnings": record.warnings,
@@ -344,6 +427,180 @@ class ReviewApplication:
             "updated_at": record.updated_at,
         }
 
+    async def pause_curation_session(
+        self,
+        session_id: str,
+        *,
+        expected_batch_version: int,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        return await self._control_curation_session(
+            session_id,
+            operation="pause",
+            expected_batch_version=expected_batch_version,
+            idempotency_key=idempotency_key,
+        )
+
+    async def terminate_curation_session(
+        self,
+        session_id: str,
+        *,
+        expected_batch_version: int,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        return await self._control_curation_session(
+            session_id,
+            operation="terminate",
+            expected_batch_version=expected_batch_version,
+            idempotency_key=idempotency_key,
+        )
+
+    async def _control_curation_session(
+        self,
+        session_id: str,
+        *,
+        operation: Literal["pause", "terminate"],
+        expected_batch_version: int,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        curation = self.repository.get_curation_session(session_id)
+        if curation.workspace_id != self.workspace_id:
+            raise LookupError(session_id)
+        if curation.active_batch_id is None:
+            raise ReviewConflictError("curation session has no active batch")
+        batch_id = curation.active_batch_id
+        existing = self.repository.find_curation_control_receipt(
+            batch_id, idempotency_key
+        )
+        try:
+            receipt = self.repository.request_batch_control(
+                batch_id,
+                operation=operation,
+                idempotency_key=idempotency_key,
+                expected_version=expected_batch_version,
+            )
+        except ReviewConflictError:
+            winner = self.repository.get_batch(batch_id)
+            if (
+                existing is None
+                and winner.status in {"review_pending", "completed"}
+            ):
+                return await self.curation_resource(session_id)
+            raise
+        if receipt.result_status != "requested":
+            return await self.curation_resource(session_id)
+        intent = self.repository.get_batch(batch_id)
+        transient_status = "pausing" if operation == "pause" else "terminating"
+        await self.events.publish(
+            session_id,
+            intent.run_id,
+            "curation.control.changed",
+            {
+                "resourceId": session_id,
+                "batchId": batch_id,
+                "status": transient_status,
+                "operation": operation,
+                "version": intent.version,
+            },
+        )
+        if intent.run_id is not None:
+            await self.executions.cancel(intent.run_id)
+        self.repository.interrupt_running_curation_work_items(
+            batch_id, error_code=f"curation_{operation}d"
+        )
+        try:
+            terminal = self.repository.finalize_batch_control(receipt.id)
+        except ReviewConflictError:
+            winner = self.repository.get_batch(batch_id)
+            if winner.status in {"review_pending", "completed"}:
+                return await self.curation_resource(session_id)
+            raise
+        await self.events.publish(
+            session_id,
+            terminal.run_id,
+            "curation.control.changed",
+            {
+                "resourceId": session_id,
+                "batchId": batch_id,
+                "status": terminal.status,
+                "operation": operation,
+                "version": terminal.version,
+            },
+        )
+        return await self.curation_resource(session_id)
+
+    async def resume_curation_session(
+        self,
+        session_id: str,
+        *,
+        expected_batch_version: int,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        curation = self.repository.get_curation_session(session_id)
+        if curation.workspace_id != self.workspace_id:
+            raise LookupError(session_id)
+        if curation.active_batch_id is None:
+            raise ReviewConflictError("curation session has no active batch")
+        batch = self.repository.get_batch(curation.active_batch_id)
+        existing = self.repository.find_curation_control_receipt(
+            batch.id, idempotency_key
+        )
+        if existing is not None:
+            if existing.operation != "resume" or existing.execution_id is None:
+                raise ReviewConflictError("control request changed")
+            attempt = self.repository.get_curation_attempt_for_execution(
+                existing.execution_id
+            )
+            if attempt.reason not in {"paused", "failed", "interrupted"}:
+                raise ReviewConflictError("control request changed")
+            self.repository.resume_curation_batch(
+                batch.id,
+                execution_id=existing.execution_id,
+                idempotency_key=idempotency_key,
+                expected_version=expected_batch_version,
+                reason=attempt.reason,
+            )
+            return await self.curation_resource(session_id)
+        if (
+            batch.status not in {"paused", "failed", "interrupted"}
+            or batch.control_intent is not None
+        ):
+            raise ReviewConflictError("question batch cannot be resumed")
+        if batch.version != expected_batch_version:
+            raise ReviewConflictError("question batch version changed")
+        execution_input = self.repository.curation_batch_input(batch.id)
+        session = self.sessions.get(session_id)
+        execution = await self.executions.prepare(
+            session,
+            input=execution_input,
+            project_input_message=False,
+        )
+        try:
+            resumed = self.repository.resume_curation_batch(
+                batch.id,
+                execution_id=execution.id,
+                idempotency_key=idempotency_key,
+                expected_version=expected_batch_version,
+                reason=batch.status,
+            )
+        except Exception:
+            await self.executions.cancel(execution.id)
+            raise
+        await self.events.publish(
+            session_id,
+            execution.id,
+            "curation.control.changed",
+            {
+                "resourceId": session_id,
+                "batchId": batch.id,
+                "status": resumed.status,
+                "operation": "resume",
+                "version": resumed.version,
+            },
+        )
+        self.executions.run_prepared(execution, graph_input=execution.input)
+        return await self.curation_resource(session_id)
+
     async def retry_curation_session(self, session_id: str) -> dict[str, Any]:
         curation = self.repository.get_curation_session(session_id)
         latest = self.sessions.repository.latest_execution(session_id)
@@ -368,14 +625,11 @@ class ReviewApplication:
                 "stage": "queued",
             },
         )
-        await self._start_curation_execution(
-            session_id=session_id,
-            source_refs=curation.source_refs,
-            rewrite_feedback=None,
-            rewrite_of_batch_id=None,
-            resume_batch_id=curation.active_batch_id,
+        return await self.resume_curation_session(
+            session_id,
+            expected_batch_version=batch.version,
+            idempotency_key=f"legacy-retry:{latest.id}",
         )
-        return await self.curation_resource(session_id)
 
     async def list_curation_resources(
         self, *, deleted_only: bool = False
@@ -1492,6 +1746,9 @@ class ReviewApplication:
             self.repository.reattach_batch_run(batch.id, execution.id)
         else:
             self.repository.attach_batch_run(batch.id, execution.id)
+            self.repository.record_curation_attempt(
+                batch.id, execution.id, reason="initial"
+            )
         self.executions.run_prepared(execution, graph_input=execution.input)
         await self.timeline.append(
             session_id=session_id,
@@ -1508,12 +1765,32 @@ class ReviewApplication:
         return execution
 
     def _active_curation_phase(self, record) -> str | None:
-        if record.stage != "generating" or record.active_batch_id is None:
+        if record.active_batch_id is None or record.stage not in {
+            "generating",
+            "paused",
+            "interrupted",
+            "failed",
+        }:
             return None
         items = self.repository.list_curation_work_items(record.active_batch_id)
         if any(item.stage == "enrichment" for item in items):
             return "enrichment"
         return "discovery" if items else None
+
+    @staticmethod
+    def _curation_controls(batch) -> dict[str, bool]:
+        if batch is None or batch.control_intent is not None:
+            return {
+                "can_pause": False,
+                "can_resume": False,
+                "can_terminate": False,
+            }
+        return {
+            "can_pause": batch.status == "generating",
+            "can_resume": batch.status in {"paused", "interrupted", "failed"},
+            "can_terminate": batch.status
+            in {"generating", "paused", "interrupted", "failed"},
+        }
 
     def _summarize_curation(self, session_id: str):
         current = self.repository.get_curation_session(session_id)
@@ -1616,7 +1893,7 @@ class ReviewApplication:
             source_refs=source_refs,
             rewrite_of_batch_id=rewrite_of_batch_id,
         )
-        execution = await self.executions.start(
+        execution = await self.executions.prepare(
             session,
             input={
                 "batchId": batch.id,
@@ -1632,7 +1909,12 @@ class ReviewApplication:
             },
             project_input_message=False,
         )
-        return self.repository.attach_batch_run(batch.id, execution.id)
+        attached = self.repository.attach_batch_run(batch.id, execution.id)
+        self.repository.record_curation_attempt(
+            batch.id, execution.id, reason="initial"
+        )
+        self.executions.run_prepared(execution, graph_input=execution.input)
+        return attached
 
     def list_batches(self, *, status: str | None = None):
         return self.repository.list_batches(self.workspace_id, status=status)

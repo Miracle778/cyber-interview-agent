@@ -64,6 +64,10 @@ class CreateCurationSessionCommand(ReviewModel):
     source_refs: list[str] = Field(min_length=1)
 
 
+class ControlCurationSessionCommand(ReviewModel):
+    expected_batch_version: int = Field(ge=1)
+
+
 class SubmitCurationCommand(ReviewModel):
     text: str = Field(min_length=1, max_length=5000)
     summary_version: int = Field(ge=0)
@@ -333,6 +337,26 @@ class CurationProgressResource(ReviewModel):
     phase: Literal["discovery", "enrichment"] | None = None
     completed: int = Field(ge=0)
     total: int = Field(ge=0)
+    generated_candidate_count: int = Field(default=0, ge=0)
+    active_workers: int = Field(default=0, ge=0)
+
+
+class CurationTimingResource(ReviewModel):
+    current_elapsed_ms: int = Field(ge=0)
+    cumulative_elapsed_ms: int = Field(ge=0)
+
+
+class CurationControlsResource(ReviewModel):
+    can_pause: bool
+    can_resume: bool
+    can_terminate: bool
+
+
+class ProvisionalCandidateResource(ReviewModel):
+    id: str
+    title: str
+    question_text: str
+    source_refs: list[str]
 
 
 class CurationSessionResource(ReviewModel):
@@ -343,6 +367,8 @@ class CurationSessionResource(ReviewModel):
     source_refs: list[str]
     sources: list[CurationSourceResource]
     active_batch_id: str | None
+    batch_status: str | None = None
+    batch_version: int | None = Field(default=None, ge=1)
     execution_id: str | None
     execution_status: str | None
     execution_started_at: str | None
@@ -353,6 +379,19 @@ class CurationSessionResource(ReviewModel):
     context_usage: ContextUsageResource
     stage: str
     progress: CurationProgressResource
+    timing: CurationTimingResource = Field(
+        default_factory=lambda: CurationTimingResource(
+            current_elapsed_ms=0, cumulative_elapsed_ms=0
+        )
+    )
+    controls: CurationControlsResource = Field(
+        default_factory=lambda: CurationControlsResource(
+            can_pause=False, can_resume=False, can_terminate=False
+        )
+    )
+    provisional_candidates: list[ProvisionalCandidateResource] = Field(
+        default_factory=list, max_length=200
+    )
     summary: dict[str, Any]
     summary_version: int
     warnings: list[dict[str, Any]]

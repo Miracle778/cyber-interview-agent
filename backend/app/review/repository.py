@@ -613,6 +613,38 @@ class ReviewRepository:
                 raise ReviewConflictError("question batch terminal state changed")
         return self.get_batch(batch_id)
 
+    def fail_curation_batch(
+        self, batch_id: str, *, expected_run_id: str
+    ) -> QuestionBatchRecord:
+        """Atomically fail the current Batch and its Session projection."""
+        with self._transaction():
+            row = self._connection.execute(
+                "SELECT * FROM review_question_batches WHERE id = ?",
+                (batch_id,),
+            ).fetchone()
+            if row is None:
+                raise LookupError(batch_id)
+            current = self._batch_record(row)
+            if current.run_id != expected_run_id:
+                raise ReviewConflictError("question batch current run changed")
+            if current.status != "generating" or current.control_intent is not None:
+                return current
+            cursor = self._connection.execute(
+                "UPDATE review_question_batches SET status = 'failed', "
+                "version = version + 1, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND run_id = ? AND status = 'generating' "
+                "AND version = ? AND control_intent IS NULL",
+                (batch_id, expected_run_id, current.version),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError("question batch terminal state changed")
+            self._connection.execute(
+                "UPDATE review_curation_sessions SET stage = 'failed', "
+                "updated_at = CURRENT_TIMESTAMP WHERE active_batch_id = ?",
+                (batch_id,),
+            )
+        return self.get_batch(batch_id)
+
     def reduce_curation_concurrency(
         self, batch_id: str, *, error_code: str
     ) -> QuestionBatchRecord:
@@ -1156,6 +1188,27 @@ class ReviewRepository:
             assert created is not None
             return self._curation_control_receipt_record(created)
 
+    def find_curation_control_receipt(
+        self, batch_id: str, idempotency_key: str
+    ) -> CurationControlReceiptRecord | None:
+        row = self._connection.execute(
+            "SELECT * FROM review_curation_control_receipts "
+            "WHERE batch_id = ? AND idempotency_key = ?",
+            (batch_id, idempotency_key),
+        ).fetchone()
+        return None if row is None else self._curation_control_receipt_record(row)
+
+    def get_curation_attempt_for_execution(
+        self, execution_id: str
+    ) -> CurationBatchAttemptRecord:
+        row = self._connection.execute(
+            "SELECT * FROM review_curation_batch_attempts WHERE execution_id = ?",
+            (execution_id,),
+        ).fetchone()
+        if row is None:
+            raise LookupError(execution_id)
+        return self._curation_batch_attempt_record(row)
+
     def finalize_batch_control(self, receipt_id: str) -> QuestionBatchRecord:
         with self._transaction():
             receipt_row = self._connection.execute(
@@ -1633,12 +1686,61 @@ class ReviewRepository:
     def reconcile_abandoned_work(self) -> tuple[int, int]:
         """Close domain work whose owning execution cannot continue after restart."""
         with self._transaction():
-            batches = self._connection.execute(
-                "UPDATE review_question_batches SET status = 'failed', "
-                "updated_at = CURRENT_TIMESTAMP WHERE status = 'generating' "
-                "AND run_id IN (SELECT id FROM agent_runs WHERE status IN "
-                "('interrupted', 'failed', 'cancelled'))"
-            ).rowcount
+            abandoned = self._connection.execute(
+                "SELECT batch.* FROM review_question_batches batch "
+                "LEFT JOIN agent_runs run ON run.id = batch.run_id "
+                "WHERE batch.control_intent IS NOT NULL OR "
+                "(batch.status = 'generating' AND "
+                "(batch.run_id IS NULL OR run.id IS NULL OR run.status IN "
+                "('interrupted', 'failed', 'cancelled', 'completed'))) "
+                "ORDER BY batch.created_at, batch.id"
+            ).fetchall()
+            batches = 0
+            for row in abandoned:
+                batch = self._batch_record(row)
+                target = (
+                    "paused"
+                    if batch.control_intent == "pause"
+                    else "terminated"
+                    if batch.control_intent == "terminate"
+                    else "interrupted"
+                )
+                error_code = f"curation_{target}"
+                self._connection.execute(
+                    "UPDATE review_curation_work_items SET status = 'interrupted', "
+                    "last_error_code = ?, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE batch_id = ? AND status = 'running'",
+                    (error_code, batch.id),
+                )
+                cursor = self._connection.execute(
+                    "UPDATE review_question_batches SET status = ?, "
+                    "control_intent = NULL, version = version + 1, "
+                    "updated_at = CURRENT_TIMESTAMP WHERE id = ? "
+                    "AND status = ? AND version = ? AND control_intent IS ?",
+                    (
+                        target,
+                        batch.id,
+                        batch.status,
+                        batch.version,
+                        batch.control_intent,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                batches += 1
+                self._connection.execute(
+                    "UPDATE review_curation_sessions SET stage = ?, "
+                    "updated_at = CURRENT_TIMESTAMP WHERE active_batch_id = ?",
+                    (target, batch.id),
+                )
+                if batch.control_intent is not None:
+                    self._connection.execute(
+                        "UPDATE review_curation_control_receipts SET "
+                        "result_status = ?, updated_at = CURRENT_TIMESTAMP "
+                        "WHERE batch_id = ? AND operation = ? "
+                        "AND result_status = 'requested'",
+                        (target, batch.id, batch.control_intent),
+                    )
             rounds = self._connection.execute(
                 "UPDATE review_rounds SET status = 'failed', "
                 "updated_at = CURRENT_TIMESTAMP WHERE status = 'running' "

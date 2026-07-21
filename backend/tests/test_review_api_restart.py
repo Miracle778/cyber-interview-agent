@@ -128,9 +128,22 @@ async def test_waiting_input_round_resumes_after_application_restart(
         await second.close()
 
 
+@pytest.mark.parametrize(
+    ("operation", "pre_paused", "expected_status", "expected_error_code"),
+    (
+        (None, False, "interrupted", "curation_interrupted"),
+        ("pause", False, "paused", "curation_paused"),
+        ("terminate", False, "terminated", "curation_terminated"),
+        ("terminate", True, "terminated", "curation_terminated"),
+    ),
+)
 @pytest.mark.asyncio
-async def test_restart_reconciles_abandoned_generating_batch(
+async def test_restart_reconciles_curation_control_intent_and_orphans(
     tmp_path: Path,
+    operation: str | None,
+    pre_paused: bool,
+    expected_status: str,
+    expected_error_code: str,
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -148,20 +161,98 @@ async def test_restart_reconciles_abandoned_generating_batch(
     session = await review.sessions.create(
         workspace_id="w1", kind="question.curate", title="Interrupted batch"
     )
-    execution = await review.executions.prepare(session, input={})
+    review.repository.create_curation_session(
+        workspace_id="w1",
+        session_id=session.id,
+        source_refs=("source-1",),
+    )
     batch = review.repository.create_batch(
         workspace_id="w1",
         session_id=session.id,
-        run_id=execution.id,
+        run_id=None,
         source_refs=("source-1",),
     )
+    execution_input = {
+        "batchId": batch.id,
+        "batch_id": batch.id,
+        "sourceRefs": ["source-1"],
+        "source_refs": ["source-1"],
+        "source_excerpts": ["source-1:restart.md\nQuestion?"],
+        "similar_questions": [],
+        "rewrite_feedback": None,
+    }
+    execution = await review.executions.prepare(
+        session,
+        input=execution_input,
+        project_input_message=False,
+    )
+    batch = review.repository.attach_batch_run(batch.id, execution.id)
+    review.repository.record_curation_attempt(
+        batch.id, execution.id, reason="initial"
+    )
+    review.repository.update_curation_progress(
+        session.id,
+        stage="generating",
+        completed_units=0,
+        total_units=1,
+        active_batch_id=batch.id,
+    )
+    item = review.repository.plan_curation_work_item(
+        batch_id=batch.id,
+        stage="discovery",
+        unit_index=0,
+        input_digest="a" * 64,
+        source_refs=("source-1#section-0001",),
+    )
+    review.repository.start_curation_work_item(item.id)
+    if pre_paused:
+        pause_receipt = review.repository.request_batch_control(
+            batch.id,
+            operation="pause",
+            idempotency_key="pause-before-terminate-restart-0001",
+            expected_version=batch.version,
+        )
+        batch = review.repository.finalize_batch_control(pause_receipt.id)
+    if operation is not None:
+        review.repository.request_batch_control(
+            batch.id,
+            operation=operation,
+            idempotency_key=f"{operation}-before-restart-0001",
+            expected_version=batch.version,
+        )
     await first.close()
 
     second = build()
     try:
         await second.recover()
-        restored = second.review("w1").repository.get_batch(batch.id)
-        assert restored.status == "failed"
+        restored_review = second.review("w1")
+        restored = restored_review.repository.get_batch(batch.id)
+        restored_item = restored_review.repository.get_curation_work_item(item.id)
+        restored_session = restored_review.repository.get_curation_session(
+            session.id
+        )
+        latest = restored_review.sessions.repository.latest_execution(session.id)
+
+        assert restored.status == expected_status
+        assert restored.control_intent is None
+        assert restored_item.status == "interrupted"
+        assert restored_item.last_error_code == expected_error_code
+        assert restored_session.stage == expected_status
+        assert latest is not None
+        assert latest.status == "interrupted"
+        assert restored.run_id == execution.id
+        assert restored_review.sessions.repository.connection.execute(
+            "SELECT COUNT(*) FROM agent_runs WHERE session_id = ? "
+            "AND status IN ('queued', 'running')",
+            (session.id,),
+        ).fetchone()[0] == 0
+        if operation is not None:
+            receipt = restored_review.sessions.repository.connection.execute(
+                "SELECT result_status FROM review_curation_control_receipts "
+                "WHERE batch_id = ? AND operation = ?",
+                (batch.id, operation),
+            ).fetchone()
+            assert receipt[0] == expected_status
     finally:
         await second.close()
 

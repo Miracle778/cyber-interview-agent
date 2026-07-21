@@ -3,13 +3,14 @@ from __future__ import annotations
 from secrets import randbits
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Header, Query, status
 
 from app.api.dependencies import get_agent_application
 from app.application.workspace_runtime import AgentApplication
 from app.review.models import ReviewRoundSettings
 from app.schemas.review import (
     ActiveQuestionResource,
+    ControlCurationSessionCommand,
     CreateCurationSessionCommand,
     CreateQuestionBatchCommand,
     CreateReviewDiscussionCommand,
@@ -84,6 +85,72 @@ async def get_curation_session(
 ):
     review = application.locate_review_session(session_id)
     return await review.curation_resource(session_id)
+
+
+@router.post(
+    "/curation-sessions/{session_id}/pause",
+    response_model=CurationSessionResource,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def pause_curation_session(
+    session_id: str,
+    command: ControlCurationSessionCommand,
+    idempotency_key: Annotated[
+        str,
+        Header(alias="Idempotency-Key", min_length=8, max_length=200),
+    ],
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_review_session(session_id)
+    return await review.pause_curation_session(
+        session_id,
+        expected_batch_version=command.expected_batch_version,
+        idempotency_key=idempotency_key,
+    )
+
+
+@router.post(
+    "/curation-sessions/{session_id}/resume",
+    response_model=CurationSessionResource,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def resume_curation_session(
+    session_id: str,
+    command: ControlCurationSessionCommand,
+    idempotency_key: Annotated[
+        str,
+        Header(alias="Idempotency-Key", min_length=8, max_length=200),
+    ],
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_review_session(session_id)
+    return await review.resume_curation_session(
+        session_id,
+        expected_batch_version=command.expected_batch_version,
+        idempotency_key=idempotency_key,
+    )
+
+
+@router.post(
+    "/curation-sessions/{session_id}/terminate",
+    response_model=CurationSessionResource,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def terminate_curation_session(
+    session_id: str,
+    command: ControlCurationSessionCommand,
+    idempotency_key: Annotated[
+        str,
+        Header(alias="Idempotency-Key", min_length=8, max_length=200),
+    ],
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_review_session(session_id)
+    return await review.terminate_curation_session(
+        session_id,
+        expected_batch_version=command.expected_batch_version,
+        idempotency_key=idempotency_key,
+    )
 
 
 @router.post(
