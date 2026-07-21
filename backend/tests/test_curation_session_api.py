@@ -1,5 +1,6 @@
 from pathlib import Path
 from dataclasses import replace
+from hashlib import sha256
 import asyncio
 import json
 
@@ -13,7 +14,12 @@ from app.api.routes_review import router as review_router
 from app.application.workspace_runtime import AgentApplication
 from app.agents.context_assembly import ContextSummary
 from app.knowledge.source_registry import KnowledgeSourceService
-from app.knowledge.drafts import CreateDraftCommand
+from app.knowledge.drafts import (
+    CreateDraftCommand,
+    DraftNotEditableError,
+    KnowledgeDraftService,
+    UpdateDraftCommand,
+)
 from app.graphs.publication import create_publication_graph
 from tests.test_review_api_v2 import _graph_factory
 from app.review.curation_command_contracts import CurationCommandPlan
@@ -373,6 +379,99 @@ async def test_rejected_finalization_never_projects_success_or_leaks_stage(
     assert not list(
         (review.workspace_root / "artifacts/review/drafts").glob("*.md")
     )
+
+
+@pytest.mark.asyncio
+async def test_cancelling_after_staging_cleans_private_artifact_immediately(
+    api, application, monkeypatch
+) -> None:
+    app, source_ids = application
+    review = app.review("w1")
+    staged = asyncio.Event()
+    original_stage = KnowledgeDraftService.stage_curation_draft
+
+    async def block_after_stage(self, batch_id, command):
+        result = await original_stage(self, batch_id, command)
+        staged.set()
+        await asyncio.Event().wait()
+        return result
+
+    monkeypatch.setattr(
+        KnowledgeDraftService,
+        "stage_curation_draft",
+        block_after_stage,
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        resource = (
+            await client.post(
+                "/api/review/curation-sessions",
+                json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+            )
+        ).json()
+        await asyncio.wait_for(staged.wait(), timeout=1)
+        execution = review.sessions.repository.get_execution(
+            resource["executionId"]
+        )
+        batch_id = str(execution.input["batch_id"])
+        referenced_id = "referenced-draft-during-cancel"
+        referenced_path = (
+            review.workspace_root
+            / "artifacts/review/drafts"
+            / f"{referenced_id}.md"
+        )
+        referenced_path.parent.mkdir(parents=True, exist_ok=True)
+        referenced_content = b"# committed reference\n"
+        referenced_path.write_bytes(referenced_content)
+        referenced_hash = sha256(referenced_content).hexdigest()
+        connection = review.sessions.repository.connection
+        connection.execute(
+            "INSERT INTO review_curation_staged_drafts "
+            "(draft_id, batch_id, execution_id, content_path, content_hash) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                referenced_id,
+                batch_id,
+                execution.id,
+                f"artifacts/review/drafts/{referenced_id}.md",
+                referenced_hash,
+            ),
+        )
+        connection.execute(
+            "INSERT INTO knowledge_drafts "
+            "(id, workspace_id, session_id, run_id, domain, document_type, "
+            "document_id, title, content_path, content_hash, status) "
+            "VALUES (?, 'w1', ?, ?, 'review', 'question', ?, 'Referenced', "
+            "?, ?, 'review_pending')",
+            (
+                referenced_id,
+                resource["id"],
+                execution.id,
+                f"question-{referenced_id}",
+                f"artifacts/review/drafts/{referenced_id}.md",
+                referenced_hash,
+            ),
+        )
+        connection.commit()
+        terminal = await app.cancel_execution(resource["executionId"])
+
+    assert terminal.status == "cancelled"
+    assert review.sessions.repository.get_execution(
+        resource["executionId"]
+    ).status != "completed"
+    assert review.sessions.repository.connection.execute(
+        "SELECT COUNT(*) FROM review_curation_staged_drafts "
+        "WHERE execution_id = ?",
+        (resource["executionId"],),
+    ).fetchone()[0] == 0
+    assert referenced_path.read_bytes() == referenced_content
+    assert [
+        path.name
+        for path in (
+            review.workspace_root / "artifacts/review/drafts"
+        ).glob("*.md")
+    ] == [f"{referenced_id}.md"]
 
 
 @pytest.mark.parametrize(
@@ -1058,10 +1157,36 @@ async def test_candidate_rewrite_resumes_its_original_curation_session(
         assert revision_execution.input["expected_revision_draft_hash"] == (
             original["draft"]["contentHash"]
         )
+        await app.wait_execution(rewritten.json()["executionId"])
         candidate = (await client.get(
             f"/api/review/question-candidates/{candidate_id}"
         )).json()
         assert candidate["curationSessionId"] == created["id"]
+        assert candidate["draft"]["id"] != original["draft"]["id"]
+
+        historical = await app.get_draft(original["draft"]["id"])
+        assert historical["status"] == "superseded"
+        with pytest.raises(DraftNotEditableError):
+            await app.update_draft(
+                historical["id"],
+                UpdateDraftCommand(
+                    expected_version=historical["version"],
+                    markdown="# must remain historical\n",
+                ),
+            )
+        with pytest.raises(DraftNotEditableError):
+            await app.request_draft_publication(historical["id"])
+
+        current = await app.get_draft(candidate["draft"]["id"])
+        edited = await app.update_draft(
+            current["id"],
+            UpdateDraftCommand(
+                expected_version=current["version"],
+                markdown=current["markdown"] + "\n## 可继续编辑\n",
+            ),
+        )
+        assert edited["status"] == "review_pending"
+        assert edited["version"] == current["version"] + 1
 
 
 @pytest.mark.asyncio

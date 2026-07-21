@@ -112,7 +112,7 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
+        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
     assert "agent_context_usage" in _tables(connection)
     connection.close()
 
@@ -211,6 +211,75 @@ def test_migration_021_tracks_private_staged_draft_files(
     }
     assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
     connection.close()
+
+
+def test_migration_022_preserves_drafts_and_references_and_adds_superseded(
+    tmp_path: Path,
+) -> None:
+    connection = _create_runtime_at_version(tmp_path, 21)
+    connection.execute(
+        "INSERT INTO agent_sessions "
+        "(id, workspace_id, graph_id, graph_version, title) "
+        "VALUES ('s22', 'w1', 'question.curate', 1, 'S')"
+    )
+    connection.execute(
+        "INSERT INTO agent_runs (id, session_id, status) "
+        "VALUES ('r22', 's22', 'completed')"
+    )
+    connection.execute(
+        "INSERT INTO review_question_batches "
+        "(id, workspace_id, session_id, origin_session_id, run_id, "
+        "source_refs_json, status) "
+        "VALUES ('b22', 'w1', 's22', 's22', 'r22', '[]', 'completed')"
+    )
+    connection.execute(
+        "INSERT INTO knowledge_drafts "
+        "(id, workspace_id, session_id, run_id, domain, document_type, "
+        "document_id, title, content_path, content_hash, status) "
+        "VALUES ('d22', 'w1', 's22', 'r22', 'review', 'question', "
+        "'q22', 'Q', 'artifacts/review/drafts/d22.md', ?, 'review_pending')",
+        ("a" * 64,),
+    )
+    connection.execute(
+        "INSERT INTO review_question_candidates "
+        "(id, batch_id, draft_id, question_json, status) "
+        "VALUES ('c22', 'b22', 'd22', '{}', 'review_pending')"
+    )
+    connection.execute(
+        "INSERT INTO pending_actions "
+        "(id, workspace_id, session_id, run_id, action_type, payload_json, "
+        "preview_json, status, idempotency_key) "
+        "VALUES ('a22', 'w1', 's22', 'r22', 'knowledge.publish', '{}', "
+        "'{}', 'approved', 'publish-d22')"
+    )
+    connection.execute(
+        "INSERT INTO publication_runs "
+        "(id, action_id, draft_id, expected_draft_version, "
+        "expected_content_hash, document_id, target_path, state) "
+        "VALUES ('p22', 'a22', 'd22', 1, ?, 'q22', "
+        "'10_question_bank/q22.md', 'completed')",
+        ("a" * 64,),
+    )
+    connection.commit()
+    connection.close()
+
+    reopened = connect_runtime_database(tmp_path)
+    reopened.execute(
+        "UPDATE knowledge_drafts SET status = 'superseded' WHERE id = 'd22'"
+    )
+    reopened.commit()
+
+    assert tuple(reopened.execute(
+        "SELECT id, status, content_hash FROM knowledge_drafts WHERE id = 'd22'"
+    ).fetchone()) == ("d22", "superseded", "a" * 64)
+    assert reopened.execute(
+        "SELECT draft_id FROM review_question_candidates WHERE id = 'c22'"
+    ).fetchone()[0] == "d22"
+    assert reopened.execute(
+        "SELECT draft_id FROM publication_runs WHERE id = 'p22'"
+    ).fetchone()[0] == "d22"
+    assert reopened.execute("PRAGMA foreign_key_check").fetchall() == []
+    reopened.close()
 
 
 def test_migration_019_preserves_version_18_batch_session_and_work_item_rows(
@@ -321,7 +390,7 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
+        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
     reopened.close()
 
 

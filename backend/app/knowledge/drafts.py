@@ -21,7 +21,7 @@ DocumentType: TypeAlias = Literal[
     "source", "question", "concept", "session_report", "mastery_report"
 ]
 DraftStatus: TypeAlias = Literal[
-    "draft", "review_pending", "rejected", "published"
+    "draft", "review_pending", "rejected", "published", "superseded"
 ]
 _DOCUMENT_TYPES = frozenset(
     {"source", "question", "concept", "session_report", "mastery_report"}
@@ -294,6 +294,26 @@ class KnowledgeDraftService:
                 )
                 await connection.commit()
             raise
+
+    def validate_curation_artifact(
+        self, draft_id: str, content_path: str, content_hash: str
+    ) -> None:
+        expected_path = f"artifacts/review/drafts/{draft_id}.md"
+        if content_path != expected_path:
+            raise DraftContentChangedError(
+                f"staged draft {draft_id!r} path changed"
+            )
+        path = WorkspacePathPolicy(self._workspace_root).resolve_for_create(
+            "review.drafts", f"{draft_id}.md"
+        )
+        if not path.is_file():
+            raise DraftContentChangedError(
+                f"staged draft {draft_id!r} artifact is missing"
+            )
+        if sha256(path.read_bytes()).hexdigest() != content_hash:
+            raise DraftContentChangedError(
+                f"staged draft {draft_id!r} artifact hash changed"
+            )
 
     async def cleanup_curation_staging(
         self, *, batch_id: str, execution_id: str

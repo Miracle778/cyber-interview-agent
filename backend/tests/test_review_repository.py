@@ -1,10 +1,12 @@
 import sqlite3
 from dataclasses import replace
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
 
 from app.infrastructure.runtime_database import connect_runtime_database
+from app.knowledge.drafts import KnowledgeDraftService
 from app.review.errors import InputAlreadyResolvedError, ReviewConflictError
 from app.review.models import (
     CurationSummary,
@@ -190,10 +192,25 @@ def _register_staging(
     batch_id: str,
     execution_id: str,
     candidates: tuple[dict[str, object], ...],
+    write_artifacts: bool = True,
 ) -> None:
+    database_path = Path(
+        connection.execute("PRAGMA database_list").fetchone()[2]
+    )
+    workspace_root = database_path.parents[1]
     for item in candidates:
         draft = item["draft"]
         assert isinstance(draft, dict)
+        if write_artifacts:
+            content = f"# staged {item['draft_id']}\n".encode()
+            digest = sha256(content).hexdigest()
+            draft["content_hash"] = digest
+            question = item["question"]
+            assert isinstance(question, QuestionSnapshot)
+            item["question"] = replace(question, content_hash=digest)
+            path = workspace_root / str(draft["content_path"])
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
         connection.execute(
             "INSERT INTO review_curation_staged_drafts "
             "(draft_id, batch_id, execution_id, content_path, content_hash) "
@@ -207,6 +224,16 @@ def _register_staging(
             ),
         )
     connection.commit()
+
+
+def _validated_repository(
+    tmp_path: Path, connection
+) -> ReviewRepository:
+    drafts = KnowledgeDraftService(tmp_path, workspace_id="w1")
+    return ReviewRepository(
+        connection,
+        validate_curation_artifact=drafts.validate_curation_artifact,
+    )
 
 
 def test_curation_context_round_trips_with_compare_and_swap(
@@ -692,7 +719,7 @@ def test_curation_finalization_is_exactly_once_for_same_owner(
     tmp_path: Path,
 ) -> None:
     connection = _connection(tmp_path)
-    repository = ReviewRepository(connection)
+    repository = _validated_repository(tmp_path, connection)
     repository.create_curation_session(
         workspace_id="w1", session_id="s1", source_refs=("source-1",)
     )
@@ -873,7 +900,7 @@ def test_revision_finalization_requires_immutable_base_draft(
     tmp_path: Path,
 ) -> None:
     connection = _connection(tmp_path)
-    repository = ReviewRepository(connection)
+    repository = _validated_repository(tmp_path, connection)
     repository.create_curation_session(
         workspace_id="w1", session_id="s1", source_refs=("source-1",)
     )
@@ -974,7 +1001,7 @@ def test_successful_revision_retires_prior_draft(
     tmp_path: Path,
 ) -> None:
     connection = _connection(tmp_path)
-    repository = ReviewRepository(connection)
+    repository = _validated_repository(tmp_path, connection)
     repository.create_curation_session(
         workspace_id="w1", session_id="s1", source_refs=("source-1",)
     )
@@ -1056,11 +1083,131 @@ def test_successful_revision_retires_prior_draft(
     assert tuple(connection.execute(
         "SELECT status, version FROM knowledge_drafts "
         "WHERE id = 'draft-base-retire'"
-    ).fetchone()) == ("rejected", 2)
+    ).fetchone()) == ("superseded", 2)
     assert tuple(connection.execute(
         "SELECT status, version FROM knowledge_drafts "
         "WHERE id = 'draft-revision-retire'"
     ).fetchone()) == ("review_pending", 2)
+    connection.close()
+
+
+@pytest.mark.parametrize("artifact_state", ("missing", "tampered"))
+def test_curation_finalization_rejects_invalid_staged_artifact_at_commit(
+    tmp_path: Path, artifact_state: str
+) -> None:
+    connection = _connection(tmp_path)
+    drafts = KnowledgeDraftService(tmp_path, workspace_id="w1")
+    repository = ReviewRepository(
+        connection,
+        validate_curation_artifact=drafts.validate_curation_artifact,
+    )
+    repository.create_curation_session(
+        workspace_id="w1", session_id="s1", source_refs=("source-1",)
+    )
+    batch = repository.create_batch(
+        workspace_id="w1",
+        session_id="s1",
+        run_id="r1",
+        source_refs=("source-1",),
+        batch_id=f"batch-{artifact_state}-artifact",
+    )
+    repository.claim_curation_finalization(batch.id, "r1")
+    candidate = _finalization_candidate(
+        candidate_id=f"candidate-{artifact_state}",
+        draft_id=f"draft-{artifact_state}",
+    )
+    content = b"# verified artifact\n"
+    digest = sha256(content).hexdigest()
+    draft = candidate["draft"]
+    assert isinstance(draft, dict)
+    draft["content_hash"] = digest
+    question = candidate["question"]
+    assert isinstance(question, QuestionSnapshot)
+    candidate["question"] = replace(question, content_hash=digest)
+    _register_staging(
+        connection,
+        batch_id=batch.id,
+        execution_id="r1",
+        candidates=(candidate,),
+        write_artifacts=False,
+    )
+    if artifact_state == "tampered":
+        path = tmp_path / str(draft["content_path"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"tampered")
+
+    with pytest.raises(ReviewConflictError, match="artifact"):
+        repository.finalize_curation_candidates(
+            batch.id, "r1", candidates=(candidate,)
+        )
+
+    assert repository.get_batch(batch.id).status == "generating"
+    assert repository.get_curation_session("s1").summary_version == 0
+    assert connection.execute(
+        "SELECT COUNT(*) FROM knowledge_drafts WHERE id = ?",
+        (candidate["draft_id"],),
+    ).fetchone()[0] == 0
+    assert connection.execute(
+        "SELECT COUNT(*) FROM review_question_candidates WHERE batch_id = ?",
+        (batch.id,),
+    ).fetchone()[0] == 0
+    assert connection.execute(
+        "SELECT COUNT(*) FROM review_question_source_links WHERE batch_id = ?",
+        (batch.id,),
+    ).fetchone()[0] == 0
+    connection.close()
+
+
+def test_curation_finalization_validates_artifact_and_commits(
+    tmp_path: Path,
+) -> None:
+    connection = _connection(tmp_path)
+    drafts = KnowledgeDraftService(tmp_path, workspace_id="w1")
+    repository = ReviewRepository(
+        connection,
+        validate_curation_artifact=drafts.validate_curation_artifact,
+    )
+    repository.create_curation_session(
+        workspace_id="w1", session_id="s1", source_refs=("source-1",)
+    )
+    batch = repository.create_batch(
+        workspace_id="w1",
+        session_id="s1",
+        run_id="r1",
+        source_refs=("source-1",),
+        batch_id="batch-valid-artifact",
+    )
+    repository.claim_curation_finalization(batch.id, "r1")
+    candidate = _finalization_candidate(
+        candidate_id="candidate-valid-artifact",
+        draft_id="draft-valid-artifact",
+    )
+    content = b"# verified artifact\n"
+    digest = sha256(content).hexdigest()
+    draft = candidate["draft"]
+    assert isinstance(draft, dict)
+    draft["content_hash"] = digest
+    question = candidate["question"]
+    assert isinstance(question, QuestionSnapshot)
+    candidate["question"] = replace(question, content_hash=digest)
+    _register_staging(
+        connection,
+        batch_id=batch.id,
+        execution_id="r1",
+        candidates=(candidate,),
+        write_artifacts=False,
+    )
+    path = tmp_path / str(draft["content_path"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+
+    persisted = repository.finalize_curation_candidates(
+        batch.id, "r1", candidates=(candidate,)
+    )
+
+    assert persisted[0].draft_id == "draft-valid-artifact"
+    assert repository.get_batch(batch.id).status == "completed"
+    assert repository.get_curation_session("s1").summary_version == 1
     connection.close()
 
 
@@ -1113,7 +1260,7 @@ def test_old_curation_run_cannot_finalize_after_new_owner_claims(
     tmp_path: Path,
 ) -> None:
     connection = _connection(tmp_path)
-    repository = ReviewRepository(connection)
+    repository = _validated_repository(tmp_path, connection)
     repository.create_curation_session(
         workspace_id="w1", session_id="s1", source_refs=("source-1",)
     )
@@ -1190,7 +1337,7 @@ def test_curation_finalization_rolls_back_every_formal_write(
     tmp_path: Path,
 ) -> None:
     connection = _connection(tmp_path)
-    repository = ReviewRepository(connection)
+    repository = _validated_repository(tmp_path, connection)
     repository.create_curation_session(
         workspace_id="w1", session_id="s1", source_refs=("source-1",)
     )

@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from hashlib import sha256
-from typing import Any, Iterator, Literal, cast
+from typing import Any, Callable, Iterator, Literal, cast
 from uuid import uuid4
 
 from app.review.errors import (
@@ -64,9 +64,15 @@ def _canonical_json(value: object) -> str:
 
 
 class ReviewRepository:
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        validate_curation_artifact: Callable[[str, str, str], None] | None = None,
+    ) -> None:
         self._connection = connection
         self._connection.row_factory = sqlite3.Row
+        self._validate_curation_artifact = validate_curation_artifact
 
     def create_curation_session(
         self,
@@ -781,6 +787,20 @@ class ReviewRepository:
                     raise ReviewConflictError(
                         "staged curation draft changed before finalization"
                     )
+                if self._validate_curation_artifact is None:
+                    raise ReviewConflictError(
+                        "curation draft artifact validator is unavailable"
+                    )
+                try:
+                    self._validate_curation_artifact(
+                        draft_id,
+                        str(staged["content_path"]),
+                        str(staged["content_hash"]),
+                    )
+                except Exception as error:
+                    raise ReviewConflictError(
+                        "curation draft artifact validation failed"
+                    ) from error
 
             for item in candidates:
                 candidate_id = str(item["candidate_id"])
@@ -893,7 +913,7 @@ class ReviewRepository:
                         raise LookupError(candidate_id)
                     if base["status"] != "published":
                         cursor = self._connection.execute(
-                            "UPDATE knowledge_drafts SET status = 'rejected', "
+                            "UPDATE knowledge_drafts SET status = 'superseded', "
                             "version = version + 1, "
                             "updated_at = CURRENT_TIMESTAMP WHERE id = ? "
                             "AND version = ? AND content_hash = ? "

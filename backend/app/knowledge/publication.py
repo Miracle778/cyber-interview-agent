@@ -135,7 +135,7 @@ class PublicationService:
         if action.status not in {"approved", "edited_and_approved"}:
             raise ValueError("publication action must be approved")
         draft = await self._drafts.get(str(action.payload["draftId"]))
-        if draft.status == "rejected":
+        if draft.status in {"rejected", "superseded"}:
             raise DraftNotEditableError(
                 f"draft {draft.id!r} is retired and cannot be published"
             )

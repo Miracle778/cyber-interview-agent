@@ -32,6 +32,7 @@ from app.hitl.service import HitlService
 from app.infrastructure.runtime_database import connect_runtime_database
 from app.infrastructure.observability import NoopObservabilitySink
 from app.knowledge.drafts import (
+    DraftNotEditableError,
     DraftNotFoundError,
     KnowledgeDraftRecord,
     KnowledgeDraftService,
@@ -199,7 +200,10 @@ class WorkspaceRuntime:
         profile_storage = MaterialStorage(root)
         audit = ToolAuditRepository(root)
         projection = SqliteMiddlewareProjection(connection)
-        reviews = ReviewRepository(connection)
+        reviews = ReviewRepository(
+            connection,
+            validate_curation_artifact=drafts.validate_curation_artifact,
+        )
         holder: dict[str, HitlService] = {}
         trace_writer = getattr(graph_factory, "trace_writer", None) or AgentTraceWriter()
 
@@ -492,6 +496,10 @@ class AgentApplication:
         async with lock:
             # Re-read inside the lock so concurrent callers use the same version/hash.
             draft = await context.drafts.get(draft.id)
+            if draft.status == "superseded":
+                raise DraftNotEditableError(
+                    f"draft {draft.id!r} is superseded and cannot be published"
+                )
             action_key = publication_action_key(
                 draft_id=draft.id,
                 draft_version=draft.version,

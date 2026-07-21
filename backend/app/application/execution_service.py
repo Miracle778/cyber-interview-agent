@@ -1570,6 +1570,17 @@ class AgentExecutionService:
                     {"executionId": execution.id},
                 )
         except asyncio.CancelledError:
+            if session.kind in {"question.curate", "question.revise"}:
+                batch_id = str(
+                    execution.input.get("batch_id")
+                    or execution.input.get("batchId", "")
+                )
+                if batch_id:
+                    await KnowledgeDraftService(
+                        self._workspace_root, workspace_id=self._workspace_id
+                    ).cleanup_curation_staging(
+                        batch_id=batch_id, execution_id=execution.id
+                    )
             raise
         except CurationFinalizationRejected as error:
             batch_id = str(

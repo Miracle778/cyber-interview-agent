@@ -8,6 +8,7 @@ from app.application.workspace_runtime import AgentApplication
 from app.knowledge.drafts import (
     CreateDraftCommand,
     DraftContentChangedError,
+    DraftNotEditableError,
     DraftVersionChangedError,
     KnowledgeDraftService,
     UpdateDraftCommand,
@@ -382,5 +383,30 @@ async def test_update_rejects_draft_file_changed_outside_service(
                 markdown="# replacement\n",
             ),
         )
-
     assert path.read_text(encoding="utf-8") == "# external edit\n"
+
+
+@pytest.mark.asyncio
+async def test_update_rejects_superseded_draft(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    created = await service.create(_command())
+    connection = connect_runtime_database(tmp_path)
+    connection.execute(
+        "UPDATE knowledge_drafts SET status = 'superseded' WHERE id = ?",
+        (created.id,),
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(DraftNotEditableError):
+        await service.update(
+            created.id,
+            UpdateDraftCommand(
+                expected_version=created.version,
+                markdown="# must stay historical\n",
+            ),
+        )
+
+    historical = await service.get(created.id)
+    assert historical.status == "superseded"
+    assert historical.markdown == created.markdown

@@ -100,6 +100,24 @@ async def test_publish_rejects_retired_draft(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_publish_rejects_superseded_draft(tmp_path: Path) -> None:
+    draft = await _draft(tmp_path)
+    action = await _resolved_action(tmp_path, draft)
+    connection = connect_runtime_database(tmp_path)
+    connection.execute(
+        "UPDATE knowledge_drafts SET status = 'superseded' WHERE id = ?",
+        (draft.id,),
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(DraftNotEditableError):
+        await PublicationService(
+            tmp_path, workspace_id="w1"
+        ).publish_approved_action(action)
+
+
+@pytest.mark.asyncio
 async def test_publish_preserves_external_target(tmp_path: Path) -> None:
     draft = await _draft(tmp_path)
     action = await _resolved_action(tmp_path, draft)
