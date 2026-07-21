@@ -1643,7 +1643,19 @@ class ReviewApplication:
         candidates = self.repository.list_candidates(self.workspace_id)
         own = [item for item in candidates if item.batch_id == batch.id]
         return {
-            **asdict(batch),
+            "id": batch.id,
+            "workspace_id": batch.workspace_id,
+            "session_id": batch.session_id,
+            "origin_session_id": batch.origin_session_id,
+            "run_id": batch.run_id,
+            "source_refs": list(batch.source_refs),
+            "rewrite_of_batch_id": batch.rewrite_of_batch_id,
+            "status": batch.status,
+            "version": batch.version,
+            "control_intent": batch.control_intent,
+            "concurrency_limit": batch.concurrency_limit,
+            "created_at": batch.created_at,
+            "updated_at": batch.updated_at,
             "candidate_count": len(own),
             "pending_count": sum(
                 item.status == "review_pending" for item in own

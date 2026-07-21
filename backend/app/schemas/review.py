@@ -213,6 +213,9 @@ class QuestionBatchResource(ReviewModel):
     source_refs: list[str]
     rewrite_of_batch_id: str | None
     status: str
+    version: int = Field(ge=1)
+    control_intent: Literal["pause", "terminate"] | None
+    concurrency_limit: int = Field(ge=1)
     candidate_count: int = 0
     pending_count: int = 0
     candidates: list[QuestionCandidateResource] = Field(default_factory=list)

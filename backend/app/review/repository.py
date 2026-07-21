@@ -953,7 +953,16 @@ class ReviewRepository:
                             str(link["merge_reason"]),
                         ),
                     )
-            if batch.session_id is not None:
+            curation_session = (
+                None
+                if batch.session_id is None
+                else self._connection.execute(
+                    "SELECT 1 FROM review_curation_sessions "
+                    "WHERE session_id = ?",
+                    (batch.session_id,),
+                ).fetchone()
+            )
+            if curation_session is not None:
                 summary = CurationSummary(
                     items=tuple(
                         {

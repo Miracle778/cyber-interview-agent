@@ -219,7 +219,8 @@ class KnowledgeDraftService:
             try:
                 owner = await connection.execute(
                     "SELECT f.state, f.execution_id, b.run_id, b.status, "
-                    "b.control_intent, b.session_id, c.active_batch_id "
+                    "b.control_intent, c.session_id AS curation_session_id, "
+                    "c.active_batch_id "
                     "FROM review_curation_finalizations f "
                     "JOIN review_question_batches b ON b.id = f.batch_id "
                     "LEFT JOIN review_curation_sessions c "
@@ -236,7 +237,7 @@ class KnowledgeDraftService:
                     or row["status"] != "generating"
                     or row["control_intent"] is not None
                     or (
-                        row["session_id"] is not None
+                        row["curation_session_id"] is not None
                         and row["active_batch_id"] != batch_id
                     )
                 ):
@@ -394,8 +395,8 @@ class KnowledgeDraftService:
                 "OR b.control_intent IS NOT NULL "
                 "OR run.id IS NULL "
                 "OR run.status NOT IN ('queued', 'running') "
-                "OR (b.session_id IS NOT NULL AND (c.session_id IS NULL "
-                "OR c.active_batch_id != b.id)))"
+                "OR (c.session_id IS NOT NULL "
+                "AND c.active_batch_id != b.id))"
             )
             owners = await cursor.fetchall()
         removed = 0

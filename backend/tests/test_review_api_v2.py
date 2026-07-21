@@ -444,7 +444,14 @@ async def test_question_batch_persists_agent_candidates(api, application) -> Non
         )
         assert created.status_code == 202, created.text
         batch = created.json()
-        await application.wait_execution(batch["runId"])
+        assert batch["version"] == 1
+        assert batch["controlIntent"] is None
+        assert batch["concurrencyLimit"] == 3
+        execution = await application.wait_execution(batch["runId"])
+        assert execution.status == "completed", (
+            execution.error_code,
+            execution.error_message,
+        )
         detail = await client.get(
             f"/api/review/question-batches/{batch['id']}"
         )
