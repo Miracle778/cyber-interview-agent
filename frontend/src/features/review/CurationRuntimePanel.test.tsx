@@ -118,27 +118,64 @@ describe("CurationRuntimePanel candidate status", () => {
     expect(failure).toHaveAttribute("aria-live", "polite");
   });
 
-  it("ticks the current and cumulative elapsed time only while the Batch is generating", () => {
-    render(<CurationRuntimePanel session={{
+  it("ticks from the server snapshot with a monotonic clock and ignores wall-clock skew", () => {
+    let monotonicNow = 5_000;
+    vi.spyOn(performance, "now").mockImplementation(() => monotonicNow);
+    const running = {
       ...session,
       stage: "generating",
       batchStatus: "generating",
-      executionStartedAt: "2026-07-21T16:00:00.000Z",
+      executionId: "execution-1",
+      executionStartedAt: "1999-01-01T00:00:00.000Z",
       progress: { phase: "enrichment", completed: 2, total: 5, generatedCandidateCount: 3, activeWorkers: 2 },
-      timing: { currentElapsedMs: 151_000, cumulativeElapsedMs: 211_000 },
+      timing: { currentElapsedMs: 10_000, cumulativeElapsedMs: 70_000 },
       controls: { canPause: true, canResume: false, canTerminate: true },
       provisionalCandidates: [],
-    }} />);
+    } as CurationSession;
+    const { rerender } = render(<CurationRuntimePanel session={running} />);
 
-    expect(screen.getByText("本次运行 2 分 31 秒")).toBeInTheDocument();
-    expect(screen.getByText("累计运行 3 分 31 秒")).toBeInTheDocument();
+    expect(screen.getByText("本次运行 10 秒")).toBeInTheDocument();
+    expect(screen.getByText("累计运行 1 分 10 秒")).toBeInTheDocument();
     expect(screen.getByText("2 个工作单元运行中")).toBeInTheDocument();
     expect(screen.getByText("已生成 3 道候选")).toBeInTheDocument();
+    const progress = screen.getByRole("status", { name: "整理进度" });
+    expect(progress).toHaveAttribute("aria-live", "polite");
+    expect(progress).toHaveTextContent("正在补全候选");
+    expect(screen.getByText("本次运行 10 秒").closest("div")).toHaveAttribute("aria-live", "off");
 
-    act(() => vi.advanceTimersByTime(1000));
+    monotonicNow += 1_000;
+    vi.setSystemTime(new Date("2036-01-01T00:00:00Z"));
+    act(() => vi.advanceTimersByTime(1_000));
 
-    expect(screen.getByText("本次运行 2 分 32 秒")).toBeInTheDocument();
-    expect(screen.getByText("累计运行 3 分 32 秒")).toBeInTheDocument();
+    expect(screen.getByText("本次运行 11 秒")).toBeInTheDocument();
+    expect(screen.getByText("累计运行 1 分 11 秒")).toBeInTheDocument();
+
+    rerender(<CurationRuntimePanel session={{
+      ...running,
+      timing: { currentElapsedMs: 8_000, cumulativeElapsedMs: 68_000 },
+    }} />);
+    expect(screen.getByText("本次运行 11 秒")).toBeInTheDocument();
+    expect(screen.getByText("累计运行 1 分 11 秒")).toBeInTheDocument();
+
+    monotonicNow += 1_000;
+    vi.setSystemTime(new Date("2001-01-01T00:00:00Z"));
+    act(() => vi.advanceTimersByTime(1_000));
+
+    expect(screen.getByText("本次运行 12 秒")).toBeInTheDocument();
+    expect(screen.getByText("累计运行 1 分 12 秒")).toBeInTheDocument();
+
+    rerender(<CurationRuntimePanel session={{
+      ...running,
+      stage: "paused",
+      batchStatus: "paused",
+      timing: { currentElapsedMs: 9_000, cumulativeElapsedMs: 69_000 },
+      controls: { canPause: false, canResume: true, canTerminate: true },
+    }} />);
+    monotonicNow += 5_000;
+    act(() => vi.advanceTimersByTime(5_000));
+
+    expect(screen.getByText("本次运行 12 秒")).toBeInTheDocument();
+    expect(screen.getByText("累计运行 1 分 12 秒")).toBeInTheDocument();
   });
 
   it.each([
@@ -202,6 +239,34 @@ describe("CurationRuntimePanel candidate status", () => {
     }} onPause={onPause} onResume={onResume} onTerminate={onTerminate} />);
     fireEvent.click(screen.getByRole("button", { name: "继续整理" }));
     expect(onResume).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["pause", "resume", "terminate"] as const)("disables every available control while %s is pending", (pending) => {
+    const { rerender } = render(<CurationRuntimePanel session={{
+      ...session,
+      stage: "generating",
+      batchStatus: "generating",
+      progress: { phase: "discovery", completed: 1, total: 4, generatedCandidateCount: 0, activeWorkers: 1 },
+      timing: { currentElapsedMs: 1_000, cumulativeElapsedMs: 1_000 },
+      controls: { canPause: true, canResume: false, canTerminate: true },
+      provisionalCandidates: [],
+    }} controlPending={pending} />);
+
+    expect(screen.getByRole("button", { name: "暂停整理" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "终止整理" })).toBeDisabled();
+
+    rerender(<CurationRuntimePanel session={{
+      ...session,
+      stage: "paused",
+      batchStatus: "paused",
+      progress: { phase: "enrichment", completed: 1, total: 4, generatedCandidateCount: 1, activeWorkers: 0 },
+      timing: { currentElapsedMs: 1_000, cumulativeElapsedMs: 1_000 },
+      controls: { canPause: false, canResume: true, canTerminate: true },
+      provisionalCandidates: [],
+    }} controlPending={pending} />);
+
+    expect(screen.getByRole("button", { name: "继续整理" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "终止整理" })).toBeDisabled();
   });
 
   it("renders provisional candidates as an explicitly read-only processing preview", () => {

@@ -1,5 +1,5 @@
 import { Activity, ArrowLeft, Ban, ChevronDown, CirclePause, Clock3, FileText, Pause, Play, TriangleAlert, WifiOff } from "lucide-react";
-import { type CSSProperties, useEffect, useState } from "react";
+import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { Button } from "../../shared/ui/Button";
 import { CurationArtifactCard } from "./CurationArtifactCard";
 import { CurationProvisionalList } from "./CurationProvisionalList";
@@ -24,6 +24,7 @@ interface CurationRuntimePanelProps {
   candidates?: QuestionCandidate[] | null;
   activeModelLabel?: string;
   controlPending?: "pause" | "resume" | "terminate" | null;
+  controlNotice?: string | null;
   artifactBusyId?: string | null;
   statusFilter?: CandidateStatus | null;
   onStatusFilterChange?: (status: CandidateStatus | null) => void;
@@ -44,17 +45,32 @@ function elapsedLabel(prefix: string, elapsedMs: number) {
   return minutes > 0 ? `${prefix} ${minutes} 分 ${seconds} 秒` : `${prefix} ${seconds} 秒`;
 }
 
-export function CurationRuntimePanel({ session, candidates = null, activeModelLabel = "", controlPending = null, artifactBusyId = null, statusFilter = null, onStatusFilterChange = () => undefined, onOpenCandidate = () => undefined, onPublishCandidate = () => undefined, onSaveNote = () => undefined, onPause = () => undefined, onResume = () => undefined, onTerminate = () => undefined }: CurationRuntimePanelProps) {
+interface ElapsedClockSnapshot {
+  batchKey: string;
+  executionKey: string;
+  serverCurrentElapsed: number;
+  serverCumulativeElapsed: number;
+  observedAt: number;
+  currentBase: number;
+  cumulativeBase: number;
+  running: boolean;
+}
+
+function currentMonotonicTime() {
+  return globalThis.performance?.now() ?? 0;
+}
+
+export function CurationRuntimePanel({ session, candidates = null, activeModelLabel = "", controlPending = null, controlNotice = null, artifactBusyId = null, statusFilter = null, onStatusFilterChange = () => undefined, onOpenCandidate = () => undefined, onPublishCandidate = () => undefined, onSaveNote = () => undefined, onPause = () => undefined, onResume = () => undefined, onTerminate = () => undefined }: CurationRuntimePanelProps) {
   const [runtimeOpen, setRuntimeOpen] = useState(true);
   const [warningsOpen, setWarningsOpen] = useState(true);
-  const [now, setNow] = useState(() => Date.now());
+  const [, setClockTick] = useState(0);
+  const elapsedClock = useRef<ElapsedClockSnapshot | null>(null);
   const batchRunning = session?.batchStatus === "generating" && session.stage !== "pausing";
   useEffect(() => {
-    setNow(Date.now());
     if (!batchRunning) return;
-    const timer = globalThis.setInterval(() => setNow(Date.now()), 1000);
+    const timer = globalThis.setInterval(() => setClockTick((tick) => tick + 1), 1000);
     return () => globalThis.clearInterval(timer);
-  }, [batchRunning, session?.executionId, session?.executionStartedAt]);
+  }, [batchRunning, session?.executionId]);
   const currentContextTokens = session?.contextUsage?.currentTokens ?? 0;
   const contextThresholdTokens = session?.contextUsage?.thresholdTokens ?? 0;
   const contextPercentage = contextThresholdTokens > 0 ? Math.min(100, Math.round((currentContextTokens / contextThresholdTokens) * 100)) : 0;
@@ -69,12 +85,48 @@ export function CurationRuntimePanel({ session, candidates = null, activeModelLa
   const generationLabel = session?.progress?.phase === "discovery" ? "正在识别题目" : session?.progress?.phase === "enrichment" ? "正在补全候选" : null;
   const candidateLimitReached = session?.warnings?.some((warning) => warning.code === "candidate_limit_reached") ?? false;
   const serverCurrentElapsed = session?.timing?.currentElapsedMs ?? 0;
-  const executionStartedAt = Date.parse(session?.executionStartedAt ?? "");
-  const currentElapsed = batchRunning && Number.isFinite(executionStartedAt)
-    ? Math.max(serverCurrentElapsed, now - executionStartedAt)
-    : serverCurrentElapsed;
-  const priorElapsed = Math.max(0, (session?.timing?.cumulativeElapsedMs ?? 0) - serverCurrentElapsed);
-  const cumulativeElapsed = batchRunning ? priorElapsed + currentElapsed : session?.timing?.cumulativeElapsedMs ?? 0;
+  const serverCumulativeElapsed = session?.timing?.cumulativeElapsedMs ?? 0;
+  const monotonicNow = currentMonotonicTime();
+  const batchKey = session?.activeBatchId ?? session?.id ?? "none";
+  const executionKey = session?.executionId ?? "none";
+  const previousClock = elapsedClock.current;
+  if (!previousClock || previousClock.batchKey !== batchKey) {
+    elapsedClock.current = {
+      batchKey,
+      executionKey,
+      serverCurrentElapsed,
+      serverCumulativeElapsed,
+      observedAt: monotonicNow,
+      currentBase: serverCurrentElapsed,
+      cumulativeBase: serverCumulativeElapsed,
+      running: batchRunning,
+    };
+  } else {
+    const previousDelta = previousClock.running ? Math.max(0, monotonicNow - previousClock.observedAt) : 0;
+    const previousCurrent = previousClock.currentBase + previousDelta;
+    const previousCumulative = previousClock.cumulativeBase + previousDelta;
+    const snapshotChanged = previousClock.executionKey !== executionKey
+      || previousClock.serverCurrentElapsed !== serverCurrentElapsed
+      || previousClock.serverCumulativeElapsed !== serverCumulativeElapsed
+      || previousClock.running !== batchRunning;
+    if (snapshotChanged) {
+      const executionChanged = previousClock.executionKey !== executionKey;
+      elapsedClock.current = {
+        batchKey,
+        executionKey,
+        serverCurrentElapsed,
+        serverCumulativeElapsed,
+        observedAt: monotonicNow,
+        currentBase: executionChanged ? serverCurrentElapsed : Math.max(previousCurrent, serverCurrentElapsed),
+        cumulativeBase: Math.max(previousCumulative, serverCumulativeElapsed),
+        running: batchRunning,
+      };
+    }
+  }
+  const activeClock = elapsedClock.current!;
+  const activeDelta = activeClock.running ? Math.max(0, monotonicNow - activeClock.observedAt) : 0;
+  const currentElapsed = activeClock.currentBase + activeDelta;
+  const cumulativeElapsed = activeClock.cumulativeBase + activeDelta;
   const controlState = session?.stage === "pausing" ? "pausing" : session?.batchStatus;
   const controlPresentation = controlState ? {
     generating: { label: generationLabel ?? "正在整理", detail: "已提交的处理单元会持续保存", icon: Activity },
@@ -99,8 +151,8 @@ export function CurationRuntimePanel({ session, candidates = null, activeModelLa
             <span><ControlIcon size={18} aria-hidden="true" /></span>
             <div><strong>{controlPresentation.label}</strong><small>{controlPresentation.detail}</small></div>
           </div>
-          <div className="curation-control-state__progress" aria-label="整理进度">
-            <div><strong>{session.progress?.completed ?? 0} / {session.progress?.total ?? 0}</strong><span>工作单元</span></div>
+          <div className="curation-control-state__progress" role="status" aria-label="整理进度" aria-live="polite" aria-atomic="true">
+            <div><strong>{session.progress?.completed ?? 0} / {session.progress?.total ?? 0}</strong><span>{controlPresentation.label} · 工作单元</span></div>
             <div><strong>{session.progress?.activeWorkers ?? 0}</strong><span>{session.progress?.activeWorkers ?? 0} 个工作单元运行中</span></div>
             <div><strong>{session.progress?.generatedCandidateCount ?? 0}</strong><span>已生成 {session.progress?.generatedCandidateCount ?? 0} 道候选</span></div>
           </div>
@@ -111,11 +163,12 @@ export function CurationRuntimePanel({ session, candidates = null, activeModelLa
           </div>
           {controlState === "pausing" || session.controls?.canPause || session.controls?.canResume || session.controls?.canTerminate ? <div className="curation-control-actions">
             {controlState === "pausing" ? <Button disabled><Pause size={16} />正在暂停…</Button> : null}
-            {controlState !== "pausing" && session.controls?.canPause ? <Button loading={controlPending === "pause"} onClick={onPause}><Pause size={16} />暂停整理</Button> : null}
-            {session.controls?.canResume ? <Button loading={controlPending === "resume"} onClick={onResume}><Play size={16} />继续整理</Button> : null}
-            {session.controls?.canTerminate ? <Button className="curation-control-actions__terminate" variant="danger" loading={controlPending === "terminate"} onClick={confirmTerminate}><Ban size={16} />终止整理</Button> : null}
+            {controlState !== "pausing" && session.controls?.canPause ? <Button disabled={controlPending !== null} loading={controlPending === "pause"} onClick={onPause}><Pause size={16} />暂停整理</Button> : null}
+            {session.controls?.canResume ? <Button disabled={controlPending !== null} loading={controlPending === "resume"} onClick={onResume}><Play size={16} />继续整理</Button> : null}
+            {session.controls?.canTerminate ? <Button disabled={controlPending !== null} className="curation-control-actions__terminate" variant="danger" loading={controlPending === "terminate"} onClick={confirmTerminate}><Ban size={16} />终止整理</Button> : null}
           </div> : null}
         </section> : null}
+        {controlNotice ? <section className="curation-control-notice" role="status" aria-label="整理控制提示" aria-live="polite" aria-atomic="true"><TriangleAlert size={17} aria-hidden="true" /><p>{controlNotice}</p></section> : null}
         <CurationProvisionalList items={session.provisionalCandidates ?? []} />
         <section className="curation-candidate-status" aria-label="候选题实时状态" aria-live="polite">
           {statusFilter ? null : <header><div><strong>候选题</strong><small>最近变动随操作实时更新</small></div><span>{candidateItems.length} 道</span></header>}

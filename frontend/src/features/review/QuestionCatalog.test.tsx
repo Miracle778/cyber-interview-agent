@@ -3,9 +3,22 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QuestionCatalog } from "./QuestionCatalog";
+import type { CurationSession } from "./reviewTypes";
 
 const workspace = { id: "w1", workspacePath: "/tmp/demo", vaultPath: "/tmp/demo/vault" };
 function wrapper({ children }: { children: ReactNode }) { return <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{children}</QueryClientProvider>; }
+
+function controlSession(overrides: Partial<CurationSession> = {}): CurationSession {
+  return {
+    id: "cs-control", workspaceId: "w1", title: "control.md", sourceRefs: ["s1"], sources: [{ id: "s1", filename: "control.md", organizationState: "in_progress" }],
+    activeBatchId: "b1", batchStatus: "generating", batchVersion: 6, executionId: "e1", executionStatus: "running", executionStartedAt: null, executionFinishedAt: null,
+    executionErrorCode: null, executionErrorMessage: null, contextCompacted: false, contextUsage: { currentTokens: 0, thresholdTokens: 1000, estimated: false }, stage: "generating",
+    progress: { phase: "discovery", completed: 1, total: 4, generatedCandidateCount: 0, activeWorkers: 1 }, timing: { currentElapsedMs: 1_000, cumulativeElapsedMs: 1_000 },
+    controls: { canPause: true, canResume: false, canTerminate: true }, provisionalCandidates: [], summary: { items: [] }, summaryVersion: 0, warnings: [], preferredModelId: null,
+    preferredReasoningEffort: "none", latestCommand: null, candidateCount: 0, pendingCount: 0, publishedCount: 0, messages: [],
+    usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, callCount: 0, estimatedCount: 0 }, createdAt: "now", updatedAt: "now", ...overrides,
+  };
+}
 
 describe("QuestionCatalog", () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
@@ -303,6 +316,66 @@ describe("QuestionCatalog", () => {
     ));
   });
 
+  it.each([
+    ["pause", "暂停整理", controlSession()],
+    ["resume", "继续整理", controlSession({ batchStatus: "failed", stage: "failed", executionStatus: "failed", controls: { canPause: false, canResume: true, canTerminate: true } })],
+    ["terminate", "终止整理", controlSession({ batchStatus: "paused", stage: "paused", controls: { canPause: false, canResume: true, canTerminate: true } })],
+  ] as const)("shows safe recovery guidance when %s fails", async (operation, buttonName, initialSession) => {
+    if (operation === "terminate") vi.spyOn(globalThis, "confirm").mockReturnValue(true);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/api/knowledge/sources") || url.includes("/api/review/question-candidates") || url.includes("/api/settings/providers")) return Response.json([]);
+      if (url.endsWith(`/${operation}`) && init?.method === "POST") {
+        return Response.json({ code: "internal_error", message: "SQLITE secret table leaked" }, { status: 503 });
+      }
+      if (url.includes("/api/review/curation-sessions")) return Response.json([initialSession]);
+      throw new Error(`unexpected ${url}`);
+    });
+
+    render(<QuestionCatalog workspace={workspace} />, { wrapper });
+    fireEvent.click(await screen.findByRole("button", { name: /control\.md/ }));
+    fireEvent.click(await screen.findByRole("button", { name: buttonName }));
+
+    const notice = await screen.findByRole("status", { name: "整理控制提示" });
+    expect(notice).toHaveAttribute("aria-live", "polite");
+    expect(notice).toHaveTextContent("操作未完成，请检查网络连接后重试。当前整理进度已保留。");
+    expect(notice).not.toHaveTextContent("SQLITE secret table leaked");
+  });
+
+  it("refreshes a stale 409 conflict and clears the notice on the next successful request", async () => {
+    const failed = controlSession({ batchStatus: "failed", stage: "failed", executionStatus: "failed", controls: { canPause: false, canResume: true, canTerminate: true } });
+    const resumed = controlSession({ ...failed, batchStatus: "generating", batchVersion: 7, stage: "generating", executionStatus: "running", controls: { canPause: true, canResume: false, canTerminate: true } });
+    let controlAttempts = 0;
+    let sessionReads = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/api/knowledge/sources") || url.includes("/api/review/question-candidates") || url.includes("/api/settings/providers")) return Response.json([]);
+      if (url.endsWith("/resume") && init?.method === "POST") {
+        controlAttempts += 1;
+        if (controlAttempts === 1) return Response.json({ code: "batch_version_conflict", message: "raw server conflict" }, { status: 409 });
+        return Response.json(resumed, { status: 202 });
+      }
+      if (url.includes("/api/review/curation-sessions")) {
+        sessionReads += 1;
+        return Response.json([failed]);
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+
+    render(<QuestionCatalog workspace={workspace} />, { wrapper });
+    fireEvent.click(await screen.findByRole("button", { name: /control\.md/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "继续整理" }));
+
+    const notice = await screen.findByRole("status", { name: "整理控制提示" });
+    expect(notice).toHaveTextContent("整理状态已在其他页面更新，已刷新最新状态。请根据当前状态重试。");
+    expect(notice).not.toHaveTextContent("raw server conflict");
+    await waitFor(() => expect(sessionReads).toBeGreaterThan(1));
+
+    fireEvent.click(screen.getByRole("button", { name: "继续整理" }));
+    await waitFor(() => expect(screen.queryByRole("status", { name: "整理控制提示" })).toBeNull());
+    await waitFor(() => expect(controlAttempts).toBe(2));
+  });
+
   it("refreshes the selected resource when a curation control event arrives", async () => {
     class CatalogEventSource {
       static instances: CatalogEventSource[] = [];
@@ -315,10 +388,32 @@ describe("QuestionCatalog", () => {
       emit(event: object) { this.listeners.get((event as { type: string }).type)?.({ data: JSON.stringify(event) } as MessageEvent<string>); }
     }
     vi.stubGlobal("EventSource", CatalogEventSource);
-    const running = {
-      id: "cs1", workspaceId: "w1", title: "mysql.md", sourceRefs: ["s1"], sources: [{ id: "s1", filename: "mysql.md", organizationState: "in_progress" }], activeBatchId: "b1", batchStatus: "generating", batchVersion: 3, executionId: "e1", executionStatus: "running", executionStartedAt: "2026-07-21T16:00:00Z", executionFinishedAt: null, executionErrorCode: null, executionErrorMessage: null, contextCompacted: false, contextUsage: { currentTokens: 0, thresholdTokens: 1000, estimated: false }, stage: "generating", progress: { phase: "discovery", completed: 4, total: 4, generatedCandidateCount: 1, activeWorkers: 2 }, timing: { currentElapsedMs: 10_000, cumulativeElapsedMs: 10_000 }, controls: { canPause: true, canResume: false, canTerminate: true }, provisionalCandidates: [], summary: { items: [] }, summaryVersion: 0, warnings: [], candidateCount: 0, pendingCount: 0, publishedCount: 0, messages: [], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, callCount: 0, estimatedCount: 0 }, createdAt: "now", updatedAt: "now",
-    };
-    const paused = { ...running, batchStatus: "paused", batchVersion: 4, executionStatus: "cancelled", stage: "paused", progress: { phase: "enrichment", completed: 1, total: 3, generatedCandidateCount: 2, activeWorkers: 0 }, controls: { canPause: false, canResume: true, canTerminate: true } };
+    const running = controlSession({ id: "cs1", title: "mysql.md", batchVersion: 4, progress: { phase: "discovery", completed: 4, total: 4, generatedCandidateCount: 1, activeWorkers: 2 } });
+    const enrichment = controlSession({
+      ...running,
+      batchStatus: "paused",
+      batchVersion: 4,
+      executionStatus: "cancelled",
+      stage: "paused",
+      progress: { phase: "enrichment", completed: 1, total: 3, generatedCandidateCount: 2, activeWorkers: 0 },
+      controls: { canPause: false, canResume: true, canTerminate: true },
+      provisionalCandidates: [
+        { id: "p1", title: "MVCC 原始预览", questionText: "什么是 MVCC？", sourceRefs: ["s1#1"] },
+        { id: "p2", title: "间隙锁预览", questionText: "什么是间隙锁？", sourceRefs: ["s1#2"] },
+      ],
+    });
+    const staleDiscovery = controlSession({
+      ...running,
+      batchVersion: 4,
+      progress: { phase: "discovery", completed: 4, total: 4, generatedCandidateCount: 1, activeWorkers: 2 },
+      provisionalCandidates: [{ id: "p1", title: "过时替换标题", questionText: "过时内容", sourceRefs: ["s1#1"] }],
+    });
+    const shorterEnrichment = controlSession({
+      ...enrichment,
+      progress: { phase: "enrichment", completed: 2, total: 3, generatedCandidateCount: 2, activeWorkers: 0 },
+      provisionalCandidates: [{ id: "p1", title: "过时替换标题", questionText: "过时内容", sourceRefs: ["s1#1"] }],
+    });
+    const responses = [running, enrichment, staleDiscovery, shorterEnrichment];
     let sessionReads = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
@@ -328,7 +423,7 @@ describe("QuestionCatalog", () => {
       if (url.includes("/api/settings/providers")) return Response.json([]);
       if (url.includes("/api/review/curation-sessions")) {
         sessionReads += 1;
-        return Response.json([sessionReads > 1 ? paused : running]);
+        return Response.json([responses[Math.min(sessionReads - 1, responses.length - 1)]]);
       }
       throw new Error(`unexpected ${url}`);
     });
@@ -341,6 +436,20 @@ describe("QuestionCatalog", () => {
 
     expect(await screen.findByRole("button", { name: "继续整理" })).toBeInTheDocument();
     expect(screen.getByLabelText("整理进度")).toHaveTextContent("1 / 3");
+    expect(screen.getByText("MVCC 原始预览")).toBeInTheDocument();
+    expect(screen.getByText("间隙锁预览")).toBeInTheDocument();
+
+    CatalogEventSource.instances[0].emit({ id: 8, type: "curation.progress.changed", sessionId: "cs1", executionId: "e1", timestamp: "now", payload: { resourceId: "cs1", phase: "discovery", completed: 4, total: 4 } });
+    await waitFor(() => expect(sessionReads).toBeGreaterThan(2));
+    expect(screen.getByLabelText("整理进度")).toHaveTextContent("1 / 3");
+    expect(screen.getByText("MVCC 原始预览")).toBeInTheDocument();
+    expect(screen.queryByText("过时替换标题")).toBeNull();
+
+    CatalogEventSource.instances[0].emit({ id: 9, type: "curation.progress.changed", sessionId: "cs1", executionId: "e1", timestamp: "now", payload: { resourceId: "cs1", phase: "enrichment", completed: 2, total: 3 } });
+    await waitFor(() => expect(screen.getByLabelText("整理进度")).toHaveTextContent("2 / 3"));
+    expect(screen.getByText("MVCC 原始预览")).toBeInTheDocument();
+    expect(screen.getByText("间隙锁预览")).toBeInTheDocument();
+    expect(screen.queryByText("过时替换标题")).toBeNull();
     expect(sessionReads).toBeGreaterThan(1);
   });
 

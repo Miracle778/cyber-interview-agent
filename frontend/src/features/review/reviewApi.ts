@@ -59,9 +59,16 @@ async function controlCurationSession(
     } catch {
       /* non-JSON error body */
     }
-    throw new ApiError(error.code ?? "api_error", error.message ?? "请求失败");
+    throw new CurationControlError(error.code ?? "api_error", error.message ?? "请求失败", response.status);
   }
   return response.json() as Promise<CurationSession>;
+}
+
+export class CurationControlError extends ApiError {
+  constructor(code: string, message: string, public readonly status: number) {
+    super(code, message);
+    this.name = "CurationControlError";
+  }
 }
 
 export function pauseCurationSession(id: string, expectedBatchVersion: number, idempotencyKey: string): Promise<CurationSession> {
