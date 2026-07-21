@@ -582,6 +582,269 @@ class ReviewRepository:
                 raise ReviewConflictError("question batch terminal state changed")
         return self.get_batch(batch_id)
 
+    def claim_curation_finalization(
+        self, batch_id: str, execution_id: str
+    ) -> tuple[str, str, int, str, tuple[str, ...]]:
+        """Durably bind candidate preparation to the current batch owner."""
+        with self._transaction():
+            existing = self._connection.execute(
+                "SELECT * FROM review_curation_finalizations WHERE batch_id = ?",
+                (batch_id,),
+            ).fetchone()
+            if (
+                existing is not None
+                and existing["execution_id"] == execution_id
+            ):
+                return (
+                    batch_id,
+                    execution_id,
+                    int(existing["batch_version"]),
+                    str(existing["state"]),
+                    tuple(json.loads(existing["candidate_ids_json"])),
+                )
+
+            row = self._connection.execute(
+                "SELECT * FROM review_question_batches WHERE id = ?",
+                (batch_id,),
+            ).fetchone()
+            if row is None:
+                raise LookupError(batch_id)
+            batch = self._batch_record(row)
+            if (
+                batch.run_id != execution_id
+                or batch.status != "generating"
+                or batch.control_intent is not None
+            ):
+                raise ReviewConflictError(
+                    "question batch cannot be finalized by this execution"
+                )
+            if existing is None:
+                self._connection.execute(
+                    "INSERT INTO review_curation_finalizations "
+                    "(batch_id, execution_id, batch_version) VALUES (?, ?, ?)",
+                    (batch_id, execution_id, batch.version),
+                )
+            else:
+                self._connection.execute(
+                    "UPDATE review_curation_finalizations SET execution_id = ?, "
+                    "batch_version = ?, state = 'preparing', "
+                    "candidate_ids_json = '[]', updated_at = CURRENT_TIMESTAMP "
+                    "WHERE batch_id = ?",
+                    (execution_id, batch.version, batch_id),
+                )
+            return (batch_id, execution_id, batch.version, "preparing", ())
+
+    def finalize_curation_candidates(
+        self,
+        batch_id: str,
+        execution_id: str,
+        *,
+        candidates: tuple[dict[str, object], ...],
+    ) -> tuple[QuestionCandidateRecord, ...]:
+        """Publish staged curation output and complete its batch atomically."""
+        candidate_ids = tuple(str(item["candidate_id"]) for item in candidates)
+        if len(set(candidate_ids)) != len(candidate_ids):
+            raise ValueError("curation candidate ids must be unique")
+        with self._transaction():
+            claim = self._connection.execute(
+                "SELECT * FROM review_curation_finalizations WHERE batch_id = ?",
+                (batch_id,),
+            ).fetchone()
+            if claim is None or claim["execution_id"] != execution_id:
+                raise ReviewConflictError("curation finalization owner changed")
+            if claim["state"] == "committed":
+                committed_ids = tuple(json.loads(claim["candidate_ids_json"]))
+                if committed_ids != candidate_ids:
+                    raise ReviewConflictError(
+                        "committed curation candidate set changed"
+                    )
+                return tuple(self.get_candidate(value) for value in committed_ids)
+
+            batch_row = self._connection.execute(
+                "SELECT * FROM review_question_batches WHERE id = ?",
+                (batch_id,),
+            ).fetchone()
+            if batch_row is None:
+                raise LookupError(batch_id)
+            batch = self._batch_record(batch_row)
+            if (
+                batch.run_id != execution_id
+                or batch.status != "generating"
+                or batch.control_intent is not None
+                or batch.version != int(claim["batch_version"])
+            ):
+                raise ReviewConflictError("question batch finalization state changed")
+
+            for item in candidates:
+                draft_id = str(item["draft_id"])
+                question = item["question"]
+                if not isinstance(question, QuestionSnapshot):
+                    raise TypeError("curation question must be a QuestionSnapshot")
+                draft = cast(dict[str, object], item["draft"])
+                if self._connection.execute(
+                    "SELECT 1 FROM knowledge_drafts WHERE id = ?",
+                    (draft_id,),
+                ).fetchone() is not None:
+                    raise ReviewConflictError(
+                        "curation draft became formal before finalization"
+                    )
+                if (
+                    draft["workspace_id"] != batch.workspace_id
+                    or draft["session_id"] != batch.session_id
+                    or draft["run_id"] != execution_id
+                    or draft["domain"] != "review"
+                    or draft["document_type"] != "question"
+                    or draft["document_id"] != question.document_id
+                    or draft["content_hash"] != question.content_hash
+                    or str(draft["content_path"])
+                    != f"artifacts/review/drafts/{draft_id}.md"
+                ):
+                    raise ReviewConflictError(
+                        "staged curation draft changed before finalization"
+                    )
+
+            for item in candidates:
+                candidate_id = str(item["candidate_id"])
+                draft_id = str(item["draft_id"])
+                draft = cast(dict[str, object], item["draft"])
+                question = cast(QuestionSnapshot, item["question"])
+                source_refs = tuple(str(value) for value in item["source_refs"])
+                self._connection.execute(
+                    "INSERT INTO knowledge_drafts "
+                    "(id, workspace_id, session_id, run_id, agent_type, domain, "
+                    "document_type, document_id, title, content_path, "
+                    "source_refs_json, relation_refs_json, status, version, "
+                    "content_hash) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                    "'review_pending', ?, ?)",
+                    (
+                        draft_id,
+                        draft["workspace_id"],
+                        draft["session_id"],
+                        draft["run_id"],
+                        draft.get("agent_type"),
+                        draft["domain"],
+                        draft["document_type"],
+                        draft["document_id"],
+                        draft["title"],
+                        draft["content_path"],
+                        _canonical_json(tuple(draft["source_refs"])),
+                        _canonical_json(tuple(draft["relation_refs"])),
+                        int(draft.get("version", 1)),
+                        draft["content_hash"],
+                    ),
+                )
+                revision_candidate_id = item.get("revision_candidate_id")
+                if revision_candidate_id is None:
+                    self._connection.execute(
+                        "INSERT INTO review_question_candidates "
+                        "(id, batch_id, draft_id, question_json, source_refs_json, "
+                        "correction_note, duplicate_of_question_id, status) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, 'review_pending')",
+                        (
+                            candidate_id,
+                            batch_id,
+                            draft_id,
+                            _canonical_json(asdict(question)),
+                            _canonical_json(source_refs),
+                            str(item.get("correction_note", "")),
+                            item.get("duplicate_of_question_id"),
+                        ),
+                    )
+                else:
+                    if str(revision_candidate_id) != candidate_id:
+                        raise ValueError(
+                            "revision finalization must retain its candidate id"
+                        )
+                    cursor = self._connection.execute(
+                        "UPDATE review_question_candidates SET draft_id = ?, "
+                        "question_json = ?, source_refs_json = ?, "
+                        "status = 'review_pending', updated_at = CURRENT_TIMESTAMP "
+                        "WHERE id = ? AND (batch_id = ? OR batch_id = ?)",
+                        (
+                            draft_id,
+                            _canonical_json(asdict(question)),
+                            _canonical_json(source_refs),
+                            candidate_id,
+                            batch_id,
+                            batch.rewrite_of_batch_id,
+                        ),
+                    )
+                    if cursor.rowcount != 1:
+                        raise LookupError(candidate_id)
+                for link in cast(tuple[dict[str, object], ...], item["source_links"]):
+                    self._connection.execute(
+                        "INSERT OR IGNORE INTO review_question_source_links "
+                        "(id, question_id, source_id, batch_id, session_id, "
+                        "origin_session_id, evidence_ref, merge_reason) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            str(link["link_id"]),
+                            str(link["question_id"]),
+                            str(link["source_id"]),
+                            batch_id,
+                            batch.session_id,
+                            batch.origin_session_id,
+                            str(link["evidence_ref"]),
+                            str(link["merge_reason"]),
+                        ),
+                    )
+            if batch.session_id is not None:
+                summary = CurationSummary(
+                    items=tuple(
+                        {
+                            "ordinal": index,
+                            "candidateId": str(item["candidate_id"]),
+                            "title": cast(QuestionSnapshot, item["question"]).title,
+                            "topics": cast(QuestionSnapshot, item["question"]).topics,
+                            "difficulty": cast(
+                                QuestionSnapshot, item["question"]
+                            ).difficulty,
+                            "sourceCount": len(tuple(item["source_refs"])),
+                            "recommendation": (
+                                "link_existing"
+                                if item.get("duplicate_of_question_id")
+                                else "recommend_confirm"
+                            ),
+                            "reason": (
+                                "与已发布题目相同，建议确认来源关联"
+                                if item.get("duplicate_of_question_id")
+                                else "结构完整且来源明确"
+                            ),
+                        }
+                        for index, item in enumerate(candidates, start=1)
+                    )
+                )
+                cursor = self._connection.execute(
+                    "UPDATE review_curation_sessions SET "
+                    "stage = 'waiting_for_command', completed_units = 1, "
+                    "total_units = 1, summary_json = ?, "
+                    "summary_version = summary_version + 1, "
+                    "updated_at = CURRENT_TIMESTAMP WHERE session_id = ?",
+                    (
+                        _canonical_json({"items": summary.items}),
+                        batch.session_id,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise LookupError(batch.session_id)
+            cursor = self._connection.execute(
+                "UPDATE review_question_batches SET status = 'completed', "
+                "version = version + 1, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND run_id = ? AND status = 'generating' "
+                "AND version = ? AND control_intent IS NULL",
+                (batch_id, execution_id, batch.version),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError("question batch finalization state changed")
+            self._connection.execute(
+                "UPDATE review_curation_finalizations SET state = 'committed', "
+                "candidate_ids_json = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE batch_id = ? AND execution_id = ? AND state = 'preparing'",
+                (_canonical_json(candidate_ids), batch_id, execution_id),
+            )
+        return tuple(self.get_candidate(value) for value in candidate_ids)
+
     def attach_batch_run(
         self, batch_id: str, run_id: str
     ) -> QuestionBatchRecord:

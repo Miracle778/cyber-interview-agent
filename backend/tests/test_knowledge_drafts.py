@@ -9,6 +9,7 @@ from app.knowledge.drafts import (
     DraftVersionChangedError,
     KnowledgeDraftService,
     UpdateDraftCommand,
+    stage_draft,
 )
 from app.knowledge.workspace_layout import initialize_knowledge_artifacts
 from app.security.workspace_paths import PathPolicyError
@@ -68,6 +69,39 @@ async def test_create_draft_writes_outside_vault(tmp_path: Path) -> None:
     assert draft.status == "draft"
     assert draft.source_refs == ("source-1",)
     assert not list((tmp_path / "knowledge-vault").rglob("*.md"))
+
+
+def test_stage_draft_is_idempotent_without_creating_formal_row(
+    tmp_path: Path,
+) -> None:
+    service = _service(tmp_path)
+    command = CreateDraftCommand(
+        domain="review",
+        document_type="question",
+        title="缓存穿透",
+        markdown="# 缓存穿透\n",
+        source_refs=("source-1",),
+        relation_refs=(),
+        session_id=None,
+        run_id=None,
+        draft_id="staged-draft",
+        document_id="staged-document",
+    )
+
+    first = stage_draft(
+        tmp_path, workspace_id="w1", command=command
+    )
+    replayed = stage_draft(
+        tmp_path, workspace_id="w1", command=command
+    )
+
+    assert first == replayed
+    assert (tmp_path / first.content_path).is_file()
+    connection = connect_runtime_database(tmp_path)
+    assert connection.execute(
+        "SELECT COUNT(*) FROM knowledge_drafts WHERE id = ?", (first.id,)
+    ).fetchone()[0] == 0
+    connection.close()
 
 
 @pytest.mark.asyncio

@@ -5,10 +5,10 @@ import json
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, Protocol
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from langgraph.types import Command
 
@@ -25,15 +25,20 @@ from app.application.session_service import (
 )
 from app.hitl.models import CreatePendingAction, PendingActionRecord
 from app.infrastructure.checkpoints import AgentCheckpointer
-from app.knowledge.drafts import CreateDraftCommand, KnowledgeDraftRecord, UpdateDraftCommand
+from app.knowledge.drafts import (
+    CreateDraftCommand,
+    KnowledgeDraftRecord,
+    UpdateDraftCommand,
+    stage_draft,
+)
 from app.graphs.review_round import DraftRef
 from app.review.models import (
-    CurationSummary,
     MasteryEntry,
     MasteryProjection,
     QuestionSnapshot,
 )
 from app.review.models import ReviewAnswerReceipt, ReviewInputReceipt
+from app.review.errors import ReviewConflictError
 from app.review.repository import ReviewRepository
 from app.review.timeline import SessionTimelineProjector
 from app.profile.repository import ProfileRepository
@@ -910,6 +915,14 @@ class AgentExecutionService:
             if not batch_id:
                 raise ValueError("question curation batch is missing")
             batch = self._review_repository.get_batch(batch_id)
+            try:
+                finalization = self._review_repository.claim_curation_finalization(
+                    batch_id, execution.id
+                )
+            except ReviewConflictError:
+                return
+            if finalization[3] == "committed":
+                return
             timeline = SessionTimelineProjector(self._repository, self._events)
             try:
                 curation = self._review_repository.get_curation_session(
@@ -968,7 +981,7 @@ class AgentExecutionService:
                     ):
                         return item.snapshot.question_id
                 return None
-            persisted = []
+            candidate_specs: list[dict[str, object]] = []
             revision_candidate_id = (
                 execution.input.get("revision_candidate_id")
                 or execution.input.get("revisionCandidateId")
@@ -986,27 +999,32 @@ class AgentExecutionService:
                     if index > 1:
                         break
                     original = self._review_repository.get_candidate(str(revision_candidate_id))
-                    if original.draft_id is None or self._get_draft is None or self._update_draft is None:
+                    if original.draft_id is None or self._get_draft is None:
                         raise RuntimeError("question revision draft is not configured")
                     current_draft = await self._get_draft(original.draft_id)
-                    if current_draft.status == "published":
-                        draft = await create_draft(
+                    draft_id = str(
+                        uuid5(
+                            NAMESPACE_URL,
+                            f"review-curation:{batch_id}:{execution.id}:revision:draft",
+                        )
+                    )
+                    draft = stage_draft(
+                        self._workspace_root,
+                        workspace_id=self._workspace_id,
+                        command=CreateDraftCommand(
+                            domain="review",
                             document_type="question",
-                            document_id=current_draft.document_id,
                             title=raw["title"],
                             markdown=markdown,
                             source_refs=original.source_refs,
                             relation_refs=tuple(raw["topics"]),
-                        )
-                    else:
-                        draft = await self._update_draft(
-                            original.draft_id,
-                            UpdateDraftCommand(
-                                expected_version=current_draft.version,
-                                title=raw["title"],
-                                markdown=markdown,
-                            ),
-                        )
+                            session_id=session.id,
+                            run_id=execution.id,
+                            agent_type=session.kind,
+                            draft_id=draft_id,
+                            document_id=current_draft.document_id,
+                        ),
+                    )
                     snapshot = QuestionSnapshot(
                         question_id=original.question.question_id,
                         document_id=draft.document_id,
@@ -1019,18 +1037,30 @@ class AgentExecutionService:
                         key_points=tuple(raw["key_points"]),
                         follow_ups=tuple(raw["follow_ups"]),
                     )
-                    candidate = (
-                        self._review_repository.replace_candidate_draft(
-                            original.id, draft_id=draft.id, question=snapshot
-                        )
-                        if draft.id != original.draft_id
-                        else self._review_repository.update_candidate(
-                            original.id, question=snapshot, status="review_pending"
-                        )
+                    draft_spec = asdict(draft)
+                    draft_spec["version"] = current_draft.version + 1
+                    candidate_specs.append(
+                        {
+                            "candidate_id": original.id,
+                            "revision_candidate_id": original.id,
+                            "draft_id": draft.id,
+                            "draft": draft_spec,
+                            "question": snapshot,
+                            "source_refs": original.source_refs,
+                            "correction_note": original.correction_note,
+                            "duplicate_of_question_id": (
+                                original.duplicate_of_question_id
+                            ),
+                            "source_links": (),
+                        }
                     )
-                    persisted.append(candidate)
                     continue
-                question_id = str(uuid4())
+                identity = f"review-curation:{batch_id}:{execution.id}:{index}"
+                question_id = str(uuid5(NAMESPACE_URL, f"{identity}:question"))
+                draft_id = str(uuid5(NAMESPACE_URL, f"{identity}:draft"))
+                candidate_id = str(
+                    uuid5(NAMESPACE_URL, f"{identity}:candidate")
+                )
                 proposed_refs = tuple(
                     str(ref)
                     for ref in raw["source_refs"]
@@ -1041,12 +1071,22 @@ class AgentExecutionService:
                     )
                 )
                 source_refs = proposed_refs or batch.source_refs
-                draft = await create_draft(
-                    document_type="question",
-                    title=raw["title"],
-                    markdown=markdown,
-                    source_refs=source_refs,
-                    relation_refs=tuple(raw["topics"]),
+                draft = stage_draft(
+                    self._workspace_root,
+                    workspace_id=self._workspace_id,
+                    command=CreateDraftCommand(
+                        domain="review",
+                        document_type="question",
+                        title=raw["title"],
+                        markdown=markdown,
+                        source_refs=source_refs,
+                        relation_refs=tuple(raw["topics"]),
+                        session_id=session.id,
+                        run_id=execution.id,
+                        agent_type=session.kind,
+                        draft_id=draft_id,
+                        document_id=f"question_{question_id}",
+                    ),
                 )
                 snapshot = QuestionSnapshot(
                     question_id=question_id,
@@ -1060,45 +1100,56 @@ class AgentExecutionService:
                     key_points=tuple(raw["key_points"]),
                     follow_ups=tuple(raw["follow_ups"]),
                 )
-                candidate = self._review_repository.save_candidate(
-                    batch_id=batch_id,
-                    question=snapshot,
-                    draft_id=draft.id,
-                    source_refs=source_refs,
-                    correction_note=raw["correction_note"],
-                    duplicate_of_question_id=similar_active(raw),
-                    status="review_pending",
-                )
-                persisted.append(candidate)
+                duplicate_of_question_id = similar_active(raw)
+                source_links: list[dict[str, object]] = []
                 for source_ref in source_refs:
                     source_id = str(source_ref).split("#", 1)[0]
-                    self._review_repository.upsert_question_source_link(
-                        # A duplicate candidate is still retained as an auditable
-                        # version, but its evidence belongs to the existing logical
-                        # question.  Linking the source to the candidate's transient
-                        # question id made "merge" a UI-only label and lost the
-                        # provenance from the published question.
-                        question_id=(
-                            candidate.duplicate_of_question_id
-                            or snapshot.question_id
-                        ),
-                        source_id=source_id,
-                        batch_id=batch.id,
-                        session_id=session.id,
-                        evidence_ref=str(source_ref),
-                        merge_reason=(
-                            "linked_to_active_question"
-                            if candidate.duplicate_of_question_id
-                            else "generated_from_source"
-                        ),
+                    source_links.append(
+                        {
+                            "link_id": str(
+                                uuid5(
+                                    NAMESPACE_URL,
+                                    f"{identity}:source:{source_ref}",
+                                )
+                            ),
+                            # Duplicate evidence belongs to the existing logical
+                            # question rather than the transient candidate question.
+                            "question_id": (
+                                duplicate_of_question_id or snapshot.question_id
+                            ),
+                            "source_id": source_id,
+                            "evidence_ref": str(source_ref),
+                            "merge_reason": (
+                                "linked_to_active_question"
+                                if duplicate_of_question_id
+                                else "generated_from_source"
+                            ),
+                        }
                     )
-                if curation is not None:
-                    self._review_repository.update_curation_progress(
-                        session.id,
-                        stage="merging",
-                        completed_units=index,
-                        total_units=max(1, len(raw_candidates)),
+                candidate_specs.append(
+                    {
+                        "candidate_id": candidate_id,
+                        "draft_id": draft.id,
+                        "draft": asdict(draft),
+                        "question": snapshot,
+                        "source_refs": source_refs,
+                        "correction_note": raw["correction_note"],
+                        "duplicate_of_question_id": duplicate_of_question_id,
+                        "source_links": tuple(source_links),
+                    }
+                )
+            try:
+                persisted = list(
+                    self._review_repository.finalize_curation_candidates(
+                        batch_id,
+                        execution.id,
+                        candidates=tuple(candidate_specs),
                     )
+                )
+            except ReviewConflictError:
+                return
+            if curation is not None:
+                for index, _candidate in enumerate(persisted, start=1):
                     await self._events.publish(
                         session.id,
                         execution.id,
@@ -1109,24 +1160,9 @@ class AgentExecutionService:
                             "total": max(1, len(raw_candidates)),
                         },
                     )
-            completed_batch = self._review_repository.update_batch_status(
-                batch_id,
-                "completed",
-                expected_run_id=execution.id,
-            )
-            if (
-                completed_batch.status != "completed"
-                or completed_batch.run_id != execution.id
-            ):
-                return
             if curation is None:
                 return
-            curation = self._review_repository.update_curation_progress(
-                session.id,
-                stage="summarizing",
-                completed_units=0,
-                total_units=1,
-            )
+            curation = self._review_repository.get_curation_session(session.id)
             await self._events.publish(
                 session.id,
                 execution.id,
@@ -1137,46 +1173,15 @@ class AgentExecutionService:
                     "version": curation.summary_version,
                 },
             )
-            summary = CurationSummary(
-                items=tuple(
-                    {
-                        "ordinal": index,
-                        "candidateId": candidate.id,
-                        "title": candidate.question.title,
-                        "topics": candidate.question.topics,
-                        "difficulty": candidate.question.difficulty,
-                        "sourceCount": len(candidate.source_refs),
-                        "recommendation": (
-                            "link_existing"
-                            if candidate.duplicate_of_question_id
-                            else "recommend_confirm"
-                        ),
-                        "reason": (
-                            "与已发布题目相同，建议确认来源关联"
-                            if candidate.duplicate_of_question_id
-                            else "结构完整且来源明确"
-                        ),
-                    }
-                    for index, candidate in enumerate(persisted, start=1)
-                )
-            )
-            curation = self._review_repository.replace_curation_summary(
-                session.id,
-                expected_version=curation.summary_version,
-                summary=summary,
-            )
-            curation = self._review_repository.update_curation_progress(
-                session.id,
-                stage="waiting_for_command",
-                completed_units=1,
-                total_units=1,
-            )
             await timeline.append(
                 session_id=session.id,
                 execution_id=execution.id,
                 role="assistant",
                 message_kind="curation_summary",
-                content=f"已整理 {len(summary.items)} 道候选题，请确认处理方式。",
+                content=(
+                    f"已整理 {len(curation.summary.items)} 道候选题，"
+                    "请确认处理方式。"
+                ),
                 payload={
                     "resourceId": session.id,
                     "version": curation.summary_version,
@@ -1188,7 +1193,7 @@ class AgentExecutionService:
                 "curation.summary.ready",
                 {
                     "resourceId": session.id,
-                    "count": len(summary.items),
+                    "count": len(curation.summary.items),
                     "version": curation.summary_version,
                 },
             )

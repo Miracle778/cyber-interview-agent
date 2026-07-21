@@ -60,6 +60,7 @@ class CreateDraftCommand:
     session_id: str | None = None
     run_id: str | None = None
     agent_type: str | None = None
+    draft_id: str | None = None
     document_id: str | None = None
 
     def __post_init__(self) -> None:
@@ -112,6 +113,69 @@ class KnowledgeDraftRecord:
     updated_at: str
 
 
+@dataclass(frozen=True, slots=True)
+class StagedDraftRecord:
+    id: str
+    workspace_id: str
+    session_id: str | None
+    run_id: str | None
+    agent_type: str | None
+    domain: str
+    document_type: DocumentType
+    document_id: str
+    title: str
+    markdown: str
+    content_path: str
+    source_refs: tuple[str, ...]
+    relation_refs: tuple[str, ...]
+    content_hash: str
+
+
+def stage_draft(
+    workspace_root: Path,
+    *,
+    workspace_id: str,
+    command: CreateDraftCommand,
+) -> StagedDraftRecord:
+    """Write deterministic draft content without creating a formal DB row."""
+    if command.draft_id is None or command.document_id is None:
+        raise ValueError("staged drafts require stable draft and document ids")
+    initialize_knowledge_artifacts(workspace_root, domain=command.domain)
+    filename = f"{command.draft_id}.md"
+    content_path = f"artifacts/{command.domain}/drafts/{filename}"
+    digest = _hash_text(command.markdown)
+    policy = WorkspacePathPolicy(workspace_root)
+    target = policy.resolve_for_create("review.drafts", filename)
+    if target.exists():
+        if sha256(target.read_bytes()).hexdigest() != digest:
+            raise DraftContentChangedError(
+                f"staged draft {command.draft_id!r} content changed"
+            )
+    else:
+        _atomic_write(
+            workspace_root,
+            filename,
+            command.markdown,
+            expected_hash=None,
+        )
+    return StagedDraftRecord(
+        id=command.draft_id,
+        workspace_id=workspace_id,
+        session_id=command.session_id,
+        run_id=command.run_id,
+        agent_type=command.agent_type,
+        domain=command.domain,
+        document_type=command.document_type,
+        document_id=command.document_id,
+        title=command.title.strip(),
+        markdown=command.markdown,
+        content_path=content_path,
+        source_refs=command.source_refs,
+        relation_refs=command.relation_refs,
+        content_hash=digest,
+    )
+
+
 class KnowledgeDraftService:
     def __init__(self, workspace_root: Path, *, workspace_id: str) -> None:
         if not workspace_id.strip():
@@ -125,7 +189,7 @@ class KnowledgeDraftService:
         initialize_knowledge_artifacts(
             self._workspace_root, domain=command.domain
         )
-        draft_id = str(uuid4())
+        draft_id = command.draft_id or str(uuid4())
         document_id = command.document_id or (
             f"{command.document_type}_{uuid4().hex}"
         )
