@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, Literal, TypedDict
 
@@ -39,9 +40,6 @@ class CurationWaveFailed(RuntimeError):
 
 class QuestionCurationInput(TypedDict, total=False):
     batch_id: str
-    source_excerpts: list[str]
-    similar_questions: list[str]
-    rewrite_feedback: str | None
     revision_candidate_id: str | None
 
 
@@ -58,27 +56,73 @@ class QuestionCurationState(TypedDict, total=False):
     warnings: list[dict[str, object]]
 
 
+@dataclass(frozen=True, slots=True)
+class CurationInvocationInput:
+    source_excerpts: tuple[str, ...]
+    similar_questions: tuple[str, ...]
+    rewrite_feedback: str | None
+
+
+class CurationInvocationInputProvider:
+    """Execution-scoped access to immutable input kept outside Graph state."""
+
+    def __init__(self, repository: ReviewRepository) -> None:
+        self._repository = repository
+        self._loaded: dict[str, CurationInvocationInput] = {}
+
+    def load(self, batch_id: str) -> CurationInvocationInput:
+        cached = self._loaded.get(batch_id)
+        if cached is not None:
+            return cached
+        raw = self._repository.curation_batch_input(batch_id)
+        source_excerpts = raw.get("source_excerpts")
+        similar_questions = raw.get("similar_questions", [])
+        rewrite_feedback = raw.get("rewrite_feedback")
+        if not isinstance(source_excerpts, list) or not all(
+            isinstance(value, str) for value in source_excerpts
+        ):
+            raise ValueError("question curation source input is missing")
+        if not isinstance(similar_questions, list) or not all(
+            isinstance(value, str) for value in similar_questions
+        ):
+            raise ValueError("question curation similar-title input is invalid")
+        if rewrite_feedback is not None and not isinstance(rewrite_feedback, str):
+            raise ValueError("question curation rewrite feedback is invalid")
+        loaded = CurationInvocationInput(
+            source_excerpts=tuple(source_excerpts),
+            similar_questions=tuple(similar_questions),
+            rewrite_feedback=rewrite_feedback,
+        )
+        self._loaded[batch_id] = loaded
+        return loaded
+
+    def discard(self, batch_id: str) -> None:
+        self._loaded.pop(batch_id, None)
+
+
 def create_question_curation_graph(
     agents: QuestionCurationAgents,
     *,
     repository: ReviewRepository,
     checkpointer=None,
 ):
-    invocation_inputs: dict[
-        str, tuple[tuple[str, ...], tuple[str, ...]]
-    ] = {}
+    invocation_inputs = CurationInvocationInputProvider(repository)
 
     async def revise_one(
         state: QuestionCurationInput,
         config: RunnableConfig,
         runtime: Runtime[AgentContext],
     ) -> dict[str, object]:
+        invocation_input = invocation_inputs.load(_batch_id(state))
         output = await agents.revise(
-            source_excerpts=tuple(state.get("source_excerpts", ())),
-            rewrite_feedback=state.get("rewrite_feedback") or "按审核意见改进题目",
+            source_excerpts=invocation_input.source_excerpts,
+            rewrite_feedback=(
+                invocation_input.rewrite_feedback or "按审核意见改进题目"
+            ),
             context=runtime.context,
             config=dict(config),
         )
+        invocation_inputs.discard(_batch_id(state))
         return {
             "candidates": [output.candidate.model_dump(mode="json")],
             "generation_phase": "enrichment",
@@ -90,12 +134,10 @@ def create_question_curation_graph(
 
     async def plan_sections(state: QuestionCurationInput) -> dict[str, object]:
         batch_id = _batch_id(state)
-        source_excerpts = tuple(state.get("source_excerpts", ()))
-        invocation_inputs[batch_id] = (
-            source_excerpts,
-            tuple(state.get("similar_questions", ())),
+        invocation_input = invocation_inputs.load(batch_id)
+        plan = plan_curation_discovery(
+            section_sources(invocation_input.source_excerpts)
         )
-        plan = plan_curation_discovery(section_sources(source_excerpts))
         items = []
         for unit in plan.deterministic_units:
             item = repository.plan_curation_work_item(
@@ -129,7 +171,9 @@ def create_question_curation_graph(
             "generation_phase": "discovery",
             "completed_units": sum(item.status == "completed" for item in items),
             "total_units": len(items),
-            "generated_candidate_count": 0,
+            "generated_candidate_count": _completed_candidate_count(
+                repository, batch_id
+            ),
             "warnings": [],
         }
 
@@ -140,7 +184,7 @@ def create_question_curation_graph(
     ) -> dict[str, object]:
         batch_id = _batch_id(state)
         plan = plan_curation_discovery(
-            _sections_for_batch(repository, invocation_inputs, batch_id)
+            _sections_for_batch(invocation_inputs, batch_id)
         )
         units = {unit.unit_index: unit for unit in plan.model_units}
         limit = repository.get_batch(batch_id).concurrency_limit
@@ -192,7 +236,9 @@ def create_question_curation_graph(
             "generation_phase": "discovery",
             "completed_units": sum(item.status == "completed" for item in items),
             "total_units": len(items),
-            "generated_candidate_count": 0,
+            "generated_candidate_count": _completed_candidate_count(
+                repository, batch_id
+            ),
         }
 
     async def plan_enrichment(state: QuestionCurationState) -> dict[str, object]:
@@ -244,14 +290,9 @@ def create_question_curation_graph(
         all_seeds = _completed_seeds(repository, batch_id)[:200]
         by_ref = {
             section.ref: section
-            for section in _sections_for_batch(
-                repository, invocation_inputs, batch_id
-            )
+            for section in _sections_for_batch(invocation_inputs, batch_id)
         }
-        known_questions = _prefilter_similar_titles(
-            all_seeds,
-            _similar_titles_for_batch(repository, invocation_inputs, batch_id),
-        )
+        similar_titles = _similar_titles_for_batch(invocation_inputs, batch_id)
         limit = repository.get_batch(batch_id).concurrency_limit
         pending_ids = tuple(
             item_id
@@ -270,6 +311,7 @@ def create_question_curation_graph(
                 ref for seed in seeds for ref in seed.source_refs
             ))
             sections = tuple(by_ref[ref] for ref in section_refs)
+            known_questions = _prefilter_similar_titles(seeds, similar_titles)
             try:
                 output = await agents.enrich(
                     seeds,
@@ -353,7 +395,7 @@ def create_question_curation_graph(
         generated_candidate_count = _completed_candidate_count(
             repository, _batch_id(state)
         )
-        invocation_inputs.pop(_batch_id(state), None)
+        invocation_inputs.discard(_batch_id(state))
         return {
             "candidates": batch.model_dump(mode="json")["candidates"],
             "generation_phase": "enrichment",
@@ -430,37 +472,17 @@ def _batch_id(state: QuestionCurationState | QuestionCurationInput) -> str:
 
 
 def _sections_for_batch(
-    repository: ReviewRepository,
-    invocation_inputs: dict[str, tuple[tuple[str, ...], tuple[str, ...]]],
+    invocation_inputs: CurationInvocationInputProvider,
     batch_id: str,
 ) -> tuple[SourceSection, ...]:
-    cached = invocation_inputs.get(batch_id)
-    if cached is not None:
-        return section_sources(cached[0])
-    persisted = repository.curation_batch_input(batch_id)
-    source_excerpts = persisted.get("source_excerpts")
-    if not isinstance(source_excerpts, list) or not all(
-        isinstance(value, str) for value in source_excerpts
-    ):
-        raise ValueError("question curation source input is missing")
-    return section_sources(tuple(source_excerpts))
+    return section_sources(invocation_inputs.load(batch_id).source_excerpts)
 
 
 def _similar_titles_for_batch(
-    repository: ReviewRepository,
-    invocation_inputs: dict[str, tuple[tuple[str, ...], tuple[str, ...]]],
+    invocation_inputs: CurationInvocationInputProvider,
     batch_id: str,
 ) -> tuple[str, ...]:
-    cached = invocation_inputs.get(batch_id)
-    if cached is not None:
-        return cached[1]
-    persisted = repository.curation_batch_input(batch_id)
-    similar_questions = persisted.get("similar_questions", [])
-    if not isinstance(similar_questions, list) or not all(
-        isinstance(value, str) for value in similar_questions
-    ):
-        raise ValueError("question curation similar-title input is invalid")
-    return tuple(similar_questions)
+    return invocation_inputs.load(batch_id).similar_questions
 
 
 def _completed_seeds(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from app.agents.question_curation_contracts import (
     QuestionSeedChunk,
 )
 from app.graphs.question_curation import create_question_curation_graph
+from app.infrastructure.checkpoints import AgentCheckpointer
 from app.infrastructure.runtime_database import connect_runtime_database
 from app.review.curation_sections import SourceSection
 from app.review.repository import ReviewRepository
@@ -33,6 +35,17 @@ class FakeProviderError(RuntimeError):
 
 class FakeRateLimitedError(RuntimeError):
     code = "rate_limited"
+
+
+class FakeRetryAfterError(RuntimeError):
+    status_code = 503
+
+    class response:
+        headers = {"Retry-After": "1"}
+
+
+class FakeAnthropicOverloadError(RuntimeError):
+    status_code = 529
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +155,28 @@ def curation_input(batch_id: str, *, section_count: int = 2) -> dict[str, object
     }
 
 
+def persist_graph_input(
+    repository: ReviewRepository, input_value: dict[str, object]
+) -> dict[str, object]:
+    batch_id = str(input_value["batch_id"])
+    batch = repository.get_batch(batch_id)
+    persisted = {
+        **input_value,
+        "batchId": batch_id,
+        "sourceRefs": list(batch.source_refs),
+    }
+    repository._connection.execute(
+        "UPDATE agent_runs SET input_json = ? WHERE id = ?",
+        (json.dumps(persisted, ensure_ascii=False), batch.run_id),
+    )
+    repository._connection.commit()
+    safe: dict[str, object] = {"batch_id": batch_id}
+    revision_candidate_id = input_value.get("revision_candidate_id")
+    if revision_candidate_id is not None:
+        safe["revision_candidate_id"] = revision_candidate_id
+    return safe
+
+
 def seed(index: int) -> QuestionSeed:
     return QuestionSeed(
         question_text=f"问题 {index}？", source_ref=f"s1#section-{index:04d}"
@@ -235,6 +270,9 @@ def test_question_curation_agents_use_stage_specific_retry_policies() -> None:
     QuestionCurationAgents.create(factory, model_bindings={})
 
     discovery, enrichment, revision = factory.specs
+    assert discovery.structured_output_handle_errors is False
+    assert enrichment.structured_output_handle_errors is False
+    assert revision.structured_output_handle_errors is True
     assert (
         discovery.invocation_policy.max_output_tokens,
         discovery.invocation_policy.request_timeout_seconds,
@@ -295,7 +333,9 @@ async def test_graph_runs_bounded_discovery_then_enrichment(
     )
     graph = create_question_curation_graph(agents, repository=repository)
     result = await graph.ainvoke(
-        {**curation_input(batch.id), "source_excerpts": plain_sources(1)},
+        persist_graph_input(repository, {
+            **curation_input(batch.id), "source_excerpts": plain_sources(1)
+        }),
         context=context(tmp_path),
     )
 
@@ -319,7 +359,10 @@ async def test_structured_units_complete_without_discovery_agent_calls(
     graph = create_question_curation_graph(agents, repository=repository)
 
     result = await graph.ainvoke(
-        curation_input(batch.id, section_count=2), context=context(tmp_path)
+        persist_graph_input(
+            repository, curation_input(batch.id, section_count=2)
+        ),
+        context=context(tmp_path),
     )
 
     discovery_items = repository.list_curation_work_items(
@@ -368,10 +411,10 @@ async def test_discovery_wave_runs_three_provider_calls_concurrently(
     agents = BarrierAgents()
     graph = create_question_curation_graph(agents, repository=repository)
     task = asyncio.create_task(graph.ainvoke(
-        {
+        persist_graph_input(repository, {
             **curation_input(batch.id),
             "source_excerpts": plain_sources(6),
-        },
+        }),
         context=context(tmp_path),
     ))
 
@@ -413,10 +456,10 @@ async def test_graph_emits_monotonic_progress_after_each_bounded_wave(
     graph = create_question_curation_graph(agents, repository=repository)
     discovery_completed: list[int] = []
     async for state in graph.astream(
-        {
+        persist_graph_input(repository, {
             **curation_input(batch.id),
             "source_excerpts": plain_sources(7),
-        },
+        }),
         context=context(tmp_path),
         stream_mode="values",
     ):
@@ -451,10 +494,10 @@ async def test_discovery_wave_commits_siblings_before_reporting_one_failure(
 
     with pytest.raises(Exception):
         await graph.ainvoke(
-            {
+            persist_graph_input(repository, {
                 **curation_input(batch.id),
                 "source_excerpts": plain_sources(3),
-            },
+            }),
             context=context(tmp_path),
         )
 
@@ -465,8 +508,12 @@ async def test_discovery_wave_commits_siblings_before_reporting_one_failure(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure_type",
+    [FakeRateLimitedError, FakeRetryAfterError, FakeAnthropicOverloadError],
+)
 async def test_final_rate_limit_reduces_only_the_current_batch_to_one(
-    repository: ReviewRepository, batch, tmp_path: Path
+    repository: ReviewRepository, batch, tmp_path: Path, failure_type
 ):
     class RateLimitedAgents(RecordingCurationAgents):
         def __init__(self):
@@ -475,7 +522,7 @@ async def test_final_rate_limit_reduces_only_the_current_batch_to_one(
         async def discover(self, sections, *, context, config, unit_index):
             self.discovery_calls.append(DiscoveryCall(unit_index, tuple(sections)))
             if unit_index == 1:
-                raise FakeRateLimitedError("private provider overload response")
+                raise failure_type("private provider overload response")
             await asyncio.sleep(0.01)
             return QuestionSeedChunk(seeds=[QuestionSeed(
                 question_text=f"说明主题 {unit_index} 的机制是什么？",
@@ -488,10 +535,10 @@ async def test_final_rate_limit_reduces_only_the_current_batch_to_one(
 
     with pytest.raises(Exception) as failure:
         await graph.ainvoke(
-            {
+            persist_graph_input(repository, {
                 **curation_input(batch.id),
                 "source_excerpts": plain_sources(3),
-            },
+            }),
             context=context(tmp_path),
         )
 
@@ -527,10 +574,10 @@ async def test_graph_cancellation_interrupts_every_started_item(
     agents = BlockingAgents()
     graph = create_question_curation_graph(agents, repository=repository)
     task = asyncio.create_task(graph.ainvoke(
-        {
+        persist_graph_input(repository, {
             **curation_input(batch.id),
             "source_excerpts": plain_sources(3),
-        },
+        }),
         context=context(tmp_path),
     ))
     await asyncio.wait_for(agents.started.wait(), timeout=1)
@@ -585,10 +632,10 @@ async def test_enrichment_uses_only_bounded_active_titles_not_prior_outputs(
     agents = DynamicEnrichmentAgents()
     graph = create_question_curation_graph(agents, repository=repository)
     result = await graph.ainvoke(
-        {
+        persist_graph_input(repository, {
             **curation_input(batch.id, section_count=6),
             "similar_questions": [f"active title {index}" for index in range(100)],
-        },
+        }),
         context=context(tmp_path),
     )
 
@@ -609,6 +656,147 @@ async def test_enrichment_uses_only_bounded_active_titles_not_prior_outputs(
 
 
 @pytest.mark.asyncio
+async def test_enrichment_ranks_active_titles_for_each_seed_chunk(
+    repository: ReviewRepository, batch, tmp_path: Path
+):
+    class ChunkAgents(RecordingCurationAgents):
+        async def enrich(
+            self, seeds, *, sections, known_questions, context, config, unit_index
+        ):
+            self.enrichment_calls.append(EnrichmentCall(
+                unit_index,
+                tuple(seeds),
+                tuple(sections),
+                tuple(known_questions),
+            ))
+            return QuestionCandidateChunk(candidates=[])
+
+    agents = ChunkAgents()
+    graph = create_question_curation_graph(agents, repository=repository)
+    questions = [
+        "alphaalpha cache invalidation?",
+        "bravobravo cache stampede?",
+        "charliecharlie write through?",
+        "deltadelta transaction isolation?",
+        "echoecho deadlock prevention?",
+        "foxtrotfoxtrot lock fairness?",
+    ]
+    source = "s1:questions.md\n" + "\n".join(
+        f"{index}、{question}\nanswer-{index}"
+        for index, question in enumerate(questions, start=1)
+    )
+    left_titles = [
+        f"{question} version-{variant}"
+        for question in questions[:3]
+        for variant in range(10)
+    ]
+    right_titles = [
+        f"{question} version-{variant}"
+        for question in questions[3:]
+        for variant in range(10)
+    ]
+
+    await graph.ainvoke(
+        persist_graph_input(repository, {
+            **curation_input(batch.id, section_count=6),
+            "source_excerpts": [source],
+            "similar_questions": [*left_titles, *right_titles],
+        }),
+        context=context(tmp_path),
+    )
+
+    calls = sorted(agents.enrichment_calls, key=lambda call: call.unit_index)
+    assert len(calls) == 2
+    assert all(len(call.known_questions) == 20 for call in calls)
+    assert all(
+        any(title.startswith(question) for question in questions[:3])
+        and not any(title.startswith(question) for question in questions[3:])
+        for title in calls[0].known_questions
+    )
+    assert all(
+        any(title.startswith(question) for question in questions[3:])
+        and not any(title.startswith(question) for question in questions[:3])
+        for title in calls[1].known_questions
+    )
+
+
+@pytest.mark.asyncio
+async def test_resume_progress_starts_at_persisted_candidate_count(
+    repository: ReviewRepository, batch, tmp_path: Path
+):
+    class ResumeProgressAgents(RecordingCurationAgents):
+        async def enrich(
+            self, seeds, *, sections, known_questions, context, config, unit_index
+        ):
+            self.enrichment_calls.append(EnrichmentCall(
+                unit_index,
+                tuple(seeds),
+                tuple(sections),
+                tuple(known_questions),
+            ))
+            return QuestionCandidateChunk(candidates=[
+                candidate(unit_index * 3 + ordinal + 1)
+                for ordinal, _seed in enumerate(seeds)
+            ])
+
+    agents = ResumeProgressAgents()
+    graph = create_question_curation_graph(agents, repository=repository)
+    graph_input = persist_graph_input(
+        repository, curation_input(batch.id, section_count=4)
+    )
+    first = await graph.ainvoke(graph_input, context=context(tmp_path))
+    persisted_count = first["generated_candidate_count"]
+    resumed_counts: list[int] = []
+
+    async for state in graph.astream(
+        graph_input,
+        context=replace(context(tmp_path), run_id="r2"),
+        stream_mode="values",
+    ):
+        if state.get("generation_phase") in {"discovery", "enrichment"}:
+            resumed_counts.append(int(state.get("generated_candidate_count", 0)))
+
+    assert persisted_count == 4
+    assert resumed_counts
+    assert resumed_counts[0] >= persisted_count
+    assert resumed_counts == sorted(resumed_counts)
+
+
+@pytest.mark.asyncio
+async def test_persisted_graph_checkpoint_contains_no_source_corpus_or_titles(
+    repository: ReviewRepository, batch, tmp_path: Path
+):
+    source_marker = "DO_NOT_CHECKPOINT_SOURCE_CORPUS_4A01"
+    title_marker = "DO_NOT_CHECKPOINT_SIMILAR_TITLE_9B02"
+    agents = RecordingCurationAgents(
+        enrichment_outputs=[QuestionCandidateChunk(candidates=[])]
+    )
+    (tmp_path / ".cyber-interview-agent").mkdir(exist_ok=True)
+    async with AgentCheckpointer(tmp_path).open() as saver:
+        graph = create_question_curation_graph(
+            agents, repository=repository, checkpointer=saver
+        )
+        await graph.ainvoke(
+            persist_graph_input(repository, {
+                **curation_input(batch.id, section_count=1),
+                "source_excerpts": [f"s1:source.md\n1、{source_marker}？\n答案"],
+                "similar_questions": [title_marker],
+            }),
+            config={"configurable": {"thread_id": "safe-checkpoint"}},
+            context=context(tmp_path),
+        )
+        persisted = await saver.aget_tuple(
+            {"configurable": {"thread_id": "safe-checkpoint"}}
+        )
+
+        assert persisted is not None
+        checkpoint_bytes = saver.serde.dumps_typed(persisted.checkpoint)[1]
+
+    assert source_marker.encode() not in checkpoint_bytes
+    assert title_marker.encode() not in checkpoint_bytes
+
+
+@pytest.mark.asyncio
 async def test_graph_output_state_excludes_source_text_and_unbounded_titles(
     repository: ReviewRepository, batch, tmp_path: Path
 ):
@@ -618,10 +806,10 @@ async def test_graph_output_state_excludes_source_text_and_unbounded_titles(
     graph = create_question_curation_graph(agents, repository=repository)
 
     result = await graph.ainvoke(
-        {
+        persist_graph_input(repository, {
             **curation_input(batch.id, section_count=1),
             "similar_questions": [f"active title {index}" for index in range(100)],
-        },
+        }),
         context=context(tmp_path),
     )
 
@@ -685,10 +873,10 @@ async def test_retry_reuses_completed_discovery_item(
 
     agents = ResumeAgents()
     graph = create_question_curation_graph(agents, repository=repository)
-    graph_input = {
+    graph_input = persist_graph_input(repository, {
         **curation_input(batch.id),
         "source_excerpts": plain_sources(2),
-    }
+    })
     with pytest.raises(Exception):
         await graph.ainvoke(
             graph_input, context=context(tmp_path)
@@ -714,11 +902,11 @@ async def test_single_revision_bypasses_discovery_and_enrichment(
     )
     graph = create_question_curation_graph(agents, repository=repository)
     result = await graph.ainvoke(
-        {
+        persist_graph_input(repository, {
             **curation_input(batch.id),
             "revision_candidate_id": "candidate-1",
             "rewrite_feedback": "更具体",
-        },
+        }),
         context=context(tmp_path),
     )
 
@@ -756,7 +944,10 @@ async def test_graph_caps_dense_sources_at_200_with_explicit_warning(
     graph = create_question_curation_graph(agents, repository=repository)
 
     result = await graph.ainvoke(
-        curation_input(batch.id, section_count=205), context=context(tmp_path)
+        persist_graph_input(
+            repository, curation_input(batch.id, section_count=205)
+        ),
+        context=context(tmp_path),
     )
 
     assert len(result["candidates"]) == 200

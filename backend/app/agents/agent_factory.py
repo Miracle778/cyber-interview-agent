@@ -30,6 +30,7 @@ class AgentSpec:
     tools: tuple[BaseTool, ...] = ()
     middleware: tuple[AgentMiddleware, ...] = ()
     response_format: type[BaseModel] | type[Any] | dict[str, Any] | None = None
+    structured_output_handle_errors: bool = True
     invocation_policy: ModelInvocationPolicy | None = None
 
     def __post_init__(self) -> None:
@@ -109,7 +110,10 @@ class AgentFactory:
             response_format=(
                 None
                 if spec.response_format is None
-                else ToolStrategy(spec.response_format)
+                else ToolStrategy(
+                    spec.response_format,
+                    handle_errors=spec.structured_output_handle_errors,
+                )
             ),
             context_schema=AgentContext,
             name=spec.execution_name,

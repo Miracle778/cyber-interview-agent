@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import pytest
-from langchain.agents.structured_output import ToolStrategy
+from langchain.agents.structured_output import (
+    StructuredOutputValidationError,
+    ToolStrategy,
+)
 from pathlib import Path
 from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models import BaseChatModel
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.outputs import ChatResult
 from langchain_openai import ChatOpenAI
 
 from app.agents.context import AgentContext
@@ -167,7 +171,9 @@ def test_agent_factory_delegates_to_create_agent_without_invocation_wrapper(
         "question_generation",
         "provider-model-1",
     )
-    assert isinstance(captured["create"].pop("response_format"), ToolStrategy)
+    strategy = captured["create"].pop("response_format")
+    assert isinstance(strategy, ToolStrategy)
+    assert strategy.handle_errors is True
     middleware = captured["create"].pop("middleware")
     assert len(middleware) == 1
     assert isinstance(middleware[0], AgentTraceMiddleware)
@@ -225,6 +231,68 @@ async def test_agent_factory_returns_a_real_runnable_agent_graph():
     )
 
     assert result["messages"][-1].text == "Agent response"
+
+
+@pytest.mark.asyncio
+async def test_agent_factory_can_disable_tool_strategy_schema_retries() -> None:
+    class CountingStructuredFake(GenericFakeChatModel):
+        calls: int = 0
+
+        def bind_tools(self, _tools, **_kwargs):
+            return self
+
+        def _generate(self, *args, **kwargs) -> ChatResult:
+            self.calls += 1
+            return super()._generate(*args, **kwargs)
+
+    model = CountingStructuredFake(messages=iter([
+        AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "AnswerEvaluation",
+                "args": {"score": "good"},
+                "id": "invalid-1",
+                "type": "tool_call",
+            }]),
+        AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "AnswerEvaluation",
+                "args": {"score": "good"},
+                "id": "invalid-2",
+                "type": "tool_call",
+            }]),
+    ]))
+
+    class StubResolver:
+        def resolve(self, *, role, provider_model_id):
+            return model
+
+    agent = AgentFactory(StubResolver()).create(
+        AgentSpec(
+            role="question_generation",
+            execution_name="question_discovery",
+            prompt=PromptSpec(id="test", version="1.0", system="Discover"),
+            response_format=AnswerEvaluation,
+            structured_output_handle_errors=False,
+        ),
+        model_bindings={"question_generation": "model-1"},
+    )
+    context = AgentContext(
+        workspace_id="w1",
+        workspace_root=Path("/workspace"),
+        session_id="s1",
+        run_id="r1",
+        allowed_tools=frozenset(),
+        allowed_scopes=frozenset(),
+    )
+
+    with pytest.raises(StructuredOutputValidationError):
+        await agent.ainvoke(
+            {"messages": [HumanMessage(content="discover")]}, context=context
+        )
+
+    assert model.calls == 1
 
 
 def test_agent_factory_uses_validated_session_model_override(monkeypatch):

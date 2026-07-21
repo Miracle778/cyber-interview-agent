@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+import httpx
 import pytest
 
 from app.review.curation_scheduler import curation_error_code, run_curation_wave
@@ -146,3 +147,60 @@ def test_transport_failures_normalize_without_provider_body(
 ) -> None:
     assert curation_error_code(error) == expected
     assert "private" not in curation_error_code(error)
+
+
+class _Response:
+    def __init__(self, headers: dict[str, str]) -> None:
+        self.headers = headers
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (
+            type(
+                "AnthropicOverloadedError",
+                (RuntimeError,),
+                {"status_code": 529},
+            )("private overload body"),
+            "rate_limited",
+        ),
+        (
+            type(
+                "OpenAIServiceUnavailableError",
+                (RuntimeError,),
+                {
+                    "status_code": 503,
+                    "response": _Response({"Retry-After": "2"}),
+                },
+            )("private retry body"),
+            "rate_limited",
+        ),
+        (
+            httpx.ReadTimeout(
+                "private timeout",
+                request=httpx.Request("POST", "https://private.invalid"),
+            ),
+            "provider_timeout",
+        ),
+        (
+            httpx.ConnectError(
+                "private connection",
+                request=httpx.Request("POST", "https://private.invalid"),
+            ),
+            "network_error",
+        ),
+        (
+            type("APITimeoutError", (RuntimeError,), {})("private timeout"),
+            "provider_timeout",
+        ),
+        (
+            type("APIConnectionError", (RuntimeError,), {})("private connection"),
+            "network_error",
+        ),
+    ],
+)
+def test_real_provider_failure_shapes_map_to_safe_retry_codes(
+    error: BaseException, expected: str
+) -> None:
+    assert curation_error_code(error) == expected
