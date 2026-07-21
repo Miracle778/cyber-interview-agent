@@ -26,7 +26,7 @@ from app.graphs.review_discussion import create_review_discussion_graph
 from app.graphs.review_round import create_review_round_graph
 from app.infrastructure.checkpoints import AgentCheckpointer
 from app.knowledge.source_registry import KnowledgeSourceService
-from app.review.errors import InputAlreadyResolvedError
+from app.review.errors import InputAlreadyResolvedError, ReviewConflictError
 from app.review.models import QuestionSnapshot
 from app.review.repository import ReviewRepository
 
@@ -59,6 +59,36 @@ class EmptyCurationAgents:
 
     async def enrich(self, *_args, **_kwargs):
         return QuestionCandidateChunk(candidates=[])
+
+
+class FailingDiscoveryAgents(EmptyCurationAgents):
+    async def discover(self, *_args, **_kwargs):
+        raise RuntimeError("private provider failure")
+
+
+def _real_curation_application(tmp_path: Path, agents):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    def real_curation_graph_factory(kind, **dependencies):
+        if kind in {"question.curate", "question.revise"}:
+            return create_question_curation_graph(
+                agents,
+                repository=dependencies["review_repository"],
+                checkpointer=dependencies["checkpointer"],
+            )
+        return _graph_factory(kind, **dependencies)
+
+    application = AgentApplication(
+        workspace_resolver=lambda _workspace_id: workspace,
+        workspace_ids=lambda: ("w1",),
+        model_bindings=lambda _workspace_id: {},
+        graph_factory=real_curation_graph_factory,
+    )
+    api = FastAPI()
+    api.include_router(review_router)
+    api.dependency_overrides[get_agent_application] = lambda: application
+    return application, api, workspace
 
 
 def _graph_factory(kind, **dependencies):
@@ -484,28 +514,10 @@ async def test_question_batch_persists_agent_candidates(api, application) -> Non
 async def test_public_question_batch_reaches_real_graph_without_checkpointing_corpus(
     tmp_path: Path, monkeypatch
 ) -> None:
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
     agents = EmptyCurationAgents()
-
-    def real_curation_graph_factory(kind, **dependencies):
-        if kind in {"question.curate", "question.revise"}:
-            return create_question_curation_graph(
-                agents,
-                repository=dependencies["review_repository"],
-                checkpointer=dependencies["checkpointer"],
-            )
-        return _graph_factory(kind, **dependencies)
-
-    application = AgentApplication(
-        workspace_resolver=lambda _workspace_id: workspace,
-        workspace_ids=lambda: ("w1",),
-        model_bindings=lambda _workspace_id: {},
-        graph_factory=real_curation_graph_factory,
+    application, api, workspace = _real_curation_application(
+        tmp_path, agents
     )
-    api = FastAPI()
-    api.include_router(review_router)
-    api.dependency_overrides[get_agent_application] = lambda: application
     source_marker = "PUBLIC_BATCH_CORPUS_MUST_NOT_ENTER_CHECKPOINT_7C31"
     source = await KnowledgeSourceService(
         workspace, workspace_id="w1"
@@ -558,5 +570,88 @@ async def test_public_question_batch_reaches_real_graph_without_checkpointing_co
             checkpoint_bytes = saver.serde.dumps_typed(persisted.checkpoint)[1]
 
         assert source_marker.encode() not in checkpoint_bytes
+    finally:
+        await application.close()
+
+
+@pytest.mark.asyncio
+async def test_public_question_batch_graph_failure_terminalizes_without_session_projection(
+    tmp_path: Path, caplog
+) -> None:
+    application, api, workspace = _real_curation_application(
+        tmp_path, FailingDiscoveryAgents()
+    )
+    source = await KnowledgeSourceService(
+        workspace, workspace_id="w1"
+    ).create(
+        original_filename="plain.md",
+        content_type="text/markdown",
+        content=("plain source without question anchors " * 80).encode(),
+    )
+    caplog.set_level("ERROR", logger="app.application.execution_service")
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=api), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/review/question-batches",
+                json={"workspaceId": "w1", "sourceRefs": [source.id]},
+            )
+
+        assert response.status_code == 202, response.text
+        batch = response.json()
+        terminal = await application.wait_execution(batch["runId"])
+        review = application.review("w1")
+        assert terminal.status == "failed"
+        assert review.repository.get_batch(batch["id"]).status == "failed"
+        assert {
+            item.status
+            for item in review.repository.list_curation_work_items(batch["id"])
+        } == {"failed"}
+        assert "failed to persist agent execution failure" not in caplog.text
+    finally:
+        await application.close()
+
+
+@pytest.mark.asyncio
+async def test_public_question_batch_finalization_rejection_terminalizes_without_session_projection(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    application, api, workspace = _real_curation_application(
+        tmp_path, EmptyCurationAgents()
+    )
+    source = await KnowledgeSourceService(
+        workspace, workspace_id="w1"
+    ).create(
+        original_filename="structured.md",
+        content_type="text/markdown",
+        content="1、What is a safe finalization boundary?\nAnswer.".encode(),
+    )
+
+    def reject_finalization(*_args, **_kwargs):
+        raise ReviewConflictError("finalization claim rejected")
+
+    monkeypatch.setattr(
+        ReviewRepository,
+        "claim_curation_finalization",
+        reject_finalization,
+    )
+    caplog.set_level("ERROR", logger="app.application.execution_service")
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=api), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/review/question-batches",
+                json={"workspaceId": "w1", "sourceRefs": [source.id]},
+            )
+
+        assert response.status_code == 202, response.text
+        batch = response.json()
+        terminal = await application.wait_execution(batch["runId"])
+        review = application.review("w1")
+        assert terminal.status == "failed"
+        assert review.repository.get_batch(batch["id"]).status == "failed"
+        assert "failed to persist agent execution failure" not in caplog.text
     finally:
         await application.close()

@@ -923,6 +923,40 @@ class AgentExecutionService:
                 ),
             )
 
+        def project_curation_failure_if_present() -> None:
+            if self._review_repository is None:
+                return
+            try:
+                curation = self._review_repository.get_curation_session(
+                    session.id
+                )
+            except LookupError:
+                return
+            except Exception as projection_error:
+                logger.error(
+                    "failed to project curation failure",
+                    extra={
+                        "execution_id": execution.id,
+                        "error_code": type(projection_error).__name__,
+                    },
+                )
+                return
+            try:
+                self._review_repository.update_curation_progress(
+                    session.id,
+                    stage="failed",
+                    completed_units=curation.completed_units,
+                    total_units=curation.total_units,
+                )
+            except Exception as projection_error:
+                logger.error(
+                    "failed to project curation failure",
+                    extra={
+                        "execution_id": execution.id,
+                        "error_code": type(projection_error).__name__,
+                    },
+                )
+
         async def persist_question_candidates(state: dict[str, Any]) -> None:
             if self._review_repository is None:
                 raise RuntimeError("question curation is not configured")
@@ -943,6 +977,7 @@ class AgentExecutionService:
                     or current_batch.status in {"paused", "terminated"}
                 ):
                     return "cancelled"
+                has_curation_projection = True
                 try:
                     active_batch_id = (
                         self._review_repository.get_curation_session(
@@ -950,10 +985,14 @@ class AgentExecutionService:
                         ).active_batch_id
                     )
                 except LookupError:
+                    has_curation_projection = False
                     active_batch_id = None
                 if (
                     current_batch.run_id != execution.id
-                    or active_batch_id != batch_id
+                    or (
+                        has_curation_projection
+                        and active_batch_id != batch_id
+                    )
                 ):
                     return "interrupted"
                 return "failed"
@@ -1632,15 +1671,7 @@ class AgentExecutionService:
                     failed_batch.status == "failed"
                     and failed_batch.run_id == execution.id
                 ):
-                    curation = self._review_repository.get_curation_session(
-                        session.id
-                    )
-                    self._review_repository.update_curation_progress(
-                        session.id,
-                        stage="failed",
-                        completed_units=curation.completed_units,
-                        total_units=curation.total_units,
-                    )
+                    project_curation_failure_if_present()
             current = self._repository.get_execution(execution.id)
             if current.status == "running":
                 terminal = self._repository.transition_execution(
@@ -1812,15 +1843,7 @@ class AgentExecutionService:
                         failed_batch.status == "failed"
                         and failed_batch.run_id == execution.id
                     ):
-                        curation = self._review_repository.get_curation_session(
-                            session.id
-                        )
-                        self._review_repository.update_curation_progress(
-                            session.id,
-                            stage="failed",
-                            completed_units=curation.completed_units,
-                            total_units=curation.total_units,
-                        )
+                        project_curation_failure_if_present()
                 current = self._repository.get_execution(execution.id)
                 if current.status == "running":
                     self._repository.transition_execution(
