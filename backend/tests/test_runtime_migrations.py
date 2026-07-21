@@ -35,6 +35,8 @@ R2_SESSION_EXPERIENCE_TABLES = {
     "review_question_source_links",
 }
 
+R2_PROGRESSIVE_CURATION_TABLES = {"review_curation_work_items"}
+
 R3_TABLES = {
     "profile_materials",
     "profile_material_versions",
@@ -98,14 +100,41 @@ def _create_runtime_at_version(workspace_root: Path, version: int) -> sqlite3.Co
 def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
     connection = connect_runtime_database(tmp_path)
 
-    assert R2_TABLES | R2_SESSION_EXPERIENCE_TABLES <= _tables(connection)
+    assert R2_TABLES | R2_SESSION_EXPERIENCE_TABLES | R2_PROGRESSIVE_CURATION_TABLES <= _tables(connection)
     assert [
         row[0]
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
     assert "agent_context_usage" in _tables(connection)
+    connection.close()
+
+
+def test_migration_018_adds_bounded_work_items(tmp_path: Path) -> None:
+    connection = connect_runtime_database(tmp_path)
+
+    columns = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info(review_curation_work_items)"
+        )
+    }
+    assert columns == {
+        "id",
+        "batch_id",
+        "stage",
+        "unit_index",
+        "input_digest",
+        "source_refs_json",
+        "status",
+        "output_json",
+        "attempt_count",
+        "last_error_code",
+        "created_at",
+        "updated_at",
+    }
+    assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
     connection.close()
 
 
@@ -135,7 +164,7 @@ def test_existing_generation_two_database_applies_r2_migration(
 
     reopened = connect_runtime_database(tmp_path)
 
-    assert R2_TABLES | R2_SESSION_EXPERIENCE_TABLES <= _tables(reopened)
+    assert R2_TABLES | R2_SESSION_EXPERIENCE_TABLES | R2_PROGRESSIVE_CURATION_TABLES <= _tables(reopened)
     assert reopened.execute(
         "SELECT title FROM agent_sessions WHERE id = 'keep'"
     ).fetchone()[0] == "keep me"
@@ -144,7 +173,7 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
     reopened.close()
 
 

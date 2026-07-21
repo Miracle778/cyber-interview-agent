@@ -14,6 +14,7 @@ def workspace(tmp_path: Path) -> Path:
         "artifacts/profile/materials",
         "knowledge-vault",
         ".cyber-interview-agent/diagnostics",
+        ".cyber-interview-agent/agent-traces",
     ):
         (root / relative).mkdir(parents=True, exist_ok=True)
     return root
@@ -153,3 +154,15 @@ def test_profile_materials_scope_rejects_traversal_to_vault(
         )
 
     assert caught.value.code == "workspace_path_denied"
+
+
+def test_agent_trace_scope_is_private_and_cannot_escape(
+    policy: WorkspacePathPolicy, workspace: Path
+) -> None:
+    trace = workspace / ".cyber-interview-agent/agent-traces/s1/r1.jsonl"
+    trace.parent.mkdir()
+    trace.write_text("{}\n", encoding="utf-8")
+
+    assert policy.resolve_for_read("diagnostics.agent_traces", "s1/r1.jsonl") == trace.resolve()
+    with pytest.raises(PathPolicyError):
+        policy.resolve_for_read("diagnostics.agent_traces", "../diagnostics/probe.txt")

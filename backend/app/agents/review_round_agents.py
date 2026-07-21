@@ -48,6 +48,7 @@ class ReviewRoundAgents:
             evaluator=factory.create(
                 AgentSpec(
                     role="answer_evaluation",
+                    execution_name="review_round_evaluator",
                     prompt=REVIEW_ROUND_EVALUATION_PROMPT,
                     middleware=middleware,
                     response_format=RoundAnswerEvaluation,
@@ -59,6 +60,7 @@ class ReviewRoundAgents:
             reporter=factory.create(
                 AgentSpec(
                     role="report_summarization",
+                    execution_name="review_round_reporter",
                     prompt=REVIEW_ROUND_REPORT_PROMPT,
                     middleware=middleware,
                     response_format=ReviewSessionReportOutput,
@@ -70,6 +72,7 @@ class ReviewRoundAgents:
             discussion=factory.create(
                 AgentSpec(
                     role="agent_chat",
+                    execution_name="review_discussion",
                     prompt=REVIEW_DISCUSSION_PROMPT,
                     tools=tuple(discussion_tools),
                     middleware=middleware,

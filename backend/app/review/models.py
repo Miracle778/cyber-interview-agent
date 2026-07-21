@@ -36,6 +36,10 @@ CurationStage: TypeAlias = Literal[
 AttemptStatus: TypeAlias = Literal[
     "evaluating", "waiting_for_follow_up", "completed", "evaluation_failed"
 ]
+CurationWorkStage: TypeAlias = Literal["discovery", "enrichment"]
+CurationWorkStatus: TypeAlias = Literal[
+    "pending", "running", "completed", "failed"
+]
 
 _DIFFICULTIES = frozenset({"easy", "medium", "hard"})
 _MODES = frozenset(
@@ -152,6 +156,22 @@ class QuestionBatchRecord:
     source_refs: tuple[str, ...]
     rewrite_of_batch_id: str | None
     status: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class CurationWorkItemRecord:
+    id: str
+    batch_id: str
+    stage: CurationWorkStage
+    unit_index: int
+    input_digest: str
+    source_refs: tuple[str, ...]
+    status: CurationWorkStatus
+    output: dict[str, object] | None
+    attempt_count: int
+    last_error_code: str | None
     created_at: str
     updated_at: str
 

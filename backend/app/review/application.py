@@ -188,7 +188,7 @@ class ReviewApplication:
         for index, source in enumerate(sources, start=1):
             text = extract_text(self.workspace_root / source.stored_path)
             excerpts.append(
-                f"{source.id}:{source.original_filename}\n{text[:20_000]}"
+                f"{source.id}:{source.original_filename}\n{text}"
             )
             self.repository.update_curation_progress(
                 session.id,
@@ -213,6 +213,7 @@ class ReviewApplication:
             session,
             input={
                 "batchId": batch.id,
+                "batch_id": batch.id,
                 "source_excerpts": excerpts,
                 "similar_questions": [
                     item.snapshot.question_text
@@ -307,6 +308,7 @@ class ReviewApplication:
             "context_usage": self.sessions.repository.context_usage(session_id),
             "stage": record.stage,
             "progress": {
+                "phase": self._active_curation_phase(record),
                 "completed": record.completed_units,
                 "total": record.total_units,
             },
@@ -365,7 +367,8 @@ class ReviewApplication:
             session_id=session_id,
             source_refs=curation.source_refs,
             rewrite_feedback=None,
-            rewrite_of_batch_id=curation.active_batch_id,
+            rewrite_of_batch_id=None,
+            resume_batch_id=curation.active_batch_id,
         )
         return await self.curation_resource(session_id)
 
@@ -1406,6 +1409,7 @@ class ReviewApplication:
         rewrite_of_batch_id: str | None,
         revision_candidate_id: str | None = None,
         revision_context: str | None = None,
+        resume_batch_id: str | None = None,
     ):
         session = self.sessions.get(session_id)
         source_service = KnowledgeSourceService(
@@ -1417,14 +1421,18 @@ class ReviewApplication:
                 source = await source_service.get(source_id)
                 text = extract_text(self.workspace_root / source.stored_path)
                 excerpts.append(
-                    f"{source.id}:{source.original_filename}\n{text[:20_000]}"
+                    f"{source.id}:{source.original_filename}\n{text}"
                 )
-        batch = self.repository.create_batch(
-            workspace_id=self.workspace_id,
-            session_id=session_id,
-            run_id=None,
-            source_refs=source_refs,
-            rewrite_of_batch_id=rewrite_of_batch_id,
+        batch = (
+            self.repository.get_batch(resume_batch_id)
+            if resume_batch_id is not None
+            else self.repository.create_batch(
+                workspace_id=self.workspace_id,
+                session_id=session_id,
+                run_id=None,
+                source_refs=source_refs,
+                rewrite_of_batch_id=rewrite_of_batch_id,
+            )
         )
         current = self.repository.get_curation_session(session_id)
         self.repository.update_curation_progress(
@@ -1434,10 +1442,11 @@ class ReviewApplication:
             total_units=max(1, len(excerpts)),
             active_batch_id=batch.id,
         )
-        execution = await self.executions.start(
+        execution = await self.executions.prepare(
             session,
             input={
                 "batchId": batch.id,
+                "batch_id": batch.id,
                 "source_excerpts": excerpts,
                 "similar_questions": [
                     item.snapshot.question_text
@@ -1447,10 +1456,15 @@ class ReviewApplication:
                 ],
                 "rewrite_feedback": rewrite_feedback,
                 "revisionCandidateId": revision_candidate_id,
+                "revision_candidate_id": revision_candidate_id,
             },
             project_input_message=False,
         )
-        self.repository.attach_batch_run(batch.id, execution.id)
+        if resume_batch_id is not None:
+            self.repository.reattach_batch_run(batch.id, execution.id)
+        else:
+            self.repository.attach_batch_run(batch.id, execution.id)
+        self.executions.run_prepared(execution, graph_input=execution.input)
         await self.timeline.append(
             session_id=session_id,
             execution_id=execution.id,
@@ -1464,6 +1478,14 @@ class ReviewApplication:
             },
         )
         return execution
+
+    def _active_curation_phase(self, record) -> str | None:
+        if record.stage != "generating" or record.active_batch_id is None:
+            return None
+        items = self.repository.list_curation_work_items(record.active_batch_id)
+        if any(item.stage == "enrichment" for item in items):
+            return "enrichment"
+        return "discovery" if items else None
 
     def _summarize_curation(self, session_id: str):
         current = self.repository.get_curation_session(session_id)

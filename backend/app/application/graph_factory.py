@@ -6,7 +6,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
 from app.agents.agent_factory import AgentFactory, ModelOverride
-from app.agents.question_curation_agent import QuestionCurationAgent
+from app.agents.question_curation_agent import QuestionCurationAgents
 from app.agents.curation_command_agents import CurationCommandAgents
 from app.agents.context_assembly import model_token_counter
 from app.agents.single_review_agents import SingleReviewAgents
@@ -16,7 +16,10 @@ from app.graphs.question_curation import create_question_curation_graph
 from app.graphs.review import create_review_graph
 from app.graphs.review_discussion import create_review_discussion_graph
 from app.graphs.review_round import create_review_round_graph
-from app.middleware.middleware_stack import REVIEW_ROUND_BUDGET, build_default_middleware
+from app.middleware.middleware_stack import (
+    REVIEW_ROUND_BUDGET,
+    build_default_middleware,
+)
 from app.middleware.tool_policy_middleware import ToolPolicyMiddleware
 
 
@@ -33,6 +36,10 @@ class ProductionGraphFactory:
     def __init__(self, agents: AgentFactory) -> None:
         self._agents = agents
 
+    @property
+    def trace_writer(self):
+        return getattr(self._agents, "trace_writer", None)
+
     def create_curation_command_agents(
         self,
         *,
@@ -40,6 +47,7 @@ class ProductionGraphFactory:
         projection,
         audit,
         observability,
+        publish_event=None,
         interaction_override: ModelOverride | None = None,
     ):
         context_limit_tokens = min(
@@ -60,10 +68,12 @@ class ProductionGraphFactory:
         )
         middleware = build_default_middleware(
             summary_model=summary_model,
+            summary_provider_model_id=model_bindings["report_summarization"],
+            trace_writer=self.trace_writer,
             projection=projection,
             policy=ToolPolicyMiddleware(
                 audit=audit, required_scopes={},
-                publish_event=dependencies.get("publish_event"),
+                publish_event=publish_event,
             ),
             observability=observability,
             interrupt_on={},
@@ -96,6 +106,8 @@ class ProductionGraphFactory:
             )
             middleware = build_default_middleware(
                 summary_model=summary_model,
+                summary_provider_model_id=bindings["report_summarization"],
+                trace_writer=self.trace_writer,
                 projection=dependencies["projection"],
                 policy=ToolPolicyMiddleware(
                     audit=dependencies["audit"], required_scopes={},
@@ -107,7 +119,7 @@ class ProductionGraphFactory:
                 context_limit_tokens=context_limit_tokens,
             )
             if kind in {"question.curate", "question.revise"}:
-                agent = QuestionCurationAgent.create(
+                agents = QuestionCurationAgents.create(
                     self._agents,
                     model_bindings=bindings,
                     middleware=middleware,
@@ -115,7 +127,9 @@ class ProductionGraphFactory:
                     checkpointer=dependencies["checkpointer"],
                 )
                 return create_question_curation_graph(
-                    agent, checkpointer=dependencies["checkpointer"]
+                    agents,
+                    repository=dependencies["review_repository"],
+                    checkpointer=dependencies["checkpointer"],
                 )
             agents = ReviewRoundAgents.create(
                 self._agents,
@@ -150,6 +164,8 @@ class ProductionGraphFactory:
             )
             middleware = build_default_middleware(
                 summary_model=summary_model,
+                summary_provider_model_id=bindings["report_summarization"],
+                trace_writer=self.trace_writer,
                 projection=dependencies["projection"],
                 policy=ToolPolicyMiddleware(
                     audit=dependencies["audit"], required_scopes={},

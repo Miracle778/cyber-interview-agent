@@ -2046,8 +2046,10 @@ select:disabled {
 .curation-stage-history li > span { width: 8px; height: 8px; margin-top: 5px; background: var(--primary); border: 2px solid var(--primary-soft); border-radius: 50%; }
 .curation-stage-history p { line-height: 1.45; }
 .curation-stage-history time { color: var(--text-soft); font-size: .7rem; }
-.curation-retry { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-2); margin-top: var(--space-4); padding: var(--space-3); color: var(--danger); background: var(--danger-soft); border: 1px solid color-mix(in srgb, var(--danger) 24%, var(--border)); border-radius: var(--radius-md); }
-.curation-retry p { margin-top: 4px; color: var(--text-muted); font-size: .78rem; line-height: 1.45; }
+.curation-retry, .curation-progress { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-2); margin-top: var(--space-4); padding: var(--space-3); border: 1px solid; border-radius: var(--radius-md); }
+.curation-retry { color: var(--danger); background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 24%, var(--border)); }
+.curation-progress { color: var(--primary); background: var(--primary-soft); border-color: color-mix(in srgb, var(--primary) 24%, var(--border)); }
+.curation-retry p, .curation-progress p { margin-top: 4px; color: var(--text-muted); font-size: .78rem; line-height: 1.45; }
 .curation-retry code { display: inline-block; margin-top: var(--space-2); color: var(--danger); font-size: .72rem; }
 .curation-retry .btn { grid-column: 1 / -1; width: 100%; }
 .curation-context-note { display: flex; align-items: flex-start; gap: var(--space-2); margin-top: var(--space-3); padding: var(--space-3); color: var(--primary); background: var(--primary-soft); border-radius: var(--radius-md); font-size: .78rem; line-height: 1.45; }

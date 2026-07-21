@@ -10,6 +10,7 @@ SCOPE_PATHS = {
     "profile.materials": Path("artifacts/profile/materials"),
     "knowledge.active": Path("knowledge-vault"),
     "diagnostics.security": Path(".cyber-interview-agent/diagnostics"),
+    "diagnostics.agent_traces": Path(".cyber-interview-agent/agent-traces"),
 }
 
 

@@ -1,44 +1,101 @@
-import pytest
-from pydantic import ValidationError
+from __future__ import annotations
+
+from dataclasses import dataclass, replace
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from app.agents.context import AgentContext
-from app.agents.question_curation_agent import QuestionCurationAgent
+from app.agents.question_curation_agent import QuestionCurationAgents
 from app.agents.question_curation_contracts import (
     QuestionCandidate,
     QuestionCandidateBatch,
-)
-from app.agents.review_round_contracts import (
-    ReviewSessionReportOutput,
-    RoundAnswerEvaluation,
+    QuestionCandidateChunk,
+    QuestionRevisionOutput,
+    QuestionSeed,
+    QuestionSeedChunk,
 )
 from app.graphs.question_curation import create_question_curation_graph
+from app.infrastructure.runtime_database import connect_runtime_database
+from app.review.curation_sections import SourceSection
+from app.review.repository import ReviewRepository
 
 
-class RecordingAgent:
-    def __init__(self, result):
-        self.result = result
-        self.calls = []
-
-    async def ainvoke(self, input, config=None, *, context=None):
-        self.calls.append((input, config, context))
-        return self.result
+class FakeProviderError(RuntimeError):
+    code = "provider_error"
 
 
-class SequencedAgent(RecordingAgent):
-    def __init__(self, results):
-        super().__init__(None)
-        self.results = iter(results)
-
-    async def ainvoke(self, input, config=None, *, context=None):
-        self.calls.append((input, config, context))
-        return {"structured_response": next(self.results)}
+@dataclass(frozen=True, slots=True)
+class DiscoveryCall:
+    unit_index: int
+    sections: tuple[SourceSection, ...]
 
 
-def _context() -> AgentContext:
+@dataclass(frozen=True, slots=True)
+class EnrichmentCall:
+    unit_index: int
+    seeds: tuple[QuestionSeed, ...]
+
+
+class RecordingCurationAgents:
+    def __init__(self, *, discovery_outputs=(), enrichment_outputs=(), revision_output=None):
+        self._discovery_outputs = iter(discovery_outputs)
+        self._enrichment_outputs = iter(enrichment_outputs)
+        self.revision_output = revision_output
+        self.discovery_calls: list[DiscoveryCall] = []
+        self.enrichment_calls: list[EnrichmentCall] = []
+        self.revision_calls: list[object] = []
+
+    @property
+    def discovery_call_indexes(self) -> list[int]:
+        return [call.unit_index for call in self.discovery_calls]
+
+    async def discover(self, sections, *, context, config, unit_index):
+        self.discovery_calls.append(DiscoveryCall(unit_index, tuple(sections)))
+        output = next(self._discovery_outputs)
+        if isinstance(output, Exception):
+            raise output
+        return output
+
+    async def enrich(self, seeds, *, sections, known_questions, context, config, unit_index):
+        self.enrichment_calls.append(EnrichmentCall(unit_index, tuple(seeds)))
+        output = next(self._enrichment_outputs)
+        if isinstance(output, Exception):
+            raise output
+        return output
+
+    async def revise(self, *, source_excerpts, rewrite_feedback, context, config):
+        self.revision_calls.append((source_excerpts, rewrite_feedback))
+        return self.revision_output
+
+
+@pytest.fixture
+def repository(tmp_path: Path):
+    connection = connect_runtime_database(tmp_path)
+    connection.execute(
+        "INSERT INTO agent_sessions (id, workspace_id, graph_id, graph_version, title) "
+        "VALUES ('s1', 'w1', 'question.curate', 1, 'Curation')"
+    )
+    connection.execute(
+        "INSERT INTO agent_runs (id, session_id, status) VALUES ('r1', 's1', 'running')"
+    )
+    connection.commit()
+    yield ReviewRepository(connection)
+    connection.close()
+
+
+@pytest.fixture
+def batch(repository: ReviewRepository):
+    return repository.create_batch(
+        workspace_id="w1", session_id="s1", run_id="r1", source_refs=("s1",)
+    )
+
+
+def context(tmp_path: Path) -> AgentContext:
     return AgentContext(
         workspace_id="w1",
-        workspace_root=Path("/workspace"),
+        workspace_root=tmp_path,
         session_id="s1",
         run_id="r1",
         allowed_tools=frozenset(),
@@ -46,264 +103,238 @@ def _context() -> AgentContext:
     )
 
 
-def test_question_candidate_batch_is_strict_and_source_backed() -> None:
-    batch = QuestionCandidateBatch(
-        candidates=[
-            QuestionCandidate(
-                title="MVCC 可见性",
-                question_text="Read View 如何判断版本是否可见？",
-                reference_answer="比较 creator_trx_id、上下界和活跃事务列表。",
-                topics=["database", "mysql"],
-                difficulty="medium",
-                key_points=["creator_trx_id", "m_ids"],
-                follow_ups=["活跃事务中的版本是否可见？"],
-                source_refs=["source-1#L84"],
-                correction_note="补齐活跃事务判断规则",
-            )
-        ]
+def dense_source(question_count: int) -> str:
+    return "s1:questions.md\n" + "\n".join(
+        f"{index}、问题 {index}？\n答案 {index}"
+        for index in range(1, question_count + 1)
     )
 
-    assert batch.candidates[0].source_refs == ["source-1#L84"]
+
+def curation_input(batch_id: str, *, section_count: int = 2) -> dict[str, object]:
+    return {
+        "batch_id": batch_id,
+        "source_excerpts": [dense_source(section_count)],
+        "similar_questions": [],
+        "rewrite_feedback": None,
+    }
+
+
+def seed(index: int) -> QuestionSeed:
+    return QuestionSeed(
+        question_text=f"问题 {index}？", source_ref=f"s1#section-{index:04d}"
+    )
+
+
+def candidate(index: int) -> QuestionCandidate:
+    return QuestionCandidate(
+        title=f"题目 {index}",
+        question_text=f"问题 {index}？",
+        reference_answer=f"答案 {index}",
+        topics=["mybatis"],
+        difficulty="medium",
+        key_points=[f"关键点 {index}"],
+        follow_ups=[],
+        source_refs=[f"s1#section-{index:04d}"],
+        correction_note="结构化整理",
+    )
+
+
+def test_question_contracts_are_strict_and_bounded() -> None:
+    with pytest.raises(ValidationError):
+        QuestionSeedChunk.model_validate({"seeds": [seed(1).model_dump()] * 7})
+    with pytest.raises(ValidationError):
+        QuestionCandidateChunk.model_validate(
+            {"candidates": [candidate(1).model_dump()] * 4}
+        )
     with pytest.raises(ValidationError):
         QuestionCandidateBatch.model_validate(
-            {**batch.model_dump(), "hidden_reasoning": "must not be accepted"}
+            {"candidates": [], "hidden_reasoning": "forbidden"}
         )
-
-
-def test_round_answer_evaluation_exposes_evidence_not_hidden_reasoning() -> None:
-    evaluation = RoundAnswerEvaluation(
-        score="partial",
-        missing_key_points=["m_ids"],
-        evidence="回答说明了事务 ID 上下界。",
-        follow_up_required=True,
-        follow_up_prompt="活跃事务中的版本是否可见？",
-        mastery_suggestion="partial",
-    )
-
-    assert "reasoning" not in evaluation.model_dump()
-    with pytest.raises(ValidationError):
-        RoundAnswerEvaluation.model_validate(
-            {**evaluation.model_dump(), "chain_of_thought": "secret"}
-        )
-
-
-def test_follow_up_prompt_is_required_only_when_follow_up_is_requested() -> None:
-    with pytest.raises(ValidationError, match="follow_up_prompt"):
-        RoundAnswerEvaluation(
-            score="partial",
-            missing_key_points=["m_ids"],
-            evidence="partial",
-            follow_up_required=True,
-            follow_up_prompt=None,
-            mastery_suggestion="partial",
-        )
-
-    complete = RoundAnswerEvaluation(
-        score="good",
-        missing_key_points=[],
-        evidence="complete",
-        follow_up_required=False,
-        follow_up_prompt=None,
-        mastery_suggestion="stable",
-    )
-    assert complete.follow_up_prompt is None
-
-
-def test_session_report_output_contains_structured_mastery_proposal() -> None:
-    output = ReviewSessionReportOutput(
-        title="数据库复习报告",
-        markdown="# 数据库复习报告\n",
-        mastery_explanation="MVCC 仍需巩固。",
-    )
-
-    assert output.markdown.startswith("#")
 
 
 @pytest.mark.asyncio
-async def test_question_generation_uses_an_isolated_role_thread() -> None:
-    batch = QuestionCandidateBatch(
-        candidates=[
-            QuestionCandidate(
-                title="MVCC",
-                question_text="什么是 MVCC？",
-                reference_answer="多版本并发控制。",
-                topics=["database"],
-                difficulty="medium",
-                key_points=["版本链"],
-                follow_ups=[],
-                source_refs=["source-1"],
-                correction_note="结构化原题",
-            )
-        ]
+async def test_graph_runs_bounded_discovery_then_enrichment(
+    repository: ReviewRepository, batch, tmp_path: Path
+):
+    agents = RecordingCurationAgents(
+        discovery_outputs=[QuestionSeedChunk(seeds=[seed(1), seed(2)])],
+        enrichment_outputs=[
+            QuestionCandidateChunk(candidates=[candidate(1), candidate(2)])
+        ],
     )
-    runnable = RecordingAgent({"structured_response": batch})
-    agent = QuestionCurationAgent(runnable)
-
-    result = await agent.generate(
-        source_excerpts=("source-1: MVCC notes",),
-        similar_questions=(),
-        rewrite_feedback=None,
-        context=_context(),
-        config={"configurable": {"thread_id": "s1"}},
+    graph = create_question_curation_graph(agents, repository=repository)
+    result = await graph.ainvoke(
+        curation_input(batch.id), context=context(tmp_path)
     )
 
-    assert result == batch
-    assert runnable.calls[0][1]["configurable"] == {
-        "thread_id": "s1:question_generation"
-    }
-    assert runnable.calls[0][2] == _context()
+    assert len(agents.discovery_calls) == 1
+    assert len(agents.discovery_calls[0].sections) <= 6
+    assert len(agents.enrichment_calls) == 1
+    assert len(agents.enrichment_calls[0].seeds) <= 3
+    assert len(result["candidates"]) == 2
+    assert result["generation_phase"] == "enrichment"
 
 
 @pytest.mark.asyncio
-async def test_numbered_question_sources_are_chunked_and_deduplicated() -> None:
-    def candidate(number: int, text: str) -> QuestionCandidate:
-        return QuestionCandidate(
-            title=f"题目 {number}",
-            question_text=text,
-            reference_answer=f"答案 {number}",
-            topics=["systems"],
-            difficulty="medium",
-            key_points=[f"关键点 {number}"],
-            follow_ups=[],
-            source_refs=["source-1"],
-            correction_note="结构化原题",
+async def test_retry_reuses_completed_discovery_item(
+    repository: ReviewRepository, batch, tmp_path: Path
+):
+    agents = RecordingCurationAgents(
+        discovery_outputs=[
+            QuestionSeedChunk(seeds=[seed(1)]),
+            FakeProviderError(),
+            QuestionSeedChunk(seeds=[seed(7)]),
+        ],
+        enrichment_outputs=[
+            QuestionCandidateChunk(candidates=[candidate(1), candidate(7)])
+        ],
+    )
+    graph = create_question_curation_graph(agents, repository=repository)
+    with pytest.raises(FakeProviderError):
+        await graph.ainvoke(
+            curation_input(batch.id, section_count=7), context=context(tmp_path)
         )
-
-    first = QuestionCandidateBatch(
-        candidates=[candidate(number, f"问题 {number}？") for number in range(1, 7)]
-    )
-    second = QuestionCandidateBatch(
-        candidates=[candidate(6, "问题 6？"), *[candidate(number, f"问题 {number}？") for number in range(7, 13)]]
-    )
-    runnable = SequencedAgent([first, second])
-    agent = QuestionCurationAgent(runnable)
-    source = "source-1:questions.md\n" + "\n".join(
-        f"{number}. 问题 {number}？答：答案 {number}。"
-        for number in range(1, 13)
+    await graph.ainvoke(
+        curation_input(batch.id, section_count=7),
+        context=replace(context(tmp_path), run_id="r2"),
     )
 
-    result = await agent.generate(
-        source_excerpts=(source,),
-        similar_questions=(),
-        rewrite_feedback=None,
-        context=_context(),
-        config={"configurable": {"thread_id": "s1"}},
-    )
-
-    assert len(runnable.calls) == 2
-    assert "1. 问题 1" in runnable.calls[0][0]["messages"][0].content
-    assert "7. 问题 7" not in runnable.calls[0][0]["messages"][0].content
-    assert "7. 问题 7" in runnable.calls[1][0]["messages"][0].content
-    assert len(result.candidates) == 12
+    assert agents.discovery_call_indexes == [0, 1, 1]
+    assert repository.list_curation_work_items(
+        batch.id, stage="discovery"
+    )[0].attempt_count == 1
 
 
 @pytest.mark.asyncio
-async def test_duplicate_candidates_merge_source_evidence_instead_of_dropping_it() -> None:
-    def duplicate(source_ref: str) -> QuestionCandidate:
-        return QuestionCandidate(
-            title="缓存穿透",
-            question_text="缓存穿透是什么？",
-            reference_answer="查询不存在的数据导致缓存无法命中。",
-            topics=["cache"],
-            difficulty="medium",
-            key_points=["空值缓存"],
-            follow_ups=[],
-            source_refs=[source_ref],
-            correction_note="补齐治理方式",
-        )
-
-    runnable = SequencedAgent(
-        [
-            QuestionCandidateBatch(candidates=[duplicate("source-1#part-1")]),
-            QuestionCandidateBatch(candidates=[duplicate("source-2#part-2")]),
-        ]
+async def test_single_revision_bypasses_discovery_and_enrichment(
+    repository: ReviewRepository, batch, tmp_path: Path
+):
+    agents = RecordingCurationAgents(
+        revision_output=QuestionRevisionOutput(candidate=candidate(1))
     )
-    agent = QuestionCurationAgent(runnable)
-    source = "source-1:questions.md\n" + "\n".join(
-        f"{number}. 问题 {number}？答：答案 {number}。"
-        for number in range(1, 13)
-    )
-
-    result = await agent.generate(
-        source_excerpts=(source,),
-        similar_questions=(),
-        rewrite_feedback=None,
-        context=_context(),
-        config={"configurable": {"thread_id": "s1"}},
-    )
-
-    assert len(result.candidates) == 1
-    assert result.candidates[0].source_refs == [
-        "source-1#part-1",
-        "source-2#part-2",
-    ]
-
-
-@pytest.mark.asyncio
-async def test_high_confidence_paraphrases_merge_but_keep_all_evidence() -> None:
-    def candidate(text: str, source_ref: str, key_point: str) -> QuestionCandidate:
-        return QuestionCandidate(
-            title="缓存穿透",
-            question_text=text,
-            reference_answer="查询不存在的数据导致缓存无法命中。",
-            topics=["cache"],
-            difficulty="medium",
-            key_points=[key_point],
-            follow_ups=[],
-            source_refs=[source_ref],
-            correction_note="补齐治理方式",
-        )
-
-    runnable = SequencedAgent([
-        QuestionCandidateBatch(candidates=[candidate("什么是缓存穿透？", "source-1", "空值缓存")]),
-        QuestionCandidateBatch(candidates=[candidate("请解释一下缓存穿透是什么", "source-2", "布隆过滤器")]),
-    ])
-    agent = QuestionCurationAgent(runnable)
-    source = "source-1:questions.md\n" + "\n".join(
-        f"{number}. 问题 {number}？答：答案 {number}。" for number in range(1, 13)
-    )
-
-    result = await agent.generate(
-        source_excerpts=(source,),
-        similar_questions=(),
-        rewrite_feedback=None,
-        context=_context(),
-        config={"configurable": {"thread_id": "s1"}},
-    )
-
-    assert len(result.candidates) == 1
-    assert result.candidates[0].source_refs == ["source-1", "source-2"]
-    assert result.candidates[0].key_points == ["空值缓存", "布隆过滤器"]
-
-
-@pytest.mark.asyncio
-async def test_question_curation_graph_returns_only_structured_candidates() -> None:
-    batch = QuestionCandidateBatch(
-        candidates=[
-            QuestionCandidate(
-                title="MVCC",
-                question_text="什么是 MVCC？",
-                reference_answer="多版本并发控制。",
-                topics=["database"],
-                difficulty="medium",
-                key_points=["版本链"],
-                follow_ups=[],
-                source_refs=["source-1"],
-                correction_note="结构化原题",
-            )
-        ]
-    )
-    agent = QuestionCurationAgent(RecordingAgent({"structured_response": batch}))
-    graph = create_question_curation_graph(agent)
-
+    graph = create_question_curation_graph(agents, repository=repository)
     result = await graph.ainvoke(
         {
-            "source_excerpts": ["source-1: MVCC notes"],
-            "similar_questions": [],
-            "rewrite_feedback": None,
+            **curation_input(batch.id),
+            "revision_candidate_id": "candidate-1",
+            "rewrite_feedback": "更具体",
         },
-        context=_context(),
+        context=context(tmp_path),
     )
 
-    assert result["candidates"] == batch.model_dump()["candidates"]
-    assert "source_excerpts" in result
+    assert len(agents.revision_calls) == 1
+    assert agents.discovery_calls == []
+    assert agents.enrichment_calls == []
+    assert len(result["candidates"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_graph_caps_dense_sources_at_200_with_explicit_warning(
+    repository: ReviewRepository, batch, tmp_path: Path
+):
+    all_seeds = [seed(index) for index in range(1, 206)]
+    discovery_outputs = [
+        QuestionSeedChunk(seeds=all_seeds[start : start + 6])
+        for start in range(0, len(all_seeds), 6)
+    ]
+    enrichment_outputs = [
+        QuestionCandidateChunk(
+            candidates=[
+                candidate(index).model_copy(update={
+                    "question_text": f"唯一主题 topic-{index} 的机制与边界是什么？",
+                    "topics": [f"topic-{index}"],
+                })
+                for index in range(start, min(start + 3, 201))
+            ]
+        )
+        for start in range(1, 201, 3)
+    ]
+    agents = RecordingCurationAgents(
+        discovery_outputs=discovery_outputs,
+        enrichment_outputs=enrichment_outputs,
+    )
+    graph = create_question_curation_graph(agents, repository=repository)
+
+    result = await graph.ainvoke(
+        curation_input(batch.id, section_count=205), context=context(tmp_path)
+    )
+
+    assert len(result["candidates"]) == 200
+    assert {warning["code"] for warning in result["warnings"]} == {
+        "candidate_limit_reached"
+    }
+    assert len(agents.discovery_calls) == 35
+    assert len(agents.enrichment_calls) == 67
+
+
+@pytest.mark.asyncio
+async def test_concrete_agents_reject_unknown_source_refs(tmp_path: Path):
+    class Runnable:
+        async def ainvoke(self, _input, config=None, *, context=None):
+            return {
+                "structured_response": QuestionSeedChunk(
+                    seeds=[QuestionSeed(question_text="问题？", source_ref="other")]
+                )
+            }
+
+    agents = QuestionCurationAgents(Runnable(), Runnable(), Runnable())
+    section = SourceSection("s1", "s1#section-0001", 1, "正文", "a" * 64)
+    with pytest.raises(ValueError, match="unknown source ref"):
+        await agents.discover(
+            (section,), context=context(tmp_path), config={}, unit_index=0
+        )
+
+
+@pytest.mark.asyncio
+async def test_concrete_agents_keep_first_seed_for_duplicate_source_refs(
+    tmp_path: Path,
+):
+    first = QuestionSeed(question_text="第一个问题？", source_ref="s1#section-0001")
+    duplicate = QuestionSeed(question_text="第二个问题？", source_ref="s1#section-0001")
+
+    class Runnable:
+        async def ainvoke(self, _input, config=None, *, context=None):
+            return {
+                "structured_response": QuestionSeedChunk(
+                    seeds=[first, duplicate]
+                )
+            }
+
+    agents = QuestionCurationAgents(Runnable(), Runnable(), Runnable())
+    section = SourceSection("s1", "s1#section-0001", 1, "正文", "a" * 64)
+
+    result = await agents.discover(
+        (section,), context=context(tmp_path), config={}, unit_index=0
+    )
+
+    assert result.seeds == [first]
+
+
+@pytest.mark.asyncio
+async def test_concrete_agents_keep_first_candidate_for_duplicate_source_refs(
+    tmp_path: Path,
+):
+    first = candidate(1)
+    duplicate = first.model_copy(update={"title": "重复候选"})
+
+    class Runnable:
+        async def ainvoke(self, _input, config=None, *, context=None):
+            return {
+                "structured_response": QuestionCandidateChunk(
+                    candidates=[first, duplicate]
+                )
+            }
+
+    agents = QuestionCurationAgents(Runnable(), Runnable(), Runnable())
+    section = SourceSection("s1", "s1#section-0001", 1, "正文", "a" * 64)
+
+    result = await agents.enrich(
+        (seed(1),),
+        sections=(section,),
+        known_questions=(),
+        context=context(tmp_path),
+        config={},
+        unit_index=0,
+    )
+
+    assert result.candidates == [first]

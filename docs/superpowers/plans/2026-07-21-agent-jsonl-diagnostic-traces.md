@@ -19,7 +19,7 @@
 - Trace content must not enter knowledge vault, SSE, timeline, ordinary logging, Session APIs, or Git.
 - Do not add a viewer, download API, remote sink, compression, retention job, or automatic deletion.
 - Preserve all unrelated dirty R3 files and local planning files; stage only files named by the current task.
-- Repository workflow for this R2 increment requires one Agent to execute the plan inline; do not create implementation subagents.
+- The root Agent owns shared runtime integration and final verification. One bounded subagent may implement Task 1's isolated writer/path foundation; it must not commit, delegate again, or touch shared runtime files.
 
 ---
 

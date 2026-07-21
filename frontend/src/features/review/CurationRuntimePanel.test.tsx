@@ -79,4 +79,32 @@ describe("CurationRuntimePanel candidate status", () => {
     expect(onSaveNote).toHaveBeenCalledWith("c1", "补充例子");
     expect(screen.queryByText("运行详情")).toBeNull();
   });
+
+  it("shows the current bounded generation phase and candidate limit", () => {
+    render(<CurationRuntimePanel session={{
+      ...session,
+      stage: "generating",
+      progress: { phase: "discovery", completed: 2, total: 5 },
+      warnings: [{ code: "candidate_limit_reached", limit: 200 }],
+    }} />);
+
+    const progress = screen.getByText("正在识别题目").closest("section");
+    expect(progress).toHaveClass("curation-progress");
+    expect(progress).not.toHaveClass("curation-retry");
+    expect(screen.getByText("2 / 5")).toBeInTheDocument();
+    expect(screen.getByText("已生成前 200 道候选题，请先审核当前结果")).toBeInTheDocument();
+  });
+
+  it("keeps the danger treatment for a failed execution", () => {
+    render(<CurationRuntimePanel session={{
+      ...session,
+      stage: "failed",
+      executionErrorCode: "provider_error",
+      executionErrorMessage: "Agent 执行失败",
+    }} />);
+
+    const failure = screen.getByText("Agent 执行失败", { selector: "strong" }).closest("section");
+    expect(failure).toHaveClass("curation-retry");
+    expect(failure).not.toHaveClass("curation-progress");
+  });
 });

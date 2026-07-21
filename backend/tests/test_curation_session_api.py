@@ -1217,6 +1217,7 @@ async def test_failed_curation_session_can_retry_in_the_same_session(
             await client.get(f"/api/review/curation-sessions/{session_id}")
         ).json()
         assert failed["executionErrorCode"] == "provider_error"
+        failed_batch_id = failed["activeBatchId"]
 
         retried = await client.post(
             f"/api/review/curation-sessions/{session_id}/retry"
@@ -1225,6 +1226,7 @@ async def test_failed_curation_session_can_retry_in_the_same_session(
         assert retried.status_code == 202, retried.text
         assert retried.json()["id"] == session_id
         assert retried.json()["executionId"] != first_execution_id
+        assert retried.json()["activeBatchId"] == failed_batch_id
         assert retried.json()["stage"] in {"generating", "waiting_for_command"}
 
 

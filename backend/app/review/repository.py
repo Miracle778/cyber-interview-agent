@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import asdict, replace
@@ -18,6 +19,9 @@ from app.review.models import (
     BulkPublicationItemRecord,
     BulkPublicationRecord,
     CurationContextRecord,
+    CurationWorkItemRecord,
+    CurationWorkStage,
+    CurationWorkStatus,
     CurationSessionRecord,
     CurationStage,
     CurationSummary,
@@ -547,6 +551,191 @@ class ReviewRepository:
             if cursor.rowcount != 1:
                 raise ReviewConflictError("question batch already has a run")
         return self.get_batch(batch_id)
+
+    def reattach_batch_run(
+        self, batch_id: str, run_id: str
+    ) -> QuestionBatchRecord:
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_question_batches SET run_id = ?, status = 'generating', "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? "
+                "AND status IN ('failed', 'completed')",
+                (run_id, batch_id),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError("question batch cannot be retried")
+        self.requeue_running_curation_work_items(batch_id)
+        return self.get_batch(batch_id)
+
+    def append_curation_warning(
+        self, session_id: str, warning: dict[str, object]
+    ) -> CurationSessionRecord:
+        canonical = cast(dict[str, object], json.loads(_canonical_json(warning)))
+        with self._transaction():
+            row = self._connection.execute(
+                "SELECT warning_json FROM review_curation_sessions WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                raise LookupError(session_id)
+            warnings = list(json.loads(row["warning_json"]))
+            if canonical in warnings:
+                return self.get_curation_session(session_id)
+            warnings.append(canonical)
+            self._connection.execute(
+                "UPDATE review_curation_sessions SET warning_json = ?, "
+                "updated_at = CURRENT_TIMESTAMP WHERE session_id = ?",
+                (_canonical_json(warnings), session_id),
+            )
+        return self.get_curation_session(session_id)
+
+    def plan_curation_work_item(
+        self,
+        *,
+        batch_id: str,
+        stage: CurationWorkStage,
+        unit_index: int,
+        input_digest: str,
+        source_refs: tuple[str, ...],
+        work_item_id: str | None = None,
+    ) -> CurationWorkItemRecord:
+        self._validate_work_item_plan(stage, unit_index, input_digest, source_refs)
+        with self._transaction():
+            existing = self._connection.execute(
+                "SELECT * FROM review_curation_work_items "
+                "WHERE batch_id = ? AND stage = ? AND unit_index = ?",
+                (batch_id, stage, unit_index),
+            ).fetchone()
+            if existing is not None:
+                record = self._curation_work_item_record(existing)
+                if (
+                    record.input_digest != input_digest
+                    or record.source_refs != source_refs
+                ):
+                    raise ReviewConflictError("curation work item input changed")
+                return record
+            try:
+                self._connection.execute(
+                    "INSERT INTO review_curation_work_items "
+                    "(id, batch_id, stage, unit_index, input_digest, source_refs_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        work_item_id or str(uuid4()),
+                        batch_id,
+                        stage,
+                        unit_index,
+                        input_digest,
+                        _canonical_json(source_refs),
+                    ),
+                )
+            except sqlite3.IntegrityError as error:
+                if "FOREIGN KEY" in str(error).upper():
+                    raise LookupError(batch_id) from error
+                raise
+        return self._get_curation_work_item_by_identity(
+            batch_id, stage, unit_index
+        )
+
+    def list_curation_work_items(
+        self, batch_id: str, *, stage: CurationWorkStage | None = None
+    ) -> tuple[CurationWorkItemRecord, ...]:
+        clauses = ["batch_id = ?"]
+        values: list[object] = [batch_id]
+        if stage is not None:
+            if stage not in {"discovery", "enrichment"}:
+                raise ValueError("unsupported curation work item stage")
+            clauses.append("stage = ?")
+            values.append(stage)
+        rows = self._connection.execute(
+            "SELECT * FROM review_curation_work_items WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY stage, unit_index, rowid",
+            tuple(values),
+        ).fetchall()
+        return tuple(self._curation_work_item_record(row) for row in rows)
+
+    def start_curation_work_item(self, work_item_id: str) -> CurationWorkItemRecord:
+        with self._transaction():
+            row = self._connection.execute(
+                "SELECT * FROM review_curation_work_items WHERE id = ?",
+                (work_item_id,),
+            ).fetchone()
+            if row is None:
+                raise LookupError(work_item_id)
+            record = self._curation_work_item_record(row)
+            if record.status == "completed":
+                return record
+            cursor = self._connection.execute(
+                "UPDATE review_curation_work_items SET status = 'running', "
+                "attempt_count = attempt_count + 1, last_error_code = NULL, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? "
+                "AND status IN ('pending', 'failed')",
+                (work_item_id,),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError("curation work item cannot be started")
+        return self.get_curation_work_item(work_item_id)
+
+    def complete_curation_work_item(
+        self, work_item_id: str, *, output: dict[str, object]
+    ) -> CurationWorkItemRecord:
+        with self._transaction():
+            row = self._connection.execute(
+                "SELECT * FROM review_curation_work_items WHERE id = ?",
+                (work_item_id,),
+            ).fetchone()
+            if row is None:
+                raise LookupError(work_item_id)
+            record = self._curation_work_item_record(row)
+            validated = self._validate_curation_work_item_output(record.stage, output)
+            if record.status == "completed":
+                if record.output == validated:
+                    return record
+                raise ReviewConflictError("curation work item output changed")
+            if record.status != "running":
+                raise ReviewConflictError("curation work item is not running")
+            cursor = self._connection.execute(
+                "UPDATE review_curation_work_items SET status = 'completed', "
+                "output_json = ?, last_error_code = NULL, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND status = 'running'",
+                (_canonical_json(validated), work_item_id),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError("curation work item is not running")
+        return self.get_curation_work_item(work_item_id)
+
+    def fail_curation_work_item(
+        self, work_item_id: str, *, error_code: str
+    ) -> CurationWorkItemRecord:
+        self._validate_curation_error_code(error_code)
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_curation_work_items SET status = 'failed', "
+                "last_error_code = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND status = 'running'",
+                (error_code, work_item_id),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError("curation work item is not running")
+        return self.get_curation_work_item(work_item_id)
+
+    def requeue_running_curation_work_items(self, batch_id: str) -> int:
+        with self._transaction():
+            return self._connection.execute(
+                "UPDATE review_curation_work_items SET status = 'failed', "
+                "last_error_code = 'curation_interrupted', updated_at = CURRENT_TIMESTAMP "
+                "WHERE batch_id = ? AND status = 'running'",
+                (batch_id,),
+            ).rowcount
+
+    def get_curation_work_item(self, work_item_id: str) -> CurationWorkItemRecord:
+        row = self._connection.execute(
+            "SELECT * FROM review_curation_work_items WHERE id = ?",
+            (work_item_id,),
+        ).fetchone()
+        if row is None:
+            raise LookupError(work_item_id)
+        return self._curation_work_item_record(row)
 
     def reconcile_abandoned_work(self) -> tuple[int, int]:
         """Close domain work whose owning execution cannot continue after restart."""
@@ -2100,6 +2289,128 @@ class ReviewRepository:
         if row is None:
             raise LookupError(link_id)
         return self._question_source_link_record(row)
+
+    def _get_curation_work_item_by_identity(
+        self, batch_id: str, stage: CurationWorkStage, unit_index: int
+    ) -> CurationWorkItemRecord:
+        row = self._connection.execute(
+            "SELECT * FROM review_curation_work_items "
+            "WHERE batch_id = ? AND stage = ? AND unit_index = ?",
+            (batch_id, stage, unit_index),
+        ).fetchone()
+        if row is None:
+            raise LookupError((batch_id, stage, unit_index))
+        return self._curation_work_item_record(row)
+
+    @staticmethod
+    def _validate_work_item_plan(
+        stage: CurationWorkStage,
+        unit_index: int,
+        input_digest: str,
+        source_refs: tuple[str, ...],
+    ) -> None:
+        if stage not in {"discovery", "enrichment"}:
+            raise ValueError("unsupported curation work item stage")
+        if unit_index < 0:
+            raise ValueError("curation work item unit index must not be negative")
+        if re.fullmatch(r"[0-9a-f]{64}", input_digest) is None:
+            raise ValueError("curation work item input digest must be a sha256 digest")
+        if not source_refs or any(not ref.strip() for ref in source_refs):
+            raise ValueError("curation work item source refs must not be empty")
+
+    @staticmethod
+    def _validate_curation_error_code(error_code: str) -> None:
+        if re.fullmatch(r"[a-z][a-z0-9_]{0,99}", error_code) is None:
+            raise ValueError("curation error code must be stable and bounded")
+
+    @staticmethod
+    def _validate_curation_work_item_output(
+        stage: CurationWorkStage, output: dict[str, object]
+    ) -> dict[str, object]:
+        """Reject unbounded or non-contract output before it becomes durable state."""
+        try:
+            from app.agents.question_curation_contracts import (
+                QuestionCandidateChunk,
+                QuestionSeedChunk,
+            )
+        except ImportError:
+            # Task 1 and this persistence foundation can land independently.
+            # Keep the same narrow wire contract until the strict Pydantic
+            # chunks are available, then delegate validation to them above.
+            expected_key = "seeds" if stage == "discovery" else "candidates"
+            maximum = 6 if stage == "discovery" else 3
+            if set(output) != {expected_key}:
+                raise ValueError("curation work item output has an invalid shape")
+            values = output[expected_key]
+            if not isinstance(values, list) or len(values) > maximum:
+                raise ValueError("curation work item output exceeds its bound")
+            if stage == "discovery":
+                if any(
+                    not isinstance(value, dict)
+                    or set(value) != {"question_text", "source_ref"}
+                    or any(
+                        not isinstance(item, str) or not item.strip()
+                        for item in value.values()
+                    )
+                    for value in values
+                ):
+                    raise ValueError("invalid discovery work item output")
+            else:
+                required = {
+                    "title", "question_text", "reference_answer", "topics",
+                    "difficulty", "key_points", "follow_ups", "source_refs",
+                    "correction_note",
+                }
+                if any(
+                    not isinstance(value, dict)
+                    or set(value) != required
+                    or not all(
+                        isinstance(value[key], list)
+                        for key in {"topics", "key_points", "follow_ups", "source_refs"}
+                    )
+                    or not all(
+                        isinstance(value[key], str) and value[key].strip()
+                        for key in required
+                        - {"topics", "key_points", "follow_ups", "source_refs", "difficulty"}
+                    )
+                    or value["difficulty"] not in {"easy", "medium", "hard"}
+                    or not all(
+                        isinstance(entry, str) and entry.strip()
+                        for key in {"topics", "key_points", "source_refs"}
+                        for entry in value[key]
+                    )
+                    or not all(isinstance(entry, str) for entry in value["follow_ups"])
+                    for value in values
+                ):
+                    raise ValueError("invalid enrichment work item output")
+            validated = output
+        else:
+            contract = (
+                QuestionSeedChunk if stage == "discovery" else QuestionCandidateChunk
+            )
+            validated = contract.model_validate(output).model_dump(mode="json")
+        encoded = _canonical_json(validated)
+        if len(encoded.encode("utf-8")) > 100_000:
+            raise ValueError("curation work item output exceeds its byte bound")
+        return cast(dict[str, object], json.loads(encoded))
+
+    @staticmethod
+    def _curation_work_item_record(row: sqlite3.Row) -> CurationWorkItemRecord:
+        output = row["output_json"]
+        return CurationWorkItemRecord(
+            id=row["id"],
+            batch_id=row["batch_id"],
+            stage=cast(CurationWorkStage, row["stage"]),
+            unit_index=row["unit_index"],
+            input_digest=row["input_digest"],
+            source_refs=tuple(json.loads(row["source_refs_json"])),
+            status=cast(CurationWorkStatus, row["status"]),
+            output=None if output is None else cast(dict[str, object], json.loads(output)),
+            attempt_count=row["attempt_count"],
+            last_error_code=row["last_error_code"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
 
     @contextmanager
     def _transaction(self) -> Iterator[None]:

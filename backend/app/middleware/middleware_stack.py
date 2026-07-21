@@ -49,6 +49,8 @@ PROFILE_CHAT_BUDGET_PROFILE = MiddlewareBudgetProfile(
 def build_default_middleware(
     *,
     summary_model: BaseChatModel,
+    summary_provider_model_id: str = "unknown",
+    trace_writer=None,
     projection: MiddlewareProjection,
     policy,
     observability: ObservabilitySink,
@@ -75,6 +77,8 @@ def build_default_middleware(
             keep=("tokens", summary_keep_tokens),
             projection=projection,
             threshold_tokens=summary_threshold_tokens,
+            trace_writer=trace_writer,
+            provider_model_id=summary_provider_model_id,
         ),
         ContextEditingMiddleware(),
         ModelCallLimitMiddleware(

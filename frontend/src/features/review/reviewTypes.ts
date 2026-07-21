@@ -148,10 +148,10 @@ export interface CurationSession {
   contextCompacted: boolean;
   contextUsage: { currentTokens: number; thresholdTokens: number; estimated: boolean };
   stage: CurationStage;
-  progress: { completed: number; total: number };
+  progress: { phase: "discovery" | "enrichment" | null; completed: number; total: number };
   summary: { items: CurationSummaryItem[] };
   summaryVersion: number;
-  warnings: { sourceId: string; code: string }[];
+  warnings: { sourceId?: string; code: string; limit?: number }[];
   preferredModelId: string | null;
   preferredReasoningEffort: "none" | "low" | "medium" | "high";
   latestCommand: {

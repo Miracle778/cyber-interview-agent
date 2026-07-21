@@ -43,6 +43,7 @@ class SingleReviewAgents:
             evaluator=factory.create(
                 AgentSpec(
                     role="answer_evaluation",
+                    execution_name="single_review_evaluator",
                     prompt=SINGLE_REVIEW_EVALUATION_PROMPT,
                     response_format=AnswerEvaluation,
                     middleware=middleware,
@@ -53,6 +54,7 @@ class SingleReviewAgents:
             reporter=factory.create(
                 AgentSpec(
                     role="report_summarization",
+                    execution_name="single_review_reporter",
                     prompt=SINGLE_REVIEW_REPORT_PROMPT,
                     middleware=middleware,
                 ),

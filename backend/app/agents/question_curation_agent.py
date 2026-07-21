@@ -1,27 +1,43 @@
 from __future__ import annotations
 
-import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage
 
-from app.agents.context import AgentContext
 from app.agents.agent_factory import AgentFactory, AgentSpec
 from app.agents.agent_invocation import isolated_thread_config
+from app.agents.agent_model_resolver import ModelInvocationPolicy
 from app.agents.agent_protocols import AgentRunnable
+from app.agents.context import AgentContext
 from app.agents.prompts.question_curation_prompts import (
-    QUESTION_CURATION_PROMPT,
-    render_question_curation_input,
+    QUESTION_DISCOVERY_PROMPT,
+    QUESTION_ENRICHMENT_PROMPT,
+    QUESTION_REVISION_PROMPT,
+    render_question_discovery_input,
+    render_question_enrichment_input,
+    render_question_revision_input,
 )
-from app.agents.question_curation_contracts import QuestionCandidateBatch
-from app.review.question_similarity import same_question
+from app.agents.question_curation_contracts import (
+    QuestionCandidateChunk,
+    QuestionRevisionOutput,
+    QuestionSeed,
+    QuestionSeedChunk,
+)
+from app.review.curation_sections import SourceSection
+
+
+_DISCOVERY_POLICY = ModelInvocationPolicy(2_048, 180, 0)
+_FULL_CANDIDATE_POLICY = ModelInvocationPolicy(4_096, 180, 0)
 
 
 @dataclass(frozen=True, slots=True)
-class QuestionCurationAgent:
-    runnable: AgentRunnable
+class QuestionCurationAgents:
+    discovery: AgentRunnable
+    enrichment: AgentRunnable
+    revision: AgentRunnable
 
     @classmethod
     def create(
@@ -32,148 +48,143 @@ class QuestionCurationAgent:
         middleware: tuple[AgentMiddleware, ...] = (),
         tools=(),
         checkpointer=None,
-    ) -> "QuestionCurationAgent":
+    ) -> "QuestionCurationAgents":
+        common = {
+            "model_bindings": model_bindings,
+            "checkpointer": checkpointer,
+        }
         return cls(
-            factory.create(
+            discovery=factory.create(
                 AgentSpec(
                     role="question_generation",
-                    prompt=QUESTION_CURATION_PROMPT,
+                    execution_name="question_discovery",
+                    prompt=QUESTION_DISCOVERY_PROMPT,
+                    middleware=middleware,
+                    response_format=QuestionSeedChunk,
+                    invocation_policy=_DISCOVERY_POLICY,
+                ),
+                **common,
+            ),
+            enrichment=factory.create(
+                AgentSpec(
+                    role="question_generation",
+                    execution_name="question_enrichment",
+                    prompt=QUESTION_ENRICHMENT_PROMPT,
                     tools=tuple(tools),
                     middleware=middleware,
-                    response_format=QuestionCandidateBatch,
+                    response_format=QuestionCandidateChunk,
+                    invocation_policy=_FULL_CANDIDATE_POLICY,
                 ),
-                model_bindings=model_bindings,
-                checkpointer=checkpointer,
-            )
+                **common,
+            ),
+            revision=factory.create(
+                AgentSpec(
+                    role="question_generation",
+                    execution_name="question_revision",
+                    prompt=QUESTION_REVISION_PROMPT,
+                    tools=tuple(tools),
+                    middleware=middleware,
+                    response_format=QuestionRevisionOutput,
+                    invocation_policy=_FULL_CANDIDATE_POLICY,
+                ),
+                **common,
+            ),
         )
 
-    async def generate(
+    async def discover(
         self,
+        sections: Sequence[SourceSection],
         *,
-        source_excerpts: tuple[str, ...],
-        similar_questions: tuple[str, ...],
-        rewrite_feedback: str | None,
         context: AgentContext,
         config: dict[str, Any],
-    ) -> QuestionCandidateBatch:
-        units = _generation_units(source_excerpts)
+        unit_index: int,
+    ) -> QuestionSeedChunk:
+        result = await self.discovery.ainvoke(
+            {"messages": [HumanMessage(content=render_question_discovery_input(sections))]},
+            isolated_thread_config(
+                config, context, f"question_discovery:{context.run_id}:{unit_index}"
+            ),
+            context=context,
+        )
+        chunk = QuestionSeedChunk.model_validate(_structured(result))
+        allowed = {section.ref for section in sections}
+        seeds: list[QuestionSeed] = []
+        seen_refs: set[str] = set()
+        for seed in chunk.seeds:
+            if seed.source_ref not in allowed:
+                raise ValueError("question discovery returned an unknown source ref")
+            if seed.source_ref in seen_refs:
+                continue
+            seen_refs.add(seed.source_ref)
+            seeds.append(seed)
+        return chunk.model_copy(update={"seeds": seeds})
+
+    async def enrich(
+        self,
+        seeds: Sequence[QuestionSeed],
+        *,
+        sections: Sequence[SourceSection],
+        known_questions: Sequence[str],
+        context: AgentContext,
+        config: dict[str, Any],
+        unit_index: int,
+    ) -> QuestionCandidateChunk:
+        result = await self.enrichment.ainvoke(
+            {
+                "messages": [HumanMessage(content=render_question_enrichment_input(
+                    seeds, sections=sections, known_questions=known_questions
+                ))]
+            },
+            isolated_thread_config(
+                config, context, f"question_enrichment:{context.run_id}:{unit_index}"
+            ),
+            context=context,
+        )
+        chunk = QuestionCandidateChunk.model_validate(_structured(result))
+        allowed = {seed.source_ref for seed in seeds}
         candidates = []
-        known_questions = list(similar_questions)
-        for source_unit in units:
-            result = await self.runnable.ainvoke(
-                {"messages": [HumanMessage(content=render_question_curation_input(
-                    source_unit,
-                    known_questions=tuple(known_questions),
-                    rewrite_feedback=rewrite_feedback,
-                ))]},
-                isolated_thread_config(config, context, "question_generation"),
-                context=context,
-            )
-            if "structured_response" not in result:
-                raise ValueError("模型未生成结构化题目候选")
-            batch = QuestionCandidateBatch.model_validate(
-                result["structured_response"]
-            )
-            for candidate in batch.candidates:
-                existing_index = next(
-                    (
-                        index
-                        for index, existing in enumerate(candidates)
-                        if same_question(
-                            existing.question_text,
-                            candidate.question_text,
-                            left_topics=existing.topics,
-                            right_topics=candidate.topics,
-                        )
-                    ),
-                    None,
-                )
-                if existing_index is not None:
-                    existing = candidates[existing_index]
-                    candidates[existing_index] = existing.model_copy(
-                        update={
-                            "source_refs": list(dict.fromkeys([*existing.source_refs, *candidate.source_refs])),
-                            "key_points": list(dict.fromkeys([*existing.key_points, *candidate.key_points])),
-                            "follow_ups": list(dict.fromkeys([*existing.follow_ups, *candidate.follow_ups])),
-                        }
-                    )
-                    continue
-                candidates.append(candidate)
-                known_questions.append(candidate.question_text)
-                if len(candidates) == 50:
-                    return QuestionCandidateBatch(candidates=candidates)
-        return QuestionCandidateBatch(candidates=candidates)
+        seen_refs: set[str] = set()
+        for candidate in chunk.candidates:
+            if len(candidate.source_refs) != 1 or candidate.source_refs[0] not in allowed:
+                raise ValueError("question enrichment returned an unknown source ref")
+            source_ref = candidate.source_refs[0]
+            if source_ref in seen_refs:
+                continue
+            seen_refs.add(source_ref)
+            candidates.append(candidate)
+        return chunk.model_copy(update={"candidates": candidates})
+
+    async def revise(
+        self,
+        *,
+        source_excerpts: Sequence[str],
+        rewrite_feedback: str,
+        context: AgentContext,
+        config: dict[str, Any],
+    ) -> QuestionRevisionOutput:
+        result = await self.revision.ainvoke(
+            {"messages": [HumanMessage(content=render_question_revision_input(
+                source_excerpts, rewrite_feedback=rewrite_feedback
+            ))]},
+            isolated_thread_config(
+                config, context, f"question_revision:{context.run_id}"
+            ),
+            context=context,
+        )
+        output = QuestionRevisionOutput.model_validate(_structured(result))
+        source_ids = {
+            excerpt.split("\n", 1)[0].split(":", 1)[0]
+            for excerpt in source_excerpts
+        }
+        if any(
+            not any(ref == source_id or ref.startswith(f"{source_id}#") for source_id in source_ids)
+            for ref in output.candidate.source_refs
+        ):
+            raise ValueError("question revision returned an unknown source ref")
+        return output
 
 
-_NUMBERED_ITEM = re.compile(r"^\s*\d{1,3}[.、)]\s+")
-_PARAGRAPH_SEPARATOR = re.compile(r"\n\s*\n")
-_MAX_NUMBERED_ITEMS_PER_CALL = 6
-_MAX_PARAGRAPHS_PER_CALL = 3
-_MAX_CHUNK_CHARS = 4000
-
-
-def _generation_units(
-    source_excerpts: tuple[str, ...],
-) -> tuple[tuple[str, ...], ...]:
-    split_sources = [_split_numbered_source(source) for source in source_excerpts]
-    if all(len(chunks) == 1 for chunks in split_sources):
-        return (source_excerpts,)
-    return tuple((chunk,) for chunks in split_sources for chunk in chunks)
-
-
-def _split_numbered_source(source: str) -> tuple[str, ...]:
-    lines = source.splitlines()
-    starts = [
-        index for index, line in enumerate(lines) if _NUMBERED_ITEM.match(line)
-    ]
-    if len(starts) <= _MAX_NUMBERED_ITEMS_PER_CALL:
-        return _split_paragraph_source(source)
-    prefix = lines[: starts[0]]
-    items = [
-        lines[start : starts[index + 1] if index + 1 < len(starts) else None]
-        for index, start in enumerate(starts)
-    ]
-    chunks = tuple(
-        "\n".join(
-            [*prefix, *[line for item in group for line in item]]
-        ).strip()
-        for offset in range(0, len(items), _MAX_NUMBERED_ITEMS_PER_CALL)
-        for group in (items[offset : offset + _MAX_NUMBERED_ITEMS_PER_CALL],)
-    )
-    return _cap_chunks_by_chars(chunks)
-
-
-def _split_paragraph_source(source: str) -> tuple[str, ...]:
-    blocks = [
-        block.strip()
-        for block in _PARAGRAPH_SEPARATOR.split(source)
-        if block.strip()
-    ]
-    if len(blocks) <= _MAX_PARAGRAPHS_PER_CALL:
-        return _cap_chunks_by_chars((source,))
-    chunks = tuple(
-        "\n\n".join(blocks[offset : offset + _MAX_PARAGRAPHS_PER_CALL])
-        for offset in range(0, len(blocks), _MAX_PARAGRAPHS_PER_CALL)
-    )
-    return _cap_chunks_by_chars(chunks)
-
-
-def _cap_chunks_by_chars(chunks: tuple[str, ...]) -> tuple[str, ...]:
-    if all(len(chunk) <= _MAX_CHUNK_CHARS for chunk in chunks):
-        return chunks
-    capped: list[str] = []
-    for chunk in chunks:
-        if len(chunk) <= _MAX_CHUNK_CHARS:
-            capped.append(chunk)
-            continue
-        acc: list[str] = []
-        acc_len = 0
-        for line in chunk.splitlines():
-            if acc and acc_len + len(line) + 1 > _MAX_CHUNK_CHARS:
-                capped.append("\n".join(acc))
-                acc, acc_len = [], 0
-            acc.append(line)
-            acc_len += len(line) + 1
-        if acc:
-            capped.append("\n".join(acc))
-    return tuple(capped)
+def _structured(result: object) -> object:
+    if not isinstance(result, dict) or "structured_response" not in result:
+        raise ValueError("模型未生成结构化题目候选")
+    return result["structured_response"]

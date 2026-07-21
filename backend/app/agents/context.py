@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -16,3 +17,6 @@ class AgentContext:
     agent_role: str | None = None
     tool_result_item_limit: int = 50
     tool_excerpt_char_limit: int = 2000
+    trace_warning: Callable[[str], None] | None = field(
+        default=None, repr=False, compare=False
+    )

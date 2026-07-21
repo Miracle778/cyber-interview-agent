@@ -42,4 +42,14 @@ describe("CurationSessionList", () => {
     fireEvent.click(screen.getByRole("button", { name: /已发布/ }));
     expect(onOpenLibrary).toHaveBeenLastCalledWith("published");
   });
+
+  it("explains the aggregate candidate limit", () => {
+    const limited = {
+      ...session("limited", "waiting_for_command", 200, 0),
+      warnings: [{ code: "candidate_limit_reached", limit: 200 }],
+    };
+    render(<CurationSessionList sessions={[limited]} candidateCount={200} publishedCount={0} onSelect={vi.fn()} onCreate={vi.fn()} onDelete={vi.fn()} onOpenLibrary={vi.fn()} />);
+
+    expect(screen.getByText("已生成前 200 道候选题，请先审核当前结果")).toBeInTheDocument();
+  });
 });

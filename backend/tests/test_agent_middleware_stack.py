@@ -17,6 +17,7 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 
 from app.agents.context import AgentContext
+from app.diagnostics.agent_trace import AgentTraceWriter, read_trace_rows
 from app.middleware.middleware_stack import build_default_middleware
 from app.middleware.no_progress_middleware import NoProgressError, NoProgressMiddleware
 from app.middleware.observability_middleware import ObservabilityMiddleware
@@ -167,6 +168,45 @@ async def test_token_pressure_is_primary_and_message_count_is_fallback():
         {"messages": [HumanMessage(content="x" * 2000) for _index in range(101)]}, _runtime()
     )
     assert fallback_update is not None
+
+
+@pytest.mark.asyncio
+async def test_context_compaction_has_its_own_agent_trace_identity(tmp_path: Path):
+    projection = FakeProjection()
+    runtime = SimpleNamespace(
+        context=AgentContext(
+            workspace_id="w1",
+            workspace_root=tmp_path,
+            session_id="s1",
+            run_id="r1",
+            allowed_tools=frozenset(),
+            allowed_scopes=frozenset(),
+        )
+    )
+    middleware = ProjectingSummarizationMiddleware(
+        model=GenericFakeChatModel(messages=iter([AIMessage(content="摘要")])),
+        trigger=("messages", 2),
+        keep=("messages", 1),
+        projection=projection,
+        threshold_tokens=1,
+        trace_writer=AgentTraceWriter(),
+        provider_model_id="provider-model-1",
+    )
+
+    await middleware.abefore_model(
+        {"messages": [
+            HumanMessage(content="第一轮"),
+            AIMessage(content="第二轮"),
+            HumanMessage(content="第三轮"),
+        ]},
+        runtime,
+    )
+
+    rows = read_trace_rows(tmp_path, "s1", "r1")
+    assert [row["event_type"] for row in rows] == [
+        "model.request", "model.response"
+    ]
+    assert {row["agent_name"] for row in rows} == {"context_summary"}
 
 
 @pytest.mark.asyncio

@@ -14,6 +14,7 @@ from app.agents.agent_factory import AgentFactory, AgentSpec, ModelOverride
 from app.agents.prompts.prompt_spec import PromptSpec
 from app.agents.review_contracts import AnswerEvaluation
 from app.agents.agent_model_resolver import ChatModelResolver, ModelResolutionError
+from app.middleware.agent_trace_middleware import AgentTraceMiddleware
 from app.db.app_database import connect_app_database
 from app.providers.base import ProviderErrorCode
 from app.repositories.provider_repository import ProviderRepository
@@ -31,7 +32,13 @@ def model_setup(tmp_path):
         connection.close()
 
 
-def _seed_model(repository, secrets, *, api_format: str):
+def _seed_model(
+    repository,
+    secrets,
+    *,
+    api_format: str,
+    model_id: str = "model-real-id",
+):
     provider = repository.create_provider(
         name="Test provider",
         api_format=api_format,
@@ -39,7 +46,7 @@ def _seed_model(repository, secrets, *, api_format: str):
         secret_source="keyring",
         secret_ref="provider:test",
     )
-    model = repository.create_model(provider.id, "model-real-id", "Model")
+    model = repository.create_model(provider.id, model_id, "Model")
     secrets.set("provider:test", "test-secret")
     return model
 
@@ -161,15 +168,25 @@ def test_agent_factory_delegates_to_create_agent_without_invocation_wrapper(
         "provider-model-1",
     )
     assert isinstance(captured["create"].pop("response_format"), ToolStrategy)
+    middleware = captured["create"].pop("middleware")
+    assert len(middleware) == 1
+    assert isinstance(middleware[0], AgentTraceMiddleware)
     assert captured["create"] == {
         "model": model,
         "tools": (),
         "system_prompt": "Evaluate the answer",
-        "middleware": (),
         "context_schema": AgentContext,
         "name": "curation_command_classifier",
         "checkpointer": None,
     }
+
+
+def test_agent_spec_requires_a_non_empty_concrete_execution_name():
+    prompt = PromptSpec(id="test", version="1.0", system="Test")
+    with pytest.raises(TypeError):
+        AgentSpec(role="agent_chat", prompt=prompt)  # type: ignore[call-arg]
+    with pytest.raises(ValueError, match="execution_name"):
+        AgentSpec(role="agent_chat", execution_name="  ", prompt=prompt)
 
 
 @pytest.mark.asyncio
@@ -186,6 +203,7 @@ async def test_agent_factory_returns_a_real_runnable_agent_graph():
     agent = AgentFactory(StubResolver()).create(
         AgentSpec(
             role="agent_chat",
+            execution_name="test_chat",
             prompt=PromptSpec(
                 id="test-agent-chat", version="1.0", system="Be concise"
             ),
@@ -229,6 +247,7 @@ def test_agent_factory_uses_validated_session_model_override(monkeypatch):
     factory.create(
         AgentSpec(
             role="answer_evaluation",
+            execution_name="test_evaluator",
             prompt=PromptSpec(
                 id="test-answer-evaluation",
                 version="1.0",
@@ -271,3 +290,92 @@ def test_model_resolver_maps_reasoning_effort_to_provider_options(
     )
 
     assert captured["reasoning_effort"] == "high"
+
+
+def test_glm_question_generation_disables_default_thinking_without_global_budget(
+    model_setup, monkeypatch
+):
+    repository, secrets = model_setup
+    model_record = _seed_model(
+        repository,
+        secrets,
+        api_format="openai-compatible",
+        model_id="GLM-5.2",
+    )
+    captured = {}
+    monkeypatch.setattr(
+        "app.agents.agent_model_resolver.ChatOpenAI",
+        lambda **kwargs: captured.update(kwargs) or GenericFakeChatModel(
+            messages=iter([AIMessage(content="ok")])
+        ),
+    )
+
+    ChatModelResolver(repository, {"keyring": secrets}).resolve(
+        role="question_generation",
+        provider_model_id=model_record.id,
+        reasoning_effort="none",
+    )
+
+    assert captured["extra_body"] == {"thinking": {"type": "disabled"}}
+    assert "max_tokens" not in captured
+    assert captured["request_timeout"] == 30
+    assert "max_retries" not in captured
+    assert "reasoning_effort" not in captured
+
+
+def test_glm_explicit_reasoning_enables_thinking(model_setup, monkeypatch):
+    repository, secrets = model_setup
+    model_record = _seed_model(
+        repository,
+        secrets,
+        api_format="openai-compatible",
+        model_id="glm-5.2",
+    )
+    captured = {}
+    monkeypatch.setattr(
+        "app.agents.agent_model_resolver.ChatOpenAI",
+        lambda **kwargs: captured.update(kwargs) or GenericFakeChatModel(
+            messages=iter([AIMessage(content="ok")])
+        ),
+    )
+
+    ChatModelResolver(repository, {"keyring": secrets}).resolve(
+        role="answer_evaluation",
+        provider_model_id=model_record.id,
+        reasoning_effort="high",
+    )
+
+    assert captured["extra_body"] == {"thinking": {"type": "enabled"}}
+    assert captured["reasoning_effort"] == "high"
+    assert "max_tokens" not in captured
+
+
+def test_non_glm_openai_compatible_model_does_not_receive_glm_options(
+    model_setup, monkeypatch
+):
+    repository, secrets = model_setup
+    model_record = _seed_model(
+        repository,
+        secrets,
+        api_format="openai-compatible",
+        model_id="gpt-compatible-model",
+    )
+    captured = {}
+    monkeypatch.setattr(
+        "app.agents.agent_model_resolver.ChatOpenAI",
+        lambda **kwargs: captured.update(kwargs) or GenericFakeChatModel(
+            messages=iter([AIMessage(content="ok")])
+        ),
+    )
+
+    ChatModelResolver(repository, {"keyring": secrets}).resolve(
+        role="answer_evaluation",
+        provider_model_id=model_record.id,
+        reasoning_effort="none",
+    )
+
+    assert "extra_body" not in captured
+    assert "reasoning_effort" not in captured
+    assert "max_tokens" not in captured
+    assert captured["request_timeout"] == 30
+    assert "max_retries" not in captured

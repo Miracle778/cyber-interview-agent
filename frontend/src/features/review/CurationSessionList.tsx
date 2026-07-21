@@ -23,8 +23,9 @@ export function CurationSessionList({ sessions, candidateCount, publishedCount, 
     <section className="curation-landing__list" aria-label="历史整理会话">
       {visibleSessions.length === 0 ? <div className="curation-landing__empty"><FileStack size={28} /><h3>{onlyActive ? "没有待处理会话" : "还没有整理会话"}</h3><p>{onlyActive ? "当前会话均已完成或失败，可清除筛选查看历史记录。" : "选择一份或多份原材料，题匠会保留完整过程、候选总结和确认记录。"}</p>{onlyActive ? <Button variant="secondary" onClick={() => setOnlyActive(false)}>查看全部会话</Button> : <Button onClick={onCreate}><Plus size={16} />创建第一个会话</Button>}</div> : visibleSessions.map((session) => {
         const meta = stageMeta[session.stage] ?? { label: session.stage, tone: "neutral" };
+        const candidateLimitReached = session.warnings?.some((warning) => warning.code === "candidate_limit_reached") ?? false;
         return <article key={session.id} className="curation-landing__item">
-          <button type="button" className="curation-landing__open" title={session.title} onClick={() => onSelect(session.id)}><div><strong>{session.title}</strong><small>{session.sources.map((source) => source.filename).join(" · ")}</small></div><span className={`badge badge--${meta.tone}`}>{meta.label}</span><p>{session.sources.length} 份资料 · {session.candidateCount} 道候选 · {session.pendingCount} 道待确认</p><ArrowRight size={18} /></button>
+          <button type="button" className="curation-landing__open" title={session.title} onClick={() => onSelect(session.id)}><div><strong>{session.title}</strong><small>{session.sources.map((source) => source.filename).join(" · ")}</small></div><span className={`badge badge--${meta.tone}`}>{meta.label}</span><p>{session.sources.length} 份资料 · {session.candidateCount} 道候选 · {session.pendingCount} 道待确认</p>{candidateLimitReached ? <p>已生成前 200 道候选题，请先审核当前结果</p> : null}<ArrowRight size={18} /></button>
           <button type="button" className="curation-landing__delete" aria-label="归档当前会话" title={`归档 ${session.title}`} onClick={() => onDelete(session.id, false)}><Archive size={16} /></button>
         </article>;
       })}

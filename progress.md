@@ -1,5 +1,13 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-07-21：GLM-5.2 题目整理正式修复
+
+- RED：新增 GLM 默认 Thinking、显式推理、未知 OpenAI-compatible 兼容、角色输出预算、稳定分块 thread、无换行长文本六类测试；首次运行 `6 failed, 16 passed`，均命中预期缺口。
+- GREEN：resolver 对 GLM 4.5+ / 5.x 显式映射 Thinking；8,192 输出预算仅绑定 `question_generation`；分块 thread 改为 `<session>:question_generation:<run>:<index>`；补齐单行硬切并移除 UUID/临时诊断日志。
+- 自动验证：核心 `22 passed`；curation API、review round、profile Agent 相关回归 `57 passed`；`git diff --check` 通过。
+- 真实 Provider：火山 `/coding/v3` GLM-5.2 在原 curation system prompt 下成功返回 1 个结构化候选，确认关闭 Thinking 参数有效。
+- 合成约 20,000 字符多分块验证因 Provider 长延迟被人工取消；原始 Mybatis 文档因未取得明确数据外发授权未发送。完整真实文档验收仍待用户授权或由用户在 App 内执行。
+
 ## 2026-07-20：R3 第一里程碑实施计划完成
 
 - 用户确认 R3 完整规格后，创建 `docs/superpowers/plans/2026-07-20-r3-personal-profile-agent.md`，本轮未修改业务代码、数据库或前端实现。
@@ -542,3 +550,14 @@
 - `AgentContext`/`ToolExecutionContext` 增加 `agent_role`（默认 None，向后兼容）；`ProductEventStream._allowed` 增加三个 agent.tool.* 事件；`graph_factory` 三处构造点与 `WorkspaceRuntime.build` 串接 `publish_event=events.publish`（用 `.get` 保持既有 fixture 兼容）；前端 `useAgentEvents` 事件联合增加三个事件。
 - TDD：先写 5 个失败测试，再实现；`test_tool_policy_middleware.py` `5 passed`；前端 `useAgentEvents.test.tsx` `8 passed`，`tsc --noEmit` 0 错误；回归 `46 passed`。
 - Reviewer gate：用含 `api_key`/路径/正文的样本参数验证事件 payload 与 audit 仅含哈希与安全字段，无源文本/Tool 结果体泄漏。
+
+## 2026-07-21：Progressive 题目整理与 Agent JSONL
+
+- 单阶段完整候选生成已替换为稳定 section、bounded discovery/enrichment、migration 018 recoverable work item、同 batch retry 和显式 200-candidate warning。
+- 全局 Runtime Agent JSONL 已落：per-Execution 文件，按 role/name/invocation 区分 Agent，覆盖模型、Tool、context summary 和 Execution 边界，写失败 fail-open。
+- 自动回归：backend 477 passed；frontend 143 passed；production build 通过。原始本地 Mybatis artifact 的纯 sectioner 验证通过；按用户要求未再调用真实 Provider。
+- 当前 R3 下一产品任务仍为 Task 8；本增量不声明 R2 Provider/browser acceptance 已完成。
+- 用户随后从页面触发真实 retry：Execution `75f5ac8e-0d20-48d8-b7f5-8aa89e4bd69b` 完成 discovery units 0–3，在 unit 4 因模型对同一允许 `source_ref` 返回多个 seed 而失败；这证明原“无结构化输出”故障已越过，但暴露了新的输出容错缺口。
+- 已把 discovery/enrichment 的重复允许引用改为稳定保留首项，未知引用继续拒绝；JSONL serializer 显式支持 LangChain `ModelResponse`。新增/关联定向 `58 passed`，`git diff --check` 通过。
+- 卡死的旧 8000 开发进程已精确终止，修复后后端与 5173 前端重新启动；`/api/health` 返回 ok、前端 HTTP 200。未由 Codex 自动重放原始正文，完整 batch 仍待用户显式重试。
+- 修正整理运行态的语义色：`正在识别题目/正在补全候选` 使用独立 `curation-progress` 主色样式和 `role=status`，`Agent 执行失败` 继续使用 danger 样式；前端定向 `7 passed`、TypeScript 与 `git diff --check` 通过。

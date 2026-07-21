@@ -5,7 +5,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, Protocol
 from uuid import uuid4
@@ -14,6 +14,8 @@ from langgraph.types import Command
 
 from app.agents.context import AgentContext
 from app.agents.agent_factory import ModelOverride
+from app.diagnostics.agent_trace import AgentTraceWriter, TraceIdentity
+from app.middleware.agent_trace_middleware import safe_error_payload
 from app.application.event_projector import AgentEventProjector
 from app.application.session_service import (
     ExecutionRecord,
@@ -107,6 +109,8 @@ class AgentExecutionService:
         review_repository: ReviewRepository | None = None,
         get_draft: Callable[[str], Awaitable[KnowledgeDraftRecord]] | None = None,
         update_draft: Callable[[str, UpdateDraftCommand], Awaitable[KnowledgeDraftRecord]] | None = None,
+        trace_writer: AgentTraceWriter | None = None,
+        trace_warning: Callable[[AgentContext, str], None] | None = None,
     ) -> None:
         self._workspace_id = workspace_id
         self._workspace_root = workspace_root
@@ -120,6 +124,9 @@ class AgentExecutionService:
         self._review_repository = review_repository
         self._get_draft = get_draft
         self._update_draft = update_draft
+        self._trace_writer = trace_writer or AgentTraceWriter()
+        self._trace_warning = trace_warning
+        self._trace_warned_runs: set[str] = set()
         self._checkpointer = AgentCheckpointer(workspace_root)
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._controls: dict[str, ExecutionControl] = {}
@@ -579,6 +586,10 @@ class AgentExecutionService:
         cancellation: ExecutionCancellation,
     ) -> None:
         execution = self._repository.get_execution(execution_id)
+        context = self._execution_context(execution)
+        await self._trace_execution(
+            context, "execution.started", {"status": "running"}
+        )
         try:
             cancellation.raise_if_requested()
             await handler(execution, cancellation)
@@ -609,6 +620,12 @@ class AgentExecutionService:
                     "execution.failed",
                     {"code": failed.error_code or "agent_execution_failed"},
                 )
+                await self._trace_execution(
+                    context,
+                    "execution.failed",
+                    safe_error_payload(error),
+                    terminal=True,
+                )
             return
         current = self._repository.get_execution(execution_id)
         if current.status == "running":
@@ -622,6 +639,12 @@ class AgentExecutionService:
                 completed.id,
                 "execution.completed",
                 {"executionId": completed.id},
+            )
+            await self._trace_execution(
+                context,
+                "execution.completed",
+                {"status": "completed"},
+                terminal=True,
             )
 
     async def _finish_cancel(self, execution_id: str) -> ExecutionRecord:
@@ -644,6 +667,12 @@ class AgentExecutionService:
             "execution.cancelled",
             {"executionId": cancelled.id},
         )
+        await self._trace_execution(
+            self._execution_context(cancelled),
+            "execution.failed",
+            {"status": "cancelled", "code": "execution_cancelled"},
+            terminal=True,
+        )
         return cancelled
 
     async def _execute(self, execution_id: str, graph_input: object) -> None:
@@ -656,6 +685,15 @@ class AgentExecutionService:
             run_id=execution.id,
             allowed_tools=frozenset(),
             allowed_scopes=frozenset(),
+        )
+        context = replace(
+            context,
+            trace_warning=lambda code, bound=context: self._record_trace_warning(
+                bound, code
+            ),
+        )
+        await self._trace_execution(
+            context, "execution.started", {"status": "running"}
         )
 
         async def create_action(**values):
@@ -825,7 +863,10 @@ class AgentExecutionService:
         async def persist_question_candidates(state: dict[str, Any]) -> None:
             if self._review_repository is None:
                 raise RuntimeError("question curation is not configured")
-            batch_id = str(execution.input.get("batchId", ""))
+            batch_id = str(
+                execution.input.get("batch_id")
+                or execution.input.get("batchId", "")
+            )
             if not batch_id:
                 raise ValueError("question curation batch is missing")
             batch = self._review_repository.get_batch(batch_id)
@@ -837,6 +878,11 @@ class AgentExecutionService:
             except LookupError:
                 curation = None
             raw_candidates = tuple(state.get("candidates", ()))
+            for warning in state.get("warnings", ()):
+                if isinstance(warning, dict):
+                    self._review_repository.append_curation_warning(
+                        session.id, warning
+                    )
             if curation is not None:
                 curation = self._review_repository.update_curation_progress(
                     session.id,
@@ -883,7 +929,10 @@ class AgentExecutionService:
                         return item.snapshot.question_id
                 return None
             persisted = []
-            revision_candidate_id = execution.input.get("revisionCandidateId")
+            revision_candidate_id = (
+                execution.input.get("revision_candidate_id")
+                or execution.input.get("revisionCandidateId")
+            )
             for index, raw in enumerate(raw_candidates, start=1):
                 markdown = (
                     f"# {raw['title']}\n\n"
@@ -1102,6 +1151,7 @@ class AgentExecutionService:
         projected_attempts: dict[str, str] = {}
         projected_drafts: set[str] = set()
         projected_progress: tuple[int, str] | None = None
+        projected_curation_progress: tuple[str, int, int] | None = None
         projector = AgentEventProjector()
         review_timeline = SessionTimelineProjector(
             self._repository, self._events
@@ -1144,6 +1194,33 @@ class AgentExecutionService:
                         data = part.get("data")
                         if isinstance(data, dict):
                             final_state = data
+                            if session.kind in {"question.curate", "question.revise"}:
+                                phase = data.get("generation_phase")
+                                if phase in {"discovery", "enrichment"}:
+                                    progress = (
+                                        str(phase),
+                                        int(data.get("completed_units", 0)),
+                                        int(data.get("total_units", 0)),
+                                    )
+                                    if progress != projected_curation_progress:
+                                        projected_curation_progress = progress
+                                        self._review_repository.update_curation_progress(
+                                            session.id,
+                                            stage="generating",
+                                            completed_units=progress[1],
+                                            total_units=progress[2],
+                                        )
+                                        await self._events.publish(
+                                            session.id,
+                                            execution.id,
+                                            "curation.progress.changed",
+                                            {
+                                                "resourceId": session.id,
+                                                "phase": progress[0],
+                                                "completed": progress[1],
+                                                "total": progress[2],
+                                            },
+                                        )
                             if session.kind == "review.round":
                                 for attempt_id in data.get("attempt_ids", ()):
                                     attempt = self._review_repository.get_attempt(
@@ -1338,6 +1415,12 @@ class AgentExecutionService:
                 "execution.completed",
                 {"executionId": execution.id},
             )
+            await self._trace_execution(
+                context,
+                "execution.completed",
+                {"status": "completed"},
+                terminal=True,
+            )
             if session.kind == "review.round":
                 await self._events.publish(
                     session.id,
@@ -1410,6 +1493,12 @@ class AgentExecutionService:
                                 "error_code": error_code,
                             },
                         )
+                        await self._trace_execution(
+                            context,
+                            "execution.failed",
+                            {"status": "interrupted", **safe_error_payload(error)},
+                            terminal=True,
+                        )
                         return
                 except Exception as persistence_error:
                     logger.error(
@@ -1440,10 +1529,17 @@ class AgentExecutionService:
                 if (
                     session.kind in {"question.curate", "question.revise"}
                     and self._review_repository is not None
-                    and execution.input.get("batchId")
+                    and (
+                        execution.input.get("batch_id")
+                        or execution.input.get("batchId")
+                    )
                 ):
                     self._review_repository.update_batch_status(
-                        str(execution.input["batchId"]), "failed"
+                        str(
+                            execution.input.get("batch_id")
+                            or execution.input["batchId"]
+                        ),
+                        "failed",
                     )
                     curation = self._review_repository.get_curation_session(
                         session.id
@@ -1475,6 +1571,12 @@ class AgentExecutionService:
                             )
                         },
                     )
+                    await self._trace_execution(
+                        context,
+                        "execution.failed",
+                        safe_error_payload(error),
+                        terminal=True,
+                    )
                     if session.kind == "review.round":
                         await self._events.publish(
                             session.id,
@@ -1496,6 +1598,64 @@ class AgentExecutionService:
                     "failed to persist agent execution failure",
                     extra={"execution_id": execution.id},
                 )
+
+    def _execution_context(self, execution: ExecutionRecord) -> AgentContext:
+        context = AgentContext(
+            workspace_id=self._workspace_id,
+            workspace_root=self._workspace_root,
+            session_id=execution.session_id,
+            run_id=execution.id,
+            allowed_tools=frozenset(),
+            allowed_scopes=frozenset(),
+        )
+        return replace(
+            context,
+            trace_warning=lambda code, bound=context: self._record_trace_warning(
+                bound, code
+            ),
+        )
+
+    def _record_trace_warning(self, context: AgentContext, code: str) -> None:
+        if context.run_id in self._trace_warned_runs:
+            return
+        self._trace_warned_runs.add(context.run_id)
+        if self._trace_warning is None:
+            return
+        try:
+            self._trace_warning(context, code)
+        except Exception:
+            pass
+
+    async def _trace_execution(
+        self,
+        context: AgentContext,
+        event_type: str,
+        payload: dict[str, object],
+        *,
+        terminal: bool = False,
+    ) -> None:
+        identity = TraceIdentity(
+            workspace_id=context.workspace_id,
+            workspace_root=context.workspace_root,
+            session_id=context.session_id,
+            run_id=context.run_id,
+            agent_role=context.agent_role or "execution",
+            agent_name="execution_runtime",
+            invocation_id=context.run_id,
+        )
+        try:
+            written = await asyncio.to_thread(
+                self._trace_writer.append,
+                identity,
+                event_type,
+                payload,
+                terminal=terminal,
+            )
+            if written:
+                return
+        except Exception:
+            pass
+        self._record_trace_warning(context, "agent_trace_write_failed")
 
 
 def _user_content(input: dict[str, Any]) -> str:

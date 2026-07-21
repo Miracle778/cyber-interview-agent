@@ -1,5 +1,14 @@
 # Agent Runtime 框架收敛关键发现
 
+## 2026-07-21 GLM-5.2 题目整理失败
+
+- `reasoning_effort=none` 不能在所有 OpenAI-compatible Provider 上统一解释为“省略参数”：GLM-5.2 省略 Thinking 参数会默认开启推理。模型能力适配必须在 resolver 层显式映射，不能依赖通用协议默认值。
+- 当前可靠映射是 GLM 4.5+ / 5.x：`none -> thinking.disabled`，非 none -> `thinking.enabled + reasoning_effort`；未知 OpenAI-compatible 模型保持原请求形状，避免发送不支持的 GLM 扩展字段。
+- 模型输出预算应按角色收紧。题目生成需要 8,192 token 容纳 ToolStrategy JSON，但评价、聊天等角色不应被同一全局上限扩大。
+- role thread 既要隔离也要可恢复：随机 UUID 会制造不可重放 checkpoint；题目分块使用 session + execution run + unit index，避免跨重试和跨块累积，同时保持同一 execution 的确定性命名。
+- “每块最多 4,000 字符”必须覆盖无换行长文本；仅按行 flush 不能建立硬上限。
+- 最小真实 Ark 调用证明 `thinking.type=disabled` 可在 `/coding/v3` 上恢复结构化 tool call；多块长生成仍有明显 Provider 延迟，功能正确性与性能验收必须分开记录。
+
 ## 2026-07-20 R3 实施扩展点
 
 - R3 应建立独立 `app/profile` 领域包，但复用现有 Workspace Runtime、Session/Execution/Event、Middleware、HITL 和 Knowledge Publication；另建 Graph registry 或执行引擎会制造第二套恢复与审计语义。
@@ -402,3 +411,13 @@
 - 普通复习轮次的上下文用量已经由通用 middleware 按 session 持久化，本次只需在 `ReviewRoundResource` 投影 `contextUsage`，不新建复习专用统计逻辑。
 - 左右分栏等高不能只依赖 Grid 默认 stretch：子栏自身的 `overflow-y:auto` 会形成独立滚动容器和明显滚动槽，视觉上仍像两个不同高度的面板。桌面工作台应由共同父级裁切，聊天记录作为主滚动区，右栏整体禁止滚动；长关键点或上下文只在展开卡片内部有界滚动。
 - 仅移除右栏滚动仍不满足单屏会话：`review-shell` 使用 `min-height: 100dvh`，同时聊天工作台保留 `min-height: 520px`，内容会反向撑高 shell 并触发 body 滚动。桌面会话态必须固定为 `height: 100dvh`、裁切 shell，并把所有中间 Grid 节点设为 `min-height: 0`；移动端再显式恢复自然文档流。
+
+## Progressive question curation 与诊断 Trace
+
+- 只限制输入字符不能解决结构化输出爆炸；必须分别限制每次识别的 section 数和每次补全的完整 candidate 数。
+- 当前 Mybatis artifact 为 39,570 字符；sectioner 得到 797 sections/133 discovery units，所有 unit 均不超过 6 sections/6,000 字符。长文档因此增加可恢复 work item 数量，而不会扩大单次 Provider 输出。
+- completed work item 是恢复边界；retry 必须重新绑定原 batch，不能创建替代 batch，否则会重复已成功的 Provider 调用。
+- Agent Trace 的文件边界应是 Execution，而 Agent 区分应是行级 identity；这既保留跨 Agent 时间顺序，又能按 `agent_name` 精确筛选。
+- Trace 安全不能依赖任意对象 `repr`；只白名单基础值、Pydantic、LangChain message 和受控字段，凭据 key 丢弃，未知对象只记录 type/unserializable。
+- 真实渐进式重试证明结构化输出已恢复，但 Provider 仍可能违反“每个 section 最多一个 seed/candidate”的提示。重复的允许引用属于可恢复输出偏差，应稳定保留首项；未知引用仍是证据边界违规，必须硬失败。
+- LangChain middleware 返回的 `ModelResponse` 是 dataclass 而非 Pydantic model；若不显式白名单其 `result/structured_response`，JSONL 会只记录 `unserializable`，无法兑现完整本地诊断目标。

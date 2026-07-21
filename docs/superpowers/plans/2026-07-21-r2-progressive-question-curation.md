@@ -24,7 +24,7 @@
 - Implement the global JSONL trace plan first so real Provider acceptance produces local request/response evidence.
 - Treat the existing uncommitted GLM thinking, 180-second timeout, stable thread, and long-line chunk tests as implementation baseline evidence; fold or replace them deliberately and never discard them while applying Task 1.
 - Preserve all unrelated dirty R3 files and local planning files; stage only files named by the current task.
-- This R2 plan contains four vertical tasks and must be executed by one Agent without implementation subagents.
+- The root Agent owns the slice end-to-end, shared Agent/Graph/API/UI integration, review, and acceptance. Two one-shot bounded subagents may implement only the non-overlapping sectioner and migration/repository foundations; they must not commit, delegate again, or cross their assigned file boundaries.
 
 ---
 

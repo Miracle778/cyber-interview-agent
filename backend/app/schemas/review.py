@@ -326,6 +326,12 @@ class LatestCurationCommandResource(ReviewModel):
     retry_count: int
 
 
+class CurationProgressResource(ReviewModel):
+    phase: Literal["discovery", "enrichment"] | None = None
+    completed: int = Field(ge=0)
+    total: int = Field(ge=0)
+
+
 class CurationSessionResource(ReviewModel):
     id: str
     workspace_id: str
@@ -343,7 +349,7 @@ class CurationSessionResource(ReviewModel):
     context_compacted: bool
     context_usage: ContextUsageResource
     stage: str
-    progress: dict[str, int]
+    progress: CurationProgressResource
     summary: dict[str, Any]
     summary_version: int
     warnings: list[dict[str, Any]]

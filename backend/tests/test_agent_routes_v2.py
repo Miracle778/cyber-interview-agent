@@ -12,6 +12,7 @@ from langgraph.graph import END, START, StateGraph
 from app.api.dependencies import get_agent_application
 from app.api.routes_agent import router as agent_router
 from app.application.workspace_runtime import AgentApplication
+from app.diagnostics.agent_trace import read_trace_rows
 
 
 def _graph_factory(kind, **dependencies):
@@ -106,6 +107,15 @@ async def test_session_and_execution_resources_do_not_expose_graph_internals(api
         assert detail["messages"][-1]["content"] == "Echo: hello"
         assert detail["messages"][-1]["messageKind"] == "text"
         assert detail["messages"][-1]["payload"] == {}
+        trace_rows = read_trace_rows(
+            application._context("w1").root, session["id"], execution["id"]
+        )
+        assert [row["event_type"] for row in trace_rows] == [
+            "execution.started", "execution.completed"
+        ]
+        assert {row["agent_name"] for row in trace_rows} == {
+            "execution_runtime"
+        }
 
 
 @pytest.mark.asyncio

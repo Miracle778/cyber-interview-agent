@@ -22,6 +22,12 @@
 
 下一步：Task 7 实现结构化 Profile Agent 与 ingest/assess Graph，Task 8 接通材料 API；Task 9 后开放第一批页面功能测试。
 
+### 2026-07-21 R2 题目整理故障增量
+
+- 正式修复已落：GLM Thinking 显式映射、question_generation 独立输出预算、稳定分块 thread、无换行长文本硬上限。
+- 自动回归与最小真实 GLM 结构化调用已通过；完整原始文档验收等待用户明确授权向外部 Provider 发送正文。
+- 该增量不改变当前 R3 Task 8 的下一产品任务，也不声明 R2 整体关闭。
+
 ## 前置阶段：R2 题库与 Agent 可用性补强
 
 目标是在现有 R2 闭环上补齐失败恢复、可观察过程、候选题管理、删除生命周期、分层题库、上下文续写和可审计相似题合并。
@@ -51,6 +57,7 @@
 | 21. Agent 会话视觉与运行事实统一 | 实现与自动验证完成，待重启后实页复核 | 深入讨论复用题库整理 Dock、运行详情和真实上下文 Token 进度 |
 | 22. 复习 Agent 工作台比例与组件统一 | 实现与自动验证完成，实页视觉待复核 | 深入讨论与普通复习互斥渲染、工作台填满可用视口、统一 Dock 与上下文进度侧栏 |
 | 23. Agent 代码结构整理第一阶段 | 已完成 | 显式 Agent/Middleware 模块命名、版本化 Prompt、共享 runnable 协议与 thread 配置；不改变 API、数据库、Graph 或 SSE 行为 |
+| 24. Progressive 题目整理与 Agent JSONL | 实现与自动验证完成；真实重试发现的重复引用偏差已修，完整 Provider/浏览器验收待续 | bounded discovery/enrichment、recoverable work items、同 batch retry、重复 ref 稳定首项归一化、200 上限提示、per-Execution 多 Agent JSONL；新增定向 58 passed |
 
 ## 工作位置
 
@@ -74,7 +81,7 @@
 - 会话化前端实施前、实施中和最终审查必须使用 `ui-ux-pro-max`，产出设计系统、页面约束和五类 UX 验收证据，不能只在收尾换颜色。
 - R8 明确为微信、飞书等原生对话入口；响应式 Web 只属于 Web UI 质量，不代表 Channel。
 - R8 复用同一 application service、session/checkpoint、HITL、工具权限和知识发布规则，不复制 Agent Runtime。
-- R2 计划最多四个纵向任务，一个 Agent 负责到底，不创建 subagent。
+- R2 默认由一个 Agent 负责到底；2026-07-21 增量经用户明确确认，例外地一次性并行 writer、sectioner、work-item 三个互不重叠基础任务，根 Agent 保留共享集成、审查、验证和提交所有权，且未发生二次转派。
 - R2 必须交付可用的 Web 复习闭环，而不是只交付 Graph/API 骨架。
 - 当前 R2 验收默认不配置或启动 Langfuse；Langfuse 正常/不可达场景留到后续 observability 专项。
 

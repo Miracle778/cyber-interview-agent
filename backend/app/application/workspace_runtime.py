@@ -47,6 +47,7 @@ from app.review.selector import QuestionSelector
 from app.review.repository import ReviewRepository
 from app.tools.audit import ToolAuditRepository
 from app.agents.context import AgentContext
+from app.diagnostics.agent_trace import AgentTraceWriter, initialize_agent_trace_directory
 from app.profile.repository import ProfileRepository
 from app.profile.service import ProfileService
 from app.profile.storage import MaterialStorage
@@ -186,6 +187,7 @@ class WorkspaceRuntime:
         validate_review_model: Callable[[str, str], None],
     ) -> "WorkspaceRuntime":
         connection = connect_runtime_database(root)
+        initialize_agent_trace_directory(root)
         repository = ProductRepository(connection)
         events = ProductEventStream(repository, workspace_root=root)
         sessions = AgentSessionService(repository, events)
@@ -196,6 +198,7 @@ class WorkspaceRuntime:
         projection = SqliteMiddlewareProjection(connection)
         reviews = ReviewRepository(connection)
         holder: dict[str, HitlService] = {}
+        trace_writer = getattr(graph_factory, "trace_writer", None) or AgentTraceWriter()
 
         def build(kind: str, **dependencies):
             return graph_factory(
@@ -223,6 +226,8 @@ class WorkspaceRuntime:
             review_repository=reviews,
             get_draft=drafts.get,
             update_draft=drafts.update,
+            trace_writer=trace_writer,
+            trace_warning=projection.warning,
         )
         projection_service = ReviewDomainService(
             repository=reviews,
@@ -264,6 +269,7 @@ class WorkspaceRuntime:
                 projection=projection,
                 audit=audit,
                 observability=observability,
+                publish_event=events.publish,
             )
         )
 
@@ -277,6 +283,7 @@ class WorkspaceRuntime:
                 projection=projection,
                 audit=audit,
                 observability=observability,
+                publish_event=events.publish,
                 interaction_override=override,
             )
 

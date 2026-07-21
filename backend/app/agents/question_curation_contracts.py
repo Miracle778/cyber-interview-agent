@@ -21,5 +21,22 @@ class QuestionCandidate(_StrictQuestionCurationOutput):
     correction_note: str = Field(min_length=1)
 
 
+class QuestionSeed(_StrictQuestionCurationOutput):
+    question_text: str = Field(min_length=1)
+    source_ref: str = Field(min_length=1)
+
+
+class QuestionSeedChunk(_StrictQuestionCurationOutput):
+    seeds: list[QuestionSeed] = Field(default_factory=list, max_length=6)
+
+
+class QuestionCandidateChunk(_StrictQuestionCurationOutput):
+    candidates: list[QuestionCandidate] = Field(default_factory=list, max_length=3)
+
+
 class QuestionCandidateBatch(_StrictQuestionCurationOutput):
-    candidates: list[QuestionCandidate] = Field(min_length=1, max_length=50)
+    candidates: list[QuestionCandidate] = Field(default_factory=list, max_length=200)
+
+
+class QuestionRevisionOutput(_StrictQuestionCurationOutput):
+    candidate: QuestionCandidate
