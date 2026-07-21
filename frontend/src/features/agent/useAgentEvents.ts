@@ -29,6 +29,7 @@ const EVENT_TYPES = [
   "session.message.created",
   "curation.stage.changed",
   "curation.progress.changed",
+  "curation.control.changed",
   "curation.summary.ready",
   "curation.command.resolved",
   "curation.command.interpreting",
@@ -141,7 +142,7 @@ export function useAgentEvents(
         } catch {
           return;
         }
-        if (!Number.isInteger(event.id) || eventIdsRef.current.has(event.id)) return;
+        if (!Number.isInteger(event.id) || event.id <= cursorRef.current || eventIdsRef.current.has(event.id)) return;
         eventIdsRef.current.add(event.id);
         cursorRef.current = Math.max(cursorRef.current, event.id);
         setEvents((current) => [...current, event].slice(-100));

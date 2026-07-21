@@ -8,7 +8,7 @@ const workspace = { id: "w1", workspacePath: "/tmp/demo", vaultPath: "/tmp/demo/
 function wrapper({ children }: { children: ReactNode }) { return <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{children}</QueryClientProvider>; }
 
 describe("QuestionCatalog", () => {
-  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
   it("opens from curation history into a focused agent workspace", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
@@ -271,14 +271,14 @@ describe("QuestionCatalog", () => {
     expect(within(queueDialog).getAllByText("TCP 慢启动").length).toBeGreaterThan(0);
   });
 
-  it("shows public execution evidence and retries a failed curation session", async () => {
+  it("hydrates a failed Batch and resumes it through the domain control endpoint", async () => {
     const failedSession = {
-      id: "cs-failed", workspaceId: "w1", title: "failed.md", sourceRefs: ["s1"], sources: [{ id: "s1", filename: "failed.md", organizationState: "previously_curated" }], activeBatchId: "b1", executionId: "e1", executionStatus: "failed", executionStartedAt: "2026-07-15T10:00:00Z", executionFinishedAt: "2026-07-15T10:00:12Z", executionErrorCode: "provider_error", executionErrorMessage: "Agent 执行失败", contextCompacted: true, contextUsage: { currentTokens: 80000, thresholdTokens: 89600, estimated: true }, stage: "failed", progress: { completed: 1, total: 2 }, summary: { items: [] }, summaryVersion: 0, warnings: [], candidateCount: 0, pendingCount: 0, publishedCount: 0, messages: [{ id: "stage-1", executionId: "e1", role: "assistant", content: "正在读取所选资料", messageKind: "stage", payload: {}, createdAt: "2026-07-15T10:00:00Z" }], usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20, callCount: 1, estimatedCount: 0 }, createdAt: "now", updatedAt: "now",
+      id: "cs-failed", workspaceId: "w1", title: "failed.md", sourceRefs: ["s1"], sources: [{ id: "s1", filename: "failed.md", organizationState: "previously_curated" }], activeBatchId: "b1", batchStatus: "failed", batchVersion: 6, executionId: "e1", executionStatus: "failed", executionStartedAt: "2026-07-15T10:00:00Z", executionFinishedAt: "2026-07-15T10:00:12Z", executionErrorCode: "provider_error", executionErrorMessage: "Agent 执行失败", contextCompacted: true, contextUsage: { currentTokens: 80000, thresholdTokens: 89600, estimated: true }, stage: "failed", progress: { phase: "enrichment", completed: 1, total: 2, generatedCandidateCount: 1, activeWorkers: 0 }, timing: { currentElapsedMs: 12_000, cumulativeElapsedMs: 12_000 }, controls: { canPause: false, canResume: true, canTerminate: true }, provisionalCandidates: [], summary: { items: [] }, summaryVersion: 0, warnings: [], candidateCount: 0, pendingCount: 0, publishedCount: 0, messages: [{ id: "stage-1", executionId: "e1", role: "assistant", content: "正在读取所选资料", messageKind: "stage", payload: {}, createdAt: "2026-07-15T10:00:00Z" }], usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20, callCount: 1, estimatedCount: 0 }, createdAt: "now", updatedAt: "now",
     };
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       if (url.includes("/api/knowledge/sources")) return Response.json([]);
-      if (url.endsWith("/retry") && init?.method === "POST") return Response.json({ ...failedSession, executionId: "e2", executionStatus: "running", stage: "generating" }, { status: 202 });
+      if (url.endsWith("/resume") && init?.method === "POST") return Response.json({ ...failedSession, batchStatus: "generating", batchVersion: 7, executionId: "e2", executionStatus: "running", stage: "generating" }, { status: 202 });
       if (url.includes("/api/review/curation-sessions")) return Response.json([failedSession]);
       throw new Error(`unexpected ${url}`);
     });
@@ -286,17 +286,62 @@ describe("QuestionCatalog", () => {
     fireEvent.click(await screen.findByRole("button", { name: /failed\.md/ }));
     const runtime = await screen.findByRole("complementary", { name: "整理运行状态" });
     await waitFor(() => expect(runtime).toHaveTextContent("Agent 执行失败"));
-    expect(runtime).not.toHaveTextContent("耗时");
+    expect(runtime).toHaveTextContent("本次运行 12 秒");
     expect(runtime).toHaveTextContent("0.02k");
     expect(runtime).toHaveTextContent("当前上下文 / 压缩阈值");
     const processDetails = screen.getByText("Agent 处理失败").closest("details");
     fireEvent.click(screen.getByText("Agent 处理失败"));
     expect(processDetails).toHaveTextContent("正在读取所选资料");
-    fireEvent.click(within(runtime).getByRole("button", { name: "重试整理" }));
+    fireEvent.click(within(runtime).getByRole("button", { name: "继续整理" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/review/curation-sessions/cs-failed/retry",
-      expect.objectContaining({ method: "POST" }),
+      "/api/review/curation-sessions/cs-failed/resume",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ "Idempotency-Key": expect.any(String) }),
+        body: JSON.stringify({ expectedBatchVersion: 6 }),
+      }),
     ));
+  });
+
+  it("refreshes the selected resource when a curation control event arrives", async () => {
+    class CatalogEventSource {
+      static instances: CatalogEventSource[] = [];
+      onopen: ((event: Event) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      listeners = new Map<string, (event: MessageEvent<string>) => void>();
+      constructor(readonly url: string) { CatalogEventSource.instances.push(this); }
+      addEventListener(type: string, listener: (event: MessageEvent<string>) => void) { this.listeners.set(type, listener); }
+      close() {}
+      emit(event: object) { this.listeners.get((event as { type: string }).type)?.({ data: JSON.stringify(event) } as MessageEvent<string>); }
+    }
+    vi.stubGlobal("EventSource", CatalogEventSource);
+    const running = {
+      id: "cs1", workspaceId: "w1", title: "mysql.md", sourceRefs: ["s1"], sources: [{ id: "s1", filename: "mysql.md", organizationState: "in_progress" }], activeBatchId: "b1", batchStatus: "generating", batchVersion: 3, executionId: "e1", executionStatus: "running", executionStartedAt: "2026-07-21T16:00:00Z", executionFinishedAt: null, executionErrorCode: null, executionErrorMessage: null, contextCompacted: false, contextUsage: { currentTokens: 0, thresholdTokens: 1000, estimated: false }, stage: "generating", progress: { phase: "discovery", completed: 4, total: 4, generatedCandidateCount: 1, activeWorkers: 2 }, timing: { currentElapsedMs: 10_000, cumulativeElapsedMs: 10_000 }, controls: { canPause: true, canResume: false, canTerminate: true }, provisionalCandidates: [], summary: { items: [] }, summaryVersion: 0, warnings: [], candidateCount: 0, pendingCount: 0, publishedCount: 0, messages: [], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, callCount: 0, estimatedCount: 0 }, createdAt: "now", updatedAt: "now",
+    };
+    const paused = { ...running, batchStatus: "paused", batchVersion: 4, executionStatus: "cancelled", stage: "paused", progress: { phase: "enrichment", completed: 1, total: 3, generatedCandidateCount: 2, activeWorkers: 0 }, controls: { canPause: false, canResume: true, canTerminate: true } };
+    let sessionReads = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/api/agent/sessions/cs1") return Response.json({ id: "cs1" });
+      if (url.includes("/api/knowledge/sources")) return Response.json([]);
+      if (url.includes("/api/review/question-candidates")) return Response.json([]);
+      if (url.includes("/api/settings/providers")) return Response.json([]);
+      if (url.includes("/api/review/curation-sessions")) {
+        sessionReads += 1;
+        return Response.json([sessionReads > 1 ? paused : running]);
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+
+    render(<QuestionCatalog workspace={workspace} />, { wrapper });
+    fireEvent.click(await screen.findByRole("button", { name: /mysql\.md/ }));
+    expect(await screen.findByRole("button", { name: "暂停整理" })).toBeInTheDocument();
+    await waitFor(() => expect(CatalogEventSource.instances).toHaveLength(1));
+    CatalogEventSource.instances[0].emit({ id: 7, type: "curation.control.changed", sessionId: "cs1", executionId: "e1", timestamp: "now", payload: { resourceId: "cs1", status: "paused", operation: "pause", version: 4 } });
+
+    expect(await screen.findByRole("button", { name: "继续整理" })).toBeInTheDocument();
+    expect(screen.getByLabelText("整理进度")).toHaveTextContent("1 / 3");
+    expect(sessionReads).toBeGreaterThan(1);
   });
 
   it("renders a command optimistically and reconciles the durable timeline", async () => {

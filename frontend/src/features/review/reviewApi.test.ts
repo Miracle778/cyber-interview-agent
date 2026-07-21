@@ -6,7 +6,10 @@ import {
   submitReviewAnswer,
   retryReviewEvaluation,
   getBulkPublicationPreflight,
+  pauseCurationSession,
+  resumeCurationSession,
   startBulkPublication,
+  terminateCurationSession,
   retryBulkPublication,
 } from "./reviewApi";
 import type { CurationSession, ReviewRound } from "./reviewTypes";
@@ -99,6 +102,29 @@ describe("reviewApi", () => {
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ idempotencyKey: "bulk-retry-1" }),
+      }),
+    );
+  });
+
+  it.each([
+    ["pause", pauseCurationSession],
+    ["resume", resumeCurationSession],
+    ["terminate", terminateCurationSession],
+  ] as const)("sends %s idempotency in the header and only the expected Batch version in the body", async (operation, request) => {
+    const session = { id: "curation-1", batchVersion: 8 } as CurationSession;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(session, { status: 202 }));
+
+    await request("curation-1", 7, `${operation}-request-0001`);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/review/curation-sessions/curation-1/${operation}`,
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          "Content-Type": "application/json",
+          "Idempotency-Key": `${operation}-request-0001`,
+        }),
+        body: JSON.stringify({ expectedBatchVersion: 7 }),
       }),
     );
   });

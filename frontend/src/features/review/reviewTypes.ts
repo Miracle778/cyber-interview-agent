@@ -86,7 +86,7 @@ export interface QuestionBatch {
   runId: string | null;
   sourceRefs: string[];
   rewriteOfBatchId: string | null;
-  status: "generating" | "review_pending" | "completed" | "failed";
+  status: CurationBatchStatus;
   candidateCount: number;
   pendingCount: number;
   candidates: QuestionCandidate[];
@@ -94,16 +94,36 @@ export interface QuestionBatch {
   updatedAt: string;
 }
 
+export type CurationBatchStatus =
+  | "generating"
+  | "paused"
+  | "interrupted"
+  | "review_pending"
+  | "completed"
+  | "failed"
+  | "terminated";
+
 export type CurationStage =
   | "queued"
   | "reading_sources"
   | "generating"
+  | "pausing"
+  | "paused"
+  | "interrupted"
   | "merging"
   | "summarizing"
   | "waiting_for_command"
   | "publishing"
   | "completed"
-  | "failed";
+  | "failed"
+  | "terminated";
+
+export interface CurationProvisionalCandidate {
+  id: string;
+  title: string;
+  questionText: string;
+  sourceRefs: string[];
+}
 
 export interface CurationMessage {
   id: string;
@@ -139,6 +159,8 @@ export interface CurationSession {
   sourceRefs: string[];
   sources: CurationSource[];
   activeBatchId: string | null;
+  batchStatus: CurationBatchStatus | null;
+  batchVersion: number | null;
   executionId: string | null;
   executionStatus: string | null;
   executionStartedAt: string | null;
@@ -148,7 +170,16 @@ export interface CurationSession {
   contextCompacted: boolean;
   contextUsage: { currentTokens: number; thresholdTokens: number; estimated: boolean };
   stage: CurationStage;
-  progress: { phase: "discovery" | "enrichment" | null; completed: number; total: number };
+  progress: {
+    phase: "discovery" | "enrichment" | null;
+    completed: number;
+    total: number;
+    generatedCandidateCount: number;
+    activeWorkers: number;
+  };
+  timing: { currentElapsedMs: number; cumulativeElapsedMs: number };
+  controls: { canPause: boolean; canResume: boolean; canTerminate: boolean };
+  provisionalCandidates: CurationProvisionalCandidate[];
   summary: { items: CurationSummaryItem[] };
   summaryVersion: number;
   warnings: { sourceId?: string; code: string; limit?: number }[];

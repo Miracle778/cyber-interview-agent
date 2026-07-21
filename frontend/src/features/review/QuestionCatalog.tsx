@@ -14,13 +14,34 @@ import { CurationSessionList } from "./CurationSessionList";
 import { QuestionLibrary } from "./QuestionLibrary";
 import { groupLogicalQuestions } from "./questionGroups";
 import { SourceSelectionDialog } from "./SourceSelectionDialog";
-import { abandonCurationCommand, createCurationSession, deleteCurationSession, getBulkPublication, getBulkPublicationPreflight, getCurationSession, getQuestionCandidateOriginSession, listAllQuestionCandidates, listCurationSessions, publishQuestionCandidate, restoreCurationSession, retryBulkPublication, retryCurationCommand, retryCurationSession, startBulkPublication, submitCurationCommand, updateQuestionCandidateNote } from "./reviewApi";
+import { abandonCurationCommand, createCurationSession, deleteCurationSession, getBulkPublication, getBulkPublicationPreflight, getCurationSession, getQuestionCandidateOriginSession, listAllQuestionCandidates, listCurationSessions, pauseCurationSession, publishQuestionCandidate, restoreCurationSession, resumeCurationSession, retryBulkPublication, retryCurationCommand, startBulkPublication, submitCurationCommand, terminateCurationSession, updateQuestionCandidateNote } from "./reviewApi";
 import type { BulkPublication, BulkPublicationPreflight, CurationMessage, CurationSession, QuestionCandidate } from "./reviewTypes";
 
 type CatalogView = "sessions" | "library";
 
 function commandId() {
   return globalThis.crypto?.randomUUID?.() ?? `curation-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function curationIsRunning(session: CurationSession) {
+  return session.batchStatus === "generating" || session.stage === "pausing";
+}
+
+function reconcileCurationSession(current: CurationSession | undefined, incoming: CurationSession) {
+  if (!current || current.activeBatchId !== incoming.activeBatchId) return incoming;
+  const currentVersion = current.batchVersion ?? 0;
+  const incomingVersion = incoming.batchVersion ?? 0;
+  if (incomingVersion < currentVersion) return current;
+  const samePhase = current.progress?.phase === incoming.progress?.phase;
+  return {
+    ...incoming,
+    progress: {
+      ...incoming.progress,
+      completed: samePhase ? Math.max(current.progress?.completed ?? 0, incoming.progress?.completed ?? 0) : incoming.progress?.completed ?? 0,
+      total: samePhase ? Math.max(current.progress?.total ?? 0, incoming.progress?.total ?? 0) : incoming.progress?.total ?? 0,
+      generatedCandidateCount: Math.max(current.progress?.generatedCandidateCount ?? 0, incoming.progress?.generatedCandidateCount ?? 0),
+    },
+  };
 }
 
 export function QuestionCatalog({ workspace }: { workspace: WorkspaceConfig }) {
@@ -44,14 +65,18 @@ export function QuestionCatalog({ workspace }: { workspace: WorkspaceConfig }) {
   const sources = useQuery({ queryKey: ["knowledge-sources", workspace.id], queryFn: () => listSources(workspace.id) });
   const sessions = useQuery({
     queryKey: ["review-curation-sessions", workspace.id],
-    queryFn: () => listCurationSessions(workspace.id),
-    refetchInterval: (query) => query.state.data?.some((item) => !["waiting_for_command", "completed", "failed"].includes(item.stage)) ? 1200 : false,
+    queryFn: async () => {
+      const incoming = await listCurationSessions(workspace.id);
+      const current = client.getQueryData<CurationSession[]>(["review-curation-sessions", workspace.id]);
+      return incoming.map((item) => reconcileCurationSession(current?.find((existing) => existing.id === item.id), item));
+    },
+    refetchInterval: (query) => query.state.data?.some(curationIsRunning) ? 1200 : false,
   });
   const selected = useMemo(() => sessions.data?.find((item) => item.id === selectedId) ?? (directSession?.id === selectedId ? directSession : null), [directSession, selectedId, sessions.data]);
   const candidates = useQuery({
     queryKey: ["review-question-candidates", workspace.id],
     queryFn: () => listAllQuestionCandidates(workspace.id),
-    refetchInterval: selected && !["waiting_for_command", "completed", "failed"].includes(selected.stage) ? 1200 : false,
+    refetchInterval: selected && curationIsRunning(selected) ? 1200 : false,
   });
   const providers = useQuery({ queryKey: ["settings-providers"], queryFn: listProviders, enabled: Boolean(selectedId) });
   const modelOptions = useMemo(() => (providers.data ?? []).flatMap((provider) => provider.enabled ? provider.models.filter((model) => model.enabled && model.connectivityStatus === "ok").map((model) => ({ id: model.id, label: `${provider.name} / ${model.displayName}` })) : []), [providers.data]);
@@ -74,7 +99,7 @@ export function QuestionCatalog({ workspace }: { workspace: WorkspaceConfig }) {
     const result: Record<string, "not_curated" | "in_progress" | "previously_curated"> = {};
     for (const source of sources.data ?? []) result[source.id] = "not_curated";
     for (const session of sessions.data ?? []) {
-      const active = !["waiting_for_command", "completed", "failed"].includes(session.stage);
+      const active = curationIsRunning(session);
       for (const sourceId of session.sourceRefs) {
         if (active || result[sourceId] !== "in_progress") result[sourceId] = active ? "in_progress" : "previously_curated";
       }
@@ -88,7 +113,7 @@ export function QuestionCatalog({ workspace }: { workspace: WorkspaceConfig }) {
     if (unhandled.length === 0) return;
     lastHandledEventId.current = Math.max(...unhandled.map((event) => event.id));
     const eventTypes = new Set(unhandled.map((event) => event.type));
-    if (["curation.stage.changed", "curation.progress.changed", "curation.summary.ready", "session.message.created", "curation.command.resolved", "publication.changed", "execution.completed", "execution.cancelled", "execution.failed", "execution.interrupted"].some((type) => eventTypes.has(type))) {
+    if (["curation.stage.changed", "curation.progress.changed", "curation.control.changed", "curation.summary.ready", "session.message.created", "curation.command.resolved", "publication.changed", "execution.completed", "execution.cancelled", "execution.failed", "execution.interrupted"].some((type) => eventTypes.has(type))) {
       void refresh();
     }
     if (["curation.summary.ready", "curation.command.resolved", "publication.changed", "execution.completed"].some((type) => eventTypes.has(type))) {
@@ -114,9 +139,18 @@ export function QuestionCatalog({ workspace }: { workspace: WorkspaceConfig }) {
   const preflightBulk = useMutation({ mutationFn: (sessionId: string) => getBulkPublicationPreflight(sessionId), onSuccess: setBulkPreflight });
   const startBulk = useMutation({ mutationFn: ({ sessionId, version, candidateIds }: { sessionId: string; version: number; candidateIds: string[] }) => startBulkPublication(sessionId, version, candidateIds, commandId()), onSuccess: (accepted) => { setBulkPreflight(null); setBulkOperation(null); setActiveInteraction({ kind: "bulk", executionId: accepted.executionId, operationId: accepted.operationId }); } });
   const retryBulk = useMutation({ mutationFn: (operationId: string) => retryBulkPublication(operationId, commandId()), onSuccess: (accepted) => { setBulkOperation(null); setActiveInteraction({ kind: "bulk", executionId: accepted.executionId, operationId: accepted.operationId }); } });
-  const retry = useMutation({
-    mutationFn: (sessionId: string) => retryCurationSession(sessionId),
-    onSuccess: async (session) => { setSelectedId(session.id); await refresh(); },
+  const curationControl = useMutation({
+    mutationFn: ({ operation, session }: { operation: "pause" | "resume" | "terminate"; session: CurationSession }) => {
+      if (session.batchVersion === null) throw new Error("当前整理任务缺少可控制的 Batch 版本");
+      const request = operation === "pause" ? pauseCurationSession : operation === "resume" ? resumeCurationSession : terminateCurationSession;
+      return request(session.id, session.batchVersion, commandId());
+    },
+    onSuccess: async (session) => {
+      client.setQueryData<CurationSession[]>(["review-curation-sessions", workspace.id], (current) => current?.map((item) => item.id === session.id ? reconcileCurationSession(item, session) : item));
+      setDirectSession((current) => current?.id === session.id ? reconcileCurationSession(current, session) : current);
+      setSelectedId(session.id);
+      await refresh();
+    },
   });
   const removeSession = useMutation({
     mutationFn: ({ id, hard }: { id: string; hard: boolean }) => deleteCurationSession(id, hard),
@@ -226,7 +260,7 @@ export function QuestionCatalog({ workspace }: { workspace: WorkspaceConfig }) {
       </nav>
       {selected || view === "library" ? <nav className="catalog-context-nav" aria-label="当前位置导航"><button type="button" className="catalog-back" onClick={returnToCurationSessions}><ArrowLeft size={17} />返回整理会话</button><span aria-current="page">{selected ? selected.title : "题目库"}</span></nav> : null}
       {originSessionNotice ? <div className={`catalog-origin-notice${originSessionNotice.status === "error" || originSessionNotice.status === "missing" || originSessionNotice.status === "projection_missing" ? " catalog-origin-notice--error" : ""}`} role={originSessionNotice.status === "loading" ? "status" : "alert"}><AlertTriangle size={18} /><div><strong>{originSessionNotice.status === "loading" ? "正在定位会话" : "无法直接打开生成会话"}</strong><span>{originSessionNotice.message}</span></div>{originSessionNotice.status === "recycled" ? <Button size="sm" variant="secondary" loading={restoreOriginSession.isPending} onClick={() => restoreOriginSession.mutate(originSessionNotice.sessionId)}><RotateCcw size={15} />恢复并打开</Button> : null}<button type="button" aria-label="关闭会话提示" onClick={() => setOriginSessionNotice(null)}><X size={17} /></button></div> : null}
-      {view === "sessions" ? selected ? <section className="curation-session-workspace" aria-label="整理会话工作台"><div className="curation-source-stepper" aria-label="本次整理资料">{selected.sources.map((source, index) => <div key={source.id}><span>{index + 1}</span><p><small>资料 {index + 1}</small><strong title={source.filename}>{source.filename}</strong></p></div>)}</div><div ref={focusedWorkspaceRef} className="curation-focus-workspace"><CurationConversation session={selected} candidates={candidateMap} optimisticMessage={visibleOptimisticMessage} busy={interactionBusy || command.isPending} activeExecutionId={activeInteraction?.executionId} streamingState={streamingState} models={modelOptions} selectedModelId={selectedModelId} reasoningEffort={reasoningEffort} onModelChange={setSelectedModelId} onReasoningEffortChange={setReasoningEffort} onStop={() => activeInteraction && stop.mutate(activeInteraction.executionId)} onRetryCommand={() => activeInteraction?.commandId && retryCommand.mutate(activeInteraction.commandId)} onAbandonCommand={() => activeInteraction?.commandId && abandonCommand.mutate(activeInteraction.commandId)} onBulkPublish={() => bulkOperation?.status === "partial_failure" && activeInteraction?.operationId ? retryBulk.mutate(activeInteraction.operationId) : preflightBulk.mutate(selected.id)} bulkBusy={preflightBulk.isPending || startBulk.isPending || retryBulk.isPending || (activeInteraction?.kind === "bulk" && interactionBusy)} bulkRetryAvailable={bulkOperation?.status === "partial_failure"} artifactBusyId={publishCandidate.isPending ? publishCandidate.variables ?? null : saveNote.isPending ? saveNote.variables?.candidateId ?? null : null} onSubmit={sendCommand} onOpenCandidate={setFocusedCandidateId} onPublishCandidate={(candidateId) => publishCandidate.mutate(candidateId)} onSaveNote={(candidateId, note) => saveNote.mutate({ candidateId, note })} />{focusedCandidate ? <CurationArtifactDetail candidate={focusedCandidate} onClose={() => setFocusedCandidateId(null)} /> : <CurationRuntimePanel session={selected} candidates={candidates.isLoading ? null : selectedCandidates} activeModelLabel={modelOptions.find((model) => model.id === selectedModelId)?.label ?? selectedModelId} retrying={retry.isPending} artifactBusyId={publishCandidate.isPending ? publishCandidate.variables ?? null : saveNote.isPending ? saveNote.variables?.candidateId ?? null : null} statusFilter={candidateStatusFilter} onStatusFilterChange={setCandidateStatusFilter} onOpenCandidate={setFocusedCandidateId} onPublishCandidate={(candidateId) => publishCandidate.mutate(candidateId)} onSaveNote={(candidateId, note) => saveNote.mutate({ candidateId, note })} onRetry={() => retry.mutate(selected.id)} />}</div></section> : <CurationSessionList sessions={sessions.data ?? []} candidateCount={logicalQuestionGroups.length} publishedCount={publishedCandidateCount} onSelect={(id) => { setDirectSession(null); setSelectedId(id); setFocusedCandidateId(null); setCandidateStatusFilter(null); setActiveInteraction(null); setBulkOperation(null); }} onCreate={() => setDialogOpen(true)} onDelete={handleDeleteSession} onOpenLibrary={(status) => { setLibraryInitialStatus(status ?? ""); setView("library"); }} /> : <QuestionLibrary workspace={workspace} sources={sources.data ?? []} initialCandidateId={focusedCandidateId} initialStatus={libraryInitialStatus} onBackToSessions={() => setView("sessions")} onOpenSession={handleOpenOriginSession} onOpenDirectSession={(session) => { setDirectSession(session); setSelectedId(session.id); setFocusedCandidateId(null); setView("sessions"); }} />}
+      {view === "sessions" ? selected ? <section className="curation-session-workspace" aria-label="整理会话工作台"><div className="curation-source-stepper" aria-label="本次整理资料">{selected.sources.map((source, index) => <div key={source.id}><span>{index + 1}</span><p><small>资料 {index + 1}</small><strong title={source.filename}>{source.filename}</strong></p></div>)}</div><div ref={focusedWorkspaceRef} className="curation-focus-workspace"><CurationConversation session={selected} candidates={candidateMap} optimisticMessage={visibleOptimisticMessage} busy={interactionBusy || command.isPending} activeExecutionId={activeInteraction?.executionId} streamingState={streamingState} models={modelOptions} selectedModelId={selectedModelId} reasoningEffort={reasoningEffort} onModelChange={setSelectedModelId} onReasoningEffortChange={setReasoningEffort} onStop={() => activeInteraction && stop.mutate(activeInteraction.executionId)} onRetryCommand={() => activeInteraction?.commandId && retryCommand.mutate(activeInteraction.commandId)} onAbandonCommand={() => activeInteraction?.commandId && abandonCommand.mutate(activeInteraction.commandId)} onBulkPublish={() => bulkOperation?.status === "partial_failure" && activeInteraction?.operationId ? retryBulk.mutate(activeInteraction.operationId) : preflightBulk.mutate(selected.id)} bulkBusy={preflightBulk.isPending || startBulk.isPending || retryBulk.isPending || (activeInteraction?.kind === "bulk" && interactionBusy)} bulkRetryAvailable={bulkOperation?.status === "partial_failure"} artifactBusyId={publishCandidate.isPending ? publishCandidate.variables ?? null : saveNote.isPending ? saveNote.variables?.candidateId ?? null : null} onSubmit={sendCommand} onOpenCandidate={setFocusedCandidateId} onPublishCandidate={(candidateId) => publishCandidate.mutate(candidateId)} onSaveNote={(candidateId, note) => saveNote.mutate({ candidateId, note })} />{focusedCandidate ? <CurationArtifactDetail candidate={focusedCandidate} onClose={() => setFocusedCandidateId(null)} /> : <CurationRuntimePanel session={selected} candidates={candidates.isLoading ? null : selectedCandidates} activeModelLabel={modelOptions.find((model) => model.id === selectedModelId)?.label ?? selectedModelId} controlPending={curationControl.isPending ? curationControl.variables?.operation ?? null : null} artifactBusyId={publishCandidate.isPending ? publishCandidate.variables ?? null : saveNote.isPending ? saveNote.variables?.candidateId ?? null : null} statusFilter={candidateStatusFilter} onStatusFilterChange={setCandidateStatusFilter} onOpenCandidate={setFocusedCandidateId} onPublishCandidate={(candidateId) => publishCandidate.mutate(candidateId)} onSaveNote={(candidateId, note) => saveNote.mutate({ candidateId, note })} onPause={() => curationControl.mutate({ operation: "pause", session: selected })} onResume={() => curationControl.mutate({ operation: "resume", session: selected })} onTerminate={() => curationControl.mutate({ operation: "terminate", session: selected })} />}</div></section> : <CurationSessionList sessions={sessions.data ?? []} candidateCount={logicalQuestionGroups.length} publishedCount={publishedCandidateCount} onSelect={(id) => { setDirectSession(null); setSelectedId(id); setFocusedCandidateId(null); setCandidateStatusFilter(null); setActiveInteraction(null); setBulkOperation(null); }} onCreate={() => setDialogOpen(true)} onDelete={handleDeleteSession} onOpenLibrary={(status) => { setLibraryInitialStatus(status ?? ""); setView("library"); }} /> : <QuestionLibrary workspace={workspace} sources={sources.data ?? []} initialCandidateId={focusedCandidateId} initialStatus={libraryInitialStatus} onBackToSessions={() => setView("sessions")} onOpenSession={handleOpenOriginSession} onOpenDirectSession={(session) => { setDirectSession(session); setSelectedId(session.id); setFocusedCandidateId(null); setView("sessions"); }} />}
       <SourceSelectionDialog open={dialogOpen} sources={sources.data ?? []} sourceStates={sourceStates} busy={create.isPending} onClose={() => setDialogOpen(false)} onConfirm={(ids) => create.mutate(ids)} />
       <CurationRecycleBin open={trashOpen} workspaceId={workspace.id} onClose={() => setTrashOpen(false)} />
       {bulkPreflight ? <div className="dialog-backdrop" role="presentation"><section className="bulk-publication-dialog" role="dialog" aria-modal="true" aria-labelledby="bulk-publication-title"><h3 id="bulk-publication-title">确认一键发布</h3><p>将发布 {bulkPreflight.publishable.length} 道推荐题；{bulkPreflight.needsReview.length + bulkPreflight.blocked.length} 道需复核题会被跳过。已发布题目不会重复处理。</p><dl><div><dt>可发布</dt><dd>{bulkPreflight.publishable.length}</dd></div><div><dt>需复核</dt><dd>{bulkPreflight.needsReview.length}</dd></div><div><dt>已发布</dt><dd>{bulkPreflight.alreadyPublished.length}</dd></div></dl><footer><Button variant="ghost" onClick={() => setBulkPreflight(null)}>取消</Button><Button disabled={bulkPreflight.publishable.length === 0} loading={startBulk.isPending} onClick={() => startBulk.mutate({ sessionId: bulkPreflight.sessionId, version: bulkPreflight.summaryVersion, candidateIds: bulkPreflight.publishable })}>确认发布</Button></footer></section></div> : null}

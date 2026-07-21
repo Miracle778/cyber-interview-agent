@@ -115,6 +115,24 @@ describe("useAgentEvents", () => {
     expect(result.current.events.map((event) => event.type)).toEqual(["review.evaluation.started", "session.message.created"]);
   });
 
+  it("collects curation control events and ignores an older event delivered out of order", () => {
+    const { result } = renderHook(() =>
+      useAgentEvents("s1", {
+        createEventSource: (url) => new FakeEventSource(url),
+      }),
+    );
+    const source = FakeEventSource.instances[0];
+
+    act(() => {
+      source.emit({ id: 12, type: "curation.control.changed", sessionId: "s1", executionId: "r1", timestamp: "now", payload: { resourceId: "s1", status: "paused", operation: "pause", version: 4 } });
+      source.emit({ id: 11, type: "curation.progress.changed", sessionId: "s1", executionId: "r1", timestamp: "earlier", payload: { completed: 1, total: 4 } });
+    });
+
+    expect(result.current.events.map((event) => [event.id, event.type])).toEqual([
+      [12, "curation.control.changed"],
+    ]);
+  });
+
   it("bounds the retained event window", () => {
     const { result } = renderHook(() => useAgentEvents("s1", { createEventSource: (url) => new FakeEventSource(url) }));
     const source = FakeEventSource.instances[0];

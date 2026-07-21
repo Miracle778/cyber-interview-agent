@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "../../shared/api/client";
+import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiPut } from "../../shared/api/client";
 import type {
   ActiveQuestion,
   AcceptedBulkPublication,
@@ -36,6 +36,44 @@ export function createCurationSession(workspaceId: string, sourceRefs: string[])
 
 export function retryCurationSession(id: string): Promise<CurationSession> {
   return apiPost(`/api/review/curation-sessions/${id}/retry`, {});
+}
+
+async function controlCurationSession(
+  id: string,
+  operation: "pause" | "resume" | "terminate",
+  expectedBatchVersion: number,
+  idempotencyKey: string,
+): Promise<CurationSession> {
+  const response = await fetch(`/api/review/curation-sessions/${id}/${operation}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: JSON.stringify({ expectedBatchVersion }),
+  });
+  if (!response.ok) {
+    let error: { code?: string; message?: string } = {};
+    try {
+      error = await response.json() as { code?: string; message?: string };
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new ApiError(error.code ?? "api_error", error.message ?? "请求失败");
+  }
+  return response.json() as Promise<CurationSession>;
+}
+
+export function pauseCurationSession(id: string, expectedBatchVersion: number, idempotencyKey: string): Promise<CurationSession> {
+  return controlCurationSession(id, "pause", expectedBatchVersion, idempotencyKey);
+}
+
+export function resumeCurationSession(id: string, expectedBatchVersion: number, idempotencyKey: string): Promise<CurationSession> {
+  return controlCurationSession(id, "resume", expectedBatchVersion, idempotencyKey);
+}
+
+export function terminateCurationSession(id: string, expectedBatchVersion: number, idempotencyKey: string): Promise<CurationSession> {
+  return controlCurationSession(id, "terminate", expectedBatchVersion, idempotencyKey);
 }
 
 export function deleteCurationSession(id: string, hard = false): Promise<void> {
