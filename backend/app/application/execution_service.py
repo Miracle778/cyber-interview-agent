@@ -1109,7 +1109,13 @@ class AgentExecutionService:
                             "total": max(1, len(raw_candidates)),
                         },
                     )
-            self._review_repository.update_batch_status(batch_id, "completed")
+            completed_batch = self._review_repository.update_batch_status(
+                batch_id,
+                "completed",
+                expected_run_id=execution.id,
+            )
+            if completed_batch.status != "completed":
+                return
             if curation is None:
                 return
             curation = self._review_repository.update_curation_progress(
@@ -1577,22 +1583,27 @@ class AgentExecutionService:
                         or execution.input.get("batchId")
                     )
                 ):
-                    self._review_repository.update_batch_status(
+                    failed_batch = self._review_repository.update_batch_status(
                         str(
                             execution.input.get("batch_id")
                             or execution.input["batchId"]
                         ),
                         "failed",
+                        expected_run_id=execution.id,
                     )
-                    curation = self._review_repository.get_curation_session(
-                        session.id
-                    )
-                    self._review_repository.update_curation_progress(
-                        session.id,
-                        stage="failed",
-                        completed_units=curation.completed_units,
-                        total_units=curation.total_units,
-                    )
+                    if (
+                        failed_batch.status == "failed"
+                        and failed_batch.run_id == execution.id
+                    ):
+                        curation = self._review_repository.get_curation_session(
+                            session.id
+                        )
+                        self._review_repository.update_curation_progress(
+                            session.id,
+                            stage="failed",
+                            completed_units=curation.completed_units,
+                            total_units=curation.total_units,
+                        )
                 current = self._repository.get_execution(execution.id)
                 if current.status == "running":
                     self._repository.transition_execution(

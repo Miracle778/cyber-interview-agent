@@ -351,6 +351,11 @@ class ReviewApplication:
             raise LookupError(session_id)
         if curation.stage != "failed" or latest is None or latest.status != "failed":
             raise ReviewConflictError("only failed curation sessions can retry")
+        if curation.active_batch_id is None:
+            raise ReviewConflictError("failed curation session has no active batch")
+        batch = self.repository.get_batch(curation.active_batch_id)
+        if batch.status != "failed" or batch.control_intent is not None:
+            raise ReviewConflictError("only failed question batches can retry")
         await self.timeline.append(
             session_id=session_id,
             execution_id=latest.id,
@@ -1412,6 +1417,15 @@ class ReviewApplication:
         resume_batch_id: str | None = None,
     ):
         session = self.sessions.get(session_id)
+        batch = (
+            self.repository.get_batch(resume_batch_id)
+            if resume_batch_id is not None
+            else None
+        )
+        if batch is not None and (
+            batch.status != "failed" or batch.control_intent is not None
+        ):
+            raise ReviewConflictError("question batch cannot be retried")
         source_service = KnowledgeSourceService(
             self.workspace_root, workspace_id=self.workspace_id
         )
@@ -1424,8 +1438,8 @@ class ReviewApplication:
                     f"{source.id}:{source.original_filename}\n{text}"
                 )
         batch = (
-            self.repository.get_batch(resume_batch_id)
-            if resume_batch_id is not None
+            batch
+            if batch is not None
             else self.repository.create_batch(
                 workspace_id=self.workspace_id,
                 session_id=session_id,

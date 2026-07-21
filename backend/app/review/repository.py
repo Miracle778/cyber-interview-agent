@@ -537,15 +537,48 @@ class ReviewRepository:
         ).fetchall()
         return tuple(self._batch_record(row) for row in rows)
 
-    def update_batch_status(self, batch_id: str, status: str) -> QuestionBatchRecord:
+    def update_batch_status(
+        self,
+        batch_id: str,
+        status: Literal["completed", "failed"],
+        *,
+        expected_run_id: str | None = None,
+    ) -> QuestionBatchRecord:
+        if status not in {"completed", "failed"}:
+            raise ValueError("unsupported question batch terminal status")
         with self._transaction():
+            row = self._connection.execute(
+                "SELECT * FROM review_question_batches WHERE id = ?",
+                (batch_id,),
+            ).fetchone()
+            if row is None:
+                raise LookupError(batch_id)
+            current = self._batch_record(row)
+            if (
+                current.status != "generating"
+                or current.control_intent is not None
+                or (
+                    expected_run_id is not None
+                    and current.run_id != expected_run_id
+                )
+            ):
+                return current
             cursor = self._connection.execute(
                 "UPDATE review_question_batches SET status = ?, "
-                "version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (status, batch_id),
+                "version = version + 1, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND status = 'generating' AND version = ? "
+                "AND control_intent IS NULL "
+                "AND (? IS NULL OR run_id = ?)",
+                (
+                    status,
+                    batch_id,
+                    current.version,
+                    expected_run_id,
+                    expected_run_id,
+                ),
             )
             if cursor.rowcount != 1:
-                raise LookupError(batch_id)
+                raise ReviewConflictError("question batch terminal state changed")
         return self.get_batch(batch_id)
 
     def attach_batch_run(
@@ -564,17 +597,16 @@ class ReviewRepository:
     def reattach_batch_run(
         self, batch_id: str, run_id: str
     ) -> QuestionBatchRecord:
-        with self._transaction():
-            cursor = self._connection.execute(
-                "UPDATE review_question_batches SET run_id = ?, status = 'generating', "
-                "updated_at = CURRENT_TIMESTAMP WHERE id = ? "
-                "AND status IN ('failed', 'completed')",
-                (run_id, batch_id),
-            )
-            if cursor.rowcount != 1:
-                raise ReviewConflictError("question batch cannot be retried")
-        self.requeue_running_curation_work_items(batch_id)
-        return self.get_batch(batch_id)
+        batch = self.get_batch(batch_id)
+        if batch.status != "failed" or batch.control_intent is not None:
+            raise ReviewConflictError("question batch cannot be retried")
+        return self.resume_curation_batch(
+            batch_id,
+            execution_id=run_id,
+            idempotency_key=f"legacy-retry:{run_id}",
+            expected_version=batch.version,
+            reason="failed",
+        )
 
     def request_batch_control(
         self,
@@ -731,13 +763,6 @@ class ReviewRepository:
                 if receipt.request_digest != digest:
                     raise ReviewConflictError("control request changed")
                 return self.get_batch(batch_id)
-            execution = self._connection.execute(
-                "SELECT status FROM agent_runs WHERE id = ?", (execution_id,)
-            ).fetchone()
-            if execution is None:
-                raise LookupError(execution_id)
-            if execution["status"] not in {"queued", "running"}:
-                raise ReviewConflictError("execution cannot resume curation")
             row = self._connection.execute(
                 "SELECT * FROM review_question_batches WHERE id = ?",
                 (batch_id,),
@@ -749,6 +774,11 @@ class ReviewRepository:
                 raise ReviewConflictError("question batch version changed")
             if batch.status != reason or batch.control_intent is not None:
                 raise ReviewConflictError("question batch cannot be resumed")
+            execution = self._require_curation_execution_ownership(
+                batch, execution_id
+            )
+            if execution["status"] not in {"queued", "running"}:
+                raise ReviewConflictError("execution cannot resume curation")
             active = self._connection.execute(
                 "SELECT 1 FROM review_curation_batch_attempts attempt "
                 "JOIN agent_runs run ON run.id = attempt.execution_id "
@@ -783,6 +813,11 @@ class ReviewRepository:
                 "execution_id, result_status) VALUES (?, ?, ?, 'resume', ?, ?, 'generating')",
                 (str(uuid4()), batch_id, idempotency_key, digest, execution_id),
             )
+            self._insert_curation_attempt(
+                batch_id=batch_id,
+                execution_id=execution_id,
+                reason=reason,
+            )
             self._connection.execute(
                 "UPDATE review_curation_sessions SET stage = 'generating', "
                 "updated_at = CURRENT_TIMESTAMP WHERE active_batch_id = ?",
@@ -809,14 +844,13 @@ class ReviewRepository:
                 if attempt.batch_id != batch_id or attempt.reason != reason:
                     raise ReviewConflictError("curation attempt changed")
                 return attempt
-            if self._connection.execute(
-                "SELECT 1 FROM review_question_batches WHERE id = ?", (batch_id,)
-            ).fetchone() is None:
+            batch_row = self._connection.execute(
+                "SELECT * FROM review_question_batches WHERE id = ?", (batch_id,)
+            ).fetchone()
+            if batch_row is None:
                 raise LookupError(batch_id)
-            if self._connection.execute(
-                "SELECT 1 FROM agent_runs WHERE id = ?", (execution_id,)
-            ).fetchone() is None:
-                raise LookupError(execution_id)
+            batch = self._batch_record(batch_row)
+            self._require_curation_execution_ownership(batch, execution_id)
             active = self._connection.execute(
                 "SELECT 1 FROM review_curation_batch_attempts attempt "
                 "JOIN agent_runs run ON run.id = attempt.execution_id "
@@ -829,24 +863,11 @@ class ReviewRepository:
                 raise ReviewConflictError(
                     "question batch already has an active curation attempt"
                 )
-            ordinal = self._connection.execute(
-                "SELECT COALESCE(MAX(ordinal), 0) + 1 "
-                "FROM review_curation_batch_attempts WHERE batch_id = ?",
-                (batch_id,),
-            ).fetchone()[0]
-            attempt_id = str(uuid4())
-            self._connection.execute(
-                "INSERT INTO review_curation_batch_attempts "
-                "(id, batch_id, execution_id, ordinal, reason) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (attempt_id, batch_id, execution_id, ordinal, reason),
+            return self._insert_curation_attempt(
+                batch_id=batch_id,
+                execution_id=execution_id,
+                reason=reason,
             )
-            row = self._connection.execute(
-                "SELECT * FROM review_curation_batch_attempts WHERE id = ?",
-                (attempt_id,),
-            ).fetchone()
-            assert row is not None
-            return self._curation_batch_attempt_record(row)
 
     def curation_batch_timing(self, batch_id: str) -> CurationBatchTiming:
         if self._connection.execute(
@@ -2631,6 +2652,70 @@ class ReviewRepository:
         if row is None:
             raise LookupError((batch_id, stage, unit_index))
         return self._curation_work_item_record(row)
+
+    def _require_curation_execution_ownership(
+        self, batch: QuestionBatchRecord, execution_id: str
+    ) -> sqlite3.Row:
+        execution = self._connection.execute(
+            "SELECT run.status, run.session_id, run.input_json, "
+            "session.workspace_id, session.graph_id "
+            "FROM agent_runs run JOIN agent_sessions session "
+            "ON session.id = run.session_id WHERE run.id = ?",
+            (execution_id,),
+        ).fetchone()
+        if execution is None:
+            raise LookupError(execution_id)
+        try:
+            input_value = json.loads(execution["input_json"])
+        except (TypeError, ValueError):
+            input_value = None
+        associations = (
+            [
+                input_value[key]
+                for key in ("batchId", "batch_id")
+                if key in input_value
+            ]
+            if isinstance(input_value, dict)
+            else []
+        )
+        if (
+            batch.session_id is None
+            or execution["session_id"] != batch.session_id
+            or execution["workspace_id"] != batch.workspace_id
+            or execution["graph_id"] not in {"question.curate", "question.revise"}
+            or not associations
+            or any(value != batch.id for value in associations)
+        ):
+            raise ReviewConflictError(
+                "curation execution does not belong to question batch"
+            )
+        return execution
+
+    def _insert_curation_attempt(
+        self,
+        *,
+        batch_id: str,
+        execution_id: str,
+        reason: CurationAttemptReason,
+    ) -> CurationBatchAttemptRecord:
+        ordinal = self._connection.execute(
+            "SELECT COALESCE(MAX(ordinal), 0) + 1 "
+            "FROM review_curation_batch_attempts WHERE batch_id = ?",
+            (batch_id,),
+        ).fetchone()[0]
+        attempt_id = str(uuid4())
+        self._connection.execute(
+            "INSERT INTO review_curation_batch_attempts "
+            "(id, batch_id, execution_id, ordinal, reason) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (attempt_id, batch_id, execution_id, ordinal, reason),
+        )
+        row = self._connection.execute(
+            "SELECT * FROM review_curation_batch_attempts WHERE id = ?",
+            (attempt_id,),
+        ).fetchone()
+        assert row is not None
+        return self._curation_batch_attempt_record(row)
 
     @staticmethod
     def _validate_work_item_plan(

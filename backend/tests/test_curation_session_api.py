@@ -1218,6 +1218,12 @@ async def test_failed_curation_session_can_retry_in_the_same_session(
         ).json()
         assert failed["executionErrorCode"] == "provider_error"
         failed_batch_id = failed["activeBatchId"]
+        connection.execute(
+            "UPDATE review_question_batches SET status = 'failed', "
+            "version = version + 1 WHERE id = ?",
+            (failed_batch_id,),
+        )
+        connection.commit()
 
         retried = await client.post(
             f"/api/review/curation-sessions/{session_id}/retry"
@@ -1228,6 +1234,54 @@ async def test_failed_curation_session_can_retry_in_the_same_session(
         assert retried.json()["executionId"] != first_execution_id
         assert retried.json()["activeBatchId"] == failed_batch_id
         assert retried.json()["stage"] in {"generating", "waiting_for_command"}
+
+
+@pytest.mark.asyncio
+async def test_legacy_retry_cannot_reopen_completed_batch(
+    api, application
+) -> None:
+    app, source_ids = application
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = await client.post(
+            "/api/review/curation-sessions",
+            json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+        )
+        session_id = created.json()["id"]
+        execution_id = created.json()["executionId"]
+        await app.wait_execution(execution_id)
+        review = app.locate_review_session(session_id)
+        batch_id = review.repository.get_curation_session(
+            session_id
+        ).active_batch_id
+        assert batch_id is not None
+        completed = review.repository.get_batch(batch_id)
+        assert completed.status == "completed"
+
+        connection = review.sessions.repository.connection
+        connection.execute(
+            "UPDATE agent_runs SET status = 'failed', error_code = 'late_failure', "
+            "finished_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (execution_id,),
+        )
+        connection.commit()
+        curation = review.repository.get_curation_session(session_id)
+        review.repository.update_curation_progress(
+            session_id,
+            stage="failed",
+            completed_units=curation.completed_units,
+            total_units=curation.total_units,
+        )
+
+        with pytest.raises(
+            ReviewConflictError, match="only failed question batches can retry"
+        ):
+            await client.post(
+                f"/api/review/curation-sessions/{session_id}/retry"
+            )
+        assert review.repository.get_batch(batch_id) == completed
+        assert review.repository.get_curation_session(session_id).stage == "failed"
 
 
 @pytest.mark.asyncio

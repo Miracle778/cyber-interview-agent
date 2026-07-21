@@ -16,8 +16,9 @@ def repository(tmp_path: Path) -> ReviewRepository:
         "VALUES ('session-1', 'workspace-1', 'question.curate', 1, 'Curation')"
     )
     connection.execute(
-        "INSERT INTO agent_runs (id, session_id, status) "
-        "VALUES ('run-2', 'session-1', 'running')"
+        "INSERT INTO agent_runs (id, session_id, status, input_json) "
+        "VALUES ('run-2', 'session-1', 'running', "
+        "'{\"batchId\":\"batch-1\",\"batch_id\":\"batch-1\"}')"
     )
     connection.commit()
     yield ReviewRepository(connection)
@@ -31,6 +32,7 @@ def batch(repository: ReviewRepository):
         session_id="session-1",
         run_id=None,
         source_refs=("source-1",),
+        batch_id="batch-1",
     )
 
 
@@ -88,7 +90,7 @@ def test_completed_item_cannot_be_restarted_or_overwritten(
         repository.complete_curation_work_item(completed.id, output={"seeds": []})
 
 
-def test_fail_requeue_and_reattach_preserve_completed_items(
+def test_fail_requeue_and_legacy_reattach_use_durable_resume_history(
     repository: ReviewRepository, batch
 ) -> None:
     completed = repository.plan_curation_work_item(
@@ -120,6 +122,23 @@ def test_fail_requeue_and_reattach_preserve_completed_items(
 
     assert retried.run_id == "run-2"
     assert retried.status == "generating"
+    assert retried.version == 3
+    assert [
+        tuple(row)
+        for row in repository._connection.execute(
+            "SELECT operation, execution_id, result_status "
+            "FROM review_curation_control_receipts WHERE batch_id = ?",
+            (batch.id,),
+        ).fetchall()
+    ] == [("resume", "run-2", "generating")]
+    assert [
+        tuple(row)
+        for row in repository._connection.execute(
+            "SELECT execution_id, ordinal, reason "
+            "FROM review_curation_batch_attempts WHERE batch_id = ?",
+            (batch.id,),
+        ).fetchall()
+    ] == [("run-2", 1, "failed")]
     assert [(item.status, item.attempt_count, item.last_error_code) for item in items] == [
         ("completed", 1, None),
         ("failed", 1, "provider_timeout"),
@@ -195,6 +214,47 @@ def test_batch_control_rejects_changed_payload_and_stale_version(
         )
 
 
+def test_pause_control_intent_wins_over_late_failure(
+    repository: ReviewRepository, batch
+) -> None:
+    receipt = repository.request_batch_control(
+        batch.id,
+        operation="pause",
+        idempotency_key="pause-race-0001",
+        expected_version=batch.version,
+    )
+
+    raced = repository.update_batch_status(
+        batch.id, "failed", expected_run_id="run-2"
+    )
+
+    assert raced.status == "generating"
+    assert raced.control_intent == "pause"
+    assert raced.version == batch.version + 1
+    paused = repository.finalize_batch_control(receipt.id)
+    assert paused.status == "paused"
+    assert paused.control_intent is None
+
+
+def test_terminated_batch_is_absorbing_for_late_completion_and_failure(
+    repository: ReviewRepository, batch
+) -> None:
+    receipt = repository.request_batch_control(
+        batch.id,
+        operation="terminate",
+        idempotency_key="terminate-race-0001",
+        expected_version=batch.version,
+    )
+    terminated = repository.finalize_batch_control(receipt.id)
+
+    assert repository.update_batch_status(
+        batch.id, "completed", expected_run_id="run-2"
+    ) == terminated
+    assert repository.update_batch_status(
+        batch.id, "failed", expected_run_id="run-2"
+    ) == terminated
+
+
 def test_terminated_batch_cannot_resume(
     repository: ReviewRepository, batch
 ) -> None:
@@ -243,7 +303,48 @@ def test_resume_reuses_batch_and_records_idempotent_receipt(
     ) == resumed
 
 
-def test_only_one_active_attempt_can_be_recorded(
+def test_resume_rejects_execution_owned_by_another_curation_session(
+    repository: ReviewRepository, batch
+) -> None:
+    repository.update_batch_status(batch.id, "failed")
+    failed = repository.get_batch(batch.id)
+    repository._connection.execute(
+        "INSERT INTO agent_sessions "
+        "(id, workspace_id, graph_id, graph_version, title) "
+        "VALUES ('session-2', 'workspace-1', 'question.curate', 1, 'Other')"
+    )
+    repository._connection.execute(
+        "INSERT INTO agent_runs (id, session_id, status, input_json) "
+        "VALUES ('run-3', 'session-2', 'running', "
+        "'{\"batchId\":\"batch-1\"}')"
+    )
+    repository._connection.commit()
+
+    with pytest.raises(ReviewConflictError, match="does not belong to question batch"):
+        repository.resume_curation_batch(
+            batch.id,
+            execution_id="run-3",
+            idempotency_key="resume-unrelated-0001",
+            expected_version=failed.version,
+            reason="failed",
+        )
+
+
+def test_attempt_rejects_execution_without_immutable_batch_input(
+    repository: ReviewRepository, batch
+) -> None:
+    repository._connection.execute(
+        "UPDATE agent_runs SET input_json = '{\"batchId\":\"other-batch\"}' "
+        "WHERE id = 'run-2'"
+    )
+    repository._connection.commit()
+
+    with pytest.raises(ReviewConflictError, match="does not belong to question batch"):
+        repository.record_curation_attempt(batch.id, "run-2", reason="initial")
+    assert repository.curation_batch_timing(batch.id).cumulative_elapsed_ms == 0
+
+
+def test_unrelated_active_execution_cannot_enter_attempt_history(
     repository: ReviewRepository, batch
 ) -> None:
     repository.record_curation_attempt(batch.id, "run-2", reason="initial")
@@ -258,8 +359,37 @@ def test_only_one_active_attempt_can_be_recorded(
     )
     repository._connection.commit()
 
-    with pytest.raises(ReviewConflictError, match="active curation attempt"):
+    with pytest.raises(ReviewConflictError, match="does not belong to question batch"):
         repository.record_curation_attempt(batch.id, "run-3", reason="paused")
+
+
+def test_legacy_reattach_cannot_reopen_completed_or_terminated_batch(
+    repository: ReviewRepository, batch
+) -> None:
+    repository.update_batch_status(batch.id, "completed")
+    completed = repository.get_batch(batch.id)
+
+    with pytest.raises(ReviewConflictError, match="cannot be retried"):
+        repository.reattach_batch_run(batch.id, "run-2")
+    assert repository.get_batch(batch.id) == completed
+
+    other = repository.create_batch(
+        workspace_id="workspace-1",
+        session_id="session-1",
+        run_id=None,
+        source_refs=("source-1",),
+        batch_id="batch-terminated",
+    )
+    receipt = repository.request_batch_control(
+        other.id,
+        operation="terminate",
+        idempotency_key="terminate-legacy-0001",
+        expected_version=other.version,
+    )
+    terminated = repository.finalize_batch_control(receipt.id)
+    with pytest.raises(ReviewConflictError, match="cannot be retried"):
+        repository.reattach_batch_run(other.id, "run-2")
+    assert repository.get_batch(other.id) == terminated
 
 
 def test_batch_timing_sums_execution_intervals_without_paused_gaps(
@@ -272,8 +402,8 @@ def test_batch_timing_sums_execution_intervals_without_paused_gaps(
     )
     repository._connection.execute(
         "INSERT INTO agent_runs "
-        "(id, session_id, status, started_at, finished_at) VALUES "
-        "('run-3', 'session-1', 'completed', "
+        "(id, session_id, status, input_json, started_at, finished_at) VALUES "
+        "('run-3', 'session-1', 'completed', '{\"batchId\":\"batch-1\"}', "
         "'2026-07-22 00:01:00', '2026-07-22 00:01:20')"
     )
     repository._connection.commit()
