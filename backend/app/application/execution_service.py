@@ -1371,24 +1371,28 @@ class AgentExecutionService:
                                         progress = raw_progress
                                     if progress != projected_curation_progress:
                                         projected_curation_progress = progress
-                                        self._review_repository.update_curation_progress(
-                                            session.id,
-                                            stage="generating",
-                                            completed_units=progress[1],
-                                            total_units=progress[2],
-                                        )
-                                        await self._events.publish(
-                                            session.id,
-                                            execution.id,
-                                            "curation.progress.changed",
-                                            {
-                                                "resourceId": session.id,
-                                                "phase": progress[0],
-                                                "completed": progress[1],
-                                                "total": progress[2],
-                                                "generatedCandidateCount": progress[3],
-                                            },
-                                        )
+                                        try:
+                                            self._review_repository.update_curation_progress(
+                                                session.id,
+                                                stage="generating",
+                                                completed_units=progress[1],
+                                                total_units=progress[2],
+                                            )
+                                        except LookupError:
+                                            pass
+                                        else:
+                                            await self._events.publish(
+                                                session.id,
+                                                execution.id,
+                                                "curation.progress.changed",
+                                                {
+                                                    "resourceId": session.id,
+                                                    "phase": progress[0],
+                                                    "completed": progress[1],
+                                                    "total": progress[2],
+                                                    "generatedCandidateCount": progress[3],
+                                                },
+                                            )
                             if session.kind == "review.round":
                                 for attempt_id in data.get("attempt_ids", ()):
                                     attempt = self._review_repository.get_attempt(

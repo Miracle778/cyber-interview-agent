@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from hashlib import sha256
 
@@ -16,10 +17,18 @@ from app.agents.review_round_contracts import (
 from app.api.dependencies import get_agent_application
 from app.api.routes_review import router as review_router
 from app.application.workspace_runtime import AgentApplication
+from app.agents.question_curation_contracts import (
+    QuestionCandidateChunk,
+    QuestionSeedChunk,
+)
+from app.graphs.question_curation import create_question_curation_graph
 from app.graphs.review_discussion import create_review_discussion_graph
 from app.graphs.review_round import create_review_round_graph
+from app.infrastructure.checkpoints import AgentCheckpointer
+from app.knowledge.source_registry import KnowledgeSourceService
 from app.review.errors import InputAlreadyResolvedError
 from app.review.models import QuestionSnapshot
+from app.review.repository import ReviewRepository
 
 
 class FakeRoundAgents:
@@ -42,6 +51,14 @@ class FakeRoundAgents:
 
     async def discuss(self, **_values):
         return "这是基于冻结题目与 attempt 的解释。"
+
+
+class EmptyCurationAgents:
+    async def discover(self, *_args, **_kwargs):
+        return QuestionSeedChunk(seeds=[])
+
+    async def enrich(self, *_args, **_kwargs):
+        return QuestionCandidateChunk(candidates=[])
 
 
 def _graph_factory(kind, **dependencies):
@@ -461,3 +478,85 @@ async def test_question_batch_persists_agent_candidates(api, application) -> Non
         assert value["candidateCount"] == 1
         assert value["candidates"][0]["correctionNote"] == "补齐治理方式"
         assert value["candidates"][0]["draft"]["status"] == "review_pending"
+
+
+@pytest.mark.asyncio
+async def test_public_question_batch_reaches_real_graph_without_checkpointing_corpus(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    agents = EmptyCurationAgents()
+
+    def real_curation_graph_factory(kind, **dependencies):
+        if kind in {"question.curate", "question.revise"}:
+            return create_question_curation_graph(
+                agents,
+                repository=dependencies["review_repository"],
+                checkpointer=dependencies["checkpointer"],
+            )
+        return _graph_factory(kind, **dependencies)
+
+    application = AgentApplication(
+        workspace_resolver=lambda _workspace_id: workspace,
+        workspace_ids=lambda: ("w1",),
+        model_bindings=lambda _workspace_id: {},
+        graph_factory=real_curation_graph_factory,
+    )
+    api = FastAPI()
+    api.include_router(review_router)
+    api.dependency_overrides[get_agent_application] = lambda: application
+    source_marker = "PUBLIC_BATCH_CORPUS_MUST_NOT_ENTER_CHECKPOINT_7C31"
+    source = await KnowledgeSourceService(
+        workspace, workspace_id="w1"
+    ).create(
+        original_filename="checkpoint-safe.md",
+        content_type="text/markdown",
+        content=f"1、{source_marker}？\n答案保持在不可变执行输入中。".encode(),
+    )
+    observed_batch_ids: list[str] = []
+    original_batch_input = ReviewRepository.curation_batch_input
+
+    def record_batch_input(self, batch_id: str):
+        observed_batch_ids.append(batch_id)
+        return original_batch_input(self, batch_id)
+
+    monkeypatch.setattr(
+        ReviewRepository, "curation_batch_input", record_batch_input
+    )
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=api), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/review/question-batches",
+                json={"workspaceId": "w1", "sourceRefs": [source.id]},
+            )
+
+        assert response.status_code == 202, response.text
+        batch = response.json()
+        execution = await application.wait_execution(batch["runId"])
+        assert execution.status == "completed", (
+            execution.error_code,
+            execution.error_message,
+        )
+        assert observed_batch_ids == [batch["id"]]
+        persisted_input = json.loads(
+            application.review("w1").executions._repository.connection.execute(
+                "SELECT input_json FROM agent_runs WHERE id = ?",
+                (batch["runId"],),
+            ).fetchone()[0]
+        )
+        assert persisted_input["batchId"] == batch["id"]
+        assert persisted_input["batch_id"] == batch["id"]
+
+        async with AgentCheckpointer(workspace).open() as saver:
+            persisted = await saver.aget_tuple(
+                {"configurable": {"thread_id": batch["sessionId"]}}
+            )
+            assert persisted is not None
+            checkpoint_bytes = saver.serde.dumps_typed(persisted.checkpoint)[1]
+
+        assert source_marker.encode() not in checkpoint_bytes
+    finally:
+        await application.close()

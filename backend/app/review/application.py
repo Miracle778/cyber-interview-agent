@@ -1620,6 +1620,7 @@ class ReviewApplication:
             session,
             input={
                 "batchId": batch.id,
+                "batch_id": batch.id,
                 "source_excerpts": excerpts,
                 "similar_questions": [
                     item.snapshot.question_text
