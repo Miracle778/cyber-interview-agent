@@ -16,6 +16,7 @@
 - discovery 单次最多返回 6 个 seed，enrichment 单次最多返回 3 个完整候选；
 - 每个完成单元持久化，后端失败或重启后不重跑已完成单元；
 - 整理会话最多聚合 200 个候选，达到上限时显式结束并记录截断原因；
+- 所有 Runtime Agent 的实际模型请求、响应、Tool 往返和错误按 Execution 追加写入本地 JSONL，失败时可还原 Provider 调用上下文；
 - 单题修订继续只输出一个候选，不进入多题 discovery 流水线；
 - 不改变发布、题目去重、active catalog、复习快照和 HITL 边界。
 
@@ -148,7 +149,56 @@ Graph checkpoint 只保存 section refs、work item IDs、当前索引和有界�
 - Provider timeout、400/429/5xx 映射为稳定错误码并记录到 work item，不把 Provider 原始响应、请求正文或密钥写入事件、timeline 或 API。
 - 任一 work item 失败时 batch/session 进入 failed，但已完成 item 保留。重试从首个 failed/pending item 继续。
 
-## 8. API 与 UI 边界
+## 8. 全局 Agent JSONL 诊断轨迹
+
+为避免下一次只能依靠 UI 错误文案、数据库终态或临时脚本猜测 Provider 请求，新增 Runtime 级本地诊断轨迹。该能力覆盖所有经 `AgentFactory` 创建的 Agent，而不是只覆盖题目整理 Agent；内部上下文摘要模型调用也必须显式接入同一 writer。Provider 健康检查等不属于产品 Agent Execution 的独立 ping 不进入此轨迹。
+
+每个 Execution 使用独立文件：
+
+```text
+.cyber-interview-agent/agent-traces/<session-id>/<run-id>.jsonl
+```
+
+目录继续由 `.gitignore` 排除，不属于 knowledge vault、source artifact、产品事件或 API 资源。文件中的每一行都是一个完整 JSON 对象，首版 schema 为：
+
+```json
+{
+  "schema_version": 1,
+  "timestamp": "2026-07-21T12:34:56.000Z",
+  "sequence": 3,
+  "event_id": "uuid",
+  "workspace_id": "workspace-id",
+  "session_id": "session-id",
+  "run_id": "execution-id",
+  "agent_role": "question_generation",
+  "agent_name": "question_discovery",
+  "invocation_id": "uuid",
+  "event_type": "model.request",
+  "payload": {}
+}
+```
+
+事件类型和内容：
+
+- `execution.started` / `execution.completed` / `execution.failed`：Execution 边界、session kind、终态和稳定错误码；
+- `model.request`：实际发送的 system prompt、messages、Tools/schema 描述以及白名单模型参数；
+- `model.response`：最终 assistant message、tool calls、structured response、usage、finish reason、Provider request ID 和安全 response metadata；
+- `model.error`：异常类型、HTTP 状态、Provider 错误码/request ID 和不含认证信息的错误正文；
+- `tool.request` / `tool.response` / `tool.error`：Tool 名称、完整参数或结果及稳定错误码；
+- 流式响应不逐 token 写文件；聚合为一次最终 `model.response`，但请求在 Provider 调用前立即落盘，因此超时、进程终止或无响应时仍能看到完整输入。
+
+诊断目标要求消息、实际发送的 source 片段、Tool 参数和 Tool 结果不做长度截断，否则无法还原高密度文档故障。它们属于本地敏感运行数据，必须满足以下边界：
+
+- 永不序列化 API key、Authorization、HTTP headers、secret ref、环境变量、模型客户端对象或任意凭据容器；模型参数采用字段白名单，不直接 dump SDK 对象；
+- 不通过 SSE、timeline、普通日志、错误响应或前端 API 暴露 JSONL 内容；首版只允许用户从本地 workspace 读取；
+- 目录创建和文件打开经过 Workspace path policy，拒绝 symlink、路径穿越和跨 workspace 写入；
+- 一个 run 内用进程级锁和 append 模式保持单行完整、顺序递增；每个事件 flush，终态事件额外 fsync；尾部因崩溃产生的不完整行由读取工具忽略并报告；
+- Trace 写入是 best-effort 诊断旁路。创建、序列化或写盘失败记录一次 `agent_trace_write_failed` Runtime warning，但不得把成功的 Agent 调用改成失败；
+- 首版不自动删除、不合并跨 Execution 文件，也不提供远程上传。用户可按 session/run 精确删除本地轨迹；保留策略和 UI 查看器以后按真实磁盘使用决定。
+
+统一 `AgentTraceMiddleware` 在 `AgentFactory` 注入，调用方不能遗漏；Graph/Execution service 写 execution 边界，摘要 middleware 使用同一 writer。结构化 serializer 显式支持 LangChain 的 system/human/AI/tool message、tool call、Pydantic structured response 和 usage metadata，未知对象只记录类型与安全占位符，不使用可能包含 secret 的任意 `repr`。
+
+## 9. API 与 UI 边界
 
 现有创建整理会话 API 不变。session resource 的阶段仍是 `reading_sources -> generating -> merging -> summarizing -> waiting_for_command`，但 generating 进度改为真实工作单元：
 
@@ -160,9 +210,9 @@ Graph checkpoint 只保存 section refs、work item IDs、当前索引和有界�
 
 候选题审核、备注、重写、发布、删除和题目库页面契约不变。达到 200 上限时页面显示明确 warning，并允许用户先审核当前结果；本阶段不增加“继续下一批 200 题”的新产品操作。
 
-## 9. 测试与验收
+## 10. 测试与验收
 
-### 9.1 纯函数与契约
+### 10.1 纯函数与契约
 
 - 中文编号无空格、Markdown 标题、加粗标题、问号行、零宽空白；
 - 前缀只出现一次，section ref 稳定；
@@ -170,7 +220,7 @@ Graph checkpoint 只保存 section refs、work item IDs、当前索引和有界�
 - discovery 不接受答案字段，enrichment 不接受第四个 candidate；
 - 聚合 200 时显式 warning，不静默截断。
 
-### 9.2 Repository 与 Graph
+### 10.2 Repository 与 Graph
 
 - work item 同摘要幂等、异摘要冲突；
 - discovery 第 N 项失败后重试不调用已完成的 1..N-1；
@@ -178,17 +228,29 @@ Graph checkpoint 只保存 section refs、work item IDs、当前索引和有界�
 - malformed source ref、越界输出、重复 seed 和重复 candidate 均由 reducer 拒绝或合并；
 - 单题 revise 保持一个候选和原有生命周期。
 
-### 9.3 真实文档
+### 10.3 JSONL 诊断轨迹
+
+- 所有 `AgentSpec` 即使未提供业务 middleware 也自动包含 Trace Middleware；题目整理、评价、追问、报告、discussion、命令分类和 R3 Profile Agent 均覆盖；
+- `model.request` 在 fake Provider 抛 timeout/400 前已经落盘，成功返回记录 structured response、tool calls 和 usage；
+- streaming 只产生一个聚合 response，Tool 成功/拒绝/异常均有成对事件和相同 invocation ID；
+- JSONL 每行可独立解析，sequence 单调递增，并发 append 不交叉；重启后同 run 继续追加而不覆盖旧记录；
+- 含 API key、Authorization header、secret ref 和带敏感 `repr` 的假对象不能在文件字节中出现；消息正文和实际 source 片段保持完整；
+- symlink/path traversal 被拒绝，Trace 写盘失败只记录 warning，Agent 结果保持成功；
+- `.cyber-interview-agent/agent-traces/` 不进入 Git、knowledge vault、SSE、timeline 或普通 Session API。
+
+### 10.4 真实文档
 
 - 本地使用授权的 `Mybatis拦截器.md` 验证 section 数、工作单元数、前缀不重复和候选不超过 200；
-- 真实 Provider 跑完整 discovery/enrichment，记录每阶段单元数、成功/失败、耗时和 usage，不记录正文或响应体；
+- 真实 Provider 跑完整 discovery/enrichment；验收文档只记录每阶段单元数、成功/失败、耗时和 usage，不复制本地 JSONL 中的正文或响应体；
 - 停止后重试验证 completed work item 不重复调用；
 - 完成后候选可进入现有审核、发布和题目库流程。
+- 失败或成功后可用 session/run ID 定位单个 JSONL，确认 discovery/enrichment 的请求、结构化响应、usage、耗时和 Provider request ID 连续可读。
 
-## 10. 非目标
+## 11. 非目标
 
 - 不建设通用文档理解平台、向量检索或任意自主 Planner；
 - 不自动发布候选，不改变 HITL；
 - 不在本阶段支持单次会话超过 200 个候选或继续下一批；
 - 不让模型决定 section、work item、重试、停止条件或数据库写入；
-- 不把原始 source 正文复制进新的领域表或产品事件。
+- 不把原始 source 正文复制进新的领域表或产品事件；JSONL 是用户明确要求的本地敏感诊断副本，不属于领域事实；
+- 不在首版建设 JSONL 搜索 UI、远程上传、自动清理或跨 workspace 集中日志平台。
