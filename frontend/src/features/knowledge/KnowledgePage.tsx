@@ -30,6 +30,7 @@ const STATUS_LABEL: Record<KnowledgeDraftStatus, string> = {
   review_pending: "等待确认",
   rejected: "已拒绝",
   published: "已发布",
+  superseded: "已替代",
 };
 
 function formatBytes(size: number) {

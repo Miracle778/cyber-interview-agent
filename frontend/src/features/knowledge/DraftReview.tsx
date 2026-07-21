@@ -15,6 +15,7 @@ const STATUS_TONE: Record<KnowledgeDraftStatus, "neutral" | "warning" | "danger"
   review_pending: "warning",
   rejected: "danger",
   published: "success",
+  superseded: "neutral",
 };
 
 const STATUS_LABEL: Record<KnowledgeDraftStatus, string> = {
@@ -22,6 +23,7 @@ const STATUS_LABEL: Record<KnowledgeDraftStatus, string> = {
   review_pending: "等待确认",
   rejected: "已拒绝",
   published: "已发布",
+  superseded: "已替代",
 };
 
 interface DraftReviewProps {
@@ -76,7 +78,7 @@ export function DraftReview({
   }, [controlledSelectedId, selected?.id, selected?.version]);
 
   useEffect(() => {
-    if (selected?.status === "published" || selected?.status === "rejected") {
+    if (selected?.status === "published" || selected?.status === "rejected" || selected?.status === "superseded") {
       setMessage(null);
     }
   }, [selected?.status]);
@@ -235,6 +237,9 @@ export function DraftReview({
             ) : null}
             {selected.status === "rejected" ? (
               <p className="status-note">该草稿已被拒绝，重新上传资料可生成新草稿</p>
+            ) : null}
+            {selected.status === "superseded" ? (
+              <p className="status-note">该草稿已被后续修订替代，仅保留为历史版本</p>
             ) : null}
 
             <div className="btn-row">

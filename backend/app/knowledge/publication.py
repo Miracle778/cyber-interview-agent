@@ -54,16 +54,42 @@ class PublicationRepository:
     async def prepare(self, action: PendingActionRecord, draft: KnowledgeDraftRecord, target_path: str) -> PublicationRecord:
         async with self._connection() as connection:
             await connection.execute("BEGIN IMMEDIATE")
-            cursor = await connection.execute("SELECT * FROM publication_runs WHERE action_id = ?", (action.id,))
-            row = await cursor.fetchone()
-            if row is None:
-                publication_id = str(uuid4())
-                await connection.execute(
-                    "INSERT INTO publication_runs (id, action_id, draft_id, expected_draft_version, expected_content_hash, document_id, target_path) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (publication_id, action.id, draft.id, draft.version, draft.content_hash, draft.document_id, target_path),
+            try:
+                cursor = await connection.execute(
+                    "SELECT * FROM publication_runs WHERE action_id = ?",
+                    (action.id,),
                 )
-                row = await self._require(connection, publication_id)
-            await connection.commit()
+                row = await cursor.fetchone()
+                if row is None:
+                    cursor = await connection.execute(
+                        "SELECT status, version, content_hash FROM knowledge_drafts "
+                        "WHERE id = ? AND workspace_id = ?",
+                        (draft.id, action.workspace_id),
+                    )
+                    current = await cursor.fetchone()
+                    if current is None:
+                        raise LookupError(draft.id)
+                    if (
+                        int(current["version"]) != draft.version
+                        or current["content_hash"] != draft.content_hash
+                    ):
+                        raise DraftVersionChangedError(
+                            f"draft {draft.id!r} changed before publication claim"
+                        )
+                    if current["status"] not in {"draft", "review_pending"}:
+                        raise DraftNotEditableError(
+                            f"draft {draft.id!r} is {current['status']!r}"
+                        )
+                    publication_id = str(uuid4())
+                    await connection.execute(
+                        "INSERT INTO publication_runs (id, action_id, draft_id, expected_draft_version, expected_content_hash, document_id, target_path) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (publication_id, action.id, draft.id, draft.version, draft.content_hash, draft.document_id, target_path),
+                    )
+                    row = await self._require(connection, publication_id)
+                await connection.commit()
+            except Exception:
+                await connection.rollback()
+                raise
         return self._record(row)
 
     async def transition(self, publication_id: str, *, expected: tuple[str, ...], target: PublicationState, result_hash: str | None = None, error_code: str | None = None) -> PublicationRecord:

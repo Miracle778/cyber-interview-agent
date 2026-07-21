@@ -491,6 +491,10 @@ class KnowledgeDraftService:
                     raise DraftNotEditableError(
                         f"draft {draft_id!r} is {current.status!r}"
                     )
+                if await self._has_active_publication(connection, current):
+                    raise DraftNotEditableError(
+                        f"draft {draft_id!r} has an active publication claim"
+                    )
 
                 markdown = command.markdown or current.markdown
                 title = (command.title or current.title).strip()
@@ -608,6 +612,10 @@ class KnowledgeDraftService:
                         f"draft {draft_id!r} cannot transition from "
                         f"{current.status!r} to {target_status!r}"
                     )
+                if await self._has_active_publication(connection, current):
+                    raise DraftNotEditableError(
+                        f"draft {draft_id!r} has an active publication claim"
+                    )
                 if current.status != target_status:
                     await connection.execute(
                         "UPDATE knowledge_drafts SET status = ?, "
@@ -620,6 +628,19 @@ class KnowledgeDraftService:
                 await connection.rollback()
                 raise
         return self._record_from_row(updated)
+
+    @staticmethod
+    async def _has_active_publication(
+        connection: aiosqlite.Connection, draft: KnowledgeDraftRecord
+    ) -> bool:
+        cursor = await connection.execute(
+            "SELECT 1 FROM publication_runs WHERE draft_id = ? "
+            "AND expected_draft_version = ? AND expected_content_hash = ? "
+            "AND state IN ('prepared', 'file_written', 'indexed', 'index_stale') "
+            "LIMIT 1",
+            (draft.id, draft.version, draft.content_hash),
+        )
+        return await cursor.fetchone() is not None
 
     @asynccontextmanager
     async def _connection(self) -> AsyncIterator[aiosqlite.Connection]:

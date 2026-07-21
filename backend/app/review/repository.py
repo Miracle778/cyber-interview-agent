@@ -877,7 +877,15 @@ class ReviewRepository:
                         "SELECT d.status FROM review_question_candidates c "
                         "JOIN knowledge_drafts d ON d.id = c.draft_id "
                         "WHERE c.id = ? AND c.draft_id = ? "
-                        "AND d.version = ? AND d.content_hash = ?",
+                        "AND d.version = ? AND d.content_hash = ? "
+                        "AND NOT EXISTS ("
+                        "SELECT 1 FROM publication_runs p "
+                        "WHERE p.draft_id = d.id "
+                        "AND p.expected_draft_version = d.version "
+                        "AND p.expected_content_hash = d.content_hash "
+                        "AND p.state IN "
+                        "('prepared', 'file_written', 'indexed', 'index_stale')"
+                        ")",
                         (
                             candidate_id,
                             expected_draft_id,

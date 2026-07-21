@@ -14,7 +14,7 @@ from app.knowledge.drafts import (
     KnowledgeDraftService,
     UpdateDraftCommand,
 )
-from app.knowledge.publication import PublicationService
+from app.knowledge.publication import PublicationRepository, PublicationService
 from app.knowledge.publication_handler import KnowledgePublishActionHandler
 from app.application.session_service import ProductRepository
 from app.services.search_index import rescan_active_documents
@@ -72,6 +72,27 @@ async def test_publish_is_idempotent_and_marks_draft_published(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+async def test_prepared_claim_resumes_after_service_restart(
+    tmp_path: Path,
+) -> None:
+    draft = await _draft(tmp_path)
+    action = await _resolved_action(tmp_path, draft)
+    prepared = await PublicationRepository(tmp_path).prepare(
+        action, draft, "10_question_bank/question-1.md"
+    )
+
+    resumed = await PublicationService(
+        tmp_path, workspace_id="w1"
+    ).publish_approved_action(action)
+
+    assert resumed.id == prepared.id
+    assert resumed.state == "completed"
+    assert (
+        tmp_path / "knowledge-vault/10_question_bank/question-1.md"
+    ).is_file()
+
+
+@pytest.mark.asyncio
 async def test_publish_rejects_changed_draft_version(tmp_path: Path) -> None:
     draft = await _draft(tmp_path)
     action = await _resolved_action(tmp_path, draft)
@@ -115,6 +136,35 @@ async def test_publish_rejects_superseded_draft(tmp_path: Path) -> None:
         await PublicationService(
             tmp_path, workspace_id="w1"
         ).publish_approved_action(action)
+
+
+@pytest.mark.asyncio
+async def test_prepare_rechecks_draft_before_claim_when_supersession_wins(
+    tmp_path: Path,
+) -> None:
+    draft = await _draft(tmp_path)
+    action = await _resolved_action(tmp_path, draft)
+    connection = connect_runtime_database(tmp_path)
+    connection.execute(
+        "UPDATE knowledge_drafts SET status = 'superseded', "
+        "version = version + 1 WHERE id = ?",
+        (draft.id,),
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(DraftVersionChangedError):
+        await PublicationRepository(tmp_path).prepare(
+            action, draft, "10_question_bank/question-1.md"
+        )
+
+    connection = connect_runtime_database(tmp_path)
+    assert connection.execute(
+        "SELECT COUNT(*) FROM publication_runs WHERE draft_id = ?",
+        (draft.id,),
+    ).fetchone()[0] == 0
+    connection.close()
+    assert not (tmp_path / "knowledge-vault").exists()
 
 
 @pytest.mark.asyncio

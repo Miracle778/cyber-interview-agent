@@ -1,4 +1,6 @@
+import asyncio
 import sqlite3
+import threading
 from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
@@ -6,7 +8,16 @@ from pathlib import Path
 import pytest
 
 from app.infrastructure.runtime_database import connect_runtime_database
-from app.knowledge.drafts import KnowledgeDraftService
+from app.db.connection import connect_index
+from app.hitl.models import CreatePendingAction
+from app.hitl.repository import PendingActionRepository
+from app.knowledge.drafts import (
+    DraftNotEditableError,
+    DraftVersionChangedError,
+    KnowledgeDraftService,
+    UpdateDraftCommand,
+)
+from app.knowledge.publication import PublicationService
 from app.review.errors import InputAlreadyResolvedError, ReviewConflictError
 from app.review.models import (
     CurationSummary,
@@ -1088,6 +1099,237 @@ def test_successful_revision_retires_prior_draft(
         "SELECT status, version FROM knowledge_drafts "
         "WHERE id = 'draft-revision-retire'"
     ).fetchone()) == ("review_pending", 2)
+    connection.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("winner", ("publication", "revision"))
+async def test_publication_and_revision_race_has_one_durable_winner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, winner: str,
+) -> None:
+    connection = _connection(tmp_path)
+    drafts = KnowledgeDraftService(tmp_path, workspace_id="w1")
+    revision_transaction_open = threading.Event()
+    release_revision_transaction = threading.Event()
+
+    def validate_artifact(*args):
+        drafts.validate_curation_artifact(*args)
+        if winner == "revision":
+            revision_transaction_open.set()
+            if not release_revision_transaction.wait(timeout=5):
+                raise TimeoutError("revision race barrier timed out")
+
+    repository = ReviewRepository(
+        connection,
+        validate_curation_artifact=validate_artifact,
+    )
+    repository.create_curation_session(
+        workspace_id="w1", session_id="s1", source_refs=("source-1",)
+    )
+    origin = repository.create_batch(
+        workspace_id="w1",
+        session_id="s1",
+        run_id="r1",
+        source_refs=("source-1",),
+        batch_id="batch-origin-publication-claim",
+    )
+    base_content = b"# publication claim base\n"
+    base_hash = sha256(base_content).hexdigest()
+    base_path = (
+        tmp_path
+        / "artifacts/review/drafts/draft-base-publication-claim.md"
+    )
+    base_path.parent.mkdir(parents=True, exist_ok=True)
+    base_path.write_bytes(base_content)
+    _seed_question_draft(
+        connection,
+        "draft-base-publication-claim",
+        content_hash=base_hash,
+    )
+    repository.save_candidate(
+        batch_id=origin.id,
+        question=replace(
+            _snapshot("base"),
+            document_id="doc-base",
+            content_hash=base_hash,
+        ),
+        draft_id="draft-base-publication-claim",
+        source_refs=("source-1#fragment-1",),
+        status="review_pending",
+        candidate_id="candidate-publication-claim",
+    )
+    draft = await KnowledgeDraftService(
+        tmp_path, workspace_id="w1"
+    ).get("draft-base-publication-claim")
+    actions = PendingActionRepository(tmp_path)
+    pending = await actions.create(CreatePendingAction(
+        workspace_id="w1",
+        session_id="s1",
+        run_id="r1",
+        action_type="knowledge.publish",
+        payload={
+            "draftId": draft.id,
+            "draftVersion": draft.version,
+            "contentHash": draft.content_hash,
+            "title": draft.title,
+            "markdown": draft.markdown,
+        },
+        preview={"title": draft.title, "markdown": draft.markdown},
+        editable_fields=("title", "markdown"),
+        idempotency_key="action-publication-claim",
+    ))
+    await actions.resolve(
+        pending.id,
+        expected_version=1,
+        status="approved",
+        resolution_key="approve-publication-claim",
+        decision={"decision": "approved"},
+    )
+    action = await actions.get(pending.id)
+    connection.execute(
+        "UPDATE review_question_batches SET status = 'completed' WHERE id = ?",
+        (origin.id,),
+    )
+    connection.execute(
+        "UPDATE agent_runs SET status = 'interrupted' WHERE id = 'r1'"
+    )
+    connection.execute(
+        "INSERT INTO agent_runs (id, session_id, status) "
+        "VALUES ('r2', 's1', 'running')"
+    )
+    connection.commit()
+    rewrite = repository.create_batch(
+        workspace_id="w1",
+        session_id="s1",
+        run_id="r2",
+        source_refs=("source-1",),
+        rewrite_of_batch_id=origin.id,
+        batch_id="batch-rewrite-publication-claim",
+    )
+    repository.update_curation_progress(
+        "s1",
+        stage="generating",
+        completed_units=0,
+        total_units=1,
+        active_batch_id=rewrite.id,
+    )
+    repository.claim_curation_finalization(rewrite.id, "r2")
+    revision = _finalization_candidate(
+        candidate_id="candidate-publication-claim",
+        draft_id="draft-revision-publication-claim",
+        run_id="r2",
+        document_id="doc-base",
+        question_id="base",
+        revision_candidate_id="candidate-publication-claim",
+        expected_revision_draft_id="draft-base-publication-claim",
+        expected_revision_draft_version=1,
+        expected_revision_draft_hash=base_hash,
+    )
+    revision["draft"] = {
+        **revision["draft"],  # type: ignore[arg-type]
+        "version": 2,
+    }
+    _register_staging(
+        connection,
+        batch_id=rewrite.id,
+        execution_id="r2",
+        candidates=(revision,),
+    )
+
+    service = PublicationService(tmp_path, workspace_id="w1")
+    if winner == "publication":
+        original_prepare = service._repository.prepare
+        claim_committed = asyncio.Event()
+        release_file_write = asyncio.Event()
+
+        async def prepare_then_wait(*args, **kwargs):
+            publication = await original_prepare(*args, **kwargs)
+            claim_committed.set()
+            await release_file_write.wait()
+            return publication
+
+        monkeypatch.setattr(service._repository, "prepare", prepare_then_wait)
+        publishing = asyncio.create_task(service.publish_approved_action(action))
+        await claim_committed.wait()
+        with pytest.raises(DraftNotEditableError, match="publication claim"):
+            await drafts.update(
+                draft.id,
+                UpdateDraftCommand(
+                    expected_version=draft.version,
+                    markdown="# must not change after claim\n",
+                ),
+            )
+        with pytest.raises(ReviewConflictError, match="revision base changed"):
+            repository.finalize_curation_candidates(
+                rewrite.id, "r2", candidates=(revision,)
+            )
+        release_file_write.set()
+        publication = await publishing
+
+        assert repository.get_candidate(
+            "candidate-publication-claim"
+        ).draft_id == "draft-base-publication-claim"
+        assert tuple(connection.execute(
+            "SELECT status, version FROM knowledge_drafts "
+            "WHERE id = 'draft-base-publication-claim'"
+        ).fetchone()) == ("published", 1)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM knowledge_drafts "
+            "WHERE id = 'draft-revision-publication-claim'"
+        ).fetchone()[0] == 0
+        assert publication.state == "completed"
+        assert (
+            tmp_path / "knowledge-vault/10_question_bank/doc-base.md"
+        ).is_file()
+        index = connect_index(
+            tmp_path / "knowledge-vault/.cyber-interview-agent/index.sqlite"
+        )
+        assert index.execute(
+            "SELECT status FROM manifest_documents WHERE id = 'doc-base'"
+        ).fetchone()[0] == "ingested"
+        index.close()
+    else:
+        finalizing = asyncio.create_task(asyncio.to_thread(
+            repository.finalize_curation_candidates,
+            rewrite.id,
+            "r2",
+            candidates=(revision,),
+        ))
+        assert await asyncio.to_thread(revision_transaction_open.wait, 5)
+        original_prepare = service._repository.prepare
+        prepare_started = asyncio.Event()
+
+        async def prepare_after_stale_read(*args, **kwargs):
+            prepare_started.set()
+            return await original_prepare(*args, **kwargs)
+
+        monkeypatch.setattr(
+            service._repository, "prepare", prepare_after_stale_read
+        )
+        publishing = asyncio.create_task(service.publish_approved_action(action))
+        await prepare_started.wait()
+        release_revision_transaction.set()
+        persisted = await finalizing
+        with pytest.raises(DraftVersionChangedError):
+            await publishing
+
+        assert persisted[0].draft_id == "draft-revision-publication-claim"
+        assert repository.get_candidate(
+            "candidate-publication-claim"
+        ).draft_id == "draft-revision-publication-claim"
+        assert tuple(connection.execute(
+            "SELECT status, version FROM knowledge_drafts "
+            "WHERE id = 'draft-base-publication-claim'"
+        ).fetchone()) == ("superseded", 2)
+        assert tuple(connection.execute(
+            "SELECT status, version FROM knowledge_drafts "
+            "WHERE id = 'draft-revision-publication-claim'"
+        ).fetchone()) == ("review_pending", 2)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM publication_runs "
+            "WHERE draft_id = 'draft-base-publication-claim'"
+        ).fetchone()[0] == 0
+        assert not (tmp_path / "knowledge-vault").exists()
     connection.close()
 
 

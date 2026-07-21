@@ -202,6 +202,20 @@ describe("DraftReview", () => {
     expect(screen.queryByText("已请求发布，等待人工确认")).toBeNull();
   });
 
+  it("renders a superseded draft as historical and non-actionable", async () => {
+    const superseded = { ...draft, status: "superseded" as const, version: 2 };
+    mockFetchDrafts((url) =>
+      url.includes("/api/knowledge/drafts?") ? [superseded] : [],
+    );
+
+    render(<DraftReview workspaceId="w1" />, { wrapper });
+
+    expect(await screen.findAllByText("已替代")).toHaveLength(2);
+    expect(screen.getByText("该草稿已被后续修订替代，仅保留为历史版本")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "编辑" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "请求发布" })).toBeNull();
+  });
+
   it("shows how to repair an index-stale publication", async () => {
     const stale = {
       ...draft,
