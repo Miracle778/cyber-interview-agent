@@ -35,7 +35,11 @@ R2_SESSION_EXPERIENCE_TABLES = {
     "review_question_source_links",
 }
 
-R2_PROGRESSIVE_CURATION_TABLES = {"review_curation_work_items"}
+R2_PROGRESSIVE_CURATION_TABLES = {
+    "review_curation_batch_attempts",
+    "review_curation_control_receipts",
+    "review_curation_work_items",
+}
 
 R3_TABLES = {
     "profile_materials",
@@ -106,27 +110,37 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
     assert "agent_context_usage" in _tables(connection)
     connection.close()
 
 
-def test_migration_018_adds_bounded_work_items(tmp_path: Path) -> None:
+def test_migration_019_adds_durable_batch_control_and_recovery_state(
+    tmp_path: Path,
+) -> None:
     connection = connect_runtime_database(tmp_path)
 
-    columns = {
+    batch_columns = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info(review_question_batches)"
+        )
+    }
+    work_item_columns = {
         row[1]
         for row in connection.execute(
             "PRAGMA table_info(review_curation_work_items)"
         )
     }
-    assert columns == {
+    assert {"version", "control_intent", "concurrency_limit"} <= batch_columns
+    assert work_item_columns == {
         "id",
         "batch_id",
         "stage",
         "unit_index",
         "input_digest",
         "source_refs_json",
+        "processor_kind",
         "status",
         "output_json",
         "attempt_count",
@@ -134,8 +148,95 @@ def test_migration_018_adds_bounded_work_items(tmp_path: Path) -> None:
         "created_at",
         "updated_at",
     }
+    indexes = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index'"
+        )
+    }
+    assert {
+        "idx_review_question_batches_workspace_status",
+        "idx_review_question_batches_origin_session",
+        "idx_review_curation_sessions_workspace_updated",
+        "idx_review_curation_work_items_batch_stage_status",
+        "idx_review_curation_batch_attempts_batch_ordinal",
+        "idx_review_curation_control_receipts_batch_created",
+    } <= indexes
     assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
     connection.close()
+
+
+def test_migration_019_preserves_version_18_batch_session_and_work_item_rows(
+    tmp_path: Path,
+) -> None:
+    connection = _create_runtime_at_version(tmp_path, 18)
+    connection.execute(
+        "INSERT INTO agent_sessions "
+        "(id, workspace_id, graph_id, graph_version, title) "
+        "VALUES ('s', 'w1', 'question.curate', 1, 'S')"
+    )
+    connection.execute(
+        "INSERT INTO agent_runs (id, session_id, status) "
+        "VALUES ('r', 's', 'completed')"
+    )
+    connection.execute(
+        "INSERT INTO review_question_batches "
+        "(id, workspace_id, session_id, origin_session_id, run_id, "
+        "source_refs_json, status) "
+        "VALUES ('b', 'w1', 's', 's', 'r', '[\"source-1\"]', 'completed')"
+    )
+    connection.execute(
+        "INSERT INTO review_curation_sessions "
+        "(session_id, workspace_id, source_refs_json, active_batch_id, stage) "
+        "VALUES ('s', 'w1', '[\"source-1\"]', 'b', 'completed')"
+    )
+    connection.execute(
+        "INSERT INTO review_curation_work_items "
+        "(id, batch_id, stage, unit_index, input_digest, source_refs_json, "
+        "status, output_json, attempt_count) "
+        "VALUES ('wi', 'b', 'discovery', 0, ?, '[\"source-1#section-0001\"]', "
+        "'completed', '{\"seeds\":[]}', 1)",
+        ("a" * 64,),
+    )
+    connection.execute(
+        "INSERT INTO review_question_candidates "
+        "(id, batch_id, question_json, status) "
+        "VALUES ('candidate', 'b', '{}', 'draft')"
+    )
+    connection.execute(
+        "INSERT INTO review_question_source_links "
+        "(id, question_id, source_id, batch_id, session_id, origin_session_id, "
+        "evidence_ref, merge_reason) VALUES "
+        "('link', 'question-1', 'source-1', 'b', 's', 's', 'source-1#1', 'keep')"
+    )
+    connection.commit()
+    connection.close()
+
+    reopened = connect_runtime_database(tmp_path)
+
+    assert tuple(
+        reopened.execute(
+            "SELECT id, status, version, control_intent, concurrency_limit "
+            "FROM review_question_batches WHERE id = 'b'"
+        ).fetchone()
+    ) == ("b", "completed", 1, None, 3)
+    assert tuple(
+        reopened.execute(
+            "SELECT id, processor_kind, status, output_json, attempt_count "
+            "FROM review_curation_work_items WHERE id = 'wi'"
+        ).fetchone()
+    ) == ("wi", "model", "completed", '{"seeds":[]}', 1)
+    assert reopened.execute(
+        "SELECT stage FROM review_curation_sessions WHERE session_id = 's'"
+    ).fetchone()[0] == "completed"
+    assert reopened.execute(
+        "SELECT COUNT(*) FROM review_question_candidates WHERE batch_id = 'b'"
+    ).fetchone()[0] == 1
+    assert reopened.execute(
+        "SELECT COUNT(*) FROM review_question_source_links WHERE batch_id = 'b'"
+    ).fetchone()[0] == 1
+    assert reopened.execute("PRAGMA foreign_key_check").fetchall() == []
+    reopened.close()
 
 
 def test_existing_generation_two_database_applies_r2_migration(
@@ -173,7 +274,7 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
     reopened.close()
 
 

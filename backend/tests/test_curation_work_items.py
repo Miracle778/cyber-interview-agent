@@ -144,3 +144,189 @@ def test_running_items_are_requeued_with_stable_interruption_code(
         "failed",
         "curation_interrupted",
     )
+
+
+def test_pause_control_is_idempotent_and_advances_version_twice(
+    repository: ReviewRepository, batch
+) -> None:
+    receipt = repository.request_batch_control(
+        batch.id,
+        operation="pause",
+        idempotency_key="pause-request-0001",
+        expected_version=batch.version,
+    )
+
+    assert repository.request_batch_control(
+        batch.id,
+        operation="pause",
+        idempotency_key="pause-request-0001",
+        expected_version=batch.version,
+    ) == receipt
+    paused = repository.finalize_batch_control(receipt.id)
+
+    assert paused.status == "paused"
+    assert paused.control_intent is None
+    assert paused.version == batch.version + 2
+
+
+def test_batch_control_rejects_changed_payload_and_stale_version(
+    repository: ReviewRepository, batch
+) -> None:
+    repository.request_batch_control(
+        batch.id,
+        operation="pause",
+        idempotency_key="control-request-0001",
+        expected_version=batch.version,
+    )
+
+    with pytest.raises(ReviewConflictError, match="control request changed"):
+        repository.request_batch_control(
+            batch.id,
+            operation="terminate",
+            idempotency_key="control-request-0001",
+            expected_version=batch.version,
+        )
+    with pytest.raises(ReviewConflictError, match="question batch version changed"):
+        repository.request_batch_control(
+            batch.id,
+            operation="terminate",
+            idempotency_key="terminate-request-0001",
+            expected_version=batch.version,
+        )
+
+
+def test_terminated_batch_cannot_resume(
+    repository: ReviewRepository, batch
+) -> None:
+    receipt = repository.request_batch_control(
+        batch.id,
+        operation="terminate",
+        idempotency_key="terminate-request-0001",
+        expected_version=batch.version,
+    )
+    terminated = repository.finalize_batch_control(receipt.id)
+
+    with pytest.raises(ReviewConflictError, match="question batch cannot be resumed"):
+        repository.resume_curation_batch(
+            terminated.id,
+            execution_id="run-2",
+            idempotency_key="resume-request-0001",
+            expected_version=terminated.version,
+            reason="paused",
+        )
+
+
+def test_resume_reuses_batch_and_records_idempotent_receipt(
+    repository: ReviewRepository, batch
+) -> None:
+    repository.update_batch_status(batch.id, "failed")
+    failed = repository.get_batch(batch.id)
+
+    resumed = repository.resume_curation_batch(
+        batch.id,
+        execution_id="run-2",
+        idempotency_key="resume-request-0001",
+        expected_version=failed.version,
+        reason="failed",
+    )
+
+    assert resumed.id == batch.id
+    assert resumed.run_id == "run-2"
+    assert resumed.status == "generating"
+    assert resumed.version == failed.version + 1
+    assert repository.resume_curation_batch(
+        batch.id,
+        execution_id="run-2",
+        idempotency_key="resume-request-0001",
+        expected_version=failed.version,
+        reason="failed",
+    ) == resumed
+
+
+def test_only_one_active_attempt_can_be_recorded(
+    repository: ReviewRepository, batch
+) -> None:
+    repository.record_curation_attempt(batch.id, "run-2", reason="initial")
+    repository._connection.execute(
+        "INSERT INTO agent_sessions "
+        "(id, workspace_id, graph_id, graph_version, title) "
+        "VALUES ('session-2', 'workspace-1', 'question.curate', 1, 'Other')"
+    )
+    repository._connection.execute(
+        "INSERT INTO agent_runs (id, session_id, status) "
+        "VALUES ('run-3', 'session-2', 'running')"
+    )
+    repository._connection.commit()
+
+    with pytest.raises(ReviewConflictError, match="active curation attempt"):
+        repository.record_curation_attempt(batch.id, "run-3", reason="paused")
+
+
+def test_batch_timing_sums_execution_intervals_without_paused_gaps(
+    repository: ReviewRepository, batch
+) -> None:
+    repository._connection.execute(
+        "UPDATE agent_runs SET status = 'completed', "
+        "started_at = '2026-07-22 00:00:00', finished_at = '2026-07-22 00:00:10' "
+        "WHERE id = 'run-2'"
+    )
+    repository._connection.execute(
+        "INSERT INTO agent_runs "
+        "(id, session_id, status, started_at, finished_at) VALUES "
+        "('run-3', 'session-1', 'completed', "
+        "'2026-07-22 00:01:00', '2026-07-22 00:01:20')"
+    )
+    repository._connection.commit()
+    repository.record_curation_attempt(batch.id, "run-2", reason="initial")
+    repository.record_curation_attempt(batch.id, "run-3", reason="paused")
+
+    timing = repository.curation_batch_timing(batch.id)
+
+    assert timing.current_elapsed_ms == 20_000
+    assert timing.cumulative_elapsed_ms == 30_000
+
+
+def test_interrupted_work_item_restarts_but_completed_output_stays_immutable(
+    repository: ReviewRepository, batch
+) -> None:
+    interrupted = repository.plan_curation_work_item(
+        batch_id=batch.id,
+        stage="discovery",
+        unit_index=0,
+        input_digest="a" * 64,
+        source_refs=("s1#section-0001",),
+        processor_kind="model",
+    )
+    completed = repository.plan_curation_work_item(
+        batch_id=batch.id,
+        stage="discovery",
+        unit_index=1,
+        input_digest="b" * 64,
+        source_refs=("s1#section-0002",),
+        processor_kind="deterministic",
+    )
+    repository.start_curation_work_item(interrupted.id)
+    completed = repository.complete_curation_work_item(
+        repository.start_curation_work_item(completed.id).id,
+        output={"seeds": []},
+    )
+
+    assert repository.interrupt_running_curation_work_items(
+        batch.id, error_code="curation_paused"
+    ) == 1
+    restarted = repository.start_curation_work_item(interrupted.id)
+
+    assert (restarted.status, restarted.attempt_count) == ("running", 2)
+    assert repository.start_curation_work_item(completed.id) == completed
+    with pytest.raises(ReviewConflictError, match="output changed"):
+        repository.complete_curation_work_item(
+            completed.id,
+            output={
+                "seeds": [
+                    {
+                        "question_text": "What changed?",
+                        "source_ref": "s1#section-0002",
+                    }
+                ]
+            },
+        )

@@ -5,8 +5,9 @@ import re
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import asdict, replace
+from datetime import datetime, timezone
 from hashlib import sha256
-from typing import Any, Iterator, cast
+from typing import Any, Iterator, Literal, cast
 from uuid import uuid4
 
 from app.review.errors import (
@@ -18,7 +19,15 @@ from app.review.models import (
     AttemptStatus,
     BulkPublicationItemRecord,
     BulkPublicationRecord,
+    CurationAttemptReason,
+    CurationBatchAttemptRecord,
+    CurationBatchStatus,
+    CurationBatchTiming,
     CurationContextRecord,
+    CurationControlIntent,
+    CurationControlOperation,
+    CurationControlReceiptRecord,
+    CurationProcessorKind,
     CurationWorkItemRecord,
     CurationWorkStage,
     CurationWorkStatus,
@@ -532,7 +541,7 @@ class ReviewRepository:
         with self._transaction():
             cursor = self._connection.execute(
                 "UPDATE review_question_batches SET status = ?, "
-                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                "version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (status, batch_id),
             )
             if cursor.rowcount != 1:
@@ -567,6 +576,310 @@ class ReviewRepository:
         self.requeue_running_curation_work_items(batch_id)
         return self.get_batch(batch_id)
 
+    def request_batch_control(
+        self,
+        batch_id: str,
+        *,
+        operation: Literal["pause", "terminate"],
+        idempotency_key: str,
+        expected_version: int,
+    ) -> CurationControlReceiptRecord:
+        if operation not in {"pause", "terminate"}:
+            raise ValueError("unsupported curation control operation")
+        self._validate_control_request(idempotency_key, expected_version)
+        digest = self._control_request_digest(
+            {
+                "operation": operation,
+                "expectedVersion": expected_version,
+            }
+        )
+        with self._transaction():
+            existing = self._connection.execute(
+                "SELECT * FROM review_curation_control_receipts "
+                "WHERE batch_id = ? AND idempotency_key = ?",
+                (batch_id, idempotency_key),
+            ).fetchone()
+            if existing is not None:
+                receipt = self._curation_control_receipt_record(existing)
+                if receipt.request_digest != digest:
+                    raise ReviewConflictError("control request changed")
+                return receipt
+
+            row = self._connection.execute(
+                "SELECT status, version, control_intent "
+                "FROM review_question_batches WHERE id = ?",
+                (batch_id,),
+            ).fetchone()
+            if row is None:
+                raise LookupError(batch_id)
+            if row["version"] != expected_version:
+                raise ReviewConflictError("question batch version changed")
+            allowed = (
+                {"generating"}
+                if operation == "pause"
+                else {"generating", "paused", "interrupted", "failed"}
+            )
+            if row["status"] not in allowed or row["control_intent"] is not None:
+                raise ReviewConflictError("question batch cannot be controlled")
+
+            receipt_id = str(uuid4())
+            cursor = self._connection.execute(
+                "UPDATE review_question_batches SET control_intent = ?, "
+                "version = version + 1, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND version = ? AND status = ? "
+                "AND control_intent IS NULL",
+                (operation, batch_id, expected_version, row["status"]),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError("question batch version changed")
+            self._connection.execute(
+                "INSERT INTO review_curation_control_receipts "
+                "(id, batch_id, idempotency_key, operation, request_digest, "
+                "result_status) VALUES (?, ?, ?, ?, ?, 'requested')",
+                (receipt_id, batch_id, idempotency_key, operation, digest),
+            )
+            created = self._connection.execute(
+                "SELECT * FROM review_curation_control_receipts WHERE id = ?",
+                (receipt_id,),
+            ).fetchone()
+            assert created is not None
+            return self._curation_control_receipt_record(created)
+
+    def finalize_batch_control(self, receipt_id: str) -> QuestionBatchRecord:
+        with self._transaction():
+            receipt_row = self._connection.execute(
+                "SELECT * FROM review_curation_control_receipts WHERE id = ?",
+                (receipt_id,),
+            ).fetchone()
+            if receipt_row is None:
+                raise LookupError(receipt_id)
+            receipt = self._curation_control_receipt_record(receipt_row)
+            if receipt.operation not in {"pause", "terminate"}:
+                raise ReviewConflictError("control receipt cannot be finalized")
+            target = "paused" if receipt.operation == "pause" else "terminated"
+            batch_row = self._connection.execute(
+                "SELECT * FROM review_question_batches WHERE id = ?",
+                (receipt.batch_id,),
+            ).fetchone()
+            if batch_row is None:
+                raise LookupError(receipt.batch_id)
+            batch = self._batch_record(batch_row)
+            if (
+                receipt.result_status == target
+                and batch.status == target
+                and batch.control_intent is None
+            ):
+                return batch
+            allowed = (
+                {"generating"}
+                if receipt.operation == "pause"
+                else {"generating", "paused", "interrupted", "failed"}
+            )
+            if batch.status not in allowed or batch.control_intent != receipt.operation:
+                raise ReviewConflictError("question batch control state changed")
+            cursor = self._connection.execute(
+                "UPDATE review_question_batches SET status = ?, control_intent = NULL, "
+                "version = version + 1, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND version = ? AND status = ? AND control_intent = ?",
+                (target, batch.id, batch.version, batch.status, receipt.operation),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError("question batch control state changed")
+            self._connection.execute(
+                "UPDATE review_curation_control_receipts SET result_status = ?, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? "
+                "AND result_status = 'requested'",
+                (target, receipt.id),
+            )
+            self._connection.execute(
+                "UPDATE review_curation_sessions SET stage = ?, "
+                "updated_at = CURRENT_TIMESTAMP WHERE active_batch_id = ?",
+                (target, batch.id),
+            )
+        return self.get_batch(receipt.batch_id)
+
+    def resume_curation_batch(
+        self,
+        batch_id: str,
+        *,
+        execution_id: str,
+        idempotency_key: str,
+        expected_version: int,
+        reason: Literal["paused", "failed", "interrupted"],
+    ) -> QuestionBatchRecord:
+        if reason not in {"paused", "failed", "interrupted"}:
+            raise ValueError("unsupported curation resume reason")
+        self._validate_control_request(idempotency_key, expected_version)
+        if not execution_id.strip():
+            raise ValueError("execution id must not be empty")
+        digest = self._control_request_digest(
+            {
+                "operation": "resume",
+                "executionId": execution_id,
+                "expectedVersion": expected_version,
+                "reason": reason,
+            }
+        )
+        with self._transaction():
+            existing = self._connection.execute(
+                "SELECT * FROM review_curation_control_receipts "
+                "WHERE batch_id = ? AND idempotency_key = ?",
+                (batch_id, idempotency_key),
+            ).fetchone()
+            if existing is not None:
+                receipt = self._curation_control_receipt_record(existing)
+                if receipt.request_digest != digest:
+                    raise ReviewConflictError("control request changed")
+                return self.get_batch(batch_id)
+            execution = self._connection.execute(
+                "SELECT status FROM agent_runs WHERE id = ?", (execution_id,)
+            ).fetchone()
+            if execution is None:
+                raise LookupError(execution_id)
+            if execution["status"] not in {"queued", "running"}:
+                raise ReviewConflictError("execution cannot resume curation")
+            row = self._connection.execute(
+                "SELECT * FROM review_question_batches WHERE id = ?",
+                (batch_id,),
+            ).fetchone()
+            if row is None:
+                raise LookupError(batch_id)
+            batch = self._batch_record(row)
+            if batch.version != expected_version:
+                raise ReviewConflictError("question batch version changed")
+            if batch.status != reason or batch.control_intent is not None:
+                raise ReviewConflictError("question batch cannot be resumed")
+            active = self._connection.execute(
+                "SELECT 1 FROM review_curation_batch_attempts attempt "
+                "JOIN agent_runs run ON run.id = attempt.execution_id "
+                "WHERE attempt.batch_id = ? AND run.status IN "
+                "('queued', 'running', 'waiting_for_input', 'waiting_for_approval') "
+                "LIMIT 1",
+                (batch_id,),
+            ).fetchone()
+            if active is not None:
+                raise ReviewConflictError(
+                    "question batch already has an active curation attempt"
+                )
+            cursor = self._connection.execute(
+                "UPDATE review_question_batches SET run_id = ?, status = 'generating', "
+                "control_intent = NULL, version = version + 1, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ? "
+                "AND status = ? AND control_intent IS NULL",
+                (execution_id, batch_id, expected_version, reason),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError("question batch cannot be resumed")
+            self._connection.execute(
+                "UPDATE review_curation_work_items SET status = 'interrupted', "
+                "last_error_code = 'curation_interrupted', "
+                "updated_at = CURRENT_TIMESTAMP WHERE batch_id = ? "
+                "AND status = 'running'",
+                (batch_id,),
+            )
+            self._connection.execute(
+                "INSERT INTO review_curation_control_receipts "
+                "(id, batch_id, idempotency_key, operation, request_digest, "
+                "execution_id, result_status) VALUES (?, ?, ?, 'resume', ?, ?, 'generating')",
+                (str(uuid4()), batch_id, idempotency_key, digest, execution_id),
+            )
+            self._connection.execute(
+                "UPDATE review_curation_sessions SET stage = 'generating', "
+                "updated_at = CURRENT_TIMESTAMP WHERE active_batch_id = ?",
+                (batch_id,),
+            )
+        return self.get_batch(batch_id)
+
+    def record_curation_attempt(
+        self,
+        batch_id: str,
+        execution_id: str,
+        *,
+        reason: CurationAttemptReason,
+    ) -> CurationBatchAttemptRecord:
+        if reason not in {"initial", "paused", "failed", "interrupted"}:
+            raise ValueError("unsupported curation attempt reason")
+        with self._transaction():
+            existing = self._connection.execute(
+                "SELECT * FROM review_curation_batch_attempts WHERE execution_id = ?",
+                (execution_id,),
+            ).fetchone()
+            if existing is not None:
+                attempt = self._curation_batch_attempt_record(existing)
+                if attempt.batch_id != batch_id or attempt.reason != reason:
+                    raise ReviewConflictError("curation attempt changed")
+                return attempt
+            if self._connection.execute(
+                "SELECT 1 FROM review_question_batches WHERE id = ?", (batch_id,)
+            ).fetchone() is None:
+                raise LookupError(batch_id)
+            if self._connection.execute(
+                "SELECT 1 FROM agent_runs WHERE id = ?", (execution_id,)
+            ).fetchone() is None:
+                raise LookupError(execution_id)
+            active = self._connection.execute(
+                "SELECT 1 FROM review_curation_batch_attempts attempt "
+                "JOIN agent_runs run ON run.id = attempt.execution_id "
+                "WHERE attempt.batch_id = ? AND run.status IN "
+                "('queued', 'running', 'waiting_for_input', 'waiting_for_approval') "
+                "LIMIT 1",
+                (batch_id,),
+            ).fetchone()
+            if active is not None:
+                raise ReviewConflictError(
+                    "question batch already has an active curation attempt"
+                )
+            ordinal = self._connection.execute(
+                "SELECT COALESCE(MAX(ordinal), 0) + 1 "
+                "FROM review_curation_batch_attempts WHERE batch_id = ?",
+                (batch_id,),
+            ).fetchone()[0]
+            attempt_id = str(uuid4())
+            self._connection.execute(
+                "INSERT INTO review_curation_batch_attempts "
+                "(id, batch_id, execution_id, ordinal, reason) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (attempt_id, batch_id, execution_id, ordinal, reason),
+            )
+            row = self._connection.execute(
+                "SELECT * FROM review_curation_batch_attempts WHERE id = ?",
+                (attempt_id,),
+            ).fetchone()
+            assert row is not None
+            return self._curation_batch_attempt_record(row)
+
+    def curation_batch_timing(self, batch_id: str) -> CurationBatchTiming:
+        if self._connection.execute(
+            "SELECT 1 FROM review_question_batches WHERE id = ?", (batch_id,)
+        ).fetchone() is None:
+            raise LookupError(batch_id)
+        rows = self._connection.execute(
+            "SELECT run.started_at, run.finished_at "
+            "FROM review_curation_batch_attempts attempt "
+            "JOIN agent_runs run ON run.id = attempt.execution_id "
+            "WHERE attempt.batch_id = ? ORDER BY attempt.ordinal, attempt.id",
+            (batch_id,),
+        ).fetchall()
+        now = datetime.now(timezone.utc)
+        durations: list[int] = []
+        for row in rows:
+            if row["started_at"] is None:
+                durations.append(0)
+                continue
+            started_at = self._utc_datetime(row["started_at"])
+            finished_at = (
+                now
+                if row["finished_at"] is None
+                else self._utc_datetime(row["finished_at"])
+            )
+            durations.append(
+                max(0, int((finished_at - started_at).total_seconds() * 1000))
+            )
+        return CurationBatchTiming(
+            current_elapsed_ms=durations[-1] if durations else 0,
+            cumulative_elapsed_ms=sum(durations),
+        )
+
     def append_curation_warning(
         self, session_id: str, warning: dict[str, object]
     ) -> CurationSessionRecord:
@@ -597,9 +910,12 @@ class ReviewRepository:
         unit_index: int,
         input_digest: str,
         source_refs: tuple[str, ...],
+        processor_kind: CurationProcessorKind = "model",
         work_item_id: str | None = None,
     ) -> CurationWorkItemRecord:
-        self._validate_work_item_plan(stage, unit_index, input_digest, source_refs)
+        self._validate_work_item_plan(
+            stage, unit_index, input_digest, source_refs, processor_kind
+        )
         with self._transaction():
             existing = self._connection.execute(
                 "SELECT * FROM review_curation_work_items "
@@ -611,14 +927,15 @@ class ReviewRepository:
                 if (
                     record.input_digest != input_digest
                     or record.source_refs != source_refs
+                    or record.processor_kind != processor_kind
                 ):
                     raise ReviewConflictError("curation work item input changed")
                 return record
             try:
                 self._connection.execute(
                     "INSERT INTO review_curation_work_items "
-                    "(id, batch_id, stage, unit_index, input_digest, source_refs_json) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    "(id, batch_id, stage, unit_index, input_digest, source_refs_json, "
+                    "processor_kind) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (
                         work_item_id or str(uuid4()),
                         batch_id,
@@ -626,6 +943,7 @@ class ReviewRepository:
                         unit_index,
                         input_digest,
                         _canonical_json(source_refs),
+                        processor_kind,
                     ),
                 )
             except sqlite3.IntegrityError as error:
@@ -669,7 +987,7 @@ class ReviewRepository:
                 "UPDATE review_curation_work_items SET status = 'running', "
                 "attempt_count = attempt_count + 1, last_error_code = NULL, "
                 "updated_at = CURRENT_TIMESTAMP WHERE id = ? "
-                "AND status IN ('pending', 'failed')",
+                "AND status IN ('pending', 'failed', 'interrupted')",
                 (work_item_id,),
             )
             if cursor.rowcount != 1:
@@ -726,6 +1044,18 @@ class ReviewRepository:
                 "last_error_code = 'curation_interrupted', updated_at = CURRENT_TIMESTAMP "
                 "WHERE batch_id = ? AND status = 'running'",
                 (batch_id,),
+            ).rowcount
+
+    def interrupt_running_curation_work_items(
+        self, batch_id: str, *, error_code: str
+    ) -> int:
+        self._validate_curation_error_code(error_code)
+        with self._transaction():
+            return self._connection.execute(
+                "UPDATE review_curation_work_items SET status = 'interrupted', "
+                "last_error_code = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE batch_id = ? AND status = 'running'",
+                (error_code, batch_id),
             ).rowcount
 
     def get_curation_work_item(self, work_item_id: str) -> CurationWorkItemRecord:
@@ -2308,6 +2638,7 @@ class ReviewRepository:
         unit_index: int,
         input_digest: str,
         source_refs: tuple[str, ...],
+        processor_kind: CurationProcessorKind,
     ) -> None:
         if stage not in {"discovery", "enrichment"}:
             raise ValueError("unsupported curation work item stage")
@@ -2317,6 +2648,27 @@ class ReviewRepository:
             raise ValueError("curation work item input digest must be a sha256 digest")
         if not source_refs or any(not ref.strip() for ref in source_refs):
             raise ValueError("curation work item source refs must not be empty")
+        if processor_kind not in {"deterministic", "model"}:
+            raise ValueError("unsupported curation work item processor kind")
+
+    @staticmethod
+    def _validate_control_request(idempotency_key: str, expected_version: int) -> None:
+        if not idempotency_key.strip() or len(idempotency_key) > 200:
+            raise ValueError("idempotency key must be non-empty and bounded")
+        if expected_version < 1:
+            raise ValueError("expected version must be positive")
+
+    @staticmethod
+    def _control_request_digest(payload: dict[str, object]) -> str:
+        return sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _utc_datetime(value: str) -> datetime:
+        normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
 
     @staticmethod
     def _validate_curation_error_code(error_code: str) -> None:
@@ -2404,10 +2756,40 @@ class ReviewRepository:
             unit_index=row["unit_index"],
             input_digest=row["input_digest"],
             source_refs=tuple(json.loads(row["source_refs_json"])),
+            processor_kind=cast(CurationProcessorKind, row["processor_kind"]),
             status=cast(CurationWorkStatus, row["status"]),
             output=None if output is None else cast(dict[str, object], json.loads(output)),
             attempt_count=row["attempt_count"],
             last_error_code=row["last_error_code"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    @staticmethod
+    def _curation_batch_attempt_record(
+        row: sqlite3.Row,
+    ) -> CurationBatchAttemptRecord:
+        return CurationBatchAttemptRecord(
+            id=row["id"],
+            batch_id=row["batch_id"],
+            execution_id=row["execution_id"],
+            ordinal=row["ordinal"],
+            reason=cast(CurationAttemptReason, row["reason"]),
+            created_at=row["created_at"],
+        )
+
+    @staticmethod
+    def _curation_control_receipt_record(
+        row: sqlite3.Row,
+    ) -> CurationControlReceiptRecord:
+        return CurationControlReceiptRecord(
+            id=row["id"],
+            batch_id=row["batch_id"],
+            idempotency_key=row["idempotency_key"],
+            operation=cast(CurationControlOperation, row["operation"]),
+            request_digest=row["request_digest"],
+            execution_id=row["execution_id"],
+            result_status=row["result_status"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -2473,7 +2855,12 @@ class ReviewRepository:
             run_id=row["run_id"],
             source_refs=tuple(json.loads(row["source_refs_json"])),
             rewrite_of_batch_id=row["rewrite_of_batch_id"],
-            status=row["status"],
+            status=cast(CurationBatchStatus, row["status"]),
+            version=row["version"],
+            control_intent=cast(
+                CurationControlIntent | None, row["control_intent"]
+            ),
+            concurrency_limit=row["concurrency_limit"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )

@@ -32,13 +32,31 @@ CurationStage: TypeAlias = Literal[
     "publishing",
     "completed",
     "failed",
+    "paused",
+    "interrupted",
+    "terminated",
 ]
 AttemptStatus: TypeAlias = Literal[
     "evaluating", "waiting_for_follow_up", "completed", "evaluation_failed"
 ]
 CurationWorkStage: TypeAlias = Literal["discovery", "enrichment"]
+CurationProcessorKind: TypeAlias = Literal["deterministic", "model"]
 CurationWorkStatus: TypeAlias = Literal[
-    "pending", "running", "completed", "failed"
+    "pending", "running", "completed", "failed", "interrupted"
+]
+CurationBatchStatus: TypeAlias = Literal[
+    "generating",
+    "paused",
+    "interrupted",
+    "review_pending",
+    "completed",
+    "failed",
+    "terminated",
+]
+CurationControlIntent: TypeAlias = Literal["pause", "terminate"]
+CurationControlOperation: TypeAlias = Literal["pause", "resume", "terminate"]
+CurationAttemptReason: TypeAlias = Literal[
+    "initial", "paused", "failed", "interrupted"
 ]
 
 _DIFFICULTIES = frozenset({"easy", "medium", "hard"})
@@ -155,7 +173,10 @@ class QuestionBatchRecord:
     run_id: str | None
     source_refs: tuple[str, ...]
     rewrite_of_batch_id: str | None
-    status: str
+    status: CurationBatchStatus
+    version: int
+    control_intent: CurationControlIntent | None
+    concurrency_limit: int
     created_at: str
     updated_at: str
 
@@ -168,12 +189,42 @@ class CurationWorkItemRecord:
     unit_index: int
     input_digest: str
     source_refs: tuple[str, ...]
+    processor_kind: CurationProcessorKind
     status: CurationWorkStatus
     output: dict[str, object] | None
     attempt_count: int
     last_error_code: str | None
     created_at: str
     updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class CurationBatchAttemptRecord:
+    id: str
+    batch_id: str
+    execution_id: str
+    ordinal: int
+    reason: CurationAttemptReason
+    created_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class CurationControlReceiptRecord:
+    id: str
+    batch_id: str
+    idempotency_key: str
+    operation: CurationControlOperation
+    request_digest: str
+    execution_id: str | None
+    result_status: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class CurationBatchTiming:
+    current_elapsed_ms: int
+    cumulative_elapsed_ms: int
 
 
 @dataclass(frozen=True, slots=True)
