@@ -2,6 +2,7 @@ import json
 import os
 import stat
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from threading import Thread
 
@@ -41,8 +42,36 @@ def test_writer_appends_parseable_ordered_events_and_resumes_sequence(tmp_path: 
     assert [row["sequence"] for row in rows] == [1, 2]
     assert rows[0]["payload"]["text"] == "完整原文"
     assert rows[1]["payload"]["text"] == "完整回答"
-    assert all(row["schema_version"] == 1 for row in rows)
+    assert all(row["schema_version"] == 2 for row in rows)
     assert all("+00:00" in row["timestamp"] for row in rows)
+
+
+def test_writer_records_utc_and_beijing_time_for_the_same_instant(tmp_path: Path) -> None:
+    AgentTraceWriter().append(identity(tmp_path), "model.request", {})
+    row = read_trace_rows(tmp_path, "s1", "r1")[0]
+    assert row["schema_version"] == 2
+    assert row["timezone"] == "Asia/Shanghai"
+    utc = datetime.fromisoformat(row["timestamp"])
+    local = datetime.fromisoformat(row["local_timestamp"])
+    assert utc.utcoffset().total_seconds() == 0
+    assert local.utcoffset().total_seconds() == 8 * 60 * 60
+    assert utc.timestamp() == local.timestamp()
+
+
+def test_writer_reads_handwritten_v1_before_appending_v2(tmp_path: Path) -> None:
+    initialize_agent_trace_directory(tmp_path)
+    trace_file = tmp_path / ".cyber-interview-agent/agent-traces/s1/r1.jsonl"
+    trace_file.parent.mkdir()
+    trace_file.write_text(
+        json.dumps({"schema_version": 1, "sequence": 1, "event_type": "model.request"}) + "\n",
+        encoding="utf-8",
+    )
+
+    assert AgentTraceWriter().append(identity(tmp_path), "model.response", {})
+
+    rows = read_trace_rows(tmp_path, "s1", "r1")
+    assert [row["schema_version"] for row in rows] == [1, 2]
+    assert [row["sequence"] for row in rows] == [1, 2]
 
 
 def test_writer_concurrent_appends_are_monotonic_and_file_modes_are_private(tmp_path: Path) -> None:

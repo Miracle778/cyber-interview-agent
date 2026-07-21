@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from uuid import uuid4
 
 from langchain.agents.middleware import AgentMiddleware
@@ -67,6 +68,7 @@ class AgentTraceMiddleware(AgentMiddleware):
                 "model_settings": request.model_settings,
             },
         )
+        started_at = time.monotonic()
         try:
             response = await handler(request)
         except BaseException as error:
@@ -74,7 +76,10 @@ class AgentTraceMiddleware(AgentMiddleware):
                 context,
                 identity,
                 "model.error",
-                safe_error_payload(error),
+                {
+                    **safe_error_payload(error),
+                    "duration_ms": max(0, int((time.monotonic() - started_at) * 1000)),
+                },
                 terminal=True,
             )
             raise
@@ -82,7 +87,10 @@ class AgentTraceMiddleware(AgentMiddleware):
             context,
             identity,
             "model.response",
-            {"response": response},
+            {
+                "response": response,
+                "duration_ms": max(0, int((time.monotonic() - started_at) * 1000)),
+            },
             terminal=True,
         )
         return response
@@ -101,6 +109,7 @@ class AgentTraceMiddleware(AgentMiddleware):
                 "args": tool_call.get("args", {}),
             },
         )
+        started_at = time.monotonic()
         try:
             result = await handler(request)
         except BaseException as error:
@@ -108,7 +117,10 @@ class AgentTraceMiddleware(AgentMiddleware):
                 context,
                 identity,
                 "tool.error",
-                safe_error_payload(error),
+                {
+                    **safe_error_payload(error),
+                    "duration_ms": max(0, int((time.monotonic() - started_at) * 1000)),
+                },
                 terminal=True,
             )
             raise
@@ -116,7 +128,10 @@ class AgentTraceMiddleware(AgentMiddleware):
             context,
             identity,
             "tool.response",
-            {"result": result},
+            {
+                "result": result,
+                "duration_ms": max(0, int((time.monotonic() - started_at) * 1000)),
+            },
             terminal=True,
         )
         return result

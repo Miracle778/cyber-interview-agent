@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, ClassVar, Literal, TypeAlias
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from langchain.agents.middleware.types import ModelResponse
 from langchain_core.messages import BaseMessage
@@ -32,6 +33,8 @@ TraceEventType = Literal[
 JSONValue: TypeAlias = None | bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"]
 
 _TRACE_SCOPE = "diagnostics.agent_traces"
+_LOCAL_TIMEZONE_NAME = "Asia/Shanghai"
+_LOCAL_TIMEZONE = ZoneInfo(_LOCAL_TIMEZONE_NAME)
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _SECRET_KEYS = frozenset(
     {
@@ -224,9 +227,12 @@ class AgentTraceWriter:
             with lock:
                 self._discard_incomplete_trailer(path)
                 sequence = self._last_complete_sequence(path) + 1
+                observed_at = datetime.now(timezone.utc)
                 row = {
-                    "schema_version": 1,
-                    "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                    "schema_version": 2,
+                    "timestamp": observed_at.isoformat(timespec="milliseconds"),
+                    "local_timestamp": observed_at.astimezone(_LOCAL_TIMEZONE).isoformat(timespec="milliseconds"),
+                    "timezone": _LOCAL_TIMEZONE_NAME,
                     "sequence": sequence,
                     "event_id": str(uuid4()),
                     "workspace_id": identity.workspace_id,

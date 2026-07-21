@@ -60,6 +60,34 @@ async def test_model_error_preserves_pairing_and_full_request(tmp_path: Path):
     assert rows[0]["agent_name"] == "question_discovery"
     assert rows[0]["payload"]["messages"][0]["content"] == "完整来源"
     assert "sk-hidden" not in str(rows[1])
+    assert rows[1]["payload"]["duration_ms"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_model_success_records_monotonic_duration(tmp_path: Path):
+    middleware = AgentTraceMiddleware(
+        AgentTraceWriter(),
+        agent_role="question_generation",
+        agent_name="question_discovery",
+        provider_model_id="provider-model-1",
+    )
+    request = SimpleNamespace(
+        messages=[HumanMessage(content="完整来源")],
+        system_message=SystemMessage(content="系统提示"),
+        tools=[],
+        response_format=None,
+        model_settings={"temperature": 0},
+        runtime=SimpleNamespace(context=_context(tmp_path)),
+    )
+
+    async def succeed(_request):
+        return "完整模型回答"
+
+    assert await middleware.awrap_model_call(request, succeed) == "完整模型回答"
+
+    rows = read_trace_rows(tmp_path, "s1", "r1")
+    assert rows[-1]["event_type"] == "model.response"
+    assert rows[-1]["payload"]["duration_ms"] >= 0
 
 
 @pytest.mark.asyncio
@@ -89,6 +117,7 @@ async def test_tool_success_records_full_args_and_result(tmp_path: Path):
     assert rows[0]["payload"]["args"] == {"evidence_id": "ev-1"}
     assert rows[1]["payload"]["result"]["content"] == "完整证据"
     assert rows[0]["invocation_id"] == rows[1]["invocation_id"] == "call-1"
+    assert rows[1]["payload"]["duration_ms"] >= 0
 
 
 @pytest.mark.asyncio
