@@ -93,6 +93,35 @@ def test_numbered_answer_prose_with_question_cues_stays_in_parent_range() -> Non
     assert plan.model_units == ()
 
 
+@pytest.mark.parametrize("answer_intro", ["答案：", "参考答案："])
+def test_bare_answer_labels_hold_context_until_a_strong_boundary(
+    answer_intro: str,
+) -> None:
+    sections = section_sources((
+        "s1:answers.md\n"
+        "# 为什么需要索引？\n"
+        f"{answer_intro}\n"
+        "1. 是否应该优先使用覆盖索引\n\n"
+        "这里是答案的补充说明。\n\n"
+        "2. 分析执行计划定位性能瓶颈\n"
+        "## 新一组练习\n"
+        "3. 如何定位慢查询",
+        "s2:questions.md\n1. 是否支持事务",
+    ))
+
+    plan = plan_curation_discovery(sections)
+
+    assert [unit.seeds[0].question_text for unit in plan.deterministic_units] == [
+        "为什么需要索引？",
+        "如何定位慢查询",
+        "是否支持事务",
+    ]
+    assert plan.deterministic_units[0].source_refs == tuple(
+        section.ref for section in sections if section.source_id == "s1"
+    )[:-1]
+    assert _assignment_counts(plan) == Counter({section.ref: 1 for section in sections})
+
+
 def test_plain_40k_source_uses_large_ordered_model_windows() -> None:
     sections = section_sources(("s1:plain.md\n" + "普通正文" * 10_000,))
 

@@ -32,8 +32,9 @@ _DECLARATIVE_NUMBERED_PROSE = re.compile(
     r"(?:取决于|通过.+实现|包括|是指|用于|表示|由.+组成)"
 )
 _ANSWER_LIST_INTRO = re.compile(
+    r"(?:(?:参考)?答案\s*[：:]|"
     r"(?:答案|要点|原因|步骤|类型|特点|优势|劣势|场景|条件|组成)"
-    r".{0,8}(?:如下|包括|有|分为)\s*[：:]?\s*$"
+    r".{0,8}(?:如下|包括|有|分为)\s*[：:]?)\s*$"
 )
 
 
@@ -139,7 +140,13 @@ def _question_anchor_indexes(
             continue
         if _is_non_numbered_question_anchor(section):
             indexes.append(index)
-        inside_answer_list = _has_answer_list_intro(section)
+            inside_answer_list = _has_answer_list_intro(section)
+            continue
+        if _MARKDOWN_HEADING.match(first_line) or _BOLD_HEADING.match(first_line):
+            inside_answer_list = False
+            continue
+        if _has_answer_list_intro(section):
+            inside_answer_list = True
     return indexes
 
 
