@@ -1426,41 +1426,35 @@ class ReviewApplication:
             batch.status != "failed" or batch.control_intent is not None
         ):
             raise ReviewConflictError("question batch cannot be retried")
-        source_service = KnowledgeSourceService(
-            self.workspace_root, workspace_id=self.workspace_id
-        )
-        excerpts = [revision_context] if revision_context is not None else []
-        if revision_context is None:
-            for source_id in source_refs:
-                source = await source_service.get(source_id)
-                text = extract_text(self.workspace_root / source.stored_path)
-                excerpts.append(
-                    f"{source.id}:{source.original_filename}\n{text}"
-                )
-        batch = (
-            batch
-            if batch is not None
-            else self.repository.create_batch(
+        execution_input: dict[str, Any]
+        if batch is not None:
+            execution_input = self.repository.curation_batch_input(batch.id)
+            raw_excerpts = execution_input.get("source_excerpts", [])
+            excerpts = raw_excerpts if isinstance(raw_excerpts, list) else []
+        else:
+            source_service = KnowledgeSourceService(
+                self.workspace_root, workspace_id=self.workspace_id
+            )
+            excerpts = [revision_context] if revision_context is not None else []
+            if revision_context is None:
+                for source_id in source_refs:
+                    source = await source_service.get(source_id)
+                    text = extract_text(self.workspace_root / source.stored_path)
+                    excerpts.append(
+                        f"{source.id}:{source.original_filename}\n{text}"
+                    )
+            batch = self.repository.create_batch(
                 workspace_id=self.workspace_id,
                 session_id=session_id,
                 run_id=None,
                 source_refs=source_refs,
                 rewrite_of_batch_id=rewrite_of_batch_id,
             )
-        )
-        current = self.repository.get_curation_session(session_id)
-        self.repository.update_curation_progress(
-            session_id,
-            stage="generating",
-            completed_units=0,
-            total_units=max(1, len(excerpts)),
-            active_batch_id=batch.id,
-        )
-        execution = await self.executions.prepare(
-            session,
-            input={
+            execution_input = {
                 "batchId": batch.id,
                 "batch_id": batch.id,
+                "sourceRefs": list(batch.source_refs),
+                "source_refs": list(batch.source_refs),
                 "source_excerpts": excerpts,
                 "similar_questions": [
                     item.snapshot.question_text
@@ -1471,7 +1465,18 @@ class ReviewApplication:
                 "rewrite_feedback": rewrite_feedback,
                 "revisionCandidateId": revision_candidate_id,
                 "revision_candidate_id": revision_candidate_id,
-            },
+            }
+        current = self.repository.get_curation_session(session_id)
+        self.repository.update_curation_progress(
+            session_id,
+            stage="generating",
+            completed_units=0,
+            total_units=max(1, len(excerpts)),
+            active_batch_id=batch.id,
+        )
+        execution = await self.executions.prepare(
+            session,
+            input=execution_input,
             project_input_message=False,
         )
         if resume_batch_id is not None:

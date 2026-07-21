@@ -18,7 +18,9 @@ def repository(tmp_path: Path) -> ReviewRepository:
     connection.execute(
         "INSERT INTO agent_runs (id, session_id, status, input_json) "
         "VALUES ('run-2', 'session-1', 'running', "
-        "'{\"batchId\":\"batch-1\",\"batch_id\":\"batch-1\"}')"
+        "'{\"batchId\":\"batch-1\",\"batch_id\":\"batch-1\","
+        "\"sourceRefs\":[\"source-1\"],\"source_refs\":[\"source-1\"],"
+        "\"source_excerpts\":[\"source-1:file.md\\noriginal\"]}')"
     )
     connection.commit()
     yield ReviewRepository(connection)
@@ -30,10 +32,35 @@ def batch(repository: ReviewRepository):
     return repository.create_batch(
         workspace_id="workspace-1",
         session_id="session-1",
-        run_id=None,
+        run_id="run-2",
         source_refs=("source-1",),
         batch_id="batch-1",
     )
+
+
+def _insert_resume_run(
+    repository: ReviewRepository,
+    *,
+    run_id: str = "run-3",
+    input_json: str | None = None,
+) -> None:
+    repository._connection.execute(
+        "UPDATE agent_runs SET status = 'failed', "
+        "finished_at = COALESCE(finished_at, CURRENT_TIMESTAMP) "
+        "WHERE id = 'run-2'"
+    )
+    repository._connection.execute(
+        "INSERT INTO agent_runs (id, session_id, status, input_json) "
+        "VALUES (?, 'session-1', 'running', ?)",
+        (
+            run_id,
+            input_json
+            or '{"batchId":"batch-1","batch_id":"batch-1",'
+            '"sourceRefs":["source-1"],"source_refs":["source-1"],'
+            '"source_excerpts":["source-1:file.md\\noriginal"]}',
+        ),
+    )
+    repository._connection.commit()
 
 
 def test_plan_is_idempotent_for_same_digest_and_rejects_changed_input(
@@ -116,11 +143,12 @@ def test_fail_requeue_and_legacy_reattach_use_durable_resume_history(
         error_code="provider_timeout",
     )
     repository.update_batch_status(batch.id, "failed")
+    _insert_resume_run(repository)
 
-    retried = repository.reattach_batch_run(batch.id, "run-2")
+    retried = repository.reattach_batch_run(batch.id, "run-3")
     items = repository.list_curation_work_items(batch.id, stage="discovery")
 
-    assert retried.run_id == "run-2"
+    assert retried.run_id == "run-3"
     assert retried.status == "generating"
     assert retried.version == 3
     assert [
@@ -130,7 +158,7 @@ def test_fail_requeue_and_legacy_reattach_use_durable_resume_history(
             "FROM review_curation_control_receipts WHERE batch_id = ?",
             (batch.id,),
         ).fetchall()
-    ] == [("resume", "run-2", "generating")]
+    ] == [("resume", "run-3", "generating")]
     assert [
         tuple(row)
         for row in repository._connection.execute(
@@ -138,7 +166,7 @@ def test_fail_requeue_and_legacy_reattach_use_durable_resume_history(
             "FROM review_curation_batch_attempts WHERE batch_id = ?",
             (batch.id,),
         ).fetchall()
-    ] == [("run-2", 1, "failed")]
+    ] == [("run-3", 1, "failed")]
     assert [(item.status, item.attempt_count, item.last_error_code) for item in items] == [
         ("completed", 1, None),
         ("failed", 1, "provider_timeout"),
@@ -281,22 +309,23 @@ def test_resume_reuses_batch_and_records_idempotent_receipt(
 ) -> None:
     repository.update_batch_status(batch.id, "failed")
     failed = repository.get_batch(batch.id)
+    _insert_resume_run(repository)
 
     resumed = repository.resume_curation_batch(
         batch.id,
-        execution_id="run-2",
+        execution_id="run-3",
         idempotency_key="resume-request-0001",
         expected_version=failed.version,
         reason="failed",
     )
 
     assert resumed.id == batch.id
-    assert resumed.run_id == "run-2"
+    assert resumed.run_id == "run-3"
     assert resumed.status == "generating"
     assert resumed.version == failed.version + 1
     assert repository.resume_curation_batch(
         batch.id,
-        execution_id="run-2",
+        execution_id="run-3",
         idempotency_key="resume-request-0001",
         expected_version=failed.version,
         reason="failed",
@@ -308,6 +337,9 @@ def test_resume_rejects_execution_owned_by_another_curation_session(
 ) -> None:
     repository.update_batch_status(batch.id, "failed")
     failed = repository.get_batch(batch.id)
+    repository._connection.execute(
+        "UPDATE agent_runs SET status = 'failed' WHERE id = 'run-2'"
+    )
     repository._connection.execute(
         "INSERT INTO agent_sessions "
         "(id, workspace_id, graph_id, graph_version, title) "
@@ -342,6 +374,49 @@ def test_attempt_rejects_execution_without_immutable_batch_input(
     with pytest.raises(ReviewConflictError, match="does not belong to question batch"):
         repository.record_curation_attempt(batch.id, "run-2", reason="initial")
     assert repository.curation_batch_timing(batch.id).cumulative_elapsed_ms == 0
+
+
+def test_attempt_rejects_unbound_same_session_execution_with_matching_batch_input(
+    repository: ReviewRepository, batch
+) -> None:
+    bound_input = repository._connection.execute(
+        "SELECT input_json FROM agent_runs WHERE id = 'run-2'"
+    ).fetchone()[0]
+    repository._connection.execute(
+        "INSERT INTO agent_runs (id, session_id, status, input_json) "
+        "VALUES ('forged-run', 'session-1', 'completed', ?)",
+        (bound_input,),
+    )
+    repository._connection.commit()
+
+    with pytest.raises(ReviewConflictError, match="not bound to question batch"):
+        repository.record_curation_attempt(
+            batch.id, "forged-run", reason="initial"
+        )
+    assert repository.curation_batch_timing(batch.id).cumulative_elapsed_ms == 0
+
+
+def test_resume_rejects_changed_immutable_source_input(
+    repository: ReviewRepository, batch
+) -> None:
+    repository.update_batch_status(batch.id, "failed")
+    failed = repository.get_batch(batch.id)
+    _insert_resume_run(
+        repository,
+        input_json=(
+            '{"batchId":"batch-1","sourceRefs":["source-1"],'
+            '"source_excerpts":["source-1:file.md\\naltered"]}'
+        ),
+    )
+
+    with pytest.raises(ReviewConflictError, match="immutable input changed"):
+        repository.resume_curation_batch(
+            batch.id,
+            execution_id="run-3",
+            idempotency_key="resume-altered-input-0001",
+            expected_version=failed.version,
+            reason="failed",
+        )
 
 
 def test_unrelated_active_execution_cannot_enter_attempt_history(
@@ -400,20 +475,54 @@ def test_batch_timing_sums_execution_intervals_without_paused_gaps(
         "started_at = '2026-07-22 00:00:00', finished_at = '2026-07-22 00:00:10' "
         "WHERE id = 'run-2'"
     )
-    repository._connection.execute(
-        "INSERT INTO agent_runs "
-        "(id, session_id, status, input_json, started_at, finished_at) VALUES "
-        "('run-3', 'session-1', 'completed', '{\"batchId\":\"batch-1\"}', "
-        "'2026-07-22 00:01:00', '2026-07-22 00:01:20')"
-    )
     repository._connection.commit()
     repository.record_curation_attempt(batch.id, "run-2", reason="initial")
-    repository.record_curation_attempt(batch.id, "run-3", reason="paused")
+    repository.update_batch_status(batch.id, "failed")
+    _insert_resume_run(repository)
+    failed = repository.get_batch(batch.id)
+    repository.resume_curation_batch(
+        batch.id,
+        execution_id="run-3",
+        idempotency_key="resume-timing-0001",
+        expected_version=failed.version,
+        reason="failed",
+    )
+    repository._connection.execute(
+        "UPDATE agent_runs SET status = 'completed', "
+        "started_at = '2026-07-22 00:01:00', finished_at = '2026-07-22 00:01:20' "
+        "WHERE id = 'run-3'"
+    )
+    repository._connection.commit()
 
     timing = repository.curation_batch_timing(batch.id)
 
     assert timing.current_elapsed_ms == 20_000
     assert timing.cumulative_elapsed_ms == 30_000
+
+
+def test_old_run_callback_is_rejected_after_new_run_completed(
+    repository: ReviewRepository, batch
+) -> None:
+    repository.update_batch_status(batch.id, "failed")
+    _insert_resume_run(repository)
+    failed = repository.get_batch(batch.id)
+    repository.resume_curation_batch(
+        batch.id,
+        execution_id="run-3",
+        idempotency_key="resume-stale-callback-0001",
+        expected_version=failed.version,
+        reason="failed",
+    )
+    completed = repository.update_batch_status(
+        batch.id, "completed", expected_run_id="run-3"
+    )
+    assert completed.run_id == "run-3"
+
+    with pytest.raises(ReviewConflictError, match="current run changed"):
+        repository.update_batch_status(
+            batch.id, "completed", expected_run_id="run-2"
+        )
+    assert repository.get_batch(batch.id) == completed
 
 
 def test_interrupted_work_item_restarts_but_completed_output_stays_immutable(

@@ -555,12 +555,13 @@ class ReviewRepository:
                 raise LookupError(batch_id)
             current = self._batch_record(row)
             if (
+                expected_run_id is not None
+                and current.run_id != expected_run_id
+            ):
+                raise ReviewConflictError("question batch current run changed")
+            if (
                 current.status != "generating"
                 or current.control_intent is not None
-                or (
-                    expected_run_id is not None
-                    and current.run_id != expected_run_id
-                )
             ):
                 return current
             cursor = self._connection.execute(
@@ -593,6 +594,15 @@ class ReviewRepository:
             if cursor.rowcount != 1:
                 raise ReviewConflictError("question batch already has a run")
         return self.get_batch(batch_id)
+
+    def curation_batch_input(self, batch_id: str) -> dict[str, Any]:
+        batch = self.get_batch(batch_id)
+        if batch.run_id is None:
+            raise ReviewConflictError("question batch has no bound execution input")
+        _execution, input_value, _normalized = (
+            self._require_curation_execution_ownership(batch, batch.run_id)
+        )
+        return input_value
 
     def reattach_batch_run(
         self, batch_id: str, run_id: str
@@ -774,11 +784,28 @@ class ReviewRepository:
                 raise ReviewConflictError("question batch version changed")
             if batch.status != reason or batch.control_intent is not None:
                 raise ReviewConflictError("question batch cannot be resumed")
-            execution = self._require_curation_execution_ownership(
-                batch, execution_id
+            if batch.run_id is None or batch.run_id == execution_id:
+                raise ReviewConflictError(
+                    "question batch has no prior execution input to resume"
+                )
+            _bound_execution, _bound_input, bound_normalized = (
+                self._require_curation_execution_ownership(
+                    batch, batch.run_id
+                )
+            )
+            execution, _execution_input, execution_normalized = (
+                self._require_curation_execution_ownership(
+                    batch, execution_id
+                )
             )
             if execution["status"] not in {"queued", "running"}:
                 raise ReviewConflictError("execution cannot resume curation")
+            if _canonical_json(execution_normalized) != _canonical_json(
+                bound_normalized
+            ):
+                raise ReviewConflictError(
+                    "curation execution immutable input changed"
+                )
             active = self._connection.execute(
                 "SELECT 1 FROM review_curation_batch_attempts attempt "
                 "JOIN agent_runs run ON run.id = attempt.execution_id "
@@ -851,6 +878,17 @@ class ReviewRepository:
                 raise LookupError(batch_id)
             batch = self._batch_record(batch_row)
             self._require_curation_execution_ownership(batch, execution_id)
+            bound = batch.run_id == execution_id
+            resumed = self._connection.execute(
+                "SELECT 1 FROM review_curation_control_receipts "
+                "WHERE batch_id = ? AND execution_id = ? "
+                "AND operation = 'resume' AND result_status = 'generating'",
+                (batch_id, execution_id),
+            ).fetchone()
+            if not bound and resumed is None:
+                raise ReviewConflictError(
+                    "curation execution is not bound to question batch"
+                )
             active = self._connection.execute(
                 "SELECT 1 FROM review_curation_batch_attempts attempt "
                 "JOIN agent_runs run ON run.id = attempt.execution_id "
@@ -2655,7 +2693,7 @@ class ReviewRepository:
 
     def _require_curation_execution_ownership(
         self, batch: QuestionBatchRecord, execution_id: str
-    ) -> sqlite3.Row:
+    ) -> tuple[sqlite3.Row, dict[str, Any], dict[str, Any]]:
         execution = self._connection.execute(
             "SELECT run.status, run.session_id, run.input_json, "
             "session.workspace_id, session.graph_id "
@@ -2669,27 +2707,44 @@ class ReviewRepository:
             input_value = json.loads(execution["input_json"])
         except (TypeError, ValueError):
             input_value = None
-        associations = (
-            [
-                input_value[key]
-                for key in ("batchId", "batch_id")
-                if key in input_value
-            ]
-            if isinstance(input_value, dict)
-            else []
-        )
         if (
             batch.session_id is None
             or execution["session_id"] != batch.session_id
             or execution["workspace_id"] != batch.workspace_id
             or execution["graph_id"] not in {"question.curate", "question.revise"}
-            or not associations
-            or any(value != batch.id for value in associations)
+            or not isinstance(input_value, dict)
         ):
             raise ReviewConflictError(
                 "curation execution does not belong to question batch"
             )
-        return execution
+        associations = [
+            input_value[key]
+            for key in ("batchId", "batch_id")
+            if key in input_value
+        ]
+        if not associations or any(value != batch.id for value in associations):
+            raise ReviewConflictError(
+                "curation execution does not belong to question batch"
+            )
+        source_ref_values = [
+            input_value[key]
+            for key in ("sourceRefs", "source_refs")
+            if key in input_value
+        ]
+        if any(
+            not isinstance(value, list)
+            or tuple(value) != batch.source_refs
+            for value in source_ref_values
+        ):
+            raise ReviewConflictError(
+                "curation execution immutable input changed"
+            )
+        normalized = dict(input_value)
+        for key in ("batchId", "batch_id", "sourceRefs", "source_refs"):
+            normalized.pop(key, None)
+        normalized["batchId"] = batch.id
+        normalized["sourceRefs"] = list(batch.source_refs)
+        return execution, input_value, normalized
 
     def _insert_curation_attempt(
         self,

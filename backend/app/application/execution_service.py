@@ -1114,7 +1114,10 @@ class AgentExecutionService:
                 "completed",
                 expected_run_id=execution.id,
             )
-            if completed_batch.status != "completed":
+            if (
+                completed_batch.status != "completed"
+                or completed_batch.run_id != execution.id
+            ):
                 return
             if curation is None:
                 return

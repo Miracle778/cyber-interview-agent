@@ -1,6 +1,7 @@
 from pathlib import Path
 from dataclasses import replace
 import asyncio
+import json
 
 import pytest
 import pytest_asyncio
@@ -1218,10 +1219,22 @@ async def test_failed_curation_session_can_retry_in_the_same_session(
         ).json()
         assert failed["executionErrorCode"] == "provider_error"
         failed_batch_id = failed["activeBatchId"]
+        original_input = json.loads(
+            connection.execute(
+                "SELECT input_json FROM agent_runs WHERE id = ?",
+                (first_execution_id,),
+            ).fetchone()[0]
+        )
         connection.execute(
             "UPDATE review_question_batches SET status = 'failed', "
             "version = version + 1 WHERE id = ?",
             (failed_batch_id,),
+        )
+        connection.execute(
+            "UPDATE review_curation_sessions "
+            "SET source_refs_json = ? "
+            "WHERE session_id = ?",
+            (json.dumps([source_ids[1]]), session_id),
         )
         connection.commit()
 
@@ -1234,6 +1247,13 @@ async def test_failed_curation_session_can_retry_in_the_same_session(
         assert retried.json()["executionId"] != first_execution_id
         assert retried.json()["activeBatchId"] == failed_batch_id
         assert retried.json()["stage"] in {"generating", "waiting_for_command"}
+        resumed_input = json.loads(
+            connection.execute(
+                "SELECT input_json FROM agent_runs WHERE id = ?",
+                (retried.json()["executionId"],),
+            ).fetchone()[0]
+        )
+        assert resumed_input == original_input
 
 
 @pytest.mark.asyncio
