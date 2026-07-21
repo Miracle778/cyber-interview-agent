@@ -205,6 +205,132 @@ async def test_restart_recovers_compensating_publication(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("swap_external_replacement", (False, True))
+async def test_restart_reconciles_run_scoped_quarantine_after_rename_crash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    swap_external_replacement: bool,
+) -> None:
+    draft = await _draft(tmp_path)
+    action = await _resolved_action(tmp_path, draft)
+    repository = PublicationRepository(tmp_path)
+    publication = await repository.prepare(
+        action, draft, "10_question_bank/question-1.md"
+    )
+    service = PublicationService(tmp_path, workspace_id="w1")
+    target = tmp_path / "knowledge-vault/10_question_bank/question-1.md"
+    quarantine = target.with_name(
+        f".{target.name}.{publication.id}.quarantine"
+    )
+    replacement = target.with_name("replacement.md")
+    from app.knowledge import publication as publication_module
+
+    original_hash = publication_module.hash_file
+    hash_calls = 0
+
+    def maybe_swap_after_hash(path: Path) -> str:
+        nonlocal hash_calls
+        digest = original_hash(path)
+        if path == target:
+            hash_calls += 1
+            if swap_external_replacement and hash_calls == 2:
+                replacement.write_text("external replacement", encoding="utf-8")
+                os.replace(replacement, target)
+        return digest
+
+    async def fail_mark(*_args, **_kwargs):
+        raise DraftVersionChangedError("forced mark failure")
+
+    original_replace = os.replace
+
+    def crash_after_quarantine_rename(source, destination):
+        result = original_replace(source, destination)
+        if Path(destination).name.endswith(".quarantine"):
+            raise RuntimeError("simulated crash after quarantine rename")
+        return result
+
+    monkeypatch.setattr(publication_module, "hash_file", maybe_swap_after_hash)
+    monkeypatch.setattr(service._drafts, "mark_published", fail_mark)
+    with monkeypatch.context() as crash:
+        crash.setattr(os, "replace", crash_after_quarantine_rename)
+        with pytest.raises(
+            RuntimeError, match="simulated crash after quarantine rename"
+        ):
+            await service.publish_approved_action(action)
+
+    assert not target.exists()
+    assert quarantine.is_file()
+    interrupted = await repository.latest_for_draft(draft.id)
+    assert interrupted is not None
+    assert interrupted.state == "compensating"
+
+    recovered = await PublicationService(
+        tmp_path, workspace_id="w1"
+    ).recover_transient_runs()
+
+    assert recovered == 1
+    latest = await repository.latest_for_draft(draft.id)
+    assert latest is not None
+    assert not quarantine.exists()
+    if swap_external_replacement:
+        assert target.read_text(encoding="utf-8") == "external replacement"
+        assert latest.state == "failed"
+        assert latest.error_code == "publication_compensation_conflict"
+    else:
+        assert not target.exists()
+        assert latest.state == "prepared"
+        assert latest.result_hash is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unsafe_target", ("symlink", "directory"))
+async def test_restart_keeps_published_committing_run_terminal_for_unsafe_target(
+    tmp_path: Path, unsafe_target: str,
+) -> None:
+    draft = await _draft(tmp_path)
+    action = await _resolved_action(tmp_path, draft)
+    repository = PublicationRepository(tmp_path)
+    publication = await repository.prepare(
+        action, draft, "10_question_bank/question-1.md"
+    )
+    vault = initialize_vault(tmp_path)
+    target = vault / publication.target_path
+    target.write_text(_rendered_publication(draft, action), encoding="utf-8")
+    publication = await repository.transition(
+        publication.id,
+        expected=("prepared",),
+        target="file_written",
+        result_hash=hash_file(target),
+    )
+    publication, claimed = await repository.claim(
+        publication.id, expected="file_written", target="committing"
+    )
+    assert claimed is True
+    await KnowledgeDraftService(tmp_path, workspace_id="w1").mark_published(
+        draft.id,
+        expected_version=draft.version,
+        expected_hash=draft.content_hash,
+    )
+    target.unlink()
+    if unsafe_target == "symlink":
+        external = tmp_path / "external-publication.md"
+        external.write_text("external", encoding="utf-8")
+        target.symlink_to(external)
+    else:
+        target.mkdir()
+
+    recovered = await PublicationService(
+        tmp_path, workspace_id="w1"
+    ).recover_transient_runs()
+
+    assert recovered == 1
+    latest = await repository.latest_for_draft(draft.id)
+    assert latest is not None
+    assert latest.state == "failed"
+    assert latest.error_code == "publication_recovery_conflict"
+
+
+@pytest.mark.asyncio
 async def test_source_mutation_after_claim_fails_before_vault_write_and_retries(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

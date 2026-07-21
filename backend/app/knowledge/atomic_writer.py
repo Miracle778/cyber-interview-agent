@@ -24,6 +24,7 @@ def quarantine_remove_owned_file(
     target: Path,
     expected_hash: str,
     *,
+    quarantine: Path,
     path_hash_func: Callable[[Path], str] = hash_file,
 ) -> str:
     """Remove only the same regular file that was opened and hashed."""
@@ -34,7 +35,6 @@ def quarantine_remove_owned_file(
         return "missing"
     except OSError:
         return "conflict"
-    quarantine = target.parent / f".{target.name}.{uuid4().hex}.quarantine"
     try:
         opened = os.fstat(descriptor)
         if not stat.S_ISREG(opened.st_mode):
@@ -50,6 +50,8 @@ def quarantine_remove_owned_file(
         try:
             if path_hash_func(target) != expected_hash:
                 return "conflict"
+            if quarantine.exists() or quarantine.is_symlink():
+                return "conflict"
             os.replace(target, quarantine)
         except FileNotFoundError:
             return "missing"
@@ -57,7 +59,11 @@ def quarantine_remove_owned_file(
             return "conflict"
         moved = os.stat(quarantine, follow_symlinks=False)
         if (moved.st_dev, moved.st_ino) != (opened.st_dev, opened.st_ino):
-            _restore_quarantine(quarantine, target)
+            _restore_quarantine(
+                quarantine,
+                target,
+                expected_identity=(moved.st_dev, moved.st_ino),
+            )
             return "conflict"
         quarantine.unlink()
         return "removed"
@@ -65,14 +71,74 @@ def quarantine_remove_owned_file(
         os.close(descriptor)
 
 
-def _restore_quarantine(quarantine: Path, target: Path) -> None:
+def reconcile_quarantined_file(
+    target: Path,
+    quarantine: Path,
+    expected_hash: str,
+) -> str:
+    """Reconcile a deterministic quarantine left by an interrupted removal."""
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(quarantine, os.O_RDONLY | nofollow)
+    except FileNotFoundError:
+        return "missing"
+    except OSError:
+        return "conflict"
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            return "conflict"
+        digest = sha256()
+        while True:
+            chunk = os.read(descriptor, 64 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+        identity = (opened.st_dev, opened.st_ino)
+        try:
+            current = os.stat(quarantine, follow_symlinks=False)
+        except OSError:
+            return "conflict"
+        if (current.st_dev, current.st_ino) != identity:
+            return "conflict"
+        if digest.hexdigest() == expected_hash:
+            target_conflict = target.exists() or target.is_symlink()
+            try:
+                quarantine.unlink()
+            except OSError:
+                return "conflict"
+            return "conflict" if target_conflict else "owned_removed"
+        if _restore_quarantine(
+            quarantine,
+            target,
+            expected_identity=identity,
+        ):
+            return "external_restored"
+        return "conflict"
+    finally:
+        os.close(descriptor)
+
+
+def _restore_quarantine(
+    quarantine: Path,
+    target: Path,
+    *,
+    expected_identity: tuple[int, int],
+) -> bool:
     try:
         os.link(quarantine, target, follow_symlinks=False)
     except FileExistsError:
-        return
+        return False
     except OSError:
-        return
-    quarantine.unlink()
+        return False
+    try:
+        restored = os.stat(target, follow_symlinks=False)
+        if (restored.st_dev, restored.st_ino) != expected_identity:
+            return False
+        quarantine.unlink()
+    except OSError:
+        return False
+    return True
 
 
 def atomic_write_text(

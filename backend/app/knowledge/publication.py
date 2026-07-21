@@ -17,6 +17,7 @@ from app.knowledge.atomic_writer import (
     atomic_write_text,
     hash_file,
     quarantine_remove_owned_file,
+    reconcile_quarantined_file,
 )
 from app.knowledge.document_types import create_document_type_registry
 from app.knowledge.drafts import (
@@ -366,6 +367,9 @@ class PublicationService:
                 draft_status = await self._repository.draft_status(
                     publication.draft_id
                 )
+            except Exception:
+                draft_status = "unknown"
+            try:
                 target = policy.resolve_for_create(
                     "knowledge.active", publication.target_path
                 )
@@ -375,7 +379,6 @@ class PublicationService:
                     and hash_file(target) == publication.result_hash
                 )
             except Exception:
-                draft_status = "unknown"
                 target_matches = False
 
             if draft_status == "published" and target_matches:
@@ -408,7 +411,17 @@ class PublicationService:
                     target = policy.resolve_for_create(
                         "knowledge.active", publication.target_path
                     )
-                    target_absent = not target.exists() and not target.is_symlink()
+                    quarantine = self._quarantine_path(publication, target)
+                    reconciliation = reconcile_quarantined_file(
+                        target,
+                        quarantine,
+                        publication.result_hash,
+                    )
+                    target_absent = (
+                        reconciliation in {"missing", "owned_removed"}
+                        and not target.exists()
+                        and not target.is_symlink()
+                    )
                 except Exception:
                     target_absent = False
                 updated = await self._repository.recover_after_draft_failure(
@@ -438,6 +451,7 @@ class PublicationService:
             removal = quarantine_remove_owned_file(
                 target,
                 publication.result_hash,
+                quarantine=self._quarantine_path(publication, target),
                 path_hash_func=hash_file,
             )
             retryable = removal in {"removed", "missing"}
@@ -446,6 +460,10 @@ class PublicationService:
             expected_result_hash=publication.result_hash,
             retryable=retryable,
         )
+
+    @staticmethod
+    def _quarantine_path(publication: PublicationRecord, target: Path) -> Path:
+        return target.with_name(f".{target.name}.{publication.id}.quarantine")
 
     @staticmethod
     def _settled_or_in_progress(publication: PublicationRecord) -> PublicationRecord:
