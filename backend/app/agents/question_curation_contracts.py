@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+MAX_QUESTION_SEED_SOURCE_REFS = 32
 
 
 class _StrictQuestionCurationOutput(BaseModel):
@@ -24,10 +27,27 @@ class QuestionCandidate(_StrictQuestionCurationOutput):
 class QuestionSeed(_StrictQuestionCurationOutput):
     question_text: str = Field(min_length=1)
     source_ref: str = Field(min_length=1)
+    source_refs: list[str] = Field(
+        default_factory=list, max_length=MAX_QUESTION_SEED_SOURCE_REFS
+    )
+
+    @model_validator(mode="after")
+    def normalize_source_refs(self) -> "QuestionSeed":
+        primary = self.source_ref.strip()
+        refs = [ref.strip() for ref in self.source_refs]
+        if not primary or any(not ref for ref in refs):
+            raise ValueError("source refs must not be blank")
+        if not refs:
+            refs = [primary]
+        if refs[0] != primary:
+            raise ValueError("primary source ref must be first")
+        self.source_ref = primary
+        self.source_refs = list(dict.fromkeys(refs))
+        return self
 
 
 class QuestionSeedChunk(_StrictQuestionCurationOutput):
-    seeds: list[QuestionSeed] = Field(default_factory=list, max_length=6)
+    seeds: list[QuestionSeed] = Field(default_factory=list, max_length=20)
 
 
 class QuestionCandidateChunk(_StrictQuestionCurationOutput):

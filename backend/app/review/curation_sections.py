@@ -59,7 +59,11 @@ def section_sources(source_excerpts: tuple[str, ...]) -> tuple[SourceSection, ..
 
 
 def pack_discovery_units(sections: tuple[SourceSection, ...]) -> tuple[DiscoveryUnit, ...]:
-    """Pack sections in order without exceeding discovery call budgets."""
+    """Legacy six-section packer retained until the Task 4 Graph cutover.
+
+    New planning belongs to ``curation_planner.plan_curation_discovery`` so
+    deterministic ranges and uncovered model windows share one coverage proof.
+    """
     units: list[DiscoveryUnit] = []
     current: list[SourceSection] = []
     current_characters = 0

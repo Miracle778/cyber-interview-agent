@@ -10,18 +10,20 @@ from app.review.curation_sections import SourceSection
 
 QUESTION_DISCOVERY_PROMPT = PromptSpec(
     id="question-discovery",
-    version="2.0",
+    version="3.0",
     system=(
-        "从给定的有界来源片段中识别值得复习的独立中文面试题。每个片段最多返回一个题目种子，"
-        "最多返回 6 个；只输出 question_text 和原样 source_ref，不得编造引用，不补全答案。"
+        "从当前窗口的有界来源片段中识别值得复习的独立中文面试题，最多返回 20 个轻量题目种子。"
+        "只输出 question_text、主锚点 source_ref 和有序 source_refs，不补全答案。主锚点必须是"
+        "source_refs 第一项；每个引用都必须原样来自当前窗口，不得编造、跨来源或重复引用。"
     ),
 )
 QUESTION_ENRICHMENT_PROMPT = PromptSpec(
     id="question-enrichment",
-    version="2.0",
+    version="3.0",
     system=(
         "把不超过 3 个题目种子补全为可复习的中文面试题候选。纠正明显错误，填写标题、参考答案、"
-        "topic、难度、关键点、必要追问和简短修正说明。每个候选必须且只能保留对应种子的 source_ref；"
+        "topic、难度、关键点、必要追问和简短修正说明。每个候选必须保留对应种子的全部有序引用，"
+        "且 source_refs 第一项仍是主锚点；"
         "不得自动发布。"
     ),
 )

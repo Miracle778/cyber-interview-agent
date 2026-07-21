@@ -7,6 +7,10 @@ import pytest
 from pydantic import ValidationError
 
 from app.agents.context import AgentContext
+from app.agents.prompts.question_curation_prompts import (
+    QUESTION_DISCOVERY_PROMPT,
+    QUESTION_ENRICHMENT_PROMPT,
+)
 from app.agents.question_curation_agent import QuestionCurationAgents
 from app.agents.question_curation_contracts import (
     QuestionCandidate,
@@ -141,7 +145,8 @@ def candidate(index: int) -> QuestionCandidate:
 
 def test_question_contracts_are_strict_and_bounded() -> None:
     with pytest.raises(ValidationError):
-        QuestionSeedChunk.model_validate({"seeds": [seed(1).model_dump()] * 7})
+        QuestionSeedChunk.model_validate({"seeds": [seed(1).model_dump()] * 21})
+    assert len(QuestionSeedChunk(seeds=[seed(1)] * 20).seeds) == 20
     with pytest.raises(ValidationError):
         QuestionCandidateChunk.model_validate(
             {"candidates": [candidate(1).model_dump()] * 4}
@@ -150,6 +155,81 @@ def test_question_contracts_are_strict_and_bounded() -> None:
         QuestionCandidateBatch.model_validate(
             {"candidates": [], "hidden_reasoning": "forbidden"}
         )
+
+
+def test_question_seed_preserves_legacy_primary_ref_and_normalizes_duplicates() -> None:
+    legacy = QuestionSeed.model_validate({
+        "question_text": "什么是 MVCC？",
+        "source_ref": "s1#section-0001",
+    })
+    normalized = QuestionSeed.model_validate({
+        "question_text": "什么是 MVCC？",
+        "source_ref": "s1#section-0001",
+        "source_refs": [
+            "s1#section-0001",
+            "s1#section-0002",
+            "s1#section-0001",
+            "s1#section-0003",
+        ],
+    })
+
+    assert legacy.source_refs == ["s1#section-0001"]
+    assert normalized.source_refs == [
+        "s1#section-0001",
+        "s1#section-0002",
+        "s1#section-0003",
+    ]
+    with pytest.raises(ValidationError, match="primary source ref must be first"):
+        QuestionSeed.model_validate({
+            "question_text": "什么是 MVCC？",
+            "source_ref": "s1#section-0001",
+            "source_refs": ["s1#section-0002", "s1#section-0001"],
+        })
+    with pytest.raises(ValidationError):
+        QuestionSeed.model_validate({
+            "question_text": "什么是 MVCC？",
+            "source_ref": "s1#section-0001",
+            "source_refs": [f"s1#section-{index:04d}" for index in range(1, 34)],
+        })
+
+
+def test_question_curation_agents_use_stage_specific_retry_policies() -> None:
+    class RecordingFactory:
+        def __init__(self):
+            self.specs = []
+
+        def create(self, spec, **_kwargs):
+            self.specs.append(spec)
+            return object()
+
+    factory = RecordingFactory()
+
+    QuestionCurationAgents.create(factory, model_bindings={})
+
+    discovery, enrichment, revision = factory.specs
+    assert (
+        discovery.invocation_policy.max_output_tokens,
+        discovery.invocation_policy.request_timeout_seconds,
+        discovery.invocation_policy.max_retries,
+    ) == (2_048, 90, 1)
+    assert (
+        enrichment.invocation_policy.max_output_tokens,
+        enrichment.invocation_policy.request_timeout_seconds,
+        enrichment.invocation_policy.max_retries,
+    ) == (4_096, 180, 1)
+    assert (
+        revision.invocation_policy.max_output_tokens,
+        revision.invocation_policy.request_timeout_seconds,
+        revision.invocation_policy.max_retries,
+    ) == (4_096, 180, 0)
+
+
+def test_question_curation_prompts_describe_multi_ref_bounds() -> None:
+    assert "20" in QUESTION_DISCOVERY_PROMPT.system
+    assert "当前窗口" in QUESTION_DISCOVERY_PROMPT.system
+    assert "source_refs" in QUESTION_DISCOVERY_PROMPT.system
+    assert "3" in QUESTION_ENRICHMENT_PROMPT.system
+    assert "有序引用" in QUESTION_ENRICHMENT_PROMPT.system
 
 
 @pytest.mark.asyncio
@@ -282,6 +362,77 @@ async def test_concrete_agents_reject_unknown_source_refs(tmp_path: Path):
     with pytest.raises(ValueError, match="unknown source ref"):
         await agents.discover(
             (section,), context=context(tmp_path), config={}, unit_index=0
+        )
+
+
+@pytest.mark.asyncio
+async def test_concrete_agents_reject_unknown_secondary_source_refs(tmp_path: Path):
+    class Runnable:
+        async def ainvoke(self, _input, config=None, *, context=None):
+            return {
+                "structured_response": QuestionSeedChunk(seeds=[QuestionSeed(
+                    question_text="问题？",
+                    source_ref="s1#section-0001",
+                    source_refs=["s1#section-0001", "s1#section-9999"],
+                )])
+            }
+
+    agents = QuestionCurationAgents(Runnable(), Runnable(), Runnable())
+    section = SourceSection("s1", "s1#section-0001", 1, "正文", "a" * 64)
+
+    with pytest.raises(ValueError, match="unknown source ref"):
+        await agents.discover(
+            (section,), context=context(tmp_path), config={}, unit_index=0
+        )
+
+
+@pytest.mark.asyncio
+async def test_concrete_agents_reject_cross_source_seed_refs(tmp_path: Path):
+    class Runnable:
+        async def ainvoke(self, _input, config=None, *, context=None):
+            return {
+                "structured_response": QuestionSeedChunk(seeds=[QuestionSeed(
+                    question_text="问题？",
+                    source_ref="s1#section-0001",
+                    source_refs=["s1#section-0001", "s2#section-0001"],
+                )])
+            }
+
+    agents = QuestionCurationAgents(Runnable(), Runnable(), Runnable())
+    sections = (
+        SourceSection("s1", "s1#section-0001", 1, "正文", "a" * 64),
+        SourceSection("s2", "s2#section-0001", 1, "正文", "b" * 64),
+    )
+
+    with pytest.raises(ValueError, match="cross-source"):
+        await agents.discover(
+            sections, context=context(tmp_path), config={}, unit_index=0
+        )
+
+
+@pytest.mark.asyncio
+async def test_concrete_agents_reject_unknown_enrichment_secondary_ref(
+    tmp_path: Path,
+):
+    invalid = candidate(1).model_copy(update={
+        "source_refs": ["s1#section-0001", "s1#section-9999"]
+    })
+
+    class Runnable:
+        async def ainvoke(self, _input, config=None, *, context=None):
+            return {"structured_response": QuestionCandidateChunk(candidates=[invalid])}
+
+    agents = QuestionCurationAgents(Runnable(), Runnable(), Runnable())
+    section = SourceSection("s1", "s1#section-0001", 1, "正文", "a" * 64)
+
+    with pytest.raises(ValueError, match="unknown source ref"):
+        await agents.enrich(
+            (seed(1),),
+            sections=(section,),
+            known_questions=(),
+            context=context(tmp_path),
+            config={},
+            unit_index=0,
         )
 
 

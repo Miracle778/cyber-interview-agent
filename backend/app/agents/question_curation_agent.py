@@ -29,8 +29,9 @@ from app.agents.question_curation_contracts import (
 from app.review.curation_sections import SourceSection
 
 
-_DISCOVERY_POLICY = ModelInvocationPolicy(2_048, 180, 0)
-_FULL_CANDIDATE_POLICY = ModelInvocationPolicy(4_096, 180, 0)
+_DISCOVERY_POLICY = ModelInvocationPolicy(2_048, 90, 1)
+_ENRICHMENT_POLICY = ModelInvocationPolicy(4_096, 180, 1)
+_REVISION_POLICY = ModelInvocationPolicy(4_096, 180, 0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,7 +74,7 @@ class QuestionCurationAgents:
                     tools=tuple(tools),
                     middleware=middleware,
                     response_format=QuestionCandidateChunk,
-                    invocation_policy=_FULL_CANDIDATE_POLICY,
+                    invocation_policy=_ENRICHMENT_POLICY,
                 ),
                 **common,
             ),
@@ -85,7 +86,7 @@ class QuestionCurationAgents:
                     tools=tuple(tools),
                     middleware=middleware,
                     response_format=QuestionRevisionOutput,
-                    invocation_policy=_FULL_CANDIDATE_POLICY,
+                    invocation_policy=_REVISION_POLICY,
                 ),
                 **common,
             ),
@@ -107,12 +108,14 @@ class QuestionCurationAgents:
             context=context,
         )
         chunk = QuestionSeedChunk.model_validate(_structured(result))
-        allowed = {section.ref for section in sections}
+        allowed = {section.ref: section.source_id for section in sections}
         seeds: list[QuestionSeed] = []
         seen_refs: set[str] = set()
         for seed in chunk.seeds:
-            if seed.source_ref not in allowed:
+            if any(ref not in allowed for ref in seed.source_refs):
                 raise ValueError("question discovery returned an unknown source ref")
+            if len({allowed[ref] for ref in seed.source_refs}) != 1:
+                raise ValueError("question discovery returned cross-source refs")
             if seed.source_ref in seen_refs:
                 continue
             seen_refs.add(seed.source_ref)
@@ -129,6 +132,13 @@ class QuestionCurationAgents:
         config: dict[str, Any],
         unit_index: int,
     ) -> QuestionCandidateChunk:
+        allowed = {section.ref: section.source_id for section in sections}
+        seed_refs = {seed.source_ref: tuple(seed.source_refs) for seed in seeds}
+        for seed in seeds:
+            if any(ref not in allowed for ref in seed.source_refs):
+                raise ValueError("question enrichment received an unknown source ref")
+            if len({allowed[ref] for ref in seed.source_refs}) != 1:
+                raise ValueError("question enrichment received cross-source refs")
         result = await self.enrichment.ainvoke(
             {
                 "messages": [HumanMessage(content=render_question_enrichment_input(
@@ -141,13 +151,19 @@ class QuestionCurationAgents:
             context=context,
         )
         chunk = QuestionCandidateChunk.model_validate(_structured(result))
-        allowed = {seed.source_ref for seed in seeds}
         candidates = []
         seen_refs: set[str] = set()
         for candidate in chunk.candidates:
-            if len(candidate.source_refs) != 1 or candidate.source_refs[0] not in allowed:
+            primary = candidate.source_refs[0]
+            if (
+                primary not in seed_refs
+                or any(ref not in allowed for ref in candidate.source_refs)
+                or tuple(candidate.source_refs) != seed_refs[primary]
+            ):
                 raise ValueError("question enrichment returned an unknown source ref")
-            source_ref = candidate.source_refs[0]
+            if len({allowed[ref] for ref in candidate.source_refs}) != 1:
+                raise ValueError("question enrichment returned cross-source refs")
+            source_ref = primary
             if source_ref in seen_refs:
                 continue
             seen_refs.add(source_ref)
