@@ -54,6 +54,24 @@
 - 完整 request 会重复部分历史消息，换取故障可重放性和直接可读性；
 - 新增 serializer、并发 append、Trace Middleware 和摘要调用接线，需要专门的泄密与失败旁路测试。
 
+## 2026-07-22 时间语义补充
+
+用户直接查看 JSONL 时需要把 UTC 手工换算为北京时间。UTC 仍是跨机器排序和事件关联的权威时间，但新写入行升级 Trace schema，并同时记录：
+
+```json
+{
+  "schema_version": 2,
+  "timestamp": "2026-07-21T16:30:00.123+00:00",
+  "local_timestamp": "2026-07-22T00:30:00.123+08:00",
+  "timezone": "Asia/Shanghai"
+}
+```
+
+- `timestamp` 保持 UTC 权威语义；
+- `local_timestamp` 是北京时间可读投影，`timezone` 明确转换来源；
+- 旧 schema v1 行继续可读，不重写已有诊断文件；
+- latency/duration 使用单调时钟测量，不能通过两个本地时间字符串相减。
+
 ## 重新评估条件
 
 - 本地轨迹占用达到需要自动清理或压缩的规模；
