@@ -36,6 +36,8 @@ from app.review.models import (
 from app.review.models import ReviewAnswerReceipt, ReviewInputReceipt
 from app.review.repository import ReviewRepository
 from app.review.timeline import SessionTimelineProjector
+from app.profile.repository import ProfileRepository
+from app.profile.storage import MaterialStorage
 
 
 logger = logging.getLogger(__name__)
@@ -109,6 +111,8 @@ class AgentExecutionService:
         review_repository: ReviewRepository | None = None,
         get_draft: Callable[[str], Awaitable[KnowledgeDraftRecord]] | None = None,
         update_draft: Callable[[str, UpdateDraftCommand], Awaitable[KnowledgeDraftRecord]] | None = None,
+        profile_repository: ProfileRepository | None = None,
+        profile_storage: MaterialStorage | None = None,
         trace_writer: AgentTraceWriter | None = None,
         trace_warning: Callable[[AgentContext, str], None] | None = None,
     ) -> None:
@@ -124,6 +128,8 @@ class AgentExecutionService:
         self._review_repository = review_repository
         self._get_draft = get_draft
         self._update_draft = update_draft
+        self._profile_repository = profile_repository
+        self._profile_storage = profile_storage
         self._trace_writer = trace_writer or AgentTraceWriter()
         self._trace_warning = trace_warning
         self._trace_warned_runs: set[str] = set()
@@ -685,6 +691,13 @@ class AgentExecutionService:
             run_id=execution.id,
             allowed_tools=frozenset(),
             allowed_scopes=frozenset(),
+            agent_role=(
+                "profile_extraction"
+                if session.kind == "profile.ingest"
+                else "profile_assessment"
+                if session.kind == "profile.assess"
+                else None
+            ),
         )
         context = replace(
             context,
@@ -695,6 +708,33 @@ class AgentExecutionService:
         await self._trace_execution(
             context, "execution.started", {"status": "running"}
         )
+
+        async def project_profile_card(
+            assessment_id: str,
+            proposal_ids: list[str],
+            summary: dict[str, object],
+        ) -> None:
+            existing = any(
+                message.message_kind == "assessment_card"
+                and message.payload.get("resourceId") == assessment_id
+                for message in self._repository.list_messages(session.id)
+            )
+            if existing:
+                return
+            self._repository.append_message(
+                session.id,
+                execution_id=execution.id,
+                role="assistant",
+                message_kind="assessment_card",
+                content="个人画像评估已生成。",
+                payload={
+                    "resourceId": assessment_id,
+                    "version": 1,
+                    "assessmentId": assessment_id,
+                    "proposalIds": proposal_ids,
+                    **summary,
+                },
+            )
 
         async def create_action(**values):
             return await self._create_action(
@@ -1182,6 +1222,9 @@ class AgentExecutionService:
                         and execution.configuration.provider_model_id is not None
                         else None
                     ),
+                    profile_repository=self._profile_repository,
+                    profile_storage=self._profile_storage,
+                    project_profile_card=project_profile_card,
                 )
                 async for part in graph.astream(
                     graph_input,

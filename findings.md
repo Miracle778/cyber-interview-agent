@@ -36,6 +36,13 @@
 - Tool 输出上限属于服务端上下文契约，不应交给模型自报；R3 固定为最多 50 项、单条摘录 2,000 字符，并通过 `AgentContext` 只允许服务端进一步收紧。
 - 发布状态读取来自 `profile_publications` 领域事实；未发布返回显式 `unpublished`，不把 PublicationSelection draft 伪装成已发布事实。
 
+## 2026-07-20 R3 Task 7 Graph 与恢复边界
+
+- 隐藏 system Session 只是满足 Runtime 外键和恢复语义的容器；创建 `agent_runs` 后仍必须交给统一 Execution scheduler，否则数据库会永久保留没有实际 task 的 running 假象。
+- 原文解析结果不能放入外层 Graph state。节点从不可变 blob 重建确定性片段，原文只写私有 text artifact；checkpoint 只保存 ID、计数和严格结构化输出，重试从持久 Evidence/Proposal receipt 恢复。
+- Ingest Proposal 幂等键必须稳定绑定 MaterialVersion，而不是每次重试的新 Execution ID；否则“写入成功、Event 失败”的重试会生成重复候选。created_by_execution_id 是审计归因，不属于幂等请求正文。
+- Assessment 在保存前必须预校验所有 Evidence、material version、proposal target/base 和 snapshot version；只在完整校验后写 Assessment/Proposal，并由 typed-card projector 自身做 resource ID 去重。
+
 ## 2026-07-20 Agent State 与 Context Offload 边界
 
 - 自定义 `state_schema` 只用于单一 `create_agent` 循环中产生、被后续步骤消费、需随 checkpoint 恢复且不属于领域事实的可变工作状态；输入、输出、可信权限、业务状态和跨 Session 记忆分别归消息/response、`context_schema`、领域层和 Store。

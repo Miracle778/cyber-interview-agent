@@ -8,6 +8,13 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 
 _CHECKPOINT_TYPE_ALLOWLIST = (
+    ("app.agents.profile_contracts", "ProfileAssessmentOutput"),
+    ("app.agents.profile_contracts", "ProfileExtractionOutput"),
+    ("app.agents.profile_contracts", "ProfileClaimCandidate"),
+    ("app.agents.profile_contracts", "ProfileAssessmentRecommendation"),
+    ("app.agents.profile_contracts", "ProfileAssessmentProposal"),
+    ("app.agents.profile_contracts", "ProfileActionPlanProposal"),
+    ("app.agents.profile_contracts", "ProfileActionPlanItemProposal"),
     ("app.agents.review_contracts", "AnswerEvaluation"),
     ("app.agents.question_curation_contracts", "QuestionCandidateBatch"),
     ("app.agents.review_round_contracts", "RoundAnswerEvaluation"),

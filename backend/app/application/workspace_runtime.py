@@ -194,6 +194,9 @@ class WorkspaceRuntime:
         actions = PendingActionRepository(root)
         drafts = KnowledgeDraftService(root, workspace_id=workspace_id)
         publications = PublicationService(root, workspace_id=workspace_id)
+        initialize_knowledge_artifacts(root, domain="profile")
+        profile_repository = ProfileRepository(connection)
+        profile_storage = MaterialStorage(root)
         audit = ToolAuditRepository(root)
         projection = SqliteMiddlewareProjection(connection)
         reviews = ReviewRepository(connection)
@@ -226,6 +229,8 @@ class WorkspaceRuntime:
             review_repository=reviews,
             get_draft=drafts.get,
             update_draft=drafts.update,
+            profile_repository=profile_repository,
+            profile_storage=profile_storage,
             trace_writer=trace_writer,
             trace_warning=projection.warning,
         )
@@ -315,14 +320,15 @@ class WorkspaceRuntime:
             curation_context_projection=projection,
             curation_context_factory=curation_context_factory,
         )
-        initialize_knowledge_artifacts(root, domain="profile")
-        profile_repository = ProfileRepository(connection)
         profile = ProfileService(
             workspace_id=workspace_id,
             root=root,
             repository=profile_repository,
-            storage=MaterialStorage(root),
+            storage=profile_storage,
             product_repository=repository,
+            run_ingest=lambda execution: executions.run_prepared(
+                execution, graph_input=execution.input
+            ),
         )
         return cls(
             workspace_id=workspace_id,

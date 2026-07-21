@@ -11,16 +11,25 @@ from app.agents.curation_command_agents import CurationCommandAgents
 from app.agents.context_assembly import model_token_counter
 from app.agents.single_review_agents import SingleReviewAgents
 from app.agents.review_round_agents import ReviewRoundAgents
+from app.agents.profile_agents import ProfileAgents
 from app.graphs.publication import create_publication_graph
 from app.graphs.question_curation import create_question_curation_graph
 from app.graphs.review import create_review_graph
 from app.graphs.review_discussion import create_review_discussion_graph
 from app.graphs.review_round import create_review_round_graph
+from app.graphs.profile_assess import create_profile_assess_graph
+from app.graphs.profile_ingest import create_profile_ingest_graph
 from app.middleware.middleware_stack import (
+    PROFILE_CHAT_BUDGET_PROFILE,
     REVIEW_ROUND_BUDGET,
     build_default_middleware,
 )
 from app.middleware.tool_policy_middleware import ToolPolicyMiddleware
+from app.tools.profile_tools import (
+    PROFILE_TOOL_SCOPES,
+    ProfileToolBudgetMiddleware,
+    create_profile_tools,
+)
 
 
 class DiagnosticState(TypedDict, total=False):
@@ -90,6 +99,64 @@ class ProductionGraphFactory:
         )
 
     def __call__(self, kind: str, **dependencies):
+        if kind in {"profile.ingest", "profile.assess"}:
+            bindings = dependencies["model_bindings"]
+            context_limit_tokens = min(
+                self._agents.resolve_context_limit(
+                    role, model_bindings=bindings
+                )
+                for role in (
+                    "profile_extraction",
+                    "profile_assessment",
+                    "agent_chat",
+                )
+            )
+            middleware = build_default_middleware(
+                summary_model=self._agents.resolve_model(
+                    "report_summarization", model_bindings=bindings
+                ),
+                summary_provider_model_id=bindings["report_summarization"],
+                trace_writer=self.trace_writer,
+                projection=dependencies["projection"],
+                policy=ToolPolicyMiddleware(
+                    audit=dependencies["audit"],
+                    required_scopes=PROFILE_TOOL_SCOPES,
+                    publish_event=dependencies.get("publish_event"),
+                ),
+                observability=dependencies["observability"],
+                interrupt_on={},
+                budget_profile=PROFILE_CHAT_BUDGET_PROFILE,
+                tool_guards=(ProfileToolBudgetMiddleware(),),
+                context_limit_tokens=context_limit_tokens,
+            )
+            profile_repository = dependencies["profile_repository"]
+            profile_storage = dependencies["profile_storage"]
+            if profile_repository is None or profile_storage is None:
+                raise RuntimeError("profile graph dependencies are not configured")
+            agents = ProfileAgents.create(
+                self._agents,
+                model_bindings=bindings,
+                middleware=middleware,
+                chat_tools=create_profile_tools(
+                    repository=profile_repository,
+                    storage=profile_storage,
+                ),
+                checkpointer=dependencies["checkpointer"],
+            )
+            if kind == "profile.ingest":
+                return create_profile_ingest_graph(
+                    agents,
+                    repository=profile_repository,
+                    storage=profile_storage,
+                    publish_event=dependencies.get("publish_event"),
+                    checkpointer=dependencies["checkpointer"],
+                )
+            return create_profile_assess_graph(
+                agents,
+                repository=profile_repository,
+                project_card=dependencies.get("project_profile_card"),
+                checkpointer=dependencies["checkpointer"],
+            )
         if kind in {"question.curate", "question.revise", "review.round", "review.discussion"}:
             bindings = dependencies["model_bindings"]
             roles = (

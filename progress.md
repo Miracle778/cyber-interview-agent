@@ -32,6 +32,15 @@
 - Claude 的 RED 夹具最初用不同 content hash 提交 parse，触发既有仓储不变量；修正夹具后补齐 Scope、Workspace、截断、顺序、归档、strict schema 与参数键顺序规范化覆盖。
 - 新鲜定向证据：Profile Tool/预算与受影响 middleware stack `29 passed`；Python compileall 与 `git diff --check` 通过。Ruff 不在项目依赖中，未声称 Ruff 门禁。
 
+## 2026-07-20：R3 Task 7 - 结构化 Profile Agent 与 ingest/assess Graph
+
+- 新增 extraction、assessment、chat、action planner 四个逻辑 Agent；首版分别绑定 `profile_extraction`、`profile_assessment`、`agent_chat`、`profile_assessment`，全部使用默认 AgentState。Extraction/Assessment/Planner 无 Tool，Chat 只接 Task 6 的只读 allowlist。
+- `ProfileExtractionOutput` 强制 category、typed value、1-50 个 Evidence ID、confidence 和 rationale；`profile.ingest` 按 parse→redact→evidence candidates→Agent→validate/persist 显式节点运行，未知 Evidence 在写 Proposal 前整体拒绝。
+- 私有原文和 source bytes 只在节点局部变量/MaterialStorage 中存在；外层 Graph state 仅保存材料/版本/Evidence/Proposal ID、计数和未提交结构化输出。Agent checkpoint 仅获得最多 50 条、每条 2,000 字符的脱敏 Evidence。
+- 上传/重试现在通过 `AgentExecutionService.run_prepared` 真正调度后台 Graph；Runtime 注入同一连接上的 ProfileRepository/Storage，不在节点另开连接。事件仅包含版本/Proposal ID 和计数。
+- 独立 `profile.assess` 锁定 confirmed snapshot，先校验全部 Evidence、版本和目标 Claim，再幂等保存 Assessment/Proposal，最后投影 `assessment_card`；失败不留下 Assessment 半成品。
+- 新鲜定向回归：Profile repository/material service/Agent/Graph/checkpoint/middleware/Agent routes 共 `73 passed`；compileall 与 `git diff --check` 通过。
+
 ## 2026-07-20：补充 Agent State 与 Context Offload ADR
 
 - 将 `state_schema` 的五项准入条件、状态归属表、R2 现状和 R3-R6 采用边界补入全路线 Agent 能力 ADR。

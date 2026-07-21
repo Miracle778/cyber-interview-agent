@@ -119,6 +119,14 @@ class ProfileParseError(ProfileDomainError):
     code = "profile_parse_failed"
 
 
+class ProfileExtractionFailed(ProfileDomainError):
+    code = "profile_extraction_failed"
+
+
+class ProfileAssessmentFailed(ProfileDomainError):
+    code = "profile_assessment_failed"
+
+
 class ProfileEncryptedDocument(ProfileParseError):
     code = "profile_encrypted_document"
 

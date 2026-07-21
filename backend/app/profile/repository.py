@@ -388,6 +388,7 @@ class ProfileRepository:
         proposals: Sequence[CreateClaimProposalSpec],
         *,
         idempotency_key: str | None = None,
+        created_by_execution_id: str | None = None,
     ) -> tuple[ClaimProposalRecord, ...]:
         request = {
             "versionId": version_id,
@@ -455,7 +456,7 @@ class ProfileRepository:
                     "(id, workspace_id, proposal_type, target_claim_id, "
                     "base_claim_version_id, proposed_value_json, reason, "
                     "evidence_ids_json, status, created_by_execution_id) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
                     (
                         proposal_id,
                         workspace_id,
@@ -465,6 +466,7 @@ class ProfileRepository:
                         _canonical_json(spec.proposed_value),
                         spec.reason,
                         _canonical_json(list(spec.evidence_ids)),
+                        created_by_execution_id,
                     ),
                 )
                 if spec.target_claim_id is not None:
@@ -856,6 +858,32 @@ class ProfileRepository:
         self, command: SaveAssessmentCommand
     ) -> ProfileAssessmentRecord:
         with self._transaction():
+            if command.created_by_execution_id is not None:
+                existing = self._connection.execute(
+                    "SELECT * FROM profile_assessments "
+                    "WHERE workspace_id = ? AND created_by_execution_id = ? "
+                    "ORDER BY created_at, id LIMIT 1",
+                    (command.workspace_id, command.created_by_execution_id),
+                ).fetchone()
+                if existing is not None:
+                    record = ProfileAssessmentRecord(
+                        id=existing["id"],
+                        workspace_id=existing["workspace_id"],
+                        base_profile_version=existing["base_profile_version"],
+                        result=json.loads(existing["result_json"]),
+                        created_by_execution_id=existing[
+                            "created_by_execution_id"
+                        ],
+                        created_at=existing["created_at"],
+                    )
+                    if (
+                        record.base_profile_version != command.base_profile_version
+                        or record.result != command.result
+                    ):
+                        raise ProfileIdempotencyConflict(
+                            "assessment execution was reused with different input"
+                        )
+                    return record
             assessment_id = _new_id()
             self._connection.execute(
                 "INSERT INTO profile_assessments "

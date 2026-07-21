@@ -11,6 +11,11 @@ from app.agents.review_round_contracts import (
     ReviewSessionReportOutput,
     RoundAnswerEvaluation,
 )
+from app.agents.profile_contracts import (
+    ProfileAssessmentOutput,
+    ProfileClaimCandidate,
+    ProfileExtractionOutput,
+)
 from app.infrastructure.checkpoints import AgentCheckpointer
 
 
@@ -69,6 +74,36 @@ async def test_checkpoint_serializer_explicitly_allows_review_contract(
     ],
 )
 async def test_checkpoint_serializer_allows_review_domain_contracts(
+    tmp_path, caplog, value
+) -> None:
+    (tmp_path / ".cyber-interview-agent").mkdir()
+    caplog.set_level(logging.WARNING, logger="langgraph.checkpoint.serde.jsonplus")
+    async with AgentCheckpointer(tmp_path).open() as saver:
+        restored = saver.serde.loads_typed(saver.serde.dumps_typed(value))
+
+    assert restored == value
+    assert "not in allowed_msgpack_modules" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "value",
+    [
+        ProfileExtractionOutput(
+            candidates=[
+                ProfileClaimCandidate(
+                    category="skill",
+                    value={"text": "Python"},
+                    evidence_ids=["ev-1"],
+                    confidence=0.9,
+                    rationale="Evidence grounded",
+                )
+            ]
+        ),
+        ProfileAssessmentOutput(summary="Profile assessment"),
+    ],
+)
+async def test_checkpoint_serializer_allows_profile_structured_contracts(
     tmp_path, caplog, value
 ) -> None:
     (tmp_path / ".cyber-interview-agent").mkdir()

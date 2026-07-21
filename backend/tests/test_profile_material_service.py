@@ -233,9 +233,12 @@ async def test_workspace_runtime_initializes_profile_artifacts_before_upload(
         graph_factory=graph_factory,
     )
     try:
-        result = application._context("w1").profile.upload_material(
+        context = application._context("w1")
+        result = context.profile.upload_material(
             file_name="resume.txt", content=b"hello", title="Resume"
         )
         assert result.version.storage_ref.startswith("blobs/")
+        execution = await context.executions.wait(result.execution_id)
+        assert execution.status == "completed"
     finally:
         await application.close()

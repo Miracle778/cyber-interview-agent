@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,12 +44,14 @@ class ProfileService:
         repository: ProfileRepository,
         storage: MaterialStorage,
         product_repository: ProductRepository,
+        run_ingest: Callable[[object], None] | None = None,
     ) -> None:
         self.workspace_id = workspace_id
         self.root = root
         self.repository = repository
         self.storage = storage
         self.product_repository = product_repository
+        self._run_ingest = run_ingest
         self.connection: sqlite3.Connection = repository.connection
 
     def upload_material(
@@ -137,6 +140,8 @@ class ProfileService:
             model_bindings={},
             configuration={},
         )
+        if self._run_ingest is not None:
+            self._run_ingest(execution)
         return execution.id
 
     def retry_version_ingest(self, version_id: str) -> object:
@@ -158,6 +163,8 @@ class ProfileService:
             model_bindings={},
             configuration={},
         )
+        if self._run_ingest is not None:
+            self._run_ingest(execution)
         return execution
 
     def record_ingest_failure(

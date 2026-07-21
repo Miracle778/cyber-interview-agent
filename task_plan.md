@@ -8,7 +8,7 @@
 |---|---|---|
 | R3 产品与架构规格 | 已确认 | `2026-07-20-r3-personal-profile-agent-design.md`、6 张页面参考图、Agent 能力 ADR |
 | R3 实施计划 | 执行中 | `2026-07-20-r3-personal-profile-agent.md`，18 个 TDD Task、R3.1-R3.4 四个检查点 |
-| R3.1 材料与 Evidence | Task 1-6 已完成 | schema/registry、领域 repository、私有存储/解析、隐藏 ingest Session、Tool Event/Audit、八个有界只读 Tool 与执行预算已落；Graph、API、UI 待完成 |
+| R3.1 材料与 Evidence | Task 1-7 已完成 | schema/registry、领域 repository、私有存储/解析、隐藏 ingest Session、Tool Event/Audit、八个有界只读 Tool、结构化 Agent 与 ingest/assess Graph 已落；API、UI 待完成 |
 | R3.2 Claim 审核 | 未开始 | Claim/Proposal/冲突/删除影响、审核工作台 |
 | R3.3 评估与连续对话 | 未开始 | profile.assess/manage、只读 Tool loop、Action Plan/Diff/Receipt、Agent UI |
 | R3.4 知识发布闭环 | 未开始 | 选择、独立 HITL、发布/撤回、R4-R6 查询、完整验收与文档门禁 |
@@ -20,7 +20,7 @@
 - 工作分支：`feature/review-agent-workspace`
 - 工作树：`/Users/miracle778/Project/cyber-interview-agent-new/.worktrees/r2-complete-review-agent`
 
-下一步：Task 7 实现结构化 Profile Agent 与 ingest/assess Graph，Task 8 接通材料 API；Task 9 后开放第一批页面功能测试。
+下一步：Task 8 接通材料/版本/Evidence API，Task 9 实现第一批页面并开放功能测试。
 
 ### 2026-07-21 R2 题目整理故障增量
 

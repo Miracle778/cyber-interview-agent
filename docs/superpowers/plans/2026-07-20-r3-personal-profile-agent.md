@@ -265,22 +265,22 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
 - Test: `backend/tests/test_profile_ingest_graph.py`
 - Test: `backend/tests/test_checkpoint_serialization.py`
 
-- [ ] Write failing Agent-spec tests asserting roles, structured outputs, prompts, no Tools for extraction/assessment, default `AgentState`, and explicit execution names/thread IDs.
-- [ ] Define `ProfileExtractionOutput` as evidence-grounded candidate claims. Every candidate must include category, typed value, exact Evidence references, confidence, and rationale; reject any unknown Evidence ID before persistence.
-- [ ] Implement `ProfileAgents.create` with roles `profile_extraction`, `profile_assessment`, `profile_chat`, and `profile_action_planner`; bind planner to `profile_assessment` for R3 and chat to `agent_chat`.
-- [ ] Build `profile.ingest` as an explicit StateGraph:
+- [x] Write failing Agent-spec tests asserting roles, structured outputs, prompts, no Tools for extraction/assessment, default `AgentState`, and explicit execution names/thread IDs.
+- [x] Define `ProfileExtractionOutput` as evidence-grounded candidate claims. Every candidate must include category, typed value, exact Evidence references, confidence, and rationale; reject any unknown Evidence ID before persistence.
+- [x] Implement `ProfileAgents.create` with roles `profile_extraction`, `profile_assessment`, `profile_chat`, and `profile_action_planner`; bind planner to `profile_assessment` for R3 and chat to `agent_chat`.
+- [x] Build `profile.ingest` as an explicit StateGraph:
 
   ```text
   START -> parse -> redact_for_model -> extract_evidence_candidates
         -> profile_extraction -> validate_and_persist_proposals -> END
   ```
 
-- [ ] Publish deterministic Events `profile.ingest.parsing`, `profile.ingest.extracting`, and `profile.claims.proposed`; on failure persist parse/extraction status and a stable error code. Event payloads contain counts and IDs, not raw text.
-- [ ] Use outer thread ID `<material_version_id>` and Agent thread ID `<material_version_id>:profile_extraction`; add only the new structured contracts required by safe checkpoint serialization.
-- [ ] Extend `ProductionGraphFactory` explicitly for `profile.ingest`; inject repository/service callbacks through the existing factory and execution service instead of opening another connection in graph nodes.
-- [ ] Build `profile.assess` as a separate explicit Graph that locks a Material/Claim snapshot, invokes `profile_assessment`, validates Evidence references, idempotently saves Assessment/Proposal records, and projects a typed card only after the transaction succeeds.
-- [ ] Run `cd backend && uv run pytest -q tests/test_profile_agents.py tests/test_profile_ingest_graph.py tests/test_checkpoint_serialization.py`. Expected: extraction proposals persist, invalid evidence is rejected, failure is retryable, and Agent specs have no write Tools.
-- [ ] Reviewer gate: inspect graph state/checkpoints to confirm they contain orchestration IDs and structured output only—not source bytes, normalized full text, or domain truth copies.
+- [x] Publish deterministic Events `profile.ingest.parsing`, `profile.ingest.extracting`, and `profile.claims.proposed`; on failure persist parse/extraction status and a stable error code. Event payloads contain counts and IDs, not raw text.
+- [x] Use outer thread ID `<material_version_id>` and Agent thread ID `<material_version_id>:profile_extraction`; add only the new structured contracts required by safe checkpoint serialization.
+- [x] Extend `ProductionGraphFactory` explicitly for `profile.ingest`; inject repository/service callbacks through the existing factory and execution service instead of opening another connection in graph nodes.
+- [x] Build `profile.assess` as a separate explicit Graph that locks a Material/Claim snapshot, invokes `profile_assessment`, validates Evidence references, idempotently saves Assessment/Proposal records, and projects a typed card only after the transaction succeeds.
+- [x] Run `cd backend && uv run pytest -q tests/test_profile_agents.py tests/test_profile_ingest_graph.py tests/test_checkpoint_serialization.py`. Expected: extraction proposals persist, invalid evidence is rejected, failure is retryable, and Agent specs have no write Tools.
+- [x] Reviewer gate: inspect graph state/checkpoints to confirm they contain orchestration IDs and structured output only—not source bytes, normalized full text, or domain truth copies.
 
 ## Task 8: Expose R3.1 Material and Evidence APIs
 
