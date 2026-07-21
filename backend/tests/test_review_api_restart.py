@@ -511,6 +511,165 @@ async def test_crash_pause_closes_execution_and_excludes_pause_gap_from_timing(
         await second.close()
 
 
+@pytest.mark.parametrize("crash_window", ("reservation_to_prepare", "prepare_to_bind"))
+@pytest.mark.asyncio
+async def test_resume_fault_window_replays_one_reserved_execution(
+    tmp_path: Path, monkeypatch, crash_window: str
+) -> None:
+    workspace = tmp_path / f"workspace-resume-{crash_window}"
+    workspace.mkdir()
+    source = await KnowledgeSourceService(
+        workspace, workspace_id="w1"
+    ).create(
+        original_filename="resume.md",
+        content_type="text/markdown",
+        content=b"# Resume\n\nQuestion?",
+    )
+
+    def build() -> AgentApplication:
+        return AgentApplication(
+            workspace_resolver=lambda _workspace_id: workspace,
+            workspace_ids=lambda: ("w1",),
+            model_bindings=lambda _workspace_id: {},
+            graph_factory=_graph_factory,
+        )
+
+    first = build()
+    review = first.review("w1")
+    session = await review.sessions.create(
+        workspace_id="w1", kind="question.curate", title="Reserved resume"
+    )
+    review.repository.create_curation_session(
+        workspace_id="w1", session_id=session.id, source_refs=(source.id,)
+    )
+    batch = review.repository.create_batch(
+        workspace_id="w1",
+        session_id=session.id,
+        run_id=None,
+        source_refs=(source.id,),
+    )
+    execution_input = {
+        "batchId": batch.id,
+        "batch_id": batch.id,
+        "sourceRefs": [source.id],
+        "source_refs": [source.id],
+        "source_excerpts": [f"{source.id}:resume.md\nQuestion?"],
+        "similar_questions": [],
+        "rewrite_feedback": None,
+    }
+    initial_execution = await review.executions.prepare(
+        session, input=execution_input, project_input_message=False
+    )
+    batch = review.repository.attach_batch_run(batch.id, initial_execution.id)
+    review.repository.record_curation_attempt(
+        batch.id, initial_execution.id, reason="initial"
+    )
+    review.repository.update_curation_progress(
+        session.id,
+        stage="generating",
+        completed_units=0,
+        total_units=1,
+        active_batch_id=batch.id,
+    )
+    paused = await review.pause_curation_session(
+        session.id,
+        expected_batch_version=batch.version,
+        idempotency_key=f"pause-before-{crash_window}-0001",
+    )
+    resume_key = f"resume-after-{crash_window}-0001"
+
+    class InjectedCrash(BaseException):
+        pass
+
+    if crash_window == "reservation_to_prepare":
+        async def crash_before_prepare(*_args, **_kwargs):
+            raise InjectedCrash()
+
+        monkeypatch.setattr(review.executions, "prepare", crash_before_prepare)
+    else:
+        def crash_before_bind(*_args, **_kwargs):
+            raise InjectedCrash()
+
+        monkeypatch.setattr(
+            review.repository, "resume_curation_batch", crash_before_bind
+        )
+
+    with pytest.raises(InjectedCrash):
+        await review.resume_curation_session(
+            session.id,
+            expected_batch_version=paused["batch_version"],
+            idempotency_key=resume_key,
+        )
+    preparing = review.repository.find_curation_control_receipt(
+        batch.id, resume_key
+    )
+    assert preparing is not None
+    assert preparing.result_status == "preparing"
+    assert preparing.execution_id is None
+    assert preparing.reserved_execution_id is not None
+    reserved_execution_id = preparing.reserved_execution_id
+    pre_crash_rows = review.sessions.repository.connection.execute(
+        "SELECT id FROM agent_runs WHERE id = ?", (reserved_execution_id,)
+    ).fetchall()
+    assert len(pre_crash_rows) == (
+        0 if crash_window == "reservation_to_prepare" else 1
+    )
+    await first.close()
+
+    second = build()
+    try:
+        await second.recover()
+        restored_review = second.review("w1")
+        scheduled: list[str] = []
+        monkeypatch.setattr(
+            restored_review.executions,
+            "run_prepared",
+            lambda prepared, *, graph_input: scheduled.append(prepared.id),
+        )
+        resumed = await restored_review.resume_curation_session(
+            session.id,
+            expected_batch_version=paused["batch_version"],
+            idempotency_key=resume_key,
+        )
+        replayed = await restored_review.resume_curation_session(
+            session.id,
+            expected_batch_version=paused["batch_version"],
+            idempotency_key=resume_key,
+        )
+
+        assert resumed["execution_id"] == reserved_execution_id
+        assert replayed["execution_id"] == reserved_execution_id
+        assert scheduled == [reserved_execution_id]
+        executions = restored_review.sessions.repository.list_executions(session.id)
+        assert [run.id for run in executions] == [
+            initial_execution.id,
+            reserved_execution_id,
+        ]
+        reserved_execution = restored_review.sessions.repository.get_execution(
+            reserved_execution_id
+        )
+        assert reserved_execution.status == "running"
+        assert reserved_execution.finished_at is None
+        attempts = restored_review.sessions.repository.connection.execute(
+            "SELECT execution_id FROM review_curation_batch_attempts "
+            "WHERE batch_id = ? ORDER BY ordinal",
+            (batch.id,),
+        ).fetchall()
+        assert [row[0] for row in attempts] == [
+            initial_execution.id,
+            reserved_execution_id,
+        ]
+        receipt = restored_review.repository.find_curation_control_receipt(
+            batch.id, resume_key
+        )
+        assert receipt is not None
+        assert receipt.reserved_execution_id == reserved_execution_id
+        assert receipt.execution_id == reserved_execution_id
+        assert receipt.result_status == "generating"
+    finally:
+        await second.close()
+
+
 @pytest.mark.asyncio
 async def test_interrupted_curation_command_requires_explicit_retry(
     tmp_path: Path,

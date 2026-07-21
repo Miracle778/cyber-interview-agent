@@ -647,6 +647,112 @@ async def test_concurrent_same_key_resume_is_linearized_and_projects_bound_run(
 
 
 @pytest.mark.asyncio
+async def test_terminate_preserves_interrupted_execution_end_and_timing(
+    application,
+) -> None:
+    app, source_ids = application
+    review = app.review("w1")
+    session, batch, execution = await _seed_running_curation(
+        review, source_ids[0]
+    )
+    review.sessions.repository.transition_execution(
+        execution.id, expected=("running",), target="interrupted"
+    )
+    connection = review.sessions.repository.connection
+    connection.execute(
+        "UPDATE agent_runs SET started_at = datetime('now', '-2 hours'), "
+        "finished_at = datetime('now', '-1 hour') WHERE id = ?",
+        (execution.id,),
+    )
+    connection.execute(
+        "UPDATE review_question_batches SET status = 'interrupted' WHERE id = ?",
+        (batch.id,),
+    )
+    connection.execute(
+        "UPDATE review_curation_sessions SET stage = 'interrupted' "
+        "WHERE session_id = ?",
+        (session.id,),
+    )
+    connection.commit()
+    before_execution = review.sessions.repository.get_execution(execution.id)
+    before_timing = review.repository.curation_batch_timing(batch.id)
+
+    terminated = await review.terminate_curation_session(
+        session.id,
+        expected_batch_version=batch.version,
+        idempotency_key="terminate-after-hour-interrupted-0001",
+    )
+
+    after_execution = review.sessions.repository.get_execution(execution.id)
+    after_timing = review.repository.curation_batch_timing(batch.id)
+    assert terminated["batch_status"] == "terminated"
+    assert after_execution.status == "interrupted"
+    assert after_execution.finished_at == before_execution.finished_at
+    assert after_timing == before_timing
+
+
+@pytest.mark.asyncio
+async def test_concurrent_duplicate_pause_emits_one_control_event_sequence(
+    application, monkeypatch
+) -> None:
+    app, source_ids = application
+    review = app.review("w1")
+    session, batch, _execution = await _seed_running_curation(
+        review, source_ids[0]
+    )
+    original_publish = review.events.publish
+    transient_entered = asyncio.Event()
+    release_transient = asyncio.Event()
+    transient_calls = 0
+
+    async def publish_at_barrier(session_id, execution_id, event_type, payload):
+        nonlocal transient_calls
+        if (
+            event_type == "curation.control.changed"
+            and payload.get("status") == "pausing"
+        ):
+            transient_calls += 1
+            transient_entered.set()
+            await release_transient.wait()
+        return await original_publish(
+            session_id, execution_id, event_type, payload
+        )
+
+    monkeypatch.setattr(review.events, "publish", publish_at_barrier)
+    first = asyncio.create_task(
+        review.pause_curation_session(
+            session.id,
+            expected_batch_version=batch.version,
+            idempotency_key="concurrent-pause-request-0001",
+        )
+    )
+    await asyncio.wait_for(transient_entered.wait(), timeout=0.2)
+    second = asyncio.create_task(
+        review.pause_curation_session(
+            session.id,
+            expected_batch_version=batch.version,
+            idempotency_key="concurrent-pause-request-0001",
+        )
+    )
+    await asyncio.sleep(0)
+    release_transient.set()
+    results = await asyncio.gather(first, second, return_exceptions=True)
+
+    assert all(isinstance(result, dict) for result in results), results
+    assert transient_calls == 1
+    control_events = [
+        event
+        for event in app.replay_events(session.id, after_id=None)
+        if event.type == "curation.control.changed"
+        and event.payload["operation"] == "pause"
+    ]
+    assert [event.payload["status"] for event in control_events] == [
+        "pausing",
+        "paused",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_terminate_is_idempotent_and_cannot_resume(
     application
 ) -> None:

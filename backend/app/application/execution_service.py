@@ -190,6 +190,7 @@ class AgentExecutionService:
         input: dict[str, Any],
         project_input_message: bool = True,
         configuration: dict[str, Any] | None = None,
+        execution_id: str | None = None,
     ) -> ExecutionRecord:
         bindings = dict(self._model_bindings())
         execution = self._repository.create_execution(
@@ -197,6 +198,7 @@ class AgentExecutionService:
             input=input,
             model_bindings=bindings,
             configuration=configuration,
+            execution_id=execution_id,
         )
         if project_input_message:
             self._repository.append_message(
@@ -210,6 +212,16 @@ class AgentExecutionService:
             execution.id,
             "execution.started",
             {"executionId": execution.id},
+        )
+        return execution
+
+    async def rearm_prepared(self, execution_id: str) -> ExecutionRecord:
+        execution = self._repository.rearm_unscheduled_execution(execution_id)
+        await self._events.publish(
+            execution.session_id,
+            execution.id,
+            "execution.started",
+            {"executionId": execution.id, "recovered": True},
         )
         return execution
 
@@ -424,7 +436,7 @@ class AgentExecutionService:
 
     async def cancel(self, execution_id: str) -> ExecutionRecord:
         current = self._repository.get_execution(execution_id)
-        if current.status in {"completed", "failed", "cancelled"}:
+        if current.status in {"interrupted", "completed", "failed", "cancelled"}:
             return current
         first_request = not current.cancellation_requested
         requested = self._repository.request_execution_cancel(execution_id)
@@ -678,7 +690,7 @@ class AgentExecutionService:
 
     async def _finish_cancel(self, execution_id: str) -> ExecutionRecord:
         current = self._repository.get_execution(execution_id)
-        if current.status in {"completed", "failed", "cancelled"}:
+        if current.status in {"interrupted", "completed", "failed", "cancelled"}:
             return current
         cancelled = self._repository.transition_execution(
             execution_id,

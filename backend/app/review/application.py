@@ -115,7 +115,7 @@ class ReviewApplication:
         self.curation_context_factory = curation_context_factory
         self.selector = QuestionSelector()
         self._discussion_locks: dict[str, asyncio.Lock] = {}
-        self._curation_resume_locks: dict[str, asyncio.Lock] = {}
+        self._curation_control_locks: dict[str, asyncio.Lock] = {}
         self.curation_commands = CurationCommandService()
         self.timeline = SessionTimelineProjector(
             self.sessions.repository, self.events
@@ -474,6 +474,28 @@ class ReviewApplication:
         if curation.active_batch_id is None:
             raise ReviewConflictError("curation session has no active batch")
         batch_id = curation.active_batch_id
+        lock = self._curation_control_locks.setdefault(batch_id, asyncio.Lock())
+        async with lock:
+            return await self._control_curation_session_locked(
+                session_id,
+                batch_id=batch_id,
+                operation=operation,
+                expected_batch_version=expected_batch_version,
+                idempotency_key=idempotency_key,
+            )
+
+    async def _control_curation_session_locked(
+        self,
+        session_id: str,
+        *,
+        batch_id: str,
+        operation: Literal["pause", "terminate"],
+        expected_batch_version: int,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        curation = self.repository.get_curation_session(session_id)
+        if curation.active_batch_id != batch_id:
+            raise ReviewConflictError("curation active batch changed")
         existing = self.repository.find_curation_control_receipt(
             batch_id, idempotency_key
         )
@@ -547,7 +569,7 @@ class ReviewApplication:
         if curation.active_batch_id is None:
             raise ReviewConflictError("curation session has no active batch")
         batch_id = curation.active_batch_id
-        lock = self._curation_resume_locks.setdefault(batch_id, asyncio.Lock())
+        lock = self._curation_control_locks.setdefault(batch_id, asyncio.Lock())
         async with lock:
             return await self._resume_curation_session_locked(
                 session_id,
@@ -602,13 +624,29 @@ class ReviewApplication:
         )
         if reservation.execution_id is not None:
             return await self.curation_resource(session_id)
+        if reservation.reserved_execution_id is None:
+            raise ReviewConflictError("curation resume has no reserved execution")
+        reserved_execution_id = reservation.reserved_execution_id
         execution_input = self.repository.curation_batch_input(batch.id)
         session = self.sessions.get(session_id)
-        execution = await self.executions.prepare(
-            session,
-            input=execution_input,
-            project_input_message=False,
-        )
+        try:
+            self.executions.execution(reserved_execution_id)
+        except ProductRecordNotFoundError:
+            execution = await self.executions.prepare(
+                session,
+                input=execution_input,
+                project_input_message=False,
+                execution_id=reserved_execution_id,
+            )
+        else:
+            self.repository.validate_unbound_reserved_curation_execution(
+                batch.id,
+                idempotency_key=idempotency_key,
+                execution_id=reserved_execution_id,
+            )
+            execution = await self.executions.rearm_prepared(
+                reserved_execution_id
+            )
         try:
             resumed = self.repository.resume_curation_batch(
                 batch.id,

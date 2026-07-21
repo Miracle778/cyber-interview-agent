@@ -216,6 +216,7 @@ class CurationControlReceiptRecord:
     operation: CurationControlOperation
     request_digest: str
     execution_id: str | None
+    reserved_execution_id: str | None
     result_status: str
     created_at: str
     updated_at: str

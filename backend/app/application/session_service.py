@@ -250,12 +250,32 @@ class ProductRepository:
 
     def request_execution_cancel(self, execution_id: str) -> ExecutionRecord:
         current = self.get_execution(execution_id)
-        if current.status in {"completed", "failed", "cancelled"}:
+        if current.status in {"interrupted", "completed", "failed", "cancelled"}:
             return current
         self.connection.execute(
             "UPDATE agent_runs SET cancel_requested_at = "
             "COALESCE(cancel_requested_at, CURRENT_TIMESTAMP) WHERE id = ?",
             (execution_id,),
+        )
+        self.connection.commit()
+        return self.get_execution(execution_id)
+
+    def rearm_unscheduled_execution(self, execution_id: str) -> ExecutionRecord:
+        current = self.get_execution(execution_id)
+        if current.status not in {"running", "interrupted"}:
+            raise InvalidExecutionTransitionError(
+                f"execution {execution_id} cannot be re-armed from {current.status}"
+            )
+        self.connection.execute(
+            "UPDATE agent_runs SET status = 'running', cancel_requested_at = NULL, "
+            "error_code = NULL, error_message = NULL, started_at = CURRENT_TIMESTAMP, "
+            "finished_at = NULL WHERE id = ? AND status IN ('running', 'interrupted')",
+            (execution_id,),
+        )
+        self.connection.execute(
+            "UPDATE agent_sessions SET status = 'active', last_run_id = ?, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (execution_id, current.session_id),
         )
         self.connection.commit()
         return self.get_execution(execution_id)

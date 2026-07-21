@@ -112,7 +112,7 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
     assert "agent_context_usage" in _tables(connection)
     connection.close()
 
@@ -165,6 +165,28 @@ def test_migration_019_adds_durable_batch_control_and_recovery_state(
         "idx_review_curation_control_receipts_batch_created",
     } <= indexes
     assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    connection.close()
+
+
+def test_migration_024_adds_stable_resume_execution_reservation(
+    tmp_path: Path,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+
+    receipt_columns = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info(review_curation_control_receipts)"
+        )
+    }
+    assert "reserved_execution_id" in receipt_columns
+    indexes = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA index_list(review_curation_control_receipts)"
+        )
+    }
+    assert "idx_review_curation_control_receipts_reserved_execution" in indexes
     connection.close()
 
 
@@ -443,7 +465,7 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+            ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
     reopened.close()
 
 
