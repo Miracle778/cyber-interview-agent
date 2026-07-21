@@ -316,6 +316,79 @@ describe("QuestionCatalog", () => {
     ));
   });
 
+  it("keeps interrupted-resume progress and previews monotonic under out-of-order hydration", async () => {
+    class ResumeEventSource {
+      static instances: ResumeEventSource[] = [];
+      onopen: ((event: Event) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      listeners = new Map<string, (event: MessageEvent<string>) => void>();
+      constructor(readonly url: string) { ResumeEventSource.instances.push(this); }
+      addEventListener(type: string, listener: (event: MessageEvent<string>) => void) { this.listeners.set(type, listener); }
+      close() {}
+      emit(event: object) { this.listeners.get((event as { type: string }).type)?.({ data: JSON.stringify(event) } as MessageEvent<string>); }
+    }
+    vi.stubGlobal("EventSource", ResumeEventSource);
+    const previews = [
+      { id: "p1", title: "预览 1", questionText: "问题 1", sourceRefs: ["s1#1"] },
+      { id: "p2", title: "预览 2", questionText: "问题 2", sourceRefs: ["s1#2"] },
+      { id: "p3", title: "预览 3", questionText: "问题 3", sourceRefs: ["s1#3"] },
+      { id: "p4", title: "预览 4", questionText: "问题 4", sourceRefs: ["s1#4"] },
+    ];
+    const interrupted = controlSession({
+      id: "cs-interrupted", title: "interrupted.md", batchStatus: "interrupted", batchVersion: 6,
+      executionStatus: "interrupted", stage: "interrupted",
+      progress: { phase: "enrichment", completed: 2, total: 6, generatedCandidateCount: 2, activeWorkers: 0 },
+      controls: { canPause: false, canResume: true, canTerminate: true }, provisionalCandidates: previews.slice(0, 2),
+    });
+    const resumed = controlSession({
+      ...interrupted, batchStatus: "generating", batchVersion: 7, executionId: "e2", executionStatus: "running", stage: "generating",
+      controls: { canPause: true, canResume: false, canTerminate: true },
+    });
+    const advanced = controlSession({
+      ...resumed,
+      progress: { phase: "enrichment", completed: 4, total: 6, generatedCandidateCount: 4, activeWorkers: 2 },
+      provisionalCandidates: previews,
+    });
+    const stale = controlSession({
+      ...resumed,
+      progress: { phase: "discovery", completed: 6, total: 6, generatedCandidateCount: 1, activeWorkers: 3 },
+      provisionalCandidates: previews.slice(0, 1),
+    });
+    const responses = [interrupted, resumed, advanced, stale];
+    let sessionReads = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/agent/sessions/cs-interrupted") return Response.json({ id: "cs-interrupted" });
+      if (url.includes("/api/knowledge/sources") || url.includes("/api/review/question-candidates") || url.includes("/api/settings/providers")) return Response.json([]);
+      if (url.endsWith("/resume") && init?.method === "POST") return Response.json(resumed, { status: 202 });
+      if (url.includes("/api/review/curation-sessions")) {
+        sessionReads += 1;
+        return Response.json([responses[Math.min(sessionReads - 1, responses.length - 1)]]);
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+
+    render(<QuestionCatalog workspace={workspace} />, { wrapper });
+    fireEvent.click(await screen.findByRole("button", { name: /interrupted\.md/ }));
+    expect(screen.getByLabelText("整理进度")).toHaveTextContent("2 / 6");
+    expect(screen.getByText("预览 2")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "继续整理" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "暂停整理" })).toBeInTheDocument());
+    await waitFor(() => expect(ResumeEventSource.instances).toHaveLength(1));
+
+    ResumeEventSource.instances[0].emit({ id: 21, type: "curation.progress.changed", sessionId: "cs-interrupted", executionId: "e2", timestamp: "now", payload: { resourceId: "cs-interrupted", phase: "enrichment", completed: 4, total: 6 } });
+    await waitFor(() => expect(screen.getByLabelText("整理进度")).toHaveTextContent("4 / 6"));
+    expect(screen.getByText("预览 4")).toBeInTheDocument();
+
+    ResumeEventSource.instances[0].emit({ id: 22, type: "curation.progress.changed", sessionId: "cs-interrupted", executionId: "e2", timestamp: "now", payload: { resourceId: "cs-interrupted", phase: "discovery", completed: 6, total: 6 } });
+    await waitFor(() => expect(sessionReads).toBeGreaterThanOrEqual(4));
+    expect(screen.getByLabelText("整理进度")).toHaveTextContent("4 / 6");
+    expect(screen.getByText("预览 1")).toBeInTheDocument();
+    expect(screen.getByText("预览 2")).toBeInTheDocument();
+    expect(screen.getByText("预览 3")).toBeInTheDocument();
+    expect(screen.getByText("预览 4")).toBeInTheDocument();
+  });
+
   it.each([
     ["pause", "暂停整理", controlSession()],
     ["resume", "继续整理", controlSession({ batchStatus: "failed", stage: "failed", executionStatus: "failed", controls: { canPause: false, canResume: true, canTerminate: true } })],

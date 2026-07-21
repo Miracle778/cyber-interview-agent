@@ -504,7 +504,7 @@ async def test_question_batch_persists_agent_candidates(api, application) -> Non
         )
         assert detail.status_code == 200, detail.text
         value = detail.json()
-        assert value["status"] == "completed"
+        assert value["status"] == "review_pending"
         assert value["candidateCount"] == 1
         assert value["candidates"][0]["correctionNote"] == "补齐治理方式"
         assert value["candidates"][0]["draft"]["status"] == "review_pending"

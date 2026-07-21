@@ -22,6 +22,12 @@ from app.knowledge.drafts import (
     UpdateDraftCommand,
 )
 from app.graphs.publication import create_publication_graph
+from app.graphs.question_curation import create_question_curation_graph
+from app.agents.question_curation_contracts import (
+    QuestionCandidate,
+    QuestionCandidateChunk,
+    QuestionSeedChunk,
+)
 from tests.test_review_api_v2 import _graph_factory
 from app.review.curation_command_contracts import CurationCommandPlan
 from app.review.errors import ReviewConflictError
@@ -405,6 +411,189 @@ def _provisional_candidate(title: str, source_ref: str) -> dict[str, object]:
         "source_refs": [source_ref],
         "correction_note": "No correction required",
     }
+
+
+@pytest.mark.asyncio
+async def test_six_item_curation_resumes_after_failure_pause_and_runtime_restart(
+    tmp_path: Path,
+) -> None:
+    class ControlledProviderError(RuntimeError):
+        code = "provider_error"
+
+    class BarrierCurationAgents:
+        def __init__(self) -> None:
+            self.phase = "fail"
+            self.active = 0
+            self.peak = 0
+            self.invocations: dict[int, int] = {}
+            self.first_wave_started = asyncio.Event()
+            self.release_first_wave = asyncio.Event()
+            self.pause_wave_started = asyncio.Event()
+
+        async def discover(self, *_args, **_kwargs) -> QuestionSeedChunk:
+            return QuestionSeedChunk(seeds=[])
+
+        async def enrich(
+            self,
+            seeds,
+            *,
+            sections,
+            known_questions,
+            context,
+            config,
+            unit_index,
+        ) -> QuestionCandidateChunk:
+            del sections, known_questions, context, config
+            phase = self.phase
+            self.invocations[unit_index] = self.invocations.get(unit_index, 0) + 1
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            try:
+                if phase == "fail":
+                    if self.active == 3:
+                        self.first_wave_started.set()
+                    await self.release_first_wave.wait()
+                    if unit_index == 2:
+                        raise ControlledProviderError("private provider body")
+                elif phase == "pause":
+                    if self.active == 3:
+                        self.pause_wave_started.set()
+                    await asyncio.Event().wait()
+                return QuestionCandidateChunk(candidates=[
+                    QuestionCandidate(
+                        title=f"题目 {unit_index}-{ordinal}",
+                        question_text=seed.question_text,
+                        reference_answer="确定性 fake Provider 答案",
+                        topics=["runtime"],
+                        difficulty="medium",
+                        key_points=["可恢复"],
+                        follow_ups=[],
+                        source_refs=list(seed.source_refs),
+                        correction_note="fake Provider acceptance",
+                    )
+                    for ordinal, seed in enumerate(seeds)
+                ])
+            finally:
+                self.active -= 1
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    agents = BarrierCurationAgents()
+
+    def build() -> AgentApplication:
+        def graph_factory(kind, **dependencies):
+            if kind in {"question.curate", "question.revise"}:
+                return create_question_curation_graph(
+                    agents,
+                    repository=dependencies["review_repository"],
+                    checkpointer=dependencies["checkpointer"],
+                )
+            return _session_graph_factory(kind, **dependencies)
+
+        return AgentApplication(
+            workspace_resolver=lambda _workspace_id: workspace,
+            workspace_ids=lambda: ("w1",),
+            model_bindings=lambda _workspace_id: {},
+            graph_factory=graph_factory,
+        )
+
+    first = build()
+    source = await KnowledgeSourceService(
+        workspace, workspace_id="w1"
+    ).create(
+        original_filename="six-items.md",
+        content_type="text/markdown",
+        content=(
+            "# 可恢复整理\n\n"
+            + "\n".join(
+                f"{index}、问题 {index}？\n答案 {index}"
+                for index in range(1, 19)
+            )
+        ).encode("utf-8"),
+    )
+    created = await first.review("w1").create_curation_session(
+        source_refs=(source.id,)
+    )
+    session_id = str(created["id"])
+    batch_id = str(created["active_batch_id"])
+
+    await asyncio.wait_for(agents.first_wave_started.wait(), timeout=2)
+    assert agents.peak == 3
+    agents.release_first_wave.set()
+    failed_execution = await first.wait_execution(str(created["execution_id"]))
+    assert failed_execution.status == "failed"
+
+    first_review = first.review("w1")
+    first_items = first_review.repository.list_curation_work_items(
+        batch_id, stage="enrichment"
+    )
+    assert len(first_items) == 6
+    assert [item.status for item in first_items[:3]] == [
+        "completed",
+        "completed",
+        "failed",
+    ]
+    completed_invocations = {
+        item.unit_index: agents.invocations[item.unit_index]
+        for item in first_items
+        if item.status == "completed"
+    }
+
+    agents.phase = "pause"
+    failed_batch = first_review.repository.get_batch(batch_id)
+    resumed = await first_review.resume_curation_session(
+        session_id,
+        expected_batch_version=failed_batch.version,
+        idempotency_key="resume-after-partial-failure-0001",
+    )
+    await asyncio.wait_for(agents.pause_wave_started.wait(), timeout=2)
+    assert all(
+        agents.invocations[index] == count
+        for index, count in completed_invocations.items()
+    )
+    generating_batch = first_review.repository.get_batch(batch_id)
+    paused = await first_review.pause_curation_session(
+        session_id,
+        expected_batch_version=generating_batch.version,
+        idempotency_key="pause-resumed-attempt-0001",
+    )
+    assert paused["batch_status"] == "paused"
+    assert resumed["execution_id"] != created["execution_id"]
+    assert all(
+        item.status != "running"
+        for item in first_review.repository.list_curation_work_items(batch_id)
+    )
+    await first.close()
+
+    agents.phase = "finish"
+    second = build()
+    try:
+        await second.recover()
+        second_review = second.review("w1")
+        recovered_batch = second_review.repository.get_batch(batch_id)
+        assert recovered_batch.status == "paused"
+        final_attempt = await second_review.resume_curation_session(
+            session_id,
+            expected_batch_version=recovered_batch.version,
+            idempotency_key="resume-after-runtime-restart-0001",
+        )
+        await second.wait_execution(str(final_attempt["execution_id"]))
+
+        final_batch = second_review.repository.get_batch(batch_id)
+        final_items = second_review.repository.list_curation_work_items(batch_id)
+        enrichment_items = [
+            item for item in final_items if item.stage == "enrichment"
+        ]
+        assert agents.peak == 3
+        assert all(
+            agents.invocations[index] == count
+            for index, count in completed_invocations.items()
+        )
+        assert final_batch.status == "review_pending"
+        assert enrichment_items[-1].status == "completed"
+        assert all(item.status != "running" for item in final_items)
+    finally:
+        await second.close()
 
 
 @pytest.mark.asyncio
@@ -2278,7 +2467,7 @@ async def test_failed_curation_session_can_retry_in_the_same_session(
 
 
 @pytest.mark.asyncio
-async def test_legacy_retry_cannot_reopen_completed_batch(
+async def test_legacy_retry_cannot_reopen_review_pending_batch(
     api, application
 ) -> None:
     app, source_ids = application
@@ -2297,8 +2486,8 @@ async def test_legacy_retry_cannot_reopen_completed_batch(
             session_id
         ).active_batch_id
         assert batch_id is not None
-        completed = review.repository.get_batch(batch_id)
-        assert completed.status == "completed"
+        finalized = review.repository.get_batch(batch_id)
+        assert finalized.status == "review_pending"
 
         connection = review.sessions.repository.connection
         connection.execute(
@@ -2321,7 +2510,7 @@ async def test_legacy_retry_cannot_reopen_completed_batch(
             await client.post(
                 f"/api/review/curation-sessions/{session_id}/retry"
             )
-        assert review.repository.get_batch(batch_id) == completed
+        assert review.repository.get_batch(batch_id) == finalized
         assert review.repository.get_curation_session(session_id).stage == "failed"
 
 

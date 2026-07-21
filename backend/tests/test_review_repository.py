@@ -764,7 +764,7 @@ def test_curation_finalization_is_exactly_once_for_same_owner(
     assert first_claim == replayed_claim
     assert first == replayed
     assert tuple(candidate.id for candidate in first) == ("candidate-final",)
-    assert repository.get_batch(batch.id).status == "completed"
+    assert repository.get_batch(batch.id).status == "review_pending"
     curation = repository.get_curation_session("s1")
     assert curation.stage == "waiting_for_command"
     assert curation.summary_version == 1
@@ -1448,7 +1448,7 @@ def test_curation_finalization_validates_artifact_and_commits(
     )
 
     assert persisted[0].draft_id == "draft-valid-artifact"
-    assert repository.get_batch(batch.id).status == "completed"
+    assert repository.get_batch(batch.id).status == "review_pending"
     assert repository.get_curation_session("s1").summary_version == 1
     connection.close()
 

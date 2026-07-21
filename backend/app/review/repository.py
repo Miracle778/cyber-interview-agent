@@ -768,7 +768,7 @@ class ReviewRepository:
         *,
         candidates: tuple[dict[str, object], ...],
     ) -> tuple[QuestionCandidateRecord, ...]:
-        """Publish staged curation output and complete its batch atomically."""
+        """Publish staged output and move its batch to human review atomically."""
         candidate_ids = tuple(str(item["candidate_id"]) for item in candidates)
         if len(set(candidate_ids)) != len(candidate_ids):
             raise ValueError("curation candidate ids must be unique")
@@ -1062,7 +1062,7 @@ class ReviewRepository:
                 if cursor.rowcount != 1:
                     raise LookupError(batch.session_id)
             cursor = self._connection.execute(
-                "UPDATE review_question_batches SET status = 'completed', "
+                "UPDATE review_question_batches SET status = 'review_pending', "
                 "version = version + 1, updated_at = CURRENT_TIMESTAMP "
                 "WHERE id = ? AND run_id = ? AND status = 'generating' "
                 "AND version = ? AND control_intent IS NULL",

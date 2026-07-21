@@ -428,3 +428,11 @@
 - Trace 安全不能依赖任意对象 `repr`；只白名单基础值、Pydantic、LangChain message 和受控字段，凭据 key 丢弃，未知对象只记录 type/unserializable。
 - 真实渐进式重试证明结构化输出已恢复，但 Provider 仍可能违反“每个 section 最多一个 seed/candidate”的提示。重复的允许引用属于可恢复输出偏差，应稳定保留首项；未知引用仍是证据边界违规，必须硬失败。
 - LangChain middleware 返回的 `ModelResponse` 是 dataclass 而非 Pydantic model；若不显式白名单其 `result/structured_response`，JSONL 会只记录 `unserializable`，无法兑现完整本地诊断目标。
+
+## 2026-07-22 长任务跨层验收结论
+
+- 六个 enrichment Work Item 的确定性 fake Provider 验收证明：首波同时活动调用峰值为 3；其中两项完成、一项失败后，恢复不会再次调用已完成项；恢复中的三个调用被暂停并清理为非 running；Runtime 重建后再次恢复可完成最后一个 Work Item，最终没有 running 残留。
+- 跨层 RED 暴露了一个遗留状态语义：最终 reducer 已生成正式待确认候选，却仍把 Batch 标为 `completed`。按已确认状态机修正为 `review_pending` 后，Batch 状态与候选人工审核阶段一致，兼容读取仍保留 `completed` 处理历史数据。
+- 前端 interrupted hydrate → resume → 新 enrichment 快照 → 旧 discovery 快照晚到的契约直接通过；同 Batch/同版本按阶段拒绝回退，同阶段 completed/total/generated 取最大值，provisional 按稳定 ID 只增合并，因此页面不会倒退计数或缩短预览。
+- 当前恢复能力的成熟度是单进程 bounded scheduler + SQLite durable Work Item，不是分布式任务队列。进程退出时未提交的 Provider 调用允许重发，completed Work Item 不重放。
+- `frontend/package.json` 没有 `typecheck` script；本阶段使用权威等价命令 `./node_modules/.bin/tsc --noEmit`，production build 自身也再次执行 `tsc`。计划中的不存在脚本不能被记录为成功。

@@ -570,3 +570,13 @@
 - 已把 discovery/enrichment 的重复允许引用改为稳定保留首项，未知引用继续拒绝；JSONL serializer 显式支持 LangChain `ModelResponse`。新增/关联定向 `58 passed`，`git diff --check` 通过。
 - 卡死的旧 8000 开发进程已精确终止，修复后后端与 5173 前端重新启动；`/api/health` 返回 ok、前端 HTTP 200。未由 Codex 自动重放原始正文，完整 batch 仍待用户显式重试。
 - 修正整理运行态的语义色：`正在识别题目/正在补全候选` 使用独立 `curation-progress` 主色样式和 `role=status`，`Agent 执行失败` 继续使用 danger 样式；前端定向 `7 passed`、TypeScript 与 `git diff --check` 通过。
+
+## 2026-07-22：题目整理长任务 Task 7 自动验收
+
+- 后端跨层场景使用 18 个明确题目形成 6 个 enrichment Work Item：第一波 barrier 实测 peak=3，两项完成、一项失败；第一次恢复跳过两项 completed，在三项调用活动时暂停；关闭并重建 AgentApplication、执行 recover 后再次恢复，最终最后一项 completed、所有 Work Item 均非 running。
+- 有效 RED：fixture 校正后，新增场景只在 `final_batch.status` 失败，实际为遗留 `completed`、期望为设计规定的 `review_pending`。最小修正 finalization 状态和既有仓储/API 断言后，同一场景 `1 passed`。
+- 前端新增 interrupted→resume→乱序资源契约，首次运行即 `1 passed`，证明 Task 6 的阶段防回退、单调计数与 provisional 合并已经满足验收，不额外修改生产 UI。
+- 受影响回归：后端计划列出的 9 个套件 `152 passed`；前端 QuestionCatalog、CurationRuntimePanel、reviewApi、useAgentEvents `49 passed`。
+- 完整回归第一次为后端 `629 passed, 1 failed`，唯一失败是旧 question-batch API 仍断言生成终态 `completed`；更新为 `review_pending` 并定向通过后，第二次/最终后端 `630 passed`（1 条既有 Starlette/httpx 弃用 warning）。前端完整 `166 passed`。
+- `./node_modules/.bin/tsc --noEmit` 通过；`npm run build` 成功（保留既有 652.55 kB chunk 提示）。记录时间：2026-07-22 07:28 CST（UTC+08:00）。
+- 产品成熟度：单进程 bounded scheduler，不是分布式 jobs；真实 Provider 性能、浏览器暂停/刷新/恢复/终止和真实材料完整运行未执行，也未声称通过。下一产品任务回到 R3 Task 8；非阻塞练习见本地 verification 指南。
