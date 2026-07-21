@@ -2,11 +2,13 @@ from collections import Counter
 
 import pytest
 
+from app.infrastructure.runtime_database import connect_runtime_database
 from app.review.curation_planner import (
     CurationPlanningError,
     plan_curation_discovery,
 )
 from app.review.curation_sections import SourceSection, section_sources
+from app.review.repository import ReviewRepository
 
 
 def _assignment_counts(plan) -> Counter[str]:
@@ -71,6 +73,26 @@ def test_planner_recognizes_explicit_and_numbered_question_lines() -> None:
     assert plan.model_units == ()
 
 
+def test_numbered_answer_prose_with_question_cues_stays_in_parent_range() -> None:
+    sections = section_sources((
+        "s1:answers.md\n"
+        "# 为什么需要事务隔离？\n"
+        "答案包括：\n"
+        "1. 是否开启一致性视图取决于隔离级别\n"
+        "2. 可见性机制通过版本链实现",
+    ))
+
+    plan = plan_curation_discovery(sections)
+
+    assert [unit.seeds[0].question_text for unit in plan.deterministic_units] == [
+        "为什么需要事务隔离？"
+    ]
+    assert plan.deterministic_units[0].source_refs == tuple(
+        section.ref for section in sections
+    )
+    assert plan.model_units == ()
+
+
 def test_plain_40k_source_uses_large_ordered_model_windows() -> None:
     sections = section_sources(("s1:plain.md\n" + "普通正文" * 10_000,))
 
@@ -101,6 +123,64 @@ def test_planner_never_combines_different_sources_in_one_unit() -> None:
         assert len({ref.split("#", 1)[0] for ref in unit.source_refs}) == 1
     for unit in plan.model_units:
         assert len({section.source_id for section in unit.sections}) == 1
+
+
+def test_mixed_plan_uses_one_repository_compatible_unit_index_namespace(
+    tmp_path,
+) -> None:
+    sections = section_sources((
+        "s1:mixed.md\n普通前言。\n\n# 什么是 WAL？\nWrite-ahead logging。",
+        "s2:plain.md\n另一份没有题目结构的正文。",
+    ))
+    plan = plan_curation_discovery(sections)
+    ordered_units = sorted(
+        (*plan.deterministic_units, *plan.model_units),
+        key=lambda unit: unit.unit_index,
+    )
+
+    assert [unit.unit_index for unit in ordered_units] == list(
+        range(len(ordered_units))
+    )
+    assert [unit.unit_index for unit in plan.model_units] == [0, 2]
+    assert [unit.unit_index for unit in plan.deterministic_units] == [1]
+
+    connection = connect_runtime_database(tmp_path)
+    connection.execute(
+        "INSERT INTO agent_sessions (id, workspace_id, graph_id, graph_version, title) "
+        "VALUES ('s1', 'w1', 'question.curate', 1, 'Curation')"
+    )
+    connection.execute(
+        "INSERT INTO agent_runs (id, session_id, status) VALUES ('r1', 's1', 'running')"
+    )
+    connection.commit()
+    repository = ReviewRepository(connection)
+    batch = repository.create_batch(
+        workspace_id="w1", session_id="s1", run_id="r1", source_refs=("s1", "s2")
+    )
+    try:
+        planned = [
+            repository.plan_curation_work_item(
+                batch_id=batch.id,
+                stage="discovery",
+                unit_index=unit.unit_index,
+                input_digest=unit.input_digest,
+                source_refs=(
+                    unit.source_refs
+                    if hasattr(unit, "source_refs")
+                    else tuple(section.ref for section in unit.sections)
+                ),
+                processor_kind=(
+                    "deterministic"
+                    if hasattr(unit, "source_refs")
+                    else "model"
+                ),
+            )
+            for unit in ordered_units
+        ]
+    finally:
+        connection.close()
+
+    assert len({item.unit_index for item in planned}) == len(ordered_units)
 
 
 def test_oversized_question_range_routes_overflow_to_model_coverage() -> None:

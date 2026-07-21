@@ -24,6 +24,17 @@ _QUESTION_CUES = re.compile(
 _MARKDOWN_HEADING = re.compile(r"^\s{0,3}#{1,6}\s*(?P<text>.+?)\s*$")
 _BOLD_HEADING = re.compile(r"^\s*(?:\*\*|__)(?P<text>.+?)(?:\*\*|__)\s*$")
 _NUMBERED_PREFIX = re.compile(r"^\s*\d{1,3}(?:[.、]|\))\s*(?P<text>\S.*)$")
+_INTERROGATIVE_START = re.compile(
+    r"^(?:什么|如何|为什么|怎么|哪些|是否|能否|介绍|说说|谈谈|分析)"
+)
+_QUESTION_TOPIC_END = re.compile(r"(?:区别|原理|机制)\s*[：:]?$")
+_DECLARATIVE_NUMBERED_PROSE = re.compile(
+    r"(?:取决于|通过.+实现|包括|是指|用于|表示|由.+组成)"
+)
+_ANSWER_LIST_INTRO = re.compile(
+    r"(?:答案|要点|原因|步骤|类型|特点|优势|劣势|场景|条件|组成)"
+    r".{0,8}(?:如下|包括|有|分为)\s*[：:]?\s*$"
+)
 
 
 class CurationPlanningError(ValueError):
@@ -51,7 +62,8 @@ def plan_curation_discovery(
     """Assign every atomic section to exactly one deterministic range or model window."""
     _validate_atomic_sections(sections)
     deterministic_units: list[DeterministicSeedUnit] = []
-    model_sections: list[tuple[SourceSection, ...]] = []
+    model_units: list[DiscoveryUnit] = []
+    next_unit_index = 0
 
     cursor = 0
     while cursor < len(sections):
@@ -60,13 +72,15 @@ def plan_curation_discovery(
         while end < len(sections) and sections[end].source_id == source_id:
             end += 1
         source_sections = sections[cursor:end]
-        anchor_indexes = [
-            index
-            for index, section in enumerate(source_sections)
-            if _is_question_anchor(section)
-        ]
+        anchor_indexes = _question_anchor_indexes(source_sections)
         first_anchor = anchor_indexes[0] if anchor_indexes else len(source_sections)
-        model_sections.extend(_pack_model_sections(source_sections[:first_anchor]))
+        for packed in _pack_model_sections(source_sections[:first_anchor]):
+            model_units.append(DiscoveryUnit(
+                unit_index=next_unit_index,
+                sections=packed,
+                input_digest=_sections_digest(packed),
+            ))
+            next_unit_index += 1
         for anchor_position, start in enumerate(anchor_indexes):
             stop = (
                 anchor_indexes[anchor_position + 1]
@@ -75,11 +89,6 @@ def plan_curation_discovery(
             )
             full_question_range = source_sections[start:stop]
             question_range = full_question_range[:MAX_QUESTION_SEED_SOURCE_REFS]
-            model_sections.extend(
-                _pack_model_sections(
-                    full_question_range[MAX_QUESTION_SEED_SOURCE_REFS:]
-                )
-            )
             source_refs = tuple(section.ref for section in question_range)
             seed = QuestionSeed(
                 question_text=_question_text(question_range[0]),
@@ -87,36 +96,58 @@ def plan_curation_discovery(
                 source_refs=list(source_refs),
             )
             deterministic_units.append(DeterministicSeedUnit(
-                unit_index=len(deterministic_units),
+                unit_index=next_unit_index,
                 seeds=(seed,),
                 source_refs=source_refs,
                 input_digest=_sections_digest(question_range),
             ))
+            next_unit_index += 1
+            for packed in _pack_model_sections(
+                full_question_range[MAX_QUESTION_SEED_SOURCE_REFS:]
+            ):
+                model_units.append(DiscoveryUnit(
+                    unit_index=next_unit_index,
+                    sections=packed,
+                    input_digest=_sections_digest(packed),
+                ))
+                next_unit_index += 1
         cursor = end
 
-    model_units = tuple(
-        DiscoveryUnit(
-            unit_index=index,
-            sections=packed,
-            input_digest=_sections_digest(packed),
-        )
-        for index, packed in enumerate(model_sections)
-    )
     plan = CurationDiscoveryPlan(
         deterministic_units=tuple(deterministic_units),
-        model_units=model_units,
+        model_units=tuple(model_units),
         covered_source_refs=tuple(section.ref for section in sections),
     )
     _validate_coverage(sections, plan)
     return plan
 
 
-def _is_question_anchor(section: SourceSection) -> bool:
+def _question_anchor_indexes(
+    sections: tuple[SourceSection, ...],
+) -> list[int]:
+    indexes: list[int] = []
+    inside_answer_list = False
+    for index, section in enumerate(sections):
+        first_line = section.text.splitlines()[0].strip()
+        if _NUMBERED_PREFIX.match(first_line):
+            has_question_mark = _question_text(section).endswith(("?", "？"))
+            if _numbered_question(first_line, _QUESTION_CUES) and (
+                not inside_answer_list or has_question_mark
+            ):
+                indexes.append(index)
+                inside_answer_list = _has_answer_list_intro(section)
+            continue
+        if _is_non_numbered_question_anchor(section):
+            indexes.append(index)
+        inside_answer_list = _has_answer_list_intro(section)
+    return indexes
+
+
+def _is_non_numbered_question_anchor(section: SourceSection) -> bool:
     first_line = section.text.splitlines()[0].strip()
     return (
         _question_text(section).endswith(("?", "？"))
         or _question_heading(first_line, _QUESTION_CUES)
-        or _numbered_question(first_line, _QUESTION_CUES)
     )
 
 
@@ -133,7 +164,21 @@ def _numbered_question(first_line: str, cues: re.Pattern[str]) -> bool:
     if match is None:
         return False
     text = match.group("text").strip()
-    return text.endswith(("?", "？")) or cues.search(text) is not None
+    if text.endswith(("?", "？")):
+        return True
+    if cues.search(text) is None or _DECLARATIVE_NUMBERED_PROSE.search(text):
+        return False
+    return (
+        _INTERROGATIVE_START.match(text) is not None
+        or _QUESTION_TOPIC_END.search(text) is not None
+    )
+
+
+def _has_answer_list_intro(section: SourceSection) -> bool:
+    return any(
+        _ANSWER_LIST_INTRO.search(line.strip())
+        for line in section.text.splitlines()
+    )
 
 
 def _question_text(section: SourceSection) -> str:

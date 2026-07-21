@@ -179,6 +179,15 @@ def test_question_seed_preserves_legacy_primary_ref_and_normalizes_duplicates() 
         "s1#section-0002",
         "s1#section-0003",
     ]
+    repeated = QuestionSeed.model_validate({
+        "question_text": "什么是 MVCC？",
+        "source_ref": "s1#section-0001",
+        "source_refs": [
+            "s1#section-0001" if index % 2 else "s1#section-0002"
+            for index in range(1, 34)
+        ],
+    })
+    assert repeated.source_refs == ["s1#section-0001", "s1#section-0002"]
     with pytest.raises(ValidationError, match="primary source ref must be first"):
         QuestionSeed.model_validate({
             "question_text": "什么是 MVCC？",
