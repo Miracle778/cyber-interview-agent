@@ -57,14 +57,13 @@ class ChatModelResolver:
                 model=model.model_id,
                 api_key=api_key,
                 request_timeout=30,
-                max_tokens=2048,
                 stream_usage=True,
                 **options,
             )
         if provider.api_format == "anthropic-compatible":
             budgets = {"low": 1024, "medium": 4096, "high": 8192}
             options = {}
-            max_tokens = 2048
+            max_tokens = 8192
             if reasoning_effort != "none":
                 budget = budgets[reasoning_effort]
                 options["thinking"] = {
