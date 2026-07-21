@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from hashlib import sha256
@@ -18,27 +19,41 @@ from app.agents.question_curation_contracts import (
     QuestionSeed,
     QuestionSeedChunk,
 )
-from app.review.curation_sections import (
-    SourceSection,
-    pack_discovery_units,
-    section_sources,
+from app.review.curation_planner import plan_curation_discovery
+from app.review.curation_scheduler import (
+    CurationWaveResult,
+    curation_error_code,
+    is_curation_overload_error,
+    run_curation_wave,
 )
-from app.review.question_similarity import same_question
+from app.review.curation_sections import SourceSection, section_sources
+from app.review.question_similarity import question_similarity, same_question
 from app.review.repository import ReviewRepository
 
 
-class QuestionCurationState(TypedDict, total=False):
+class CurationWaveFailed(RuntimeError):
+    def __init__(self, error_code: str) -> None:
+        self.code = error_code
+        super().__init__("curation work wave failed")
+
+
+class QuestionCurationInput(TypedDict, total=False):
     batch_id: str
     source_excerpts: list[str]
     similar_questions: list[str]
     rewrite_feedback: str | None
     revision_candidate_id: str | None
+
+
+class QuestionCurationState(TypedDict, total=False):
+    batch_id: str
+    revision_candidate_id: str | None
     discovery_work_item_ids: list[str]
     enrichment_work_item_ids: list[str]
-    current_unit_index: int
     generation_phase: Literal["discovery", "enrichment"]
     completed_units: int
     total_units: int
+    generated_candidate_count: int
     candidates: list[dict[str, Any]]
     warnings: list[dict[str, object]]
 
@@ -49,8 +64,12 @@ def create_question_curation_graph(
     repository: ReviewRepository,
     checkpointer=None,
 ):
+    invocation_inputs: dict[
+        str, tuple[tuple[str, ...], tuple[str, ...]]
+    ] = {}
+
     async def revise_one(
-        state: QuestionCurationState,
+        state: QuestionCurationInput,
         config: RunnableConfig,
         runtime: Runtime[AgentContext],
     ) -> dict[str, object]:
@@ -65,44 +84,81 @@ def create_question_curation_graph(
             "generation_phase": "enrichment",
             "completed_units": 1,
             "total_units": 1,
+            "generated_candidate_count": 1,
             "warnings": [],
         }
 
-    async def plan_sections(state: QuestionCurationState) -> dict[str, object]:
+    async def plan_sections(state: QuestionCurationInput) -> dict[str, object]:
         batch_id = _batch_id(state)
-        units = _discovery_units(state)
-        items = [
-            repository.plan_curation_work_item(
+        source_excerpts = tuple(state.get("source_excerpts", ()))
+        invocation_inputs[batch_id] = (
+            source_excerpts,
+            tuple(state.get("similar_questions", ())),
+        )
+        plan = plan_curation_discovery(section_sources(source_excerpts))
+        items = []
+        for unit in plan.deterministic_units:
+            item = repository.plan_curation_work_item(
+                batch_id=batch_id,
+                stage="discovery",
+                unit_index=unit.unit_index,
+                input_digest=unit.input_digest,
+                source_refs=unit.source_refs,
+                processor_kind="deterministic",
+            )
+            if item.status != "completed":
+                item = repository.complete_deterministic_curation_work_item(
+                    item.id,
+                    output=QuestionSeedChunk(seeds=list(unit.seeds)).model_dump(
+                        mode="json"
+                    ),
+                )
+            items.append(item)
+        for unit in plan.model_units:
+            items.append(repository.plan_curation_work_item(
                 batch_id=batch_id,
                 stage="discovery",
                 unit_index=unit.unit_index,
                 input_digest=unit.input_digest,
                 source_refs=tuple(section.ref for section in unit.sections),
-            )
-            for unit in units
-        ]
+                processor_kind="model",
+            ))
+        items.sort(key=lambda item: item.unit_index)
         return {
             "discovery_work_item_ids": [item.id for item in items],
-            "current_unit_index": 0,
             "generation_phase": "discovery",
             "completed_units": sum(item.status == "completed" for item in items),
             "total_units": len(items),
+            "generated_candidate_count": 0,
             "warnings": [],
         }
 
-    async def discover_next(
+    async def discover_wave(
         state: QuestionCurationState,
         config: RunnableConfig,
         runtime: Runtime[AgentContext],
     ) -> dict[str, object]:
-        ids = state.get("discovery_work_item_ids", [])
-        index = int(state.get("current_unit_index", 0))
-        if index >= len(ids):
-            return {"completed_units": len(ids), "total_units": len(ids)}
-        item = repository.get_curation_work_item(ids[index])
-        if item.status != "completed":
-            running = repository.start_curation_work_item(item.id)
-            unit = _discovery_units(state)[running.unit_index]
+        batch_id = _batch_id(state)
+        plan = plan_curation_discovery(
+            _sections_for_batch(repository, invocation_inputs, batch_id)
+        )
+        units = {unit.unit_index: unit for unit in plan.model_units}
+        limit = repository.get_batch(batch_id).concurrency_limit
+        pending_ids = tuple(
+            item_id
+            for item_id in state.get("discovery_work_item_ids", [])
+            if (
+                (item := repository.get_curation_work_item(item_id)).processor_kind
+                == "model"
+                and item.status != "completed"
+            )
+        )[:limit]
+
+        async def worker(work_item_id: str) -> None:
+            running = repository.start_curation_work_item(work_item_id)
+            if running.status == "completed":
+                return
+            unit = units[running.unit_index]
             try:
                 output = await agents.discover(
                     unit.sections,
@@ -113,22 +169,30 @@ def create_question_curation_graph(
                 repository.complete_curation_work_item(
                     running.id, output=output.model_dump(mode="json")
                 )
-            except Exception as error:
-                repository.fail_curation_work_item(
-                    running.id, error_code=_error_code(error)
+            except asyncio.CancelledError:
+                repository.interrupt_running_curation_work_items(
+                    batch_id, error_code="curation_interrupted"
                 )
                 raise
-        completed = sum(
-            candidate.status == "completed"
-            for candidate in repository.list_curation_work_items(
-                _batch_id(state), stage="discovery"
-            )
+            except Exception as error:
+                if repository.get_curation_work_item(running.id).status == "running":
+                    repository.fail_curation_work_item(
+                        running.id, error_code=curation_error_code(error)
+                    )
+                raise
+
+        result = await run_curation_wave(
+            pending_ids,
+            limit=limit,
+            worker=worker,
         )
+        _raise_wave_failure(repository, batch_id, result)
+        items = repository.list_curation_work_items(batch_id, stage="discovery")
         return {
-            "current_unit_index": index + 1,
             "generation_phase": "discovery",
-            "completed_units": completed,
-            "total_units": len(ids),
+            "completed_units": sum(item.status == "completed" for item in items),
+            "total_units": len(items),
+            "generated_candidate_count": 0,
         }
 
     async def plan_enrichment(state: QuestionCurationState) -> dict[str, object]:
@@ -149,55 +213,68 @@ def create_question_curation_graph(
                 sort_keys=True,
                 separators=(",", ":"),
             )
+            source_refs = tuple(dict.fromkeys(
+                ref for seed in chunk for ref in seed.source_refs
+            ))
             items.append(repository.plan_curation_work_item(
                 batch_id=batch_id,
                 stage="enrichment",
                 unit_index=unit_index,
                 input_digest=sha256(encoded.encode("utf-8")).hexdigest(),
-                source_refs=tuple(seed.source_ref for seed in chunk),
+                source_refs=source_refs,
+                processor_kind="model",
             ))
         return {
             "enrichment_work_item_ids": [item.id for item in items],
-            "current_unit_index": 0,
             "generation_phase": "enrichment",
             "completed_units": sum(item.status == "completed" for item in items),
             "total_units": len(items),
+            "generated_candidate_count": _completed_candidate_count(
+                repository, batch_id
+            ),
             "warnings": warnings,
         }
 
-    async def enrich_next(
+    async def enrich_wave(
         state: QuestionCurationState,
         config: RunnableConfig,
         runtime: Runtime[AgentContext],
     ) -> dict[str, object]:
-        ids = state.get("enrichment_work_item_ids", [])
-        index = int(state.get("current_unit_index", 0))
-        if index >= len(ids):
-            return {"completed_units": len(ids), "total_units": len(ids)}
-        item = repository.get_curation_work_item(ids[index])
-        if item.status != "completed":
-            running = repository.start_curation_work_item(item.id)
-            all_seeds = _completed_seeds(repository, _batch_id(state))[:200]
-            seeds = all_seeds[running.unit_index * 3 : running.unit_index * 3 + 3]
-            by_ref = {section.ref: section for section in _sections(state)}
-            sections = tuple(by_ref[seed.source_ref] for seed in seeds)
-            prior_questions = list(state.get("similar_questions", []))
-            for previous in repository.list_curation_work_items(
-                _batch_id(state), stage="enrichment"
-            ):
-                if previous.status != "completed" or previous.output is None:
-                    continue
-                prior_questions.extend(
-                    candidate.question_text
-                    for candidate in QuestionCandidateChunk.model_validate(
-                        previous.output
-                    ).candidates
-                )
+        batch_id = _batch_id(state)
+        all_seeds = _completed_seeds(repository, batch_id)[:200]
+        by_ref = {
+            section.ref: section
+            for section in _sections_for_batch(
+                repository, invocation_inputs, batch_id
+            )
+        }
+        known_questions = _prefilter_similar_titles(
+            all_seeds,
+            _similar_titles_for_batch(repository, invocation_inputs, batch_id),
+        )
+        limit = repository.get_batch(batch_id).concurrency_limit
+        pending_ids = tuple(
+            item_id
+            for item_id in state.get("enrichment_work_item_ids", [])
+            if repository.get_curation_work_item(item_id).status != "completed"
+        )[:limit]
+
+        async def worker(work_item_id: str) -> None:
+            running = repository.start_curation_work_item(work_item_id)
+            if running.status == "completed":
+                return
+            seeds = all_seeds[
+                running.unit_index * 3 : running.unit_index * 3 + 3
+            ]
+            section_refs = tuple(dict.fromkeys(
+                ref for seed in seeds for ref in seed.source_refs
+            ))
+            sections = tuple(by_ref[ref] for ref in section_refs)
             try:
                 output = await agents.enrich(
                     seeds,
                     sections=sections,
-                    known_questions=tuple(prior_questions),
+                    known_questions=known_questions,
                     context=runtime.context,
                     config=dict(config),
                     unit_index=running.unit_index,
@@ -205,22 +282,32 @@ def create_question_curation_graph(
                 repository.complete_curation_work_item(
                     running.id, output=output.model_dump(mode="json")
                 )
-            except Exception as error:
-                repository.fail_curation_work_item(
-                    running.id, error_code=_error_code(error)
+            except asyncio.CancelledError:
+                repository.interrupt_running_curation_work_items(
+                    batch_id, error_code="curation_interrupted"
                 )
                 raise
-        completed = sum(
-            candidate.status == "completed"
-            for candidate in repository.list_curation_work_items(
-                _batch_id(state), stage="enrichment"
-            )
+            except Exception as error:
+                if repository.get_curation_work_item(running.id).status == "running":
+                    repository.fail_curation_work_item(
+                        running.id, error_code=curation_error_code(error)
+                    )
+                raise
+
+        result = await run_curation_wave(
+            pending_ids,
+            limit=limit,
+            worker=worker,
         )
+        _raise_wave_failure(repository, batch_id, result)
+        items = repository.list_curation_work_items(batch_id, stage="enrichment")
         return {
-            "current_unit_index": index + 1,
             "generation_phase": "enrichment",
-            "completed_units": completed,
-            "total_units": len(ids),
+            "completed_units": sum(item.status == "completed" for item in items),
+            "total_units": len(items),
+            "generated_candidate_count": _completed_candidate_count(
+                repository, batch_id
+            ),
         }
 
     async def reduce_candidates(state: QuestionCurationState) -> dict[str, object]:
@@ -230,7 +317,9 @@ def create_question_curation_graph(
         ):
             if item.status != "completed" or item.output is None:
                 continue
-            for candidate in QuestionCandidateChunk.model_validate(item.output).candidates:
+            for candidate in QuestionCandidateChunk.model_validate(
+                item.output
+            ).candidates:
                 existing_index = next(
                     (
                         position
@@ -249,59 +338,83 @@ def create_question_curation_graph(
                     continue
                 existing = candidates[existing_index]
                 candidates[existing_index] = existing.model_copy(update={
-                    "source_refs": list(dict.fromkeys([*existing.source_refs, *candidate.source_refs])),
-                    "key_points": list(dict.fromkeys([*existing.key_points, *candidate.key_points])),
-                    "follow_ups": list(dict.fromkeys([*existing.follow_ups, *candidate.follow_ups])),
+                    "source_refs": list(dict.fromkeys([
+                        *existing.source_refs, *candidate.source_refs
+                    ])),
+                    "key_points": list(dict.fromkeys([
+                        *existing.key_points, *candidate.key_points
+                    ])),
+                    "follow_ups": list(dict.fromkeys([
+                        *existing.follow_ups, *candidate.follow_ups
+                    ])),
                 })
         batch = QuestionCandidateBatch(candidates=candidates[:200])
+        total = len(state.get("enrichment_work_item_ids", []))
+        generated_candidate_count = _completed_candidate_count(
+            repository, _batch_id(state)
+        )
+        invocation_inputs.pop(_batch_id(state), None)
         return {
             "candidates": batch.model_dump(mode="json")["candidates"],
             "generation_phase": "enrichment",
-            "completed_units": len(state.get("enrichment_work_item_ids", [])),
-            "total_units": len(state.get("enrichment_work_item_ids", [])),
+            "completed_units": total,
+            "total_units": total,
+            "generated_candidate_count": generated_candidate_count,
         }
 
-    def route_mode(state: QuestionCurationState) -> str:
+    def route_mode(state: QuestionCurationInput) -> str:
         return "revision" if state.get("revision_candidate_id") else "curate"
 
     def discovery_route(state: QuestionCurationState) -> str:
         return (
-            "done"
-            if int(state.get("current_unit_index", 0))
-            >= len(state.get("discovery_work_item_ids", []))
-            else "pending"
+            "pending"
+            if any(
+                repository.get_curation_work_item(item_id).status != "completed"
+                for item_id in state.get("discovery_work_item_ids", [])
+            )
+            else "done"
         )
 
     def enrichment_route(state: QuestionCurationState) -> str:
         return (
-            "done"
-            if int(state.get("current_unit_index", 0))
-            >= len(state.get("enrichment_work_item_ids", []))
-            else "pending"
+            "pending"
+            if any(
+                repository.get_curation_work_item(item_id).status != "completed"
+                for item_id in state.get("enrichment_work_item_ids", [])
+            )
+            else "done"
         )
 
-    graph = StateGraph(QuestionCurationState, context_schema=AgentContext)
-    graph.add_node("revise_one", revise_one)
-    graph.add_node("plan_sections", plan_sections)
-    graph.add_node("discover_next", discover_next)
+    graph = StateGraph(
+        QuestionCurationState,
+        context_schema=AgentContext,
+        input_schema=QuestionCurationInput,
+    )
+    graph.add_node(
+        "revise_one", revise_one, input_schema=QuestionCurationInput
+    )
+    graph.add_node(
+        "plan_sections", plan_sections, input_schema=QuestionCurationInput
+    )
+    graph.add_node("discover_wave", discover_wave)
     graph.add_node("plan_enrichment", plan_enrichment)
-    graph.add_node("enrich_next", enrich_next)
+    graph.add_node("enrich_wave", enrich_wave)
     graph.add_node("reduce_candidates", reduce_candidates)
     graph.add_conditional_edges(
         START, route_mode, {"revision": "revise_one", "curate": "plan_sections"}
     )
     graph.add_edge("revise_one", END)
-    graph.add_edge("plan_sections", "discover_next")
+    graph.add_edge("plan_sections", "discover_wave")
     graph.add_conditional_edges(
-        "discover_next",
+        "discover_wave",
         discovery_route,
-        {"pending": "discover_next", "done": "plan_enrichment"},
+        {"pending": "discover_wave", "done": "plan_enrichment"},
     )
-    graph.add_edge("plan_enrichment", "enrich_next")
+    graph.add_edge("plan_enrichment", "enrich_wave")
     graph.add_conditional_edges(
-        "enrich_next",
+        "enrich_wave",
         enrichment_route,
-        {"pending": "enrich_next", "done": "reduce_candidates"},
+        {"pending": "enrich_wave", "done": "reduce_candidates"},
     )
     graph.add_edge("reduce_candidates", END)
     return graph.compile(checkpointer=checkpointer).with_config(
@@ -309,19 +422,45 @@ def create_question_curation_graph(
     )
 
 
-def _batch_id(state: QuestionCurationState) -> str:
+def _batch_id(state: QuestionCurationState | QuestionCurationInput) -> str:
     batch_id = str(state.get("batch_id", ""))
     if not batch_id:
         raise ValueError("question curation batch is missing")
     return batch_id
 
 
-def _sections(state: QuestionCurationState) -> tuple[SourceSection, ...]:
-    return section_sources(tuple(state.get("source_excerpts", ())))
+def _sections_for_batch(
+    repository: ReviewRepository,
+    invocation_inputs: dict[str, tuple[tuple[str, ...], tuple[str, ...]]],
+    batch_id: str,
+) -> tuple[SourceSection, ...]:
+    cached = invocation_inputs.get(batch_id)
+    if cached is not None:
+        return section_sources(cached[0])
+    persisted = repository.curation_batch_input(batch_id)
+    source_excerpts = persisted.get("source_excerpts")
+    if not isinstance(source_excerpts, list) or not all(
+        isinstance(value, str) for value in source_excerpts
+    ):
+        raise ValueError("question curation source input is missing")
+    return section_sources(tuple(source_excerpts))
 
 
-def _discovery_units(state: QuestionCurationState):
-    return pack_discovery_units(_sections(state))
+def _similar_titles_for_batch(
+    repository: ReviewRepository,
+    invocation_inputs: dict[str, tuple[tuple[str, ...], tuple[str, ...]]],
+    batch_id: str,
+) -> tuple[str, ...]:
+    cached = invocation_inputs.get(batch_id)
+    if cached is not None:
+        return cached[1]
+    persisted = repository.curation_batch_input(batch_id)
+    similar_questions = persisted.get("similar_questions", [])
+    if not isinstance(similar_questions, list) or not all(
+        isinstance(value, str) for value in similar_questions
+    ):
+        raise ValueError("question curation similar-title input is invalid")
+    return tuple(similar_questions)
 
 
 def _completed_seeds(
@@ -341,7 +480,51 @@ def _completed_seeds(
     return seeds
 
 
-def _error_code(error: Exception) -> str:
-    raw = str(getattr(error, "code", "curation_work_item_failed")).lower()
-    normalized = re.sub(r"[^a-z0-9_]+", "_", raw).strip("_")[:100]
-    return normalized if re.match(r"^[a-z]", normalized) else "curation_work_item_failed"
+def _completed_candidate_count(
+    repository: ReviewRepository, batch_id: str
+) -> int:
+    return sum(
+        len(QuestionCandidateChunk.model_validate(item.output).candidates)
+        for item in repository.list_curation_work_items(
+            batch_id, stage="enrichment"
+        )
+        if item.status == "completed" and item.output is not None
+    )
+
+
+def _prefilter_similar_titles(
+    seeds: list[QuestionSeed], titles: tuple[str, ...], *, limit: int = 20
+) -> tuple[str, ...]:
+    unique_titles = tuple(dict.fromkeys(
+        title.strip() for title in titles if title.strip()
+    ))
+    ranked = sorted(
+        enumerate(unique_titles),
+        key=lambda entry: (
+            -max(
+                (
+                    question_similarity(seed.question_text, entry[1])
+                    for seed in seeds
+                ),
+                default=0.0,
+            ),
+            entry[0],
+        ),
+    )
+    return tuple(title for _index, title in ranked[:limit])
+
+
+def _raise_wave_failure(
+    repository: ReviewRepository,
+    batch_id: str,
+    result: CurationWaveResult,
+) -> None:
+    if not result.failed:
+        return
+    error_codes = tuple(error_code for _item_id, error_code in result.failed)
+    overload = next(
+        (code for code in error_codes if is_curation_overload_error(code)), None
+    )
+    if overload is not None:
+        repository.reduce_curation_concurrency(batch_id, error_code=overload)
+    raise CurationWaveFailed(error_codes[0])

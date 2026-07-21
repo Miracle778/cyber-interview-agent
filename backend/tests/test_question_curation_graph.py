@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -30,6 +31,10 @@ class FakeProviderError(RuntimeError):
     code = "provider_error"
 
 
+class FakeRateLimitedError(RuntimeError):
+    code = "rate_limited"
+
+
 @dataclass(frozen=True, slots=True)
 class DiscoveryCall:
     unit_index: int
@@ -40,6 +45,8 @@ class DiscoveryCall:
 class EnrichmentCall:
     unit_index: int
     seeds: tuple[QuestionSeed, ...]
+    sections: tuple[SourceSection, ...] = ()
+    known_questions: tuple[str, ...] = ()
 
 
 class RecordingCurationAgents:
@@ -63,7 +70,12 @@ class RecordingCurationAgents:
         return output
 
     async def enrich(self, seeds, *, sections, known_questions, context, config, unit_index):
-        self.enrichment_calls.append(EnrichmentCall(unit_index, tuple(seeds)))
+        self.enrichment_calls.append(EnrichmentCall(
+            unit_index,
+            tuple(seeds),
+            tuple(sections),
+            tuple(known_questions),
+        ))
         output = next(self._enrichment_outputs)
         if isinstance(output, Exception):
             raise output
@@ -112,6 +124,13 @@ def dense_source(question_count: int) -> str:
         f"{index}、问题 {index}？\n答案 {index}"
         for index in range(1, question_count + 1)
     )
+
+
+def plain_sources(count: int) -> list[str]:
+    return [
+        f"plain-{index}:article.md\n" + (f"普通说明段落 {index}。" * 450)
+        for index in range(count)
+    ]
 
 
 def curation_input(batch_id: str, *, section_count: int = 2) -> dict[str, object]:
@@ -233,6 +252,26 @@ def test_question_curation_agents_use_stage_specific_retry_policies() -> None:
     ) == (4_096, 180, 0)
 
 
+@pytest.mark.parametrize("_transport_failure", ["429", "5xx", "network"])
+def test_curation_transport_failures_have_at_most_one_retry(
+    _transport_failure: str,
+) -> None:
+    class RecordingFactory:
+        def __init__(self):
+            self.specs = []
+
+        def create(self, spec, **_kwargs):
+            self.specs.append(spec)
+            return object()
+
+    factory = RecordingFactory()
+    QuestionCurationAgents.create(factory, model_bindings={})
+
+    discovery, enrichment, _revision = factory.specs
+    assert discovery.invocation_policy.max_retries == 1
+    assert enrichment.invocation_policy.max_retries == 1
+
+
 def test_question_curation_prompts_describe_multi_ref_bounds() -> None:
     assert "20" in QUESTION_DISCOVERY_PROMPT.system
     assert "当前窗口" in QUESTION_DISCOVERY_PROMPT.system
@@ -246,49 +285,421 @@ async def test_graph_runs_bounded_discovery_then_enrichment(
     repository: ReviewRepository, batch, tmp_path: Path
 ):
     agents = RecordingCurationAgents(
-        discovery_outputs=[QuestionSeedChunk(seeds=[seed(1), seed(2)])],
+        discovery_outputs=[QuestionSeedChunk(seeds=[QuestionSeed(
+            question_text="普通说明主题的机制是什么？",
+            source_ref="plain-0#section-0001",
+        )])],
         enrichment_outputs=[
-            QuestionCandidateChunk(candidates=[candidate(1), candidate(2)])
+            QuestionCandidateChunk(candidates=[candidate(1)])
         ],
     )
     graph = create_question_curation_graph(agents, repository=repository)
     result = await graph.ainvoke(
-        curation_input(batch.id), context=context(tmp_path)
+        {**curation_input(batch.id), "source_excerpts": plain_sources(1)},
+        context=context(tmp_path),
     )
 
     assert len(agents.discovery_calls) == 1
     assert len(agents.discovery_calls[0].sections) <= 6
     assert len(agents.enrichment_calls) == 1
     assert len(agents.enrichment_calls[0].seeds) <= 3
-    assert len(result["candidates"]) == 2
+    assert len(result["candidates"]) == 1
     assert result["generation_phase"] == "enrichment"
+
+
+@pytest.mark.asyncio
+async def test_structured_units_complete_without_discovery_agent_calls(
+    repository: ReviewRepository, batch, tmp_path: Path
+):
+    agents = RecordingCurationAgents(
+        enrichment_outputs=[
+            QuestionCandidateChunk(candidates=[candidate(1), candidate(2)])
+        ]
+    )
+    graph = create_question_curation_graph(agents, repository=repository)
+
+    result = await graph.ainvoke(
+        curation_input(batch.id, section_count=2), context=context(tmp_path)
+    )
+
+    discovery_items = repository.list_curation_work_items(
+        batch.id, stage="discovery"
+    )
+    assert agents.discovery_calls == []
+    assert all(item.processor_kind == "deterministic" for item in discovery_items)
+    assert all(item.status == "completed" for item in discovery_items)
+    assert all(item.attempt_count == 0 for item in discovery_items)
+    assert len(result["candidates"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_discovery_wave_runs_three_provider_calls_concurrently(
+    repository: ReviewRepository, batch, tmp_path: Path
+):
+    class BarrierAgents(RecordingCurationAgents):
+        def __init__(self):
+            super().__init__(
+                enrichment_outputs=[
+                    QuestionCandidateChunk(candidates=[]),
+                    QuestionCandidateChunk(candidates=[]),
+                ]
+            )
+            self.active = 0
+            self.peak = 0
+            self.first_wave_started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def discover(self, sections, *, context, config, unit_index):
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            self.discovery_calls.append(DiscoveryCall(unit_index, tuple(sections)))
+            if self.active == 3:
+                self.first_wave_started.set()
+            try:
+                await self.release.wait()
+                return QuestionSeedChunk(seeds=[QuestionSeed(
+                    question_text=f"说明主题 {unit_index} 的机制是什么？",
+                    source_ref=sections[0].ref,
+                    source_refs=[section.ref for section in sections],
+                )])
+            finally:
+                self.active -= 1
+
+    agents = BarrierAgents()
+    graph = create_question_curation_graph(agents, repository=repository)
+    task = asyncio.create_task(graph.ainvoke(
+        {
+            **curation_input(batch.id),
+            "source_excerpts": plain_sources(6),
+        },
+        context=context(tmp_path),
+    ))
+
+    await asyncio.wait_for(agents.first_wave_started.wait(), timeout=1)
+    assert agents.peak == 3
+    agents.release.set()
+    result = await asyncio.wait_for(task, timeout=2)
+
+    assert agents.peak == 3
+    assert len(agents.discovery_calls) == 6
+    assert result["generated_candidate_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_graph_emits_monotonic_progress_after_each_bounded_wave(
+    repository: ReviewRepository, batch, tmp_path: Path
+):
+    class ProgressAgents(RecordingCurationAgents):
+        def __init__(self):
+            super().__init__()
+
+        async def discover(self, sections, *, context, config, unit_index):
+            self.discovery_calls.append(DiscoveryCall(unit_index, tuple(sections)))
+            return QuestionSeedChunk(seeds=[QuestionSeed(
+                question_text=f"说明主题 {unit_index} 的机制是什么？",
+                source_ref=sections[0].ref,
+                source_refs=[section.ref for section in sections],
+            )])
+
+        async def enrich(
+            self, seeds, *, sections, known_questions, context, config, unit_index
+        ):
+            self.enrichment_calls.append(EnrichmentCall(
+                unit_index, tuple(seeds), tuple(sections), tuple(known_questions)
+            ))
+            return QuestionCandidateChunk(candidates=[])
+
+    agents = ProgressAgents()
+    graph = create_question_curation_graph(agents, repository=repository)
+    discovery_completed: list[int] = []
+    async for state in graph.astream(
+        {
+            **curation_input(batch.id),
+            "source_excerpts": plain_sources(7),
+        },
+        context=context(tmp_path),
+        stream_mode="values",
+    ):
+        if state.get("generation_phase") == "discovery":
+            discovery_completed.append(int(state.get("completed_units", 0)))
+
+    assert discovery_completed == [0, 3, 6, 7]
+    assert discovery_completed == sorted(discovery_completed)
+
+
+@pytest.mark.asyncio
+async def test_discovery_wave_commits_siblings_before_reporting_one_failure(
+    repository: ReviewRepository, batch, tmp_path: Path
+):
+    class PartialFailureAgents(RecordingCurationAgents):
+        def __init__(self):
+            super().__init__()
+
+        async def discover(self, sections, *, context, config, unit_index):
+            self.discovery_calls.append(DiscoveryCall(unit_index, tuple(sections)))
+            if unit_index == 1:
+                raise FakeProviderError("private provider body")
+            await asyncio.sleep(0.01)
+            return QuestionSeedChunk(seeds=[QuestionSeed(
+                question_text=f"说明主题 {unit_index} 的机制是什么？",
+                source_ref=sections[0].ref,
+                source_refs=[section.ref for section in sections],
+            )])
+
+    agents = PartialFailureAgents()
+    graph = create_question_curation_graph(agents, repository=repository)
+
+    with pytest.raises(Exception):
+        await graph.ainvoke(
+            {
+                **curation_input(batch.id),
+                "source_excerpts": plain_sources(3),
+            },
+            context=context(tmp_path),
+        )
+
+    items = repository.list_curation_work_items(batch.id, stage="discovery")
+    assert [item.status for item in items] == ["completed", "failed", "completed"]
+    assert items[0].output is not None
+    assert items[2].output is not None
+
+
+@pytest.mark.asyncio
+async def test_final_rate_limit_reduces_only_the_current_batch_to_one(
+    repository: ReviewRepository, batch, tmp_path: Path
+):
+    class RateLimitedAgents(RecordingCurationAgents):
+        def __init__(self):
+            super().__init__()
+
+        async def discover(self, sections, *, context, config, unit_index):
+            self.discovery_calls.append(DiscoveryCall(unit_index, tuple(sections)))
+            if unit_index == 1:
+                raise FakeRateLimitedError("private provider overload response")
+            await asyncio.sleep(0.01)
+            return QuestionSeedChunk(seeds=[QuestionSeed(
+                question_text=f"说明主题 {unit_index} 的机制是什么？",
+                source_ref=sections[0].ref,
+                source_refs=[section.ref for section in sections],
+            )])
+
+    agents = RateLimitedAgents()
+    graph = create_question_curation_graph(agents, repository=repository)
+
+    with pytest.raises(Exception) as failure:
+        await graph.ainvoke(
+            {
+                **curation_input(batch.id),
+                "source_excerpts": plain_sources(3),
+            },
+            context=context(tmp_path),
+        )
+
+    assert getattr(failure.value, "code", None) == "rate_limited"
+    assert "provider overload" not in str(failure.value)
+    assert repository.get_batch(batch.id).concurrency_limit == 1
+    assert [
+        item.status
+        for item in repository.list_curation_work_items(batch.id, stage="discovery")
+    ] == ["completed", "failed", "completed"]
+
+
+@pytest.mark.asyncio
+async def test_graph_cancellation_interrupts_every_started_item(
+    repository: ReviewRepository, batch, tmp_path: Path
+):
+    class BlockingAgents(RecordingCurationAgents):
+        def __init__(self):
+            super().__init__()
+            self.active = 0
+            self.started = asyncio.Event()
+
+        async def discover(self, sections, *, context, config, unit_index):
+            self.active += 1
+            self.discovery_calls.append(DiscoveryCall(unit_index, tuple(sections)))
+            if self.active == 3:
+                self.started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                self.active -= 1
+
+    agents = BlockingAgents()
+    graph = create_question_curation_graph(agents, repository=repository)
+    task = asyncio.create_task(graph.ainvoke(
+        {
+            **curation_input(batch.id),
+            "source_excerpts": plain_sources(3),
+        },
+        context=context(tmp_path),
+    ))
+    await asyncio.wait_for(agents.started.wait(), timeout=1)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert agents.active == 0
+    assert all(
+        item.status != "running"
+        for item in repository.list_curation_work_items(batch.id)
+    )
+    assert {
+        item.status for item in repository.list_curation_work_items(batch.id)
+    } == {"interrupted"}
+
+
+@pytest.mark.asyncio
+async def test_enrichment_uses_only_bounded_active_titles_not_prior_outputs(
+    repository: ReviewRepository, batch, tmp_path: Path
+):
+    class DynamicEnrichmentAgents(RecordingCurationAgents):
+        def __init__(self):
+            super().__init__()
+
+        async def enrich(
+            self, seeds, *, sections, known_questions, context, config, unit_index
+        ):
+            self.enrichment_calls.append(EnrichmentCall(
+                unit_index,
+                tuple(seeds),
+                tuple(sections),
+                tuple(known_questions),
+            ))
+            await asyncio.sleep(0.005 if unit_index == 0 else 0)
+            return QuestionCandidateChunk(candidates=[
+                QuestionCandidate(
+                    title=f"generated-unit-{unit_index}-{ordinal}",
+                    question_text=seed_value.question_text,
+                    reference_answer="答案",
+                    topics=["topic"],
+                    difficulty="medium",
+                    key_points=["关键点"],
+                    follow_ups=[],
+                    source_refs=list(seed_value.source_refs),
+                    correction_note="结构化整理",
+                )
+                for ordinal, seed_value in enumerate(seeds)
+            ])
+
+    agents = DynamicEnrichmentAgents()
+    graph = create_question_curation_graph(agents, repository=repository)
+    result = await graph.ainvoke(
+        {
+            **curation_input(batch.id, section_count=6),
+            "similar_questions": [f"active title {index}" for index in range(100)],
+        },
+        context=context(tmp_path),
+    )
+
+    assert len(agents.enrichment_calls) == 2
+    assert all(len(call.known_questions) <= 20 for call in agents.enrichment_calls)
+    assert all(
+        tuple(section.ref for section in call.sections)
+        == tuple(dict.fromkeys(
+            ref for seed_value in call.seeds for ref in seed_value.source_refs
+        ))
+        for call in agents.enrichment_calls
+    )
+    assert all(
+        not any("generated-unit" in title for title in call.known_questions)
+        for call in agents.enrichment_calls
+    )
+    assert result["generated_candidate_count"] == 6
+
+
+@pytest.mark.asyncio
+async def test_graph_output_state_excludes_source_text_and_unbounded_titles(
+    repository: ReviewRepository, batch, tmp_path: Path
+):
+    agents = RecordingCurationAgents(
+        enrichment_outputs=[QuestionCandidateChunk(candidates=[candidate(1)])]
+    )
+    graph = create_question_curation_graph(agents, repository=repository)
+
+    result = await graph.ainvoke(
+        {
+            **curation_input(batch.id, section_count=1),
+            "similar_questions": [f"active title {index}" for index in range(100)],
+        },
+        context=context(tmp_path),
+    )
+
+    assert "source_excerpts" not in result
+    assert "similar_questions" not in result
+    assert "rewrite_feedback" not in result
+    assert set(result) <= {
+        "batch_id",
+        "revision_candidate_id",
+        "discovery_work_item_ids",
+        "enrichment_work_item_ids",
+        "generation_phase",
+        "completed_units",
+        "total_units",
+        "generated_candidate_count",
+        "candidates",
+        "warnings",
+    }
 
 
 @pytest.mark.asyncio
 async def test_retry_reuses_completed_discovery_item(
     repository: ReviewRepository, batch, tmp_path: Path
 ):
-    agents = RecordingCurationAgents(
-        discovery_outputs=[
-            QuestionSeedChunk(seeds=[seed(1)]),
-            FakeProviderError(),
-            QuestionSeedChunk(seeds=[seed(7)]),
-        ],
-        enrichment_outputs=[
-            QuestionCandidateChunk(candidates=[candidate(1), candidate(7)])
-        ],
-    )
+    class ResumeAgents(RecordingCurationAgents):
+        def __init__(self):
+            super().__init__()
+            self.attempts: dict[int, int] = {}
+
+        async def discover(self, sections, *, context, config, unit_index):
+            self.discovery_calls.append(DiscoveryCall(unit_index, tuple(sections)))
+            self.attempts[unit_index] = self.attempts.get(unit_index, 0) + 1
+            if unit_index == 1 and self.attempts[unit_index] == 1:
+                raise FakeProviderError()
+            return QuestionSeedChunk(seeds=[QuestionSeed(
+                question_text=f"普通说明主题 {unit_index} 的机制是什么？",
+                source_ref=sections[0].ref,
+                source_refs=[section.ref for section in sections],
+            )])
+
+        async def enrich(
+            self, seeds, *, sections, known_questions, context, config, unit_index
+        ):
+            self.enrichment_calls.append(EnrichmentCall(
+                unit_index, tuple(seeds), tuple(sections), tuple(known_questions)
+            ))
+            return QuestionCandidateChunk(candidates=[
+                QuestionCandidate(
+                    title=f"题目 {index}",
+                    question_text=seed_value.question_text,
+                    reference_answer="答案",
+                    topics=["topic"],
+                    difficulty="medium",
+                    key_points=["关键点"],
+                    follow_ups=[],
+                    source_refs=list(seed_value.source_refs),
+                    correction_note="结构化整理",
+                )
+                for index, seed_value in enumerate(seeds)
+            ])
+
+    agents = ResumeAgents()
     graph = create_question_curation_graph(agents, repository=repository)
-    with pytest.raises(FakeProviderError):
+    graph_input = {
+        **curation_input(batch.id),
+        "source_excerpts": plain_sources(2),
+    }
+    with pytest.raises(Exception):
         await graph.ainvoke(
-            curation_input(batch.id, section_count=7), context=context(tmp_path)
+            graph_input, context=context(tmp_path)
         )
     await graph.ainvoke(
-        curation_input(batch.id, section_count=7),
+        graph_input,
         context=replace(context(tmp_path), run_id="r2"),
     )
 
-    assert agents.discovery_call_indexes == [0, 1, 1]
+    assert agents.discovery_call_indexes.count(0) == 1
+    assert agents.discovery_call_indexes.count(1) == 2
     assert repository.list_curation_work_items(
         batch.id, stage="discovery"
     )[0].attempt_count == 1
@@ -352,7 +763,7 @@ async def test_graph_caps_dense_sources_at_200_with_explicit_warning(
     assert {warning["code"] for warning in result["warnings"]} == {
         "candidate_limit_reached"
     }
-    assert len(agents.discovery_calls) == 35
+    assert len(agents.discovery_calls) == 0
     assert len(agents.enrichment_calls) == 67
 
 
@@ -372,6 +783,30 @@ async def test_concrete_agents_reject_unknown_source_refs(tmp_path: Path):
         await agents.discover(
             (section,), context=context(tmp_path), config={}, unit_index=0
         )
+
+
+@pytest.mark.asyncio
+async def test_schema_validation_is_not_retried_by_the_curation_agent(
+    tmp_path: Path,
+):
+    class Runnable:
+        def __init__(self):
+            self.calls = 0
+
+        async def ainvoke(self, _input, config=None, *, context=None):
+            self.calls += 1
+            return {"structured_response": {"seeds": [{"source_ref": "s1"}]}}
+
+    runnable = Runnable()
+    agents = QuestionCurationAgents(runnable, runnable, runnable)
+    section = SourceSection("s1", "s1#section-0001", 1, "正文", "a" * 64)
+
+    with pytest.raises(ValidationError):
+        await agents.discover(
+            (section,), context=context(tmp_path), config={}, unit_index=0
+        )
+
+    assert runnable.calls == 1
 
 
 @pytest.mark.asyncio

@@ -117,6 +117,61 @@ def test_completed_item_cannot_be_restarted_or_overwritten(
         repository.complete_curation_work_item(completed.id, output={"seeds": []})
 
 
+def test_deterministic_item_completes_without_model_attempt(
+    repository: ReviewRepository, batch
+) -> None:
+    item = repository.plan_curation_work_item(
+        batch_id=batch.id,
+        stage="discovery",
+        unit_index=0,
+        input_digest="a" * 64,
+        source_refs=("s1#section-0001",),
+        processor_kind="deterministic",
+    )
+
+    completed = repository.complete_deterministic_curation_work_item(
+        item.id,
+        output={
+            "seeds": [
+                {"question_text": "什么是 MVCC？", "source_ref": "s1#section-0001"}
+            ]
+        },
+    )
+
+    assert completed.status == "completed"
+    assert completed.processor_kind == "deterministic"
+    assert completed.attempt_count == 0
+    assert repository.complete_deterministic_curation_work_item(
+        item.id, output=completed.output or {}
+    ) == completed
+
+
+def test_only_final_overload_reduces_this_batch_concurrency(
+    repository: ReviewRepository, batch
+) -> None:
+    unrelated = repository.create_batch(
+        workspace_id="workspace-1",
+        session_id="session-1",
+        run_id=None,
+        source_refs=("source-1",),
+        batch_id="batch-unrelated",
+    )
+
+    reduced = repository.reduce_curation_concurrency(
+        batch.id, error_code="rate_limited"
+    )
+
+    assert reduced.concurrency_limit == 1
+    assert repository.reduce_curation_concurrency(
+        batch.id, error_code="rate_limited"
+    ) == reduced
+    assert repository.get_batch(unrelated.id).concurrency_limit == 3
+    with pytest.raises(ValueError, match="overload"):
+        repository.reduce_curation_concurrency(
+            batch.id, error_code="schema_validation_error"
+        )
+
+
 def test_fail_requeue_and_legacy_reattach_use_durable_resume_history(
     repository: ReviewRepository, batch
 ) -> None:

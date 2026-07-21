@@ -613,6 +613,31 @@ class ReviewRepository:
                 raise ReviewConflictError("question batch terminal state changed")
         return self.get_batch(batch_id)
 
+    def reduce_curation_concurrency(
+        self, batch_id: str, *, error_code: str
+    ) -> QuestionBatchRecord:
+        """Persist the Batch-local fallback after a final overload failure."""
+        if error_code != "rate_limited":
+            raise ValueError("only a final overload can reduce curation concurrency")
+        with self._transaction():
+            row = self._connection.execute(
+                "SELECT concurrency_limit FROM review_question_batches WHERE id = ?",
+                (batch_id,),
+            ).fetchone()
+            if row is None:
+                raise LookupError(batch_id)
+            if row["concurrency_limit"] == 1:
+                return self.get_batch(batch_id)
+            cursor = self._connection.execute(
+                "UPDATE review_question_batches SET concurrency_limit = 1, "
+                "version = version + 1, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND concurrency_limit > 1",
+                (batch_id,),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError("question batch concurrency changed")
+        return self.get_batch(batch_id)
+
     def claim_curation_finalization(
         self, batch_id: str, execution_id: str
     ) -> tuple[str, str, int, str, tuple[str, ...]]:
@@ -1523,6 +1548,41 @@ class ReviewRepository:
             )
             if cursor.rowcount != 1:
                 raise ReviewConflictError("curation work item is not running")
+        return self.get_curation_work_item(work_item_id)
+
+    def complete_deterministic_curation_work_item(
+        self, work_item_id: str, *, output: dict[str, object]
+    ) -> CurationWorkItemRecord:
+        """Complete pure-code discovery without recording a model attempt."""
+        with self._transaction():
+            row = self._connection.execute(
+                "SELECT * FROM review_curation_work_items WHERE id = ?",
+                (work_item_id,),
+            ).fetchone()
+            if row is None:
+                raise LookupError(work_item_id)
+            record = self._curation_work_item_record(row)
+            if record.processor_kind != "deterministic":
+                raise ReviewConflictError("curation work item requires a model worker")
+            validated = self._validate_curation_work_item_output(
+                record.stage, output
+            )
+            if record.status == "completed":
+                if record.output == validated:
+                    return record
+                raise ReviewConflictError("curation work item output changed")
+            cursor = self._connection.execute(
+                "UPDATE review_curation_work_items SET status = 'completed', "
+                "output_json = ?, last_error_code = NULL, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? "
+                "AND processor_kind = 'deterministic' "
+                "AND status IN ('pending', 'failed', 'interrupted')",
+                (_canonical_json(validated), work_item_id),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError(
+                    "deterministic curation work item cannot be completed"
+                )
         return self.get_curation_work_item(work_item_id)
 
     def fail_curation_work_item(

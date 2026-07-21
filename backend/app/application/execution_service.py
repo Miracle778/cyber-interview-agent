@@ -40,6 +40,10 @@ from app.review.models import (
 )
 from app.review.models import ReviewAnswerReceipt, ReviewInputReceipt
 from app.review.errors import ReviewConflictError
+from app.review.curation_scheduler import (
+    curation_error_code,
+    is_curation_overload_error,
+)
 from app.review.repository import ReviewRepository
 from app.review.timeline import SessionTimelineProjector
 from app.profile.repository import ProfileRepository
@@ -1289,7 +1293,7 @@ class AgentExecutionService:
         projected_attempts: dict[str, str] = {}
         projected_drafts: set[str] = set()
         projected_progress: tuple[int, str] | None = None
-        projected_curation_progress: tuple[str, int, int] | None = None
+        projected_curation_progress: tuple[str, int, int, int] | None = None
         projector = AgentEventProjector()
         review_timeline = SessionTimelineProjector(
             self._repository, self._events
@@ -1338,11 +1342,33 @@ class AgentExecutionService:
                             if session.kind in {"question.curate", "question.revise"}:
                                 phase = data.get("generation_phase")
                                 if phase in {"discovery", "enrichment"}:
-                                    progress = (
+                                    raw_progress = (
                                         str(phase),
                                         int(data.get("completed_units", 0)),
                                         int(data.get("total_units", 0)),
+                                        int(data.get("generated_candidate_count", 0)),
                                     )
+                                    if (
+                                        projected_curation_progress is not None
+                                        and projected_curation_progress[0] == phase
+                                    ):
+                                        progress = (
+                                            raw_progress[0],
+                                            max(
+                                                raw_progress[1],
+                                                projected_curation_progress[1],
+                                            ),
+                                            max(
+                                                raw_progress[2],
+                                                projected_curation_progress[2],
+                                            ),
+                                            max(
+                                                raw_progress[3],
+                                                projected_curation_progress[3],
+                                            ),
+                                        )
+                                    else:
+                                        progress = raw_progress
                                     if progress != projected_curation_progress:
                                         projected_curation_progress = progress
                                         self._review_repository.update_curation_progress(
@@ -1360,6 +1386,7 @@ class AgentExecutionService:
                                                 "phase": progress[0],
                                                 "completed": progress[1],
                                                 "total": progress[2],
+                                                "generatedCandidateCount": progress[3],
                                             },
                                         )
                             if session.kind == "review.round":
@@ -1762,11 +1789,18 @@ class AgentExecutionService:
                         or execution.input.get("batchId")
                     )
                 ):
+                    curation_batch_id = str(
+                        execution.input.get("batch_id")
+                        or execution.input["batchId"]
+                    )
+                    normalized_error_code = curation_error_code(error)
+                    if is_curation_overload_error(normalized_error_code):
+                        self._review_repository.reduce_curation_concurrency(
+                            curation_batch_id,
+                            error_code=normalized_error_code,
+                        )
                     failed_batch = self._review_repository.update_batch_status(
-                        str(
-                            execution.input.get("batch_id")
-                            or execution.input["batchId"]
-                        ),
+                        curation_batch_id,
                         "failed",
                         expected_run_id=execution.id,
                     )
