@@ -579,4 +579,6 @@
 - 受影响回归：后端计划列出的 9 个套件 `152 passed`；前端 QuestionCatalog、CurationRuntimePanel、reviewApi、useAgentEvents `49 passed`。
 - 完整回归第一次为后端 `629 passed, 1 failed`，唯一失败是旧 question-batch API 仍断言生成终态 `completed`；更新为 `review_pending` 并定向通过后，第二次/最终后端 `630 passed`（1 条既有 Starlette/httpx 弃用 warning）。前端完整 `166 passed`。
 - `./node_modules/.bin/tsc --noEmit` 通过；`npm run build` 成功（保留既有 652.55 kB chunk 提示）。记录时间：2026-07-22 07:28 CST（UTC+08:00）。
+- Task 7 评审补齐人工审核终态：发布投影、正式拒绝和自由命令拒绝都在候选写事务内调用同一个 Repository 聚合器；仅当 Batch 至少有一个候选且全部为 `published/rejected` 时，原子推进 `review_pending -> completed` 并同步活动整理会话为 `completed`。
+- 新增最后发布、最后拒绝、尚有 pending、正式拒绝、并发最后两项和幂等回归；RED 为 `4 failed`，GREEN 为 `4 passed`，受影响套件 `94 passed`，最终后端 `633 passed`（1 条既有 warning）。记录时间：2026-07-22 07:44 CST（UTC+08:00）。
 - 产品成熟度：单进程 bounded scheduler，不是分布式 jobs；真实 Provider 性能、浏览器暂停/刷新/恢复/终止和真实材料完整运行未执行，也未声称通过。下一产品任务回到 R3 Task 8；非阻塞练习见本地 verification 指南。

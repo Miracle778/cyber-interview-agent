@@ -464,12 +464,24 @@ def test_batch_candidate_and_catalog_activation_are_idempotent(
     connection = _connection(tmp_path)
     _seed_publication(connection)
     repository = ReviewRepository(connection)
+    repository.create_curation_session(
+        workspace_id="w1",
+        session_id="s1",
+        source_refs=("source-1",),
+    )
     batch = repository.create_batch(
         workspace_id="w1",
         session_id="s1",
         run_id="r1",
         source_refs=("source-1",),
+        status="review_pending",
         batch_id="batch-1",
+    )
+    repository.update_curation_progress(
+        "s1",
+        stage="waiting_for_command",
+        completed_units=1,
+        total_units=1,
     )
     candidate = repository.save_candidate(
         batch_id=batch.id,
@@ -500,6 +512,188 @@ def test_batch_candidate_and_catalog_activation_are_idempotent(
     assert first.snapshot.question_id == "a"
     assert repository.get_candidate(candidate.id).status == "published"
     assert repository.list_active_questions("w1") == (first,)
+    assert repository.get_batch(batch.id).status == "completed"
+    assert repository.get_batch(batch.id).version == batch.version + 1
+    assert repository.get_curation_session("s1").stage == "completed"
+    connection.close()
+
+
+def test_curation_batch_completes_only_after_last_candidate_is_rejected(
+    tmp_path: Path,
+) -> None:
+    connection = _connection(tmp_path)
+    repository = ReviewRepository(connection)
+    repository.create_curation_session(
+        workspace_id="w1",
+        session_id="s1",
+        source_refs=("source-1",),
+    )
+    batch = repository.create_batch(
+        workspace_id="w1",
+        session_id="s1",
+        run_id="r1",
+        source_refs=("source-1",),
+        status="review_pending",
+        batch_id="batch-1",
+    )
+    repository.update_curation_progress(
+        "s1",
+        stage="waiting_for_command",
+        completed_units=2,
+        total_units=2,
+    )
+    first = repository.save_candidate(
+        batch_id=batch.id,
+        question=_snapshot("a"),
+        draft_id=None,
+        status="review_pending",
+        candidate_id="candidate-a",
+    )
+    second = repository.save_candidate(
+        batch_id=batch.id,
+        question=_snapshot("b"),
+        draft_id=None,
+        status="review_pending",
+        candidate_id="candidate-b",
+    )
+
+    repository.update_candidate_status(first.id, status="rejected")
+
+    assert repository.get_batch(batch.id).status == "review_pending"
+    assert repository.get_batch(batch.id).version == batch.version
+    assert (
+        repository.get_curation_session("s1").stage
+        == "waiting_for_command"
+    )
+
+    repository.update_candidate_status(second.id, status="rejected")
+
+    assert repository.get_batch(batch.id).status == "completed"
+    assert repository.get_batch(batch.id).version == batch.version + 1
+    assert repository.get_curation_session("s1").stage == "completed"
+    connection.close()
+
+
+def test_formal_candidate_rejection_completes_curation_batch(
+    tmp_path: Path,
+) -> None:
+    connection = _connection(tmp_path)
+    _seed_question_draft(connection, "draft-a")
+    repository = ReviewRepository(connection)
+    repository.create_curation_session(
+        workspace_id="w1",
+        session_id="s1",
+        source_refs=("source-1",),
+    )
+    batch = repository.create_batch(
+        workspace_id="w1",
+        session_id="s1",
+        run_id="r1",
+        source_refs=("source-1",),
+        status="review_pending",
+        batch_id="batch-1",
+    )
+    repository.update_curation_progress(
+        "s1",
+        stage="waiting_for_command",
+        completed_units=1,
+        total_units=1,
+    )
+    repository.save_candidate(
+        batch_id=batch.id,
+        question=_snapshot("a"),
+        draft_id="draft-a",
+        status="review_pending",
+        candidate_id="candidate-a",
+    )
+
+    rejected = repository.reject_candidate_for_draft(
+        "draft-a",
+        reason="用户拒绝",
+        rejected_at="2026-07-22T12:00:00+08:00",
+        action_id="action-reject-a",
+    )
+
+    assert rejected is not None
+    assert rejected.status == "rejected"
+    assert repository.get_batch(batch.id).status == "completed"
+    assert repository.get_curation_session("s1").stage == "completed"
+    connection.close()
+
+
+def test_concurrent_last_candidate_decisions_complete_batch_once(
+    tmp_path: Path,
+) -> None:
+    connection = _connection(tmp_path)
+    repository = ReviewRepository(connection)
+    repository.create_curation_session(
+        workspace_id="w1",
+        session_id="s1",
+        source_refs=("source-1",),
+    )
+    batch = repository.create_batch(
+        workspace_id="w1",
+        session_id="s1",
+        run_id="r1",
+        source_refs=("source-1",),
+        status="review_pending",
+        batch_id="batch-1",
+    )
+    repository.update_curation_progress(
+        "s1",
+        stage="waiting_for_command",
+        completed_units=2,
+        total_units=2,
+    )
+    for suffix in ("a", "b"):
+        repository.save_candidate(
+            batch_id=batch.id,
+            question=_snapshot(suffix),
+            draft_id=None,
+            status="review_pending",
+            candidate_id=f"candidate-{suffix}",
+        )
+
+    first_connection = connect_runtime_database(tmp_path)
+    second_connection = connect_runtime_database(tmp_path)
+    barrier = threading.Barrier(3)
+    errors: list[BaseException] = []
+
+    def reject(candidate_id: str, worker_connection) -> None:
+        try:
+            barrier.wait()
+            ReviewRepository(worker_connection).update_candidate_status(
+                candidate_id,
+                status="rejected",
+            )
+        except BaseException as error:  # pragma: no cover - asserted below
+            errors.append(error)
+
+    first_thread = threading.Thread(
+        target=reject,
+        args=("candidate-a", first_connection),
+    )
+    second_thread = threading.Thread(
+        target=reject,
+        args=("candidate-b", second_connection),
+    )
+    first_thread.start()
+    second_thread.start()
+    barrier.wait()
+    first_thread.join()
+    second_thread.join()
+
+    assert errors == []
+    completed = repository.get_batch(batch.id)
+    assert completed.status == "completed"
+    assert completed.version == batch.version + 1
+    assert repository.get_curation_session("s1").stage == "completed"
+
+    repository.update_candidate_status("candidate-a", status="rejected")
+
+    assert repository.get_batch(batch.id).version == completed.version
+    first_connection.close()
+    second_connection.close()
     connection.close()
 
 

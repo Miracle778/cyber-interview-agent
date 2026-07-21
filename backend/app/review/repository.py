@@ -2505,6 +2505,12 @@ class ReviewRepository:
         self, candidate_id: str, *, status: str
     ) -> QuestionCandidateRecord:
         with self._transaction():
+            candidate = self._connection.execute(
+                "SELECT batch_id FROM review_question_candidates WHERE id = ?",
+                (candidate_id,),
+            ).fetchone()
+            if candidate is None:
+                raise LookupError(candidate_id)
             cursor = self._connection.execute(
                 "UPDATE review_question_candidates SET status = ?, "
                 "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -2512,6 +2518,10 @@ class ReviewRepository:
             )
             if cursor.rowcount != 1:
                 raise LookupError(candidate_id)
+            if status in {"published", "rejected"}:
+                self._complete_curation_batch_if_resolved(
+                    str(candidate["batch_id"])
+                )
         return self.get_candidate(candidate_id)
 
     def reject_candidate_for_draft(
@@ -2523,14 +2533,24 @@ class ReviewRepository:
         action_id: str,
     ) -> QuestionCandidateRecord | None:
         with self._transaction():
+            candidate = self._connection.execute(
+                "SELECT id, batch_id FROM review_question_candidates "
+                "WHERE draft_id = ?",
+                (draft_id,),
+            ).fetchone()
+            if candidate is None:
+                return None
             cursor = self._connection.execute(
                 "UPDATE review_question_candidates SET status = 'rejected', "
                 "rejection_reason = ?, rejected_at = ?, rejection_action_id = ?, "
-                "updated_at = CURRENT_TIMESTAMP WHERE draft_id = ?",
-                (reason, rejected_at, action_id, draft_id),
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (reason, rejected_at, action_id, candidate["id"]),
             )
-        if cursor.rowcount == 0:
-            return None
+            if cursor.rowcount != 1:
+                raise LookupError(draft_id)
+            self._complete_curation_batch_if_resolved(
+                str(candidate["batch_id"])
+            )
         return self.get_candidate_by_draft(draft_id)
 
     def update_candidate_review_note(
@@ -2643,7 +2663,36 @@ class ReviewRepository:
                 "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (candidate_id,),
             )
+            self._complete_curation_batch_if_resolved(
+                str(candidate_row["batch_id"])
+            )
         return self._require_catalog(candidate.question.question_id)
+
+    def _complete_curation_batch_if_resolved(self, batch_id: str) -> bool:
+        cursor = self._connection.execute(
+            "UPDATE review_question_batches SET status = 'completed', "
+            "version = version + 1, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND status = 'review_pending' "
+            "AND EXISTS ("
+            "SELECT 1 FROM review_question_candidates c "
+            "WHERE c.batch_id = ?"
+            ") AND NOT EXISTS ("
+            "SELECT 1 FROM review_question_candidates c "
+            "WHERE c.batch_id = ? "
+            "AND c.status NOT IN ('published', 'rejected')"
+            ")",
+            (batch_id, batch_id, batch_id),
+        )
+        if cursor.rowcount != 1:
+            return False
+        self._connection.execute(
+            "UPDATE review_curation_sessions SET stage = 'completed', "
+            "updated_at = CURRENT_TIMESTAMP "
+            "WHERE active_batch_id = ? "
+            "AND stage IN ('waiting_for_command', 'publishing')",
+            (batch_id,),
+        )
+        return True
 
     def list_active_questions(
         self,
