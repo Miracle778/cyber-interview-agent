@@ -117,8 +117,8 @@ export function CurationRuntimePanel({ session, candidates = null, activeModelLa
         serverCurrentElapsed,
         serverCumulativeElapsed,
         observedAt: monotonicNow,
-        currentBase: executionChanged ? serverCurrentElapsed : Math.max(previousCurrent, serverCurrentElapsed),
-        cumulativeBase: Math.max(previousCumulative, serverCumulativeElapsed),
+        currentBase: !batchRunning || executionChanged ? serverCurrentElapsed : Math.max(previousCurrent, serverCurrentElapsed),
+        cumulativeBase: !batchRunning ? serverCumulativeElapsed : Math.max(previousCumulative, serverCumulativeElapsed),
         running: batchRunning,
       };
     }

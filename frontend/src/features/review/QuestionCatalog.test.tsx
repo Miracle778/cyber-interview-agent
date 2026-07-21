@@ -376,6 +376,45 @@ describe("QuestionCatalog", () => {
     await waitFor(() => expect(controlAttempts).toBe(2));
   });
 
+  it("clears a lost-response error when SSE hydration shows that the control already succeeded", async () => {
+    class ControlEventSource {
+      static instances: ControlEventSource[] = [];
+      onopen: ((event: Event) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      listeners = new Map<string, (event: MessageEvent<string>) => void>();
+      constructor(readonly url: string) { ControlEventSource.instances.push(this); }
+      addEventListener(type: string, listener: (event: MessageEvent<string>) => void) { this.listeners.set(type, listener); }
+      close() {}
+      emit(event: object) { this.listeners.get((event as { type: string }).type)?.({ data: JSON.stringify(event) } as MessageEvent<string>); }
+    }
+    vi.stubGlobal("EventSource", ControlEventSource);
+    const running = controlSession();
+    const paused = controlSession({ ...running, batchStatus: "paused", batchVersion: 7, stage: "paused", controls: { canPause: false, canResume: true, canTerminate: true } });
+    let responseLost = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/agent/sessions/cs-control") return Response.json({ id: "cs-control" });
+      if (url.includes("/api/knowledge/sources") || url.includes("/api/review/question-candidates") || url.includes("/api/settings/providers")) return Response.json([]);
+      if (url.endsWith("/pause") && init?.method === "POST") {
+        responseLost = true;
+        throw new TypeError("Failed to fetch");
+      }
+      if (url.includes("/api/review/curation-sessions")) return Response.json([responseLost ? paused : running]);
+      throw new Error(`unexpected ${url}`);
+    });
+
+    render(<QuestionCatalog workspace={workspace} />, { wrapper });
+    fireEvent.click(await screen.findByRole("button", { name: /control\.md/ }));
+    await waitFor(() => expect(ControlEventSource.instances).toHaveLength(1));
+    fireEvent.click(await screen.findByRole("button", { name: "暂停整理" }));
+    expect(await screen.findByRole("status", { name: "整理控制提示" })).toHaveTextContent("操作未完成");
+
+    ControlEventSource.instances[0].emit({ id: 11, type: "curation.control.changed", sessionId: "cs-control", executionId: "e1", timestamp: "now", payload: { resourceId: "cs-control", status: "paused", operation: "pause", version: 7 } });
+
+    expect(await screen.findByRole("button", { name: "继续整理" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("status", { name: "整理控制提示" })).toBeNull());
+  });
+
   it("refreshes the selected resource when a curation control event arrives", async () => {
     class CatalogEventSource {
       static instances: CatalogEventSource[] = [];

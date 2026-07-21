@@ -174,8 +174,8 @@ describe("CurationRuntimePanel candidate status", () => {
     monotonicNow += 5_000;
     act(() => vi.advanceTimersByTime(5_000));
 
-    expect(screen.getByText("本次运行 12 秒")).toBeInTheDocument();
-    expect(screen.getByText("累计运行 1 分 12 秒")).toBeInTheDocument();
+    expect(screen.getByText("本次运行 9 秒")).toBeInTheDocument();
+    expect(screen.getByText("累计运行 1 分 9 秒")).toBeInTheDocument();
   });
 
   it.each([
