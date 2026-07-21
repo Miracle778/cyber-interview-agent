@@ -496,6 +496,25 @@ class ReviewRepository:
     ) -> QuestionBatchRecord:
         identifier = batch_id or str(uuid4())
         with self._transaction():
+            curation = self._connection.execute(
+                "SELECT active_batch_id FROM review_curation_sessions "
+                "WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+            if curation is not None and curation["active_batch_id"] is not None:
+                active = self._connection.execute(
+                    "SELECT status FROM review_question_batches WHERE id = ?",
+                    (curation["active_batch_id"],),
+                ).fetchone()
+                if active is not None and active["status"] in {
+                    "generating",
+                    "paused",
+                    "interrupted",
+                    "failed",
+                }:
+                    raise ReviewConflictError(
+                        "curation session already has an active batch"
+                    )
             self._connection.execute(
                 "INSERT INTO review_question_batches "
                 "(id, workspace_id, session_id, origin_session_id, run_id, source_refs_json, "
@@ -511,6 +530,12 @@ class ReviewRepository:
                     status,
                 ),
             )
+            if curation is not None:
+                self._connection.execute(
+                    "UPDATE review_curation_sessions SET active_batch_id = ?, "
+                    "updated_at = CURRENT_TIMESTAMP WHERE session_id = ?",
+                    (identifier, session_id),
+                )
         return self.get_batch(identifier)
 
     def get_batch(self, batch_id: str) -> QuestionBatchRecord:
@@ -591,10 +616,11 @@ class ReviewRepository:
                 "SELECT * FROM review_curation_finalizations WHERE batch_id = ?",
                 (batch_id,),
             ).fetchone()
-            if (
-                existing is not None
-                and existing["execution_id"] == execution_id
-            ):
+            if existing is not None and existing["state"] == "committed":
+                if existing["execution_id"] != execution_id:
+                    raise ReviewConflictError(
+                        "curation finalization owner changed"
+                    )
                 return (
                     batch_id,
                     execution_id,
@@ -602,21 +628,23 @@ class ReviewRepository:
                     str(existing["state"]),
                     tuple(json.loads(existing["candidate_ids_json"])),
                 )
-
-            row = self._connection.execute(
-                "SELECT * FROM review_question_batches WHERE id = ?",
-                (batch_id,),
-            ).fetchone()
-            if row is None:
-                raise LookupError(batch_id)
-            batch = self._batch_record(row)
+            batch = self._require_curation_finalization_owner(
+                batch_id, execution_id
+            )
             if (
-                batch.run_id != execution_id
-                or batch.status != "generating"
-                or batch.control_intent is not None
+                existing is not None
+                and existing["execution_id"] == execution_id
             ):
-                raise ReviewConflictError(
-                    "question batch cannot be finalized by this execution"
+                if int(existing["batch_version"]) != batch.version:
+                    raise ReviewConflictError(
+                        "question batch finalization state changed"
+                    )
+                return (
+                    batch_id,
+                    execution_id,
+                    int(existing["batch_version"]),
+                    str(existing["state"]),
+                    tuple(json.loads(existing["candidate_ids_json"])),
                 )
             if existing is None:
                 self._connection.execute(
@@ -633,6 +661,42 @@ class ReviewRepository:
                     (execution_id, batch.version, batch_id),
                 )
             return (batch_id, execution_id, batch.version, "preparing", ())
+
+    def _require_curation_finalization_owner(
+        self, batch_id: str, execution_id: str
+    ) -> QuestionBatchRecord:
+        row = self._connection.execute(
+            "SELECT * FROM review_question_batches WHERE id = ?",
+            (batch_id,),
+        ).fetchone()
+        if row is None:
+            raise LookupError(batch_id)
+        batch = self._batch_record(row)
+        if (
+            batch.run_id != execution_id
+            or batch.status != "generating"
+            or batch.control_intent is not None
+        ):
+            raise ReviewConflictError(
+                "question batch cannot be finalized by this execution"
+            )
+        self._require_active_curation_batch(batch)
+        return batch
+
+    def _require_active_curation_batch(
+        self, batch: QuestionBatchRecord
+    ) -> None:
+        if batch.session_id is None:
+            return
+        row = self._connection.execute(
+            "SELECT active_batch_id FROM review_curation_sessions "
+            "WHERE session_id = ?",
+            (batch.session_id,),
+        ).fetchone()
+        if row is not None and row["active_batch_id"] != batch.id:
+            raise ReviewConflictError(
+                "question batch is not the active curation batch"
+            )
 
     def finalize_curation_candidates(
         self,
@@ -674,6 +738,7 @@ class ReviewRepository:
                 or batch.version != int(claim["batch_version"])
             ):
                 raise ReviewConflictError("question batch finalization state changed")
+            self._require_active_curation_batch(batch)
 
             for item in candidates:
                 draft_id = str(item["draft_id"])
@@ -681,6 +746,20 @@ class ReviewRepository:
                 if not isinstance(question, QuestionSnapshot):
                     raise TypeError("curation question must be a QuestionSnapshot")
                 draft = cast(dict[str, object], item["draft"])
+                staged = self._connection.execute(
+                    "SELECT content_path, content_hash "
+                    "FROM review_curation_staged_drafts "
+                    "WHERE draft_id = ? AND batch_id = ? AND execution_id = ?",
+                    (draft_id, batch_id, execution_id),
+                ).fetchone()
+                if (
+                    staged is None
+                    or staged["content_path"] != draft["content_path"]
+                    or staged["content_hash"] != draft["content_hash"]
+                ):
+                    raise ReviewConflictError(
+                        "curation draft staging reference changed"
+                    )
                 if self._connection.execute(
                     "SELECT 1 FROM knowledge_drafts WHERE id = ?",
                     (draft_id,),
@@ -756,22 +835,79 @@ class ReviewRepository:
                         raise ValueError(
                             "revision finalization must retain its candidate id"
                         )
+                    expected_draft_id = str(
+                        item.get("expected_revision_draft_id") or ""
+                    )
+                    expected_draft_version = item.get(
+                        "expected_revision_draft_version"
+                    )
+                    expected_draft_hash = str(
+                        item.get("expected_revision_draft_hash") or ""
+                    )
+                    if (
+                        not expected_draft_id
+                        or not isinstance(expected_draft_version, int)
+                        or expected_draft_version < 1
+                        or len(expected_draft_hash) != 64
+                    ):
+                        raise ReviewConflictError(
+                            "revision finalization base is missing"
+                        )
+                    base = self._connection.execute(
+                        "SELECT d.status FROM review_question_candidates c "
+                        "JOIN knowledge_drafts d ON d.id = c.draft_id "
+                        "WHERE c.id = ? AND c.draft_id = ? "
+                        "AND d.version = ? AND d.content_hash = ?",
+                        (
+                            candidate_id,
+                            expected_draft_id,
+                            expected_draft_version,
+                            expected_draft_hash,
+                        ),
+                    ).fetchone()
+                    if base is None:
+                        raise ReviewConflictError(
+                            "revision base changed before finalization"
+                        )
+                    if int(draft.get("version", 1)) != expected_draft_version + 1:
+                        raise ReviewConflictError(
+                            "revision draft version does not follow its base"
+                        )
                     cursor = self._connection.execute(
                         "UPDATE review_question_candidates SET draft_id = ?, "
                         "question_json = ?, source_refs_json = ?, "
                         "status = 'review_pending', updated_at = CURRENT_TIMESTAMP "
-                        "WHERE id = ? AND (batch_id = ? OR batch_id = ?)",
+                        "WHERE id = ? AND draft_id = ? "
+                        "AND (batch_id = ? OR batch_id = ?)",
                         (
                             draft_id,
                             _canonical_json(asdict(question)),
                             _canonical_json(source_refs),
                             candidate_id,
+                            expected_draft_id,
                             batch_id,
                             batch.rewrite_of_batch_id,
                         ),
                     )
                     if cursor.rowcount != 1:
                         raise LookupError(candidate_id)
+                    if base["status"] != "published":
+                        cursor = self._connection.execute(
+                            "UPDATE knowledge_drafts SET status = 'rejected', "
+                            "version = version + 1, "
+                            "updated_at = CURRENT_TIMESTAMP WHERE id = ? "
+                            "AND version = ? AND content_hash = ? "
+                            "AND status != 'published'",
+                            (
+                                expected_draft_id,
+                                expected_draft_version,
+                                expected_draft_hash,
+                            ),
+                        )
+                        if cursor.rowcount != 1:
+                            raise ReviewConflictError(
+                                "revision base changed before retirement"
+                            )
                 for link in cast(tuple[dict[str, object], ...], item["source_links"]):
                     self._connection.execute(
                         "INSERT OR IGNORE INTO review_question_source_links "
@@ -820,10 +956,12 @@ class ReviewRepository:
                     "stage = 'waiting_for_command', completed_units = 1, "
                     "total_units = 1, summary_json = ?, "
                     "summary_version = summary_version + 1, "
-                    "updated_at = CURRENT_TIMESTAMP WHERE session_id = ?",
+                    "updated_at = CURRENT_TIMESTAMP WHERE session_id = ? "
+                    "AND active_batch_id = ?",
                     (
                         _canonical_json({"items": summary.items}),
                         batch.session_id,
+                        batch.id,
                     ),
                 )
                 if cursor.rowcount != 1:
@@ -842,6 +980,11 @@ class ReviewRepository:
                 "candidate_ids_json = ?, updated_at = CURRENT_TIMESTAMP "
                 "WHERE batch_id = ? AND execution_id = ? AND state = 'preparing'",
                 (_canonical_json(candidate_ids), batch_id, execution_id),
+            )
+            self._connection.execute(
+                "DELETE FROM review_curation_staged_drafts "
+                "WHERE batch_id = ? AND execution_id = ?",
+                (batch_id, execution_id),
             )
         return tuple(self.get_candidate(value) for value in candidate_ids)
 

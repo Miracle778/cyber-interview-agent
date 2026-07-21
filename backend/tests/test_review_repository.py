@@ -100,8 +100,15 @@ def _finalization_candidate(
     candidate_id: str = "candidate-final",
     draft_id: str = "draft-final",
     run_id: str = "r1",
+    document_id: str | None = None,
+    question_id: str = "final",
+    revision_candidate_id: str | None = None,
+    expected_revision_draft_id: str | None = None,
+    expected_revision_draft_version: int | None = None,
+    expected_revision_draft_hash: str | None = None,
 ) -> dict[str, object]:
-    return {
+    resolved_document_id = document_id or f"doc-{draft_id}"
+    result: dict[str, object] = {
         "candidate_id": candidate_id,
         "draft_id": draft_id,
         "draft": {
@@ -111,7 +118,7 @@ def _finalization_candidate(
             "agent_type": "review.question_curation",
             "domain": "review",
             "document_type": "question",
-            "document_id": f"doc-{draft_id}",
+            "document_id": resolved_document_id,
             "title": f"Question {draft_id}",
             "content_path": f"artifacts/review/drafts/{draft_id}.md",
             "source_refs": ("source-1#fragment-1",),
@@ -119,8 +126,8 @@ def _finalization_candidate(
             "content_hash": "d" * 64,
         },
         "question": replace(
-            _snapshot("final"),
-            document_id=f"doc-{draft_id}",
+            _snapshot(question_id),
+            document_id=resolved_document_id,
             content_hash="d" * 64,
         ),
         "source_refs": ("source-1#fragment-1",),
@@ -129,13 +136,77 @@ def _finalization_candidate(
         "source_links": (
             {
                 "link_id": f"link-{candidate_id}",
-                "question_id": "final",
+                "question_id": question_id,
                 "source_id": "source-1",
                 "evidence_ref": "source-1#fragment-1",
                 "merge_reason": "generated_from_source",
             },
         ),
     }
+    if revision_candidate_id is not None:
+        result.update(
+            {
+                "revision_candidate_id": revision_candidate_id,
+                "expected_revision_draft_id": expected_revision_draft_id,
+                "expected_revision_draft_version": (
+                    expected_revision_draft_version
+                ),
+                "expected_revision_draft_hash": expected_revision_draft_hash,
+            }
+        )
+    return result
+
+
+def _seed_question_draft(
+    connection,
+    draft_id: str,
+    *,
+    run_id: str = "r1",
+    document_id: str = "doc-base",
+    content_hash: str = "b" * 64,
+    version: int = 1,
+) -> None:
+    connection.execute(
+        "INSERT INTO knowledge_drafts "
+        "(id, workspace_id, session_id, run_id, domain, document_type, "
+        "document_id, title, content_path, content_hash, status, version) "
+        "VALUES (?, 'w1', 's1', ?, 'review', 'question', ?, 'Base', ?, ?, "
+        "'review_pending', ?)",
+        (
+            draft_id,
+            run_id,
+            document_id,
+            f"artifacts/review/drafts/{draft_id}.md",
+            content_hash,
+            version,
+        ),
+    )
+    connection.commit()
+
+
+def _register_staging(
+    connection,
+    *,
+    batch_id: str,
+    execution_id: str,
+    candidates: tuple[dict[str, object], ...],
+) -> None:
+    for item in candidates:
+        draft = item["draft"]
+        assert isinstance(draft, dict)
+        connection.execute(
+            "INSERT INTO review_curation_staged_drafts "
+            "(draft_id, batch_id, execution_id, content_path, content_hash) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                item["draft_id"],
+                batch_id,
+                execution_id,
+                draft["content_path"],
+                draft["content_hash"],
+            ),
+        )
+    connection.commit()
 
 
 def test_curation_context_round_trips_with_compare_and_swap(
@@ -634,15 +705,22 @@ def test_curation_finalization_is_exactly_once_for_same_owner(
     )
     first_claim = repository.claim_curation_finalization(batch.id, "r1")
     replayed_claim = repository.claim_curation_finalization(batch.id, "r1")
+    candidates = (_finalization_candidate(),)
+    _register_staging(
+        connection,
+        batch_id=batch.id,
+        execution_id="r1",
+        candidates=candidates,
+    )
     first = repository.finalize_curation_candidates(
         batch.id,
         "r1",
-        candidates=(_finalization_candidate(),),
+        candidates=candidates,
     )
     replayed = repository.finalize_curation_candidates(
         batch.id,
         "r1",
-        candidates=(_finalization_candidate(),),
+        candidates=candidates,
     )
 
     assert first_claim == replayed_claim
@@ -664,6 +742,325 @@ def test_curation_finalization_is_exactly_once_for_same_owner(
         "SELECT COUNT(*) FROM review_question_source_links WHERE batch_id = ?",
         (batch.id,),
     ).fetchone()[0] == 1
+    connection.close()
+
+
+def test_preparing_finalization_claim_revalidates_control_state(
+    tmp_path: Path,
+) -> None:
+    connection = _connection(tmp_path)
+    repository = ReviewRepository(connection)
+    repository.create_curation_session(
+        workspace_id="w1", session_id="s1", source_refs=("source-1",)
+    )
+    batch = repository.create_batch(
+        workspace_id="w1",
+        session_id="s1",
+        run_id="r1",
+        source_refs=("source-1",),
+        batch_id="batch-claim-control",
+    )
+    repository.update_curation_progress(
+        "s1",
+        stage="generating",
+        completed_units=0,
+        total_units=1,
+        active_batch_id=batch.id,
+    )
+    repository.claim_curation_finalization(batch.id, "r1")
+    repository.request_batch_control(
+        batch.id,
+        operation="pause",
+        idempotency_key="pause-after-claim",
+        expected_version=batch.version,
+    )
+
+    with pytest.raises(ReviewConflictError):
+        repository.claim_curation_finalization(batch.id, "r1")
+
+    connection.close()
+
+
+def test_only_active_session_batch_can_finalize(
+    tmp_path: Path,
+) -> None:
+    connection = _connection(tmp_path)
+    repository = ReviewRepository(connection)
+    repository.create_curation_session(
+        workspace_id="w1", session_id="s1", source_refs=("source-1",)
+    )
+    batch = repository.create_batch(
+        workspace_id="w1",
+        session_id="s1",
+        run_id="r1",
+        source_refs=("source-1",),
+        batch_id="batch-old-active",
+    )
+    repository.update_curation_progress(
+        "s1",
+        stage="generating",
+        completed_units=0,
+        total_units=1,
+        active_batch_id=batch.id,
+    )
+    repository.claim_curation_finalization(batch.id, "r1")
+    connection.execute(
+        "INSERT INTO review_question_batches "
+        "(id, workspace_id, session_id, origin_session_id, run_id, "
+        "source_refs_json, status) VALUES "
+        "('batch-new-active', 'w1', 's1', 's1', 'r1', '[\"source-1\"]', "
+        "'generating')"
+    )
+    connection.execute(
+        "UPDATE review_curation_sessions SET active_batch_id = 'batch-new-active' "
+        "WHERE session_id = 's1'"
+    )
+    connection.commit()
+
+    with pytest.raises(ReviewConflictError):
+        repository.finalize_curation_candidates(
+            batch.id,
+            "r1",
+            candidates=(_finalization_candidate(),),
+        )
+
+    assert repository.get_curation_session("s1").active_batch_id == (
+        "batch-new-active"
+    )
+    assert connection.execute(
+        "SELECT COUNT(*) FROM knowledge_drafts WHERE run_id = 'r1'"
+    ).fetchone()[0] == 0
+    connection.close()
+
+
+def test_new_batch_is_rejected_while_session_batch_is_active(
+    tmp_path: Path,
+) -> None:
+    connection = _connection(tmp_path)
+    repository = ReviewRepository(connection)
+    repository.create_curation_session(
+        workspace_id="w1", session_id="s1", source_refs=("source-1",)
+    )
+    first = repository.create_batch(
+        workspace_id="w1",
+        session_id="s1",
+        run_id="r1",
+        source_refs=("source-1",),
+        batch_id="batch-first",
+    )
+    repository.update_curation_progress(
+        "s1",
+        stage="generating",
+        completed_units=0,
+        total_units=1,
+        active_batch_id=first.id,
+    )
+
+    with pytest.raises(ReviewConflictError):
+        repository.create_batch(
+            workspace_id="w1",
+            session_id="s1",
+            run_id="r1",
+            source_refs=("source-1",),
+            batch_id="batch-second",
+        )
+
+    assert repository.get_curation_session("s1").active_batch_id == first.id
+    connection.close()
+
+
+def test_revision_finalization_requires_immutable_base_draft(
+    tmp_path: Path,
+) -> None:
+    connection = _connection(tmp_path)
+    repository = ReviewRepository(connection)
+    repository.create_curation_session(
+        workspace_id="w1", session_id="s1", source_refs=("source-1",)
+    )
+    origin = repository.create_batch(
+        workspace_id="w1",
+        session_id="s1",
+        run_id="r1",
+        source_refs=("source-1",),
+        batch_id="batch-origin",
+    )
+    _seed_question_draft(connection, "draft-base")
+    repository.save_candidate(
+        batch_id=origin.id,
+        question=replace(
+            _snapshot("base"),
+            document_id="doc-base",
+            content_hash="b" * 64,
+        ),
+        draft_id="draft-base",
+        source_refs=("source-1#fragment-1",),
+        status="review_pending",
+        candidate_id="candidate-base",
+    )
+    connection.execute(
+        "UPDATE review_question_batches SET status = 'completed' WHERE id = ?",
+        (origin.id,),
+    )
+    connection.execute(
+        "UPDATE agent_runs SET status = 'interrupted' WHERE id = 'r1'"
+    )
+    connection.execute(
+        "INSERT INTO agent_runs (id, session_id, status) "
+        "VALUES ('r2', 's1', 'running')"
+    )
+    connection.commit()
+    rewrite = repository.create_batch(
+        workspace_id="w1",
+        session_id="s1",
+        run_id="r2",
+        source_refs=("source-1",),
+        rewrite_of_batch_id=origin.id,
+        batch_id="batch-rewrite",
+    )
+    repository.update_curation_progress(
+        "s1",
+        stage="generating",
+        completed_units=0,
+        total_units=1,
+        active_batch_id=rewrite.id,
+    )
+    repository.claim_curation_finalization(rewrite.id, "r2")
+    _seed_question_draft(
+        connection,
+        "draft-competing",
+        run_id="r2",
+        document_id="doc-base",
+        content_hash="c" * 64,
+        version=2,
+    )
+    connection.execute(
+        "UPDATE review_question_candidates SET draft_id = 'draft-competing' "
+        "WHERE id = 'candidate-base'"
+    )
+    connection.commit()
+    revision = _finalization_candidate(
+        candidate_id="candidate-base",
+        draft_id="draft-revision",
+        run_id="r2",
+        document_id="doc-base",
+        question_id="base",
+        revision_candidate_id="candidate-base",
+        expected_revision_draft_id="draft-base",
+        expected_revision_draft_version=1,
+        expected_revision_draft_hash="b" * 64,
+    )
+    _register_staging(
+        connection,
+        batch_id=rewrite.id,
+        execution_id="r2",
+        candidates=(revision,),
+    )
+
+    with pytest.raises(ReviewConflictError):
+        repository.finalize_curation_candidates(
+            rewrite.id, "r2", candidates=(revision,)
+        )
+
+    assert repository.get_candidate("candidate-base").draft_id == (
+        "draft-competing"
+    )
+    assert connection.execute(
+        "SELECT COUNT(*) FROM knowledge_drafts WHERE id = 'draft-revision'"
+    ).fetchone()[0] == 0
+    connection.close()
+
+
+def test_successful_revision_retires_prior_draft(
+    tmp_path: Path,
+) -> None:
+    connection = _connection(tmp_path)
+    repository = ReviewRepository(connection)
+    repository.create_curation_session(
+        workspace_id="w1", session_id="s1", source_refs=("source-1",)
+    )
+    origin = repository.create_batch(
+        workspace_id="w1",
+        session_id="s1",
+        run_id="r1",
+        source_refs=("source-1",),
+        batch_id="batch-origin-retire",
+    )
+    _seed_question_draft(connection, "draft-base-retire")
+    repository.save_candidate(
+        batch_id=origin.id,
+        question=replace(
+            _snapshot("base"),
+            document_id="doc-base",
+            content_hash="b" * 64,
+        ),
+        draft_id="draft-base-retire",
+        source_refs=("source-1#fragment-1",),
+        status="review_pending",
+        candidate_id="candidate-retire",
+    )
+    connection.execute(
+        "UPDATE review_question_batches SET status = 'completed' WHERE id = ?",
+        (origin.id,),
+    )
+    connection.execute(
+        "UPDATE agent_runs SET status = 'interrupted' WHERE id = 'r1'"
+    )
+    connection.execute(
+        "INSERT INTO agent_runs (id, session_id, status) "
+        "VALUES ('r2', 's1', 'running')"
+    )
+    connection.commit()
+    rewrite = repository.create_batch(
+        workspace_id="w1",
+        session_id="s1",
+        run_id="r2",
+        source_refs=("source-1",),
+        rewrite_of_batch_id=origin.id,
+        batch_id="batch-rewrite-retire",
+    )
+    repository.update_curation_progress(
+        "s1",
+        stage="generating",
+        completed_units=0,
+        total_units=1,
+        active_batch_id=rewrite.id,
+    )
+    repository.claim_curation_finalization(rewrite.id, "r2")
+    revision = _finalization_candidate(
+        candidate_id="candidate-retire",
+        draft_id="draft-revision-retire",
+        run_id="r2",
+        document_id="doc-base",
+        question_id="base",
+        revision_candidate_id="candidate-retire",
+        expected_revision_draft_id="draft-base-retire",
+        expected_revision_draft_version=1,
+        expected_revision_draft_hash="b" * 64,
+    )
+    revision["draft"] = {
+        **revision["draft"],  # type: ignore[arg-type]
+        "version": 2,
+    }
+    _register_staging(
+        connection,
+        batch_id=rewrite.id,
+        execution_id="r2",
+        candidates=(revision,),
+    )
+
+    persisted = repository.finalize_curation_candidates(
+        rewrite.id, "r2", candidates=(revision,)
+    )
+
+    assert persisted[0].draft_id == "draft-revision-retire"
+    assert tuple(connection.execute(
+        "SELECT status, version FROM knowledge_drafts "
+        "WHERE id = 'draft-base-retire'"
+    ).fetchone()) == ("rejected", 2)
+    assert tuple(connection.execute(
+        "SELECT status, version FROM knowledge_drafts "
+        "WHERE id = 'draft-revision-retire'"
+    ).fetchone()) == ("review_pending", 2)
     connection.close()
 
 
@@ -741,6 +1138,19 @@ def test_old_curation_run_cannot_finalize_after_new_owner_claims(
     )
     connection.commit()
     repository.claim_curation_finalization(batch.id, "r2")
+    new_candidates = (
+        _finalization_candidate(
+            candidate_id="candidate-new",
+            draft_id="draft-new",
+            run_id="r2",
+        ),
+    )
+    _register_staging(
+        connection,
+        batch_id=batch.id,
+        execution_id="r2",
+        candidates=new_candidates,
+    )
 
     with pytest.raises(ReviewConflictError):
         repository.finalize_curation_candidates(
@@ -755,13 +1165,7 @@ def test_old_curation_run_cannot_finalize_after_new_owner_claims(
     persisted = repository.finalize_curation_candidates(
         batch.id,
         "r2",
-        candidates=(
-                _finalization_candidate(
-                    candidate_id="candidate-new",
-                    draft_id="draft-new",
-                    run_id="r2",
-                ),
-        ),
+        candidates=new_candidates,
     )
 
     assert tuple(candidate.id for candidate in persisted) == ("candidate-new",)
@@ -798,20 +1202,29 @@ def test_curation_finalization_rolls_back_every_formal_write(
         batch_id="batch-rollback",
     )
     repository.claim_curation_finalization(batch.id, "r1")
+    candidates = (
+        _finalization_candidate(
+            candidate_id="candidate-valid", draft_id="draft-valid"
+        ),
+        _finalization_candidate(
+            candidate_id="candidate-invalid", draft_id="draft-invalid"
+        ),
+    )
+    invalid_draft = candidates[1]["draft"]
+    assert isinstance(invalid_draft, dict)
+    invalid_draft["title"] = None
+    _register_staging(
+        connection,
+        batch_id=batch.id,
+        execution_id="r1",
+        candidates=candidates,
+    )
 
     with pytest.raises(sqlite3.IntegrityError):
         repository.finalize_curation_candidates(
             batch.id,
             "r1",
-            candidates=(
-                _finalization_candidate(
-                    candidate_id="candidate-valid", draft_id="draft-valid"
-                ),
-                _finalization_candidate(
-                    candidate_id="candidate-missing",
-                    draft_id="draft-valid",
-                ),
-            ),
+            candidates=candidates,
         )
 
     assert repository.get_batch(batch.id).status == "generating"

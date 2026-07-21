@@ -1414,6 +1414,9 @@ class ReviewApplication:
         rewrite_of_batch_id: str | None,
         revision_candidate_id: str | None = None,
         revision_context: str | None = None,
+        expected_revision_draft_id: str | None = None,
+        expected_revision_draft_version: int | None = None,
+        expected_revision_draft_hash: str | None = None,
         resume_batch_id: str | None = None,
     ):
         session = self.sessions.get(session_id)
@@ -1465,6 +1468,12 @@ class ReviewApplication:
                 "rewrite_feedback": rewrite_feedback,
                 "revisionCandidateId": revision_candidate_id,
                 "revision_candidate_id": revision_candidate_id,
+                "expectedRevisionDraftId": expected_revision_draft_id,
+                "expected_revision_draft_id": expected_revision_draft_id,
+                "expectedRevisionDraftVersion": expected_revision_draft_version,
+                "expected_revision_draft_version": expected_revision_draft_version,
+                "expectedRevisionDraftHash": expected_revision_draft_hash,
+                "expected_revision_draft_hash": expected_revision_draft_hash,
             }
         current = self.repository.get_curation_session(session_id)
         self.repository.update_curation_progress(
@@ -1897,6 +1906,13 @@ class ReviewApplication:
             rewrite_of_batch_id=candidate.batch_id,
             revision_candidate_id=candidate.id,
             revision_context=revision_context,
+            expected_revision_draft_id=(None if draft is None else draft.id),
+            expected_revision_draft_version=(
+                None if draft is None else draft.version
+            ),
+            expected_revision_draft_hash=(
+                None if draft is None else draft.content_hash
+            ),
         )
         return await self.curation_resource(session_id)
 

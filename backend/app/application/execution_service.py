@@ -27,9 +27,10 @@ from app.hitl.models import CreatePendingAction, PendingActionRecord
 from app.infrastructure.checkpoints import AgentCheckpointer
 from app.knowledge.drafts import (
     CreateDraftCommand,
+    DraftNotEditableError,
     KnowledgeDraftRecord,
+    KnowledgeDraftService,
     UpdateDraftCommand,
-    stage_draft,
 )
 from app.graphs.review_round import DraftRef
 from app.review.models import (
@@ -54,6 +55,19 @@ class UnsupportedInterruptError(ValueError):
 
 class ExecutionCancelled(RuntimeError):
     code = "execution_cancelled"
+
+
+class CurationFinalizationRejected(RuntimeError):
+    code = "curation_finalization_rejected"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        outcome: Literal["cancelled", "interrupted", "failed"],
+    ) -> None:
+        super().__init__(message)
+        self.outcome = outcome
 
 
 @dataclass(slots=True)
@@ -915,14 +929,44 @@ class AgentExecutionService:
             if not batch_id:
                 raise ValueError("question curation batch is missing")
             batch = self._review_repository.get_batch(batch_id)
+
+            def rejected_outcome() -> Literal[
+                "cancelled", "interrupted", "failed"
+            ]:
+                current_batch = self._review_repository.get_batch(batch_id)
+                if (
+                    current_batch.control_intent in {"pause", "terminate"}
+                    or current_batch.status in {"paused", "terminated"}
+                ):
+                    return "cancelled"
+                try:
+                    active_batch_id = (
+                        self._review_repository.get_curation_session(
+                            session.id
+                        ).active_batch_id
+                    )
+                except LookupError:
+                    active_batch_id = None
+                if (
+                    current_batch.run_id != execution.id
+                    or active_batch_id != batch_id
+                ):
+                    return "interrupted"
+                return "failed"
+
             try:
                 finalization = self._review_repository.claim_curation_finalization(
                     batch_id, execution.id
                 )
-            except ReviewConflictError:
-                return
+            except ReviewConflictError as error:
+                raise CurationFinalizationRejected(
+                    str(error), outcome=rejected_outcome()
+                ) from error
             if finalization[3] == "committed":
                 return
+            curation_drafts = KnowledgeDraftService(
+                self._workspace_root, workspace_id=self._workspace_id
+            )
             timeline = SessionTimelineProjector(self._repository, self._events)
             try:
                 curation = self._review_repository.get_curation_session(
@@ -931,40 +975,6 @@ class AgentExecutionService:
             except LookupError:
                 curation = None
             raw_candidates = tuple(state.get("candidates", ()))
-            for warning in state.get("warnings", ()):
-                if isinstance(warning, dict):
-                    self._review_repository.append_curation_warning(
-                        session.id, warning
-                    )
-            if curation is not None:
-                curation = self._review_repository.update_curation_progress(
-                    session.id,
-                    stage="merging",
-                    completed_units=0,
-                    total_units=max(1, len(raw_candidates)),
-                )
-                await self._events.publish(
-                    session.id,
-                    execution.id,
-                    "curation.stage.changed",
-                    {
-                        "resourceId": session.id,
-                        "stage": "merging",
-                        "version": curation.summary_version,
-                    },
-                )
-                await timeline.append(
-                    session_id=session.id,
-                    execution_id=execution.id,
-                    role="assistant",
-                    message_kind="stage",
-                    content="正在合并相似题并整理来源",
-                    payload={
-                        "resourceId": session.id,
-                        "version": curation.summary_version,
-                        "stage": "merging",
-                    },
-                )
             active = self._review_repository.list_active_questions(
                 self._workspace_id
             )
@@ -1001,30 +1011,58 @@ class AgentExecutionService:
                     original = self._review_repository.get_candidate(str(revision_candidate_id))
                     if original.draft_id is None or self._get_draft is None:
                         raise RuntimeError("question revision draft is not configured")
-                    current_draft = await self._get_draft(original.draft_id)
+                    expected_revision_draft_id = str(
+                        execution.input.get("expected_revision_draft_id")
+                        or execution.input.get("expectedRevisionDraftId")
+                        or ""
+                    )
+                    expected_revision_draft_version = execution.input.get(
+                        "expected_revision_draft_version",
+                        execution.input.get("expectedRevisionDraftVersion"),
+                    )
+                    expected_revision_draft_hash = str(
+                        execution.input.get("expected_revision_draft_hash")
+                        or execution.input.get("expectedRevisionDraftHash")
+                        or ""
+                    )
+                    if (
+                        not expected_revision_draft_id
+                        or not isinstance(expected_revision_draft_version, int)
+                        or len(expected_revision_draft_hash) != 64
+                    ):
+                        raise ReviewConflictError(
+                            "revision execution is missing its immutable base"
+                        )
+                    current_draft = await self._get_draft(
+                        expected_revision_draft_id
+                    )
                     draft_id = str(
                         uuid5(
                             NAMESPACE_URL,
                             f"review-curation:{batch_id}:{execution.id}:revision:draft",
                         )
                     )
-                    draft = stage_draft(
-                        self._workspace_root,
-                        workspace_id=self._workspace_id,
-                        command=CreateDraftCommand(
-                            domain="review",
-                            document_type="question",
-                            title=raw["title"],
-                            markdown=markdown,
-                            source_refs=original.source_refs,
-                            relation_refs=tuple(raw["topics"]),
-                            session_id=session.id,
-                            run_id=execution.id,
-                            agent_type=session.kind,
-                            draft_id=draft_id,
-                            document_id=current_draft.document_id,
-                        ),
-                    )
+                    try:
+                        draft = await curation_drafts.stage_curation_draft(
+                            batch_id,
+                            CreateDraftCommand(
+                                domain="review",
+                                document_type="question",
+                                title=raw["title"],
+                                markdown=markdown,
+                                source_refs=original.source_refs,
+                                relation_refs=tuple(raw["topics"]),
+                                session_id=session.id,
+                                run_id=execution.id,
+                                agent_type=session.kind,
+                                draft_id=draft_id,
+                                document_id=current_draft.document_id,
+                            ),
+                        )
+                    except DraftNotEditableError as error:
+                        raise CurationFinalizationRejected(
+                            str(error), outcome=rejected_outcome()
+                        ) from error
                     snapshot = QuestionSnapshot(
                         question_id=original.question.question_id,
                         document_id=draft.document_id,
@@ -1043,6 +1081,15 @@ class AgentExecutionService:
                         {
                             "candidate_id": original.id,
                             "revision_candidate_id": original.id,
+                            "expected_revision_draft_id": (
+                                expected_revision_draft_id
+                            ),
+                            "expected_revision_draft_version": (
+                                expected_revision_draft_version
+                            ),
+                            "expected_revision_draft_hash": (
+                                expected_revision_draft_hash
+                            ),
                             "draft_id": draft.id,
                             "draft": draft_spec,
                             "question": snapshot,
@@ -1071,23 +1118,27 @@ class AgentExecutionService:
                     )
                 )
                 source_refs = proposed_refs or batch.source_refs
-                draft = stage_draft(
-                    self._workspace_root,
-                    workspace_id=self._workspace_id,
-                    command=CreateDraftCommand(
-                        domain="review",
-                        document_type="question",
-                        title=raw["title"],
-                        markdown=markdown,
-                        source_refs=source_refs,
-                        relation_refs=tuple(raw["topics"]),
-                        session_id=session.id,
-                        run_id=execution.id,
-                        agent_type=session.kind,
-                        draft_id=draft_id,
-                        document_id=f"question_{question_id}",
-                    ),
-                )
+                try:
+                    draft = await curation_drafts.stage_curation_draft(
+                        batch_id,
+                        CreateDraftCommand(
+                            domain="review",
+                            document_type="question",
+                            title=raw["title"],
+                            markdown=markdown,
+                            source_refs=source_refs,
+                            relation_refs=tuple(raw["topics"]),
+                            session_id=session.id,
+                            run_id=execution.id,
+                            agent_type=session.kind,
+                            draft_id=draft_id,
+                            document_id=f"question_{question_id}",
+                        ),
+                    )
+                except DraftNotEditableError as error:
+                    raise CurationFinalizationRejected(
+                        str(error), outcome=rejected_outcome()
+                    ) from error
                 snapshot = QuestionSnapshot(
                     question_id=question_id,
                     document_id=draft.document_id,
@@ -1146,9 +1197,42 @@ class AgentExecutionService:
                         candidates=tuple(candidate_specs),
                     )
                 )
-            except ReviewConflictError:
-                return
+            except ReviewConflictError as error:
+                raise CurationFinalizationRejected(
+                    str(error), outcome=rejected_outcome()
+                ) from error
             if curation is not None:
+                curation = self._review_repository.get_curation_session(
+                    session.id
+                )
+            for warning in state.get("warnings", ()):
+                if isinstance(warning, dict):
+                    self._review_repository.append_curation_warning(
+                        session.id, warning
+                    )
+            if curation is not None:
+                await self._events.publish(
+                    session.id,
+                    execution.id,
+                    "curation.stage.changed",
+                    {
+                        "resourceId": session.id,
+                        "stage": "merging",
+                        "version": curation.summary_version,
+                    },
+                )
+                await timeline.append(
+                    session_id=session.id,
+                    execution_id=execution.id,
+                    role="assistant",
+                    message_kind="stage",
+                    content="正在合并相似题并整理来源",
+                    payload={
+                        "resourceId": session.id,
+                        "version": curation.summary_version,
+                        "stage": "merging",
+                    },
+                )
                 for index, _candidate in enumerate(persisted, start=1):
                     await self._events.publish(
                         session.id,
@@ -1487,7 +1571,83 @@ class AgentExecutionService:
                 )
         except asyncio.CancelledError:
             raise
+        except CurationFinalizationRejected as error:
+            batch_id = str(
+                execution.input.get("batch_id")
+                or execution.input.get("batchId", "")
+            )
+            if batch_id:
+                await KnowledgeDraftService(
+                    self._workspace_root, workspace_id=self._workspace_id
+                ).cleanup_curation_staging(
+                    batch_id=batch_id, execution_id=execution.id
+                )
+            if error.outcome == "failed" and self._review_repository is not None:
+                failed_batch = self._review_repository.update_batch_status(
+                    batch_id, "failed", expected_run_id=execution.id
+                )
+                if (
+                    failed_batch.status == "failed"
+                    and failed_batch.run_id == execution.id
+                ):
+                    curation = self._review_repository.get_curation_session(
+                        session.id
+                    )
+                    self._review_repository.update_curation_progress(
+                        session.id,
+                        stage="failed",
+                        completed_units=curation.completed_units,
+                        total_units=curation.total_units,
+                    )
+            current = self._repository.get_execution(execution.id)
+            if current.status == "running":
+                terminal = self._repository.transition_execution(
+                    execution.id,
+                    expected=("running",),
+                    target=error.outcome,
+                    error_code=error.code,
+                    error_message=(
+                        "整理结果已被更新状态取代"
+                        if error.outcome != "failed"
+                        else "整理结果提交失败"
+                    ),
+                )
+                event_type = {
+                    "cancelled": "execution.cancelled",
+                    "interrupted": "execution.interrupted",
+                    "failed": "execution.failed",
+                }[error.outcome]
+                await self._events.publish(
+                    session.id,
+                    execution.id,
+                    event_type,
+                    {
+                        "executionId": execution.id,
+                        "code": error.code,
+                    },
+                )
+                await self._trace_execution(
+                    context,
+                    "execution.failed",
+                    {
+                        "status": terminal.status,
+                        "code": error.code,
+                    },
+                    terminal=True,
+                )
+            return
         except Exception as error:
+            if session.kind in {"question.curate", "question.revise"}:
+                batch_id = str(
+                    execution.input.get("batch_id")
+                    or execution.input.get("batchId", "")
+                )
+                if batch_id:
+                    await KnowledgeDraftService(
+                        self._workspace_root, workspace_id=self._workspace_id
+                    ).cleanup_curation_staging(
+                        batch_id=batch_id, execution_id=execution.id
+                    )
             if session.kind == "review.round" and self._review_repository is not None:
                 try:
                     round_record = self._review_repository.get_round_by_session(

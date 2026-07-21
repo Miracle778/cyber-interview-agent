@@ -7,7 +7,13 @@ from app.db.connection import connect_index
 from app.hitl.models import CreatePendingAction
 from app.hitl.repository import PendingActionRepository
 from app.knowledge.atomic_writer import ExternalDocumentChangedError
-from app.knowledge.drafts import CreateDraftCommand, DraftVersionChangedError, KnowledgeDraftService, UpdateDraftCommand
+from app.knowledge.drafts import (
+    CreateDraftCommand,
+    DraftNotEditableError,
+    DraftVersionChangedError,
+    KnowledgeDraftService,
+    UpdateDraftCommand,
+)
 from app.knowledge.publication import PublicationService
 from app.knowledge.publication_handler import KnowledgePublishActionHandler
 from app.application.session_service import ProductRepository
@@ -74,6 +80,23 @@ async def test_publish_rejects_changed_draft_version(tmp_path: Path) -> None:
 
     with pytest.raises(DraftVersionChangedError):
         await PublicationService(tmp_path, workspace_id="w1").publish_approved_action(action)
+
+
+@pytest.mark.asyncio
+async def test_publish_rejects_retired_draft(tmp_path: Path) -> None:
+    draft = await _draft(tmp_path)
+    action = await _resolved_action(tmp_path, draft)
+    drafts = KnowledgeDraftService(tmp_path, workspace_id="w1")
+    await drafts.mark_rejected(
+        draft.id,
+        expected_version=draft.version,
+        expected_hash=draft.content_hash,
+    )
+
+    with pytest.raises(DraftNotEditableError):
+        await PublicationService(
+            tmp_path, workspace_id="w1"
+        ).publish_approved_action(action)
 
 
 @pytest.mark.asyncio

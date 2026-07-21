@@ -185,6 +185,207 @@ class KnowledgeDraftService:
         self._database_path = runtime_database_path(workspace_root)
         connect_runtime_database(workspace_root).close()
 
+    async def stage_curation_draft(
+        self, batch_id: str, command: CreateDraftCommand
+    ) -> StagedDraftRecord:
+        if (
+            command.draft_id is None
+            or command.document_id is None
+            or command.run_id is None
+        ):
+            raise ValueError(
+                "curation staging requires stable draft, document, and execution ids"
+            )
+        staged = StagedDraftRecord(
+            id=command.draft_id,
+            workspace_id=self._workspace_id,
+            session_id=command.session_id,
+            run_id=command.run_id,
+            agent_type=command.agent_type,
+            domain=command.domain,
+            document_type=command.document_type,
+            document_id=command.document_id,
+            title=command.title.strip(),
+            markdown=command.markdown,
+            content_path=(
+                f"artifacts/{command.domain}/drafts/{command.draft_id}.md"
+            ),
+            source_refs=command.source_refs,
+            relation_refs=command.relation_refs,
+            content_hash=_hash_text(command.markdown),
+        )
+        async with self._connection() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+            try:
+                owner = await connection.execute(
+                    "SELECT f.state, f.execution_id, b.run_id, b.status, "
+                    "b.control_intent, b.session_id, c.active_batch_id "
+                    "FROM review_curation_finalizations f "
+                    "JOIN review_question_batches b ON b.id = f.batch_id "
+                    "LEFT JOIN review_curation_sessions c "
+                    "ON c.session_id = b.session_id "
+                    "WHERE f.batch_id = ?",
+                    (batch_id,),
+                )
+                row = await owner.fetchone()
+                if (
+                    row is None
+                    or row["state"] != "preparing"
+                    or row["execution_id"] != command.run_id
+                    or row["run_id"] != command.run_id
+                    or row["status"] != "generating"
+                    or row["control_intent"] is not None
+                    or (
+                        row["session_id"] is not None
+                        and row["active_batch_id"] != batch_id
+                    )
+                ):
+                    raise DraftNotEditableError(
+                        "curation finalization no longer owns staging"
+                    )
+                existing_cursor = await connection.execute(
+                    "SELECT * FROM review_curation_staged_drafts "
+                    "WHERE draft_id = ?",
+                    (staged.id,),
+                )
+                existing = await existing_cursor.fetchone()
+                expected = (
+                    batch_id,
+                    command.run_id,
+                    staged.content_path,
+                    staged.content_hash,
+                )
+                if existing is None:
+                    await connection.execute(
+                        "INSERT INTO review_curation_staged_drafts "
+                        "(draft_id, batch_id, execution_id, content_path, "
+                        "content_hash) VALUES (?, ?, ?, ?, ?)",
+                        (staged.id, *expected),
+                    )
+                elif tuple(
+                    existing[key]
+                    for key in (
+                        "batch_id",
+                        "execution_id",
+                        "content_path",
+                        "content_hash",
+                    )
+                ) != expected:
+                    raise DraftContentChangedError(
+                        f"staged draft {staged.id!r} identity changed"
+                    )
+                await connection.commit()
+            except Exception:
+                await connection.rollback()
+                raise
+        try:
+            return stage_draft(
+                self._workspace_root,
+                workspace_id=self._workspace_id,
+                command=command,
+            )
+        except Exception:
+            async with self._connection() as connection:
+                await connection.execute(
+                    "DELETE FROM review_curation_staged_drafts "
+                    "WHERE draft_id = ? AND batch_id = ? "
+                    "AND execution_id = ?",
+                    (staged.id, batch_id, command.run_id),
+                )
+                await connection.commit()
+            raise
+
+    async def cleanup_curation_staging(
+        self, *, batch_id: str, execution_id: str
+    ) -> int:
+        removed = 0
+        async with self._connection() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = await connection.execute(
+                    "SELECT * FROM review_curation_staged_drafts "
+                    "WHERE batch_id = ? AND execution_id = ? "
+                    "ORDER BY created_at, draft_id",
+                    (batch_id, execution_id),
+                )
+                rows = await cursor.fetchall()
+                policy = WorkspacePathPolicy(self._workspace_root)
+                for row in rows:
+                    formal_cursor = await connection.execute(
+                        "SELECT 1 FROM knowledge_drafts "
+                        "WHERE id = ? OR content_path = ? LIMIT 1",
+                        (row["draft_id"], row["content_path"]),
+                    )
+                    if await formal_cursor.fetchone() is not None:
+                        await connection.execute(
+                            "DELETE FROM review_curation_staged_drafts "
+                            "WHERE draft_id = ?",
+                            (row["draft_id"],),
+                        )
+                        continue
+                    expected_path = (
+                        f"artifacts/review/drafts/{row['draft_id']}.md"
+                    )
+                    if row["content_path"] != expected_path:
+                        continue
+                    path = policy.resolve_for_create(
+                        "review.drafts", f"{row['draft_id']}.md"
+                    )
+                    if not path.exists():
+                        await connection.execute(
+                            "DELETE FROM review_curation_staged_drafts "
+                            "WHERE draft_id = ?",
+                            (row["draft_id"],),
+                        )
+                        continue
+                    if sha256(path.read_bytes()).hexdigest() != row["content_hash"]:
+                        continue
+                    path.unlink()
+                    removed += 1
+                    await connection.execute(
+                        "DELETE FROM review_curation_staged_drafts "
+                        "WHERE draft_id = ?",
+                        (row["draft_id"],),
+                    )
+                await connection.commit()
+            except Exception:
+                await connection.rollback()
+                raise
+        return removed
+
+    async def reconcile_curation_staging(self) -> int:
+        async with self._connection() as connection:
+            cursor = await connection.execute(
+                "SELECT DISTINCT staged.batch_id, staged.execution_id "
+                "FROM review_curation_staged_drafts staged "
+                "LEFT JOIN review_curation_finalizations f "
+                "ON f.batch_id = staged.batch_id "
+                "LEFT JOIN review_question_batches b ON b.id = staged.batch_id "
+                "LEFT JOIN review_curation_sessions c ON c.session_id = b.session_id "
+                "LEFT JOIN agent_runs run ON run.id = staged.execution_id "
+                "LEFT JOIN knowledge_drafts draft "
+                "ON draft.id = staged.draft_id "
+                "OR draft.content_path = staged.content_path "
+                "WHERE draft.id IS NULL AND (f.batch_id IS NULL "
+                "OR f.state != 'preparing' "
+                "OR f.execution_id != staged.execution_id "
+                "OR b.run_id != staged.execution_id "
+                "OR b.status != 'generating' "
+                "OR b.control_intent IS NOT NULL "
+                "OR run.id IS NULL "
+                "OR run.status NOT IN ('queued', 'running') "
+                "OR (b.session_id IS NOT NULL AND (c.session_id IS NULL "
+                "OR c.active_batch_id != b.id)))"
+            )
+            owners = await cursor.fetchall()
+        removed = 0
+        for owner in owners:
+            removed += await self.cleanup_curation_staging(
+                batch_id=str(owner["batch_id"]),
+                execution_id=str(owner["execution_id"]),
+            )
+        return removed
+
     async def create(self, command: CreateDraftCommand) -> KnowledgeDraftRecord:
         initialize_knowledge_artifacts(
             self._workspace_root, domain=command.domain

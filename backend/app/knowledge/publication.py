@@ -14,7 +14,12 @@ from app.infrastructure.runtime_database import runtime_database_path
 from app.hitl.models import PendingActionRecord
 from app.knowledge.atomic_writer import ExternalDocumentChangedError, atomic_write_text, hash_file
 from app.knowledge.document_types import create_document_type_registry
-from app.knowledge.drafts import DraftVersionChangedError, KnowledgeDraftRecord, KnowledgeDraftService
+from app.knowledge.drafts import (
+    DraftNotEditableError,
+    DraftVersionChangedError,
+    KnowledgeDraftRecord,
+    KnowledgeDraftService,
+)
 from app.knowledge.frontmatter import PublishedDocument, PublishedProvenance, render_published_document
 from app.security.workspace_paths import WorkspacePathPolicy
 from app.services.search_index import IndexedDocument, upsert_document
@@ -130,6 +135,10 @@ class PublicationService:
         if action.status not in {"approved", "edited_and_approved"}:
             raise ValueError("publication action must be approved")
         draft = await self._drafts.get(str(action.payload["draftId"]))
+        if draft.status == "rejected":
+            raise DraftNotEditableError(
+                f"draft {draft.id!r} is retired and cannot be published"
+            )
         if draft.version != action.payload["draftVersion"] or draft.content_hash != action.payload["contentHash"]:
             raise DraftVersionChangedError(f"draft {draft.id!r} changed before publication")
         definition = create_document_type_registry().resolve(draft.document_type)

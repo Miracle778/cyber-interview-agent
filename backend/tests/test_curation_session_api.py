@@ -331,6 +331,156 @@ def api(application):
 
 
 @pytest.mark.asyncio
+async def test_rejected_finalization_never_projects_success_or_leaks_stage(
+    api, application, monkeypatch
+) -> None:
+    app, source_ids = application
+    review = app.review("w1")
+
+    def reject_finalization(*_args, **_kwargs):
+        raise ReviewConflictError("revision base changed")
+
+    monkeypatch.setattr(
+        review.repository,
+        "finalize_curation_candidates",
+        reject_finalization,
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = await client.post(
+            "/api/review/curation-sessions",
+            json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+        )
+        resource = created.json()
+        terminal = await app.wait_execution(resource["executionId"])
+
+    messages = review.sessions.repository.list_messages(resource["id"])
+    events = review.sessions.repository.list_events(
+        resource["id"], after_id=None
+    )
+    curation = review.repository.get_curation_session(resource["id"])
+
+    assert terminal.status == "failed"
+    assert curation.stage == "failed"
+    assert all(
+        message.content != "正在合并相似题并整理来源"
+        and message.message_kind != "curation_summary"
+        for message in messages
+    )
+    assert "execution.completed" not in {event.type for event in events}
+    assert "curation.summary.ready" not in {event.type for event in events}
+    assert not list(
+        (review.workspace_root / "artifacts/review/drafts").glob("*.md")
+    )
+
+
+@pytest.mark.parametrize(
+    ("operation", "batch_status"),
+    (("pause", "paused"), ("terminate", "terminated")),
+)
+@pytest.mark.asyncio
+async def test_control_winning_finalization_cancels_execution_without_success(
+    api, application, monkeypatch, operation: str, batch_status: str
+) -> None:
+    app, source_ids = application
+    review = app.review("w1")
+
+    def reject_after_control(batch_id, execution_id, **_kwargs):
+        batch = review.repository.get_batch(batch_id)
+        receipt = review.repository.request_batch_control(
+            batch_id,
+            operation=operation,
+            idempotency_key=f"{operation}-during-finalization",
+            expected_version=batch.version,
+        )
+        review.repository.finalize_batch_control(receipt.id)
+        raise ReviewConflictError("control won finalization")
+
+    monkeypatch.setattr(
+        review.repository,
+        "finalize_curation_candidates",
+        reject_after_control,
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        resource = (
+            await client.post(
+                "/api/review/curation-sessions",
+                json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+            )
+        ).json()
+        terminal = await app.wait_execution(resource["executionId"])
+
+    batch_id = review.repository.get_curation_session(
+        resource["id"]
+    ).active_batch_id
+    assert batch_id is not None
+    assert terminal.status == "cancelled"
+    assert review.repository.get_batch(batch_id).status == batch_status
+    assert "execution.completed" not in {
+        event.type
+        for event in review.sessions.repository.list_events(
+            resource["id"], after_id=None
+        )
+    }
+
+
+@pytest.mark.asyncio
+async def test_superseded_finalization_interrupts_old_execution(
+    api, application, monkeypatch
+) -> None:
+    app, source_ids = application
+    review = app.review("w1")
+
+    def supersede(batch_id, execution_id, **_kwargs):
+        connection = review.sessions.repository.connection
+        connection.execute(
+            "INSERT INTO review_question_batches "
+            "(id, workspace_id, session_id, origin_session_id, run_id, "
+            "source_refs_json, status) SELECT 'newer-batch', workspace_id, "
+            "session_id, origin_session_id, run_id, source_refs_json, "
+            "'generating' FROM review_question_batches WHERE id = ?",
+            (batch_id,),
+        )
+        connection.execute(
+            "UPDATE review_curation_sessions SET active_batch_id = 'newer-batch' "
+            "WHERE active_batch_id = ?",
+            (batch_id,),
+        )
+        connection.commit()
+        raise ReviewConflictError("newer active batch won")
+
+    monkeypatch.setattr(
+        review.repository,
+        "finalize_curation_candidates",
+        supersede,
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        resource = (
+            await client.post(
+                "/api/review/curation-sessions",
+                json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+            )
+        ).json()
+        terminal = await app.wait_execution(resource["executionId"])
+
+    assert terminal.status == "interrupted"
+    assert review.repository.get_curation_session(
+        resource["id"]
+    ).active_batch_id == "newer-batch"
+    assert "execution.completed" not in {
+        event.type
+        for event in review.sessions.repository.list_events(
+            resource["id"], after_id=None
+        )
+    }
+
+
+@pytest.mark.asyncio
 async def test_curation_command_returns_accepted_before_classifier_finishes(
     api, application
 ) -> None:
@@ -880,6 +1030,9 @@ async def test_candidate_rewrite_resumes_its_original_curation_session(
             f"/api/review/curation-sessions/{created['id']}"
         )).json()
         candidate_id = detail["summary"]["items"][0]["candidateId"]
+        original = (await client.get(
+            f"/api/review/question-candidates/{candidate_id}"
+        )).json()
 
         rewritten = await client.post(
             f"/api/review/question-candidates/{candidate_id}/rewrite",
@@ -892,6 +1045,18 @@ async def test_candidate_rewrite_resumes_its_original_curation_session(
         assert any(
             message["role"] == "user" and "线上排障场景" in message["content"]
             for message in rewritten.json()["messages"]
+        )
+        revision_execution = app.review(
+            "w1"
+        ).sessions.repository.get_execution(rewritten.json()["executionId"])
+        assert revision_execution.input["expected_revision_draft_id"] == (
+            original["draft"]["id"]
+        )
+        assert revision_execution.input["expected_revision_draft_version"] == (
+            original["draft"]["version"]
+        )
+        assert revision_execution.input["expected_revision_draft_hash"] == (
+            original["draft"]["contentHash"]
         )
         candidate = (await client.get(
             f"/api/review/question-candidates/{candidate_id}"
