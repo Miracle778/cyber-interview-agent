@@ -299,7 +299,7 @@ class ProductRepository:
             raise InvalidExecutionTransitionError(
                 f"execution {execution_id} cannot move from {current.status} to {target}"
             )
-        terminal = target in {"completed", "failed", "cancelled"}
+        terminal = target in {"interrupted", "completed", "failed", "cancelled"}
         self.connection.execute(
             "UPDATE agent_runs SET status = ?, error_code = ?, error_message = ?, "
             "resume_count = resume_count + ?, "

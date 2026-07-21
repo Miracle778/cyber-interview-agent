@@ -540,6 +540,113 @@ async def test_curation_control_api_uses_header_and_resumes_same_batch(
 
 
 @pytest.mark.asyncio
+async def test_concurrent_same_key_resume_is_linearized_and_projects_bound_run(
+    application, monkeypatch
+) -> None:
+    app, source_ids = application
+    review = app.review("w1")
+    session, batch, original_execution = await _seed_running_curation(
+        review, source_ids[0]
+    )
+    paused = await review.pause_curation_session(
+        session.id,
+        expected_batch_version=batch.version,
+        idempotency_key="pause-before-concurrent-resume-0001",
+    )
+    expected_version = paused["batch_version"]
+    original_prepare = review.executions.prepare
+    prepare_entered = asyncio.Event()
+    release_prepare = asyncio.Event()
+    prepare_calls: list[str] = []
+
+    async def prepare_at_barrier(*args, **kwargs):
+        prepare_calls.append("entered")
+        prepare_entered.set()
+        await release_prepare.wait()
+        return await original_prepare(*args, **kwargs)
+
+    scheduled: list[str] = []
+    monkeypatch.setattr(review.executions, "prepare", prepare_at_barrier)
+    monkeypatch.setattr(
+        review.executions,
+        "run_prepared",
+        lambda prepared, *, graph_input: scheduled.append(prepared.id),
+    )
+
+    first = asyncio.create_task(
+        review.resume_curation_session(
+            session.id,
+            expected_batch_version=expected_version,
+            idempotency_key="concurrent-resume-request-0001",
+        )
+    )
+    await asyncio.wait_for(prepare_entered.wait(), timeout=0.2)
+    reservation = review.repository.find_curation_control_receipt(
+        batch.id, "concurrent-resume-request-0001"
+    )
+    assert reservation is not None
+    assert reservation.execution_id is None
+    assert reservation.result_status == "preparing"
+    assert reservation.request_digest == sha256(
+        json.dumps(
+            {
+                "expectedVersion": expected_version,
+                "operation": "resume",
+                "reason": "paused",
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    second = asyncio.create_task(
+        review.resume_curation_session(
+            session.id,
+            expected_batch_version=expected_version,
+            idempotency_key="concurrent-resume-request-0001",
+        )
+    )
+    await asyncio.sleep(0)
+    release_prepare.set()
+    results = await asyncio.gather(first, second, return_exceptions=True)
+
+    assert all(isinstance(result, dict) for result in results), results
+    resources = [result for result in results if isinstance(result, dict)]
+    assert resources[0]["active_batch_id"] == batch.id
+    assert resources[0]["execution_id"] == resources[1]["execution_id"]
+    resumed_execution_id = resources[0]["execution_id"]
+    assert prepare_calls == ["entered"]
+    assert scheduled == [resumed_execution_id]
+    attempts = review.sessions.repository.connection.execute(
+        "SELECT execution_id FROM review_curation_batch_attempts "
+        "WHERE batch_id = ? ORDER BY ordinal",
+        (batch.id,),
+    ).fetchall()
+    assert [row[0] for row in attempts] == [
+        original_execution.id,
+        resumed_execution_id,
+    ]
+    executions = review.sessions.repository.list_executions(session.id)
+    assert len(executions) == 2
+    assert all(run.status not in {"queued", "cancelled"} for run in executions[1:])
+
+    monkeypatch.setattr(review.executions, "prepare", original_prepare)
+    review.sessions.repository.transition_execution(
+        resumed_execution_id, expected=("running",), target="completed"
+    )
+    unrelated = await original_prepare(
+        session,
+        input={"operation": "unrelated-session-execution"},
+        project_input_message=False,
+    )
+    resource = await review.curation_resource(session.id)
+
+    assert unrelated.id != resumed_execution_id
+    assert resource["execution_id"] == resumed_execution_id
+    assert resource["execution_status"] == "completed"
+
+
+@pytest.mark.asyncio
 async def test_terminate_is_idempotent_and_cannot_resume(
     application
 ) -> None:
@@ -835,10 +942,16 @@ async def test_initial_attempt_and_legacy_retry_reuse_failed_batch(
         retried = await client.post(
             f"/api/review/curation-sessions/{created['id']}/retry"
         )
+        replayed = await client.post(
+            f"/api/review/curation-sessions/{created['id']}/retry"
+        )
 
     assert retried.status_code == 202, retried.text
     assert retried.json()["activeBatchId"] == batch_id
     assert retried.json()["executionId"] != failed_execution.id
+    assert replayed.status_code == 202, replayed.text
+    assert replayed.json()["activeBatchId"] == batch_id
+    assert replayed.json()["executionId"] == retried.json()["executionId"]
     receipt = review.sessions.repository.connection.execute(
         "SELECT idempotency_key FROM review_curation_control_receipts "
         "WHERE batch_id = ? AND operation = 'resume'",

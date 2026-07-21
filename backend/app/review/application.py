@@ -115,6 +115,7 @@ class ReviewApplication:
         self.curation_context_factory = curation_context_factory
         self.selector = QuestionSelector()
         self._discussion_locks: dict[str, asyncio.Lock] = {}
+        self._curation_resume_locks: dict[str, asyncio.Lock] = {}
         self.curation_commands = CurationCommandService()
         self.timeline = SessionTimelineProjector(
             self.sessions.repository, self.events
@@ -271,11 +272,15 @@ class ReviewApplication:
         latest_command = self.repository.latest_curation_command_receipt(
             session_id
         )
-        latest = self.sessions.repository.latest_execution(session_id)
         batch = (
             None
             if record.active_batch_id is None
             else self.repository.get_batch(record.active_batch_id)
+        )
+        latest = (
+            self.sessions.repository.latest_execution(session_id)
+            if batch is None or batch.run_id is None
+            else self.sessions.repository.get_execution(batch.run_id)
         )
         work_items = (
             ()
@@ -541,33 +546,62 @@ class ReviewApplication:
             raise LookupError(session_id)
         if curation.active_batch_id is None:
             raise ReviewConflictError("curation session has no active batch")
-        batch = self.repository.get_batch(curation.active_batch_id)
+        batch_id = curation.active_batch_id
+        lock = self._curation_resume_locks.setdefault(batch_id, asyncio.Lock())
+        async with lock:
+            return await self._resume_curation_session_locked(
+                session_id,
+                batch_id=batch_id,
+                expected_batch_version=expected_batch_version,
+                idempotency_key=idempotency_key,
+            )
+
+    async def _resume_curation_session_locked(
+        self,
+        session_id: str,
+        *,
+        batch_id: str,
+        expected_batch_version: int,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        curation = self.repository.get_curation_session(session_id)
+        if curation.active_batch_id != batch_id:
+            raise ReviewConflictError("curation active batch changed")
+        batch = self.repository.get_batch(batch_id)
         existing = self.repository.find_curation_control_receipt(
             batch.id, idempotency_key
         )
-        if existing is not None:
-            if existing.operation != "resume" or existing.execution_id is None:
+        if existing is not None and existing.execution_id is not None:
+            if existing.operation != "resume":
                 raise ReviewConflictError("control request changed")
             attempt = self.repository.get_curation_attempt_for_execution(
                 existing.execution_id
             )
             if attempt.reason not in {"paused", "failed", "interrupted"}:
                 raise ReviewConflictError("control request changed")
-            self.repository.resume_curation_batch(
+            self.repository.reserve_curation_resume(
                 batch.id,
-                execution_id=existing.execution_id,
                 idempotency_key=idempotency_key,
                 expected_version=expected_batch_version,
                 reason=attempt.reason,
             )
             return await self.curation_resource(session_id)
-        if (
-            batch.status not in {"paused", "failed", "interrupted"}
-            or batch.control_intent is not None
-        ):
+        if batch.status == "paused":
+            reason: Literal["paused", "failed", "interrupted"] = "paused"
+        elif batch.status == "failed":
+            reason = "failed"
+        elif batch.status == "interrupted":
+            reason = "interrupted"
+        else:
             raise ReviewConflictError("question batch cannot be resumed")
-        if batch.version != expected_batch_version:
-            raise ReviewConflictError("question batch version changed")
+        reservation = self.repository.reserve_curation_resume(
+            batch.id,
+            idempotency_key=idempotency_key,
+            expected_version=expected_batch_version,
+            reason=reason,
+        )
+        if reservation.execution_id is not None:
+            return await self.curation_resource(session_id)
         execution_input = self.repository.curation_batch_input(batch.id)
         session = self.sessions.get(session_id)
         execution = await self.executions.prepare(
@@ -581,7 +615,7 @@ class ReviewApplication:
                 execution_id=execution.id,
                 idempotency_key=idempotency_key,
                 expected_version=expected_batch_version,
-                reason=batch.status,
+                reason=reason,
             )
         except Exception:
             await self.executions.cancel(execution.id)
@@ -603,14 +637,24 @@ class ReviewApplication:
 
     async def retry_curation_session(self, session_id: str) -> dict[str, Any]:
         curation = self.repository.get_curation_session(session_id)
-        latest = self.sessions.repository.latest_execution(session_id)
         if curation.workspace_id != self.workspace_id:
             raise LookupError(session_id)
-        if curation.stage != "failed" or latest is None or latest.status != "failed":
-            raise ReviewConflictError("only failed curation sessions can retry")
         if curation.active_batch_id is None:
             raise ReviewConflictError("failed curation session has no active batch")
         batch = self.repository.get_batch(curation.active_batch_id)
+        if batch.run_id is not None:
+            replay = self.repository.find_curation_resume_receipt_for_execution(
+                batch.id, batch.run_id
+            )
+            if (
+                replay is not None
+                and replay.idempotency_key.startswith("legacy-retry:")
+                and batch.status != "failed"
+            ):
+                return await self.curation_resource(session_id)
+        latest = self.sessions.repository.latest_execution(session_id)
+        if curation.stage != "failed" or latest is None or latest.status != "failed":
+            raise ReviewConflictError("only failed curation sessions can retry")
         if batch.status != "failed" or batch.control_intent is not None:
             raise ReviewConflictError("only failed question batches can retry")
         await self.timeline.append(

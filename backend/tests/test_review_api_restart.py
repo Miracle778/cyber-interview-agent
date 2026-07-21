@@ -257,6 +257,260 @@ async def test_restart_reconciles_curation_control_intent_and_orphans(
         await second.close()
 
 
+@pytest.mark.parametrize(
+    ("batch_status", "session_stage"),
+    (
+        ("paused", "paused"),
+        ("failed", "failed"),
+        ("interrupted", "interrupted"),
+        ("terminated", "terminated"),
+        ("review_pending", "waiting_for_command"),
+        ("completed", "completed"),
+    ),
+)
+@pytest.mark.asyncio
+async def test_restart_interrupts_orphan_work_for_non_generating_batches(
+    tmp_path: Path,
+    batch_status: str,
+    session_stage: str,
+) -> None:
+    workspace = tmp_path / "workspace-orphan-work"
+    workspace.mkdir()
+    source = await KnowledgeSourceService(
+        workspace, workspace_id="w1"
+    ).create(
+        original_filename="orphan.md",
+        content_type="text/markdown",
+        content=b"# Orphan\n\nQuestion?",
+    )
+
+    def build() -> AgentApplication:
+        return AgentApplication(
+            workspace_resolver=lambda _workspace_id: workspace,
+            workspace_ids=lambda: ("w1",),
+            model_bindings=lambda _workspace_id: {},
+            graph_factory=_graph_factory,
+        )
+
+    first = build()
+    review = first.review("w1")
+    session = await review.sessions.create(
+        workspace_id="w1", kind="question.curate", title="Orphan work item"
+    )
+    review.repository.create_curation_session(
+        workspace_id="w1", session_id=session.id, source_refs=(source.id,)
+    )
+    batch = review.repository.create_batch(
+        workspace_id="w1",
+        session_id=session.id,
+        run_id=None,
+        source_refs=(source.id,),
+    )
+    execution_input = {
+        "batchId": batch.id,
+        "batch_id": batch.id,
+        "sourceRefs": [source.id],
+        "source_refs": [source.id],
+        "source_excerpts": [f"{source.id}:restart.md\nQuestion?"],
+        "similar_questions": [],
+        "rewrite_feedback": None,
+    }
+    execution = await review.executions.prepare(
+        session, input=execution_input, project_input_message=False
+    )
+    batch = review.repository.attach_batch_run(batch.id, execution.id)
+    review.repository.record_curation_attempt(
+        batch.id, execution.id, reason="initial"
+    )
+    review.repository.update_curation_progress(
+        session.id,
+        stage="generating",
+        completed_units=1,
+        total_units=2,
+        active_batch_id=batch.id,
+    )
+    completed_item = review.repository.plan_curation_work_item(
+        batch_id=batch.id,
+        stage="discovery",
+        unit_index=0,
+        input_digest="b" * 64,
+        source_refs=(f"{source.id}#section-0001",),
+        processor_kind="deterministic",
+    )
+    completed_item = review.repository.complete_deterministic_curation_work_item(
+        completed_item.id,
+        output={
+            "seeds": [
+                {
+                    "question_text": "What remains complete?",
+                    "source_ref": f"{source.id}#section-0001",
+                    "source_refs": [f"{source.id}#section-0001"],
+                }
+            ]
+        },
+    )
+    running_item = review.repository.plan_curation_work_item(
+        batch_id=batch.id,
+        stage="discovery",
+        unit_index=1,
+        input_digest="c" * 64,
+        source_refs=(f"{source.id}#section-0002",),
+    )
+    review.repository.start_curation_work_item(running_item.id)
+    connection = review.sessions.repository.connection
+    connection.execute(
+        "UPDATE review_question_batches SET status = ? WHERE id = ?",
+        (batch_status, batch.id),
+    )
+    connection.execute(
+        "UPDATE review_curation_sessions SET stage = ? WHERE session_id = ?",
+        (session_stage, session.id),
+    )
+    connection.commit()
+    await first.close()
+
+    second = build()
+    try:
+        await second.recover()
+        restored_review = second.review("w1")
+        restored_batch = restored_review.repository.get_batch(batch.id)
+        restored_running = restored_review.repository.get_curation_work_item(
+            running_item.id
+        )
+        restored_completed = restored_review.repository.get_curation_work_item(
+            completed_item.id
+        )
+        resource = await restored_review.curation_resource(session.id)
+
+        assert restored_batch.status == batch_status
+        assert restored_running.status == "interrupted"
+        assert restored_running.last_error_code == f"curation_{batch_status}"
+        assert restored_completed == completed_item
+        assert resource["progress"]["active_workers"] == 0
+    finally:
+        await second.close()
+
+
+@pytest.mark.asyncio
+async def test_crash_pause_closes_execution_and_excludes_pause_gap_from_timing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace = tmp_path / "workspace-pause-timing"
+    workspace.mkdir()
+    source = await KnowledgeSourceService(
+        workspace, workspace_id="w1"
+    ).create(
+        original_filename="timing.md",
+        content_type="text/markdown",
+        content=b"# Timing\n\nQuestion?",
+    )
+
+    def build() -> AgentApplication:
+        return AgentApplication(
+            workspace_resolver=lambda _workspace_id: workspace,
+            workspace_ids=lambda: ("w1",),
+            model_bindings=lambda _workspace_id: {},
+            graph_factory=_graph_factory,
+        )
+
+    first = build()
+    review = first.review("w1")
+    session = await review.sessions.create(
+        workspace_id="w1", kind="question.curate", title="Pause timing"
+    )
+    review.repository.create_curation_session(
+        workspace_id="w1", session_id=session.id, source_refs=(source.id,)
+    )
+    batch = review.repository.create_batch(
+        workspace_id="w1",
+        session_id=session.id,
+        run_id=None,
+        source_refs=(source.id,),
+    )
+    execution_input = {
+        "batchId": batch.id,
+        "batch_id": batch.id,
+        "sourceRefs": [source.id],
+        "source_refs": [source.id],
+        "source_excerpts": [f"{source.id}:timing.md\nQuestion?"],
+        "similar_questions": [],
+        "rewrite_feedback": None,
+    }
+    execution = await review.executions.prepare(
+        session, input=execution_input, project_input_message=False
+    )
+    batch = review.repository.attach_batch_run(batch.id, execution.id)
+    review.repository.record_curation_attempt(
+        batch.id, execution.id, reason="initial"
+    )
+    review.repository.update_curation_progress(
+        session.id,
+        stage="generating",
+        completed_units=0,
+        total_units=1,
+        active_batch_id=batch.id,
+    )
+    connection = review.sessions.repository.connection
+    connection.execute(
+        "UPDATE agent_runs SET started_at = datetime('now', '-10 seconds') "
+        "WHERE id = ?",
+        (execution.id,),
+    )
+    connection.commit()
+    review.repository.request_batch_control(
+        batch.id,
+        operation="pause",
+        idempotency_key="pause-before-timing-restart-0001",
+        expected_version=batch.version,
+    )
+    await first.close()
+
+    second = build()
+    try:
+        await second.recover()
+        restored_review = second.review("w1")
+        interrupted = restored_review.sessions.repository.get_execution(execution.id)
+        assert interrupted.status == "interrupted"
+        assert interrupted.finished_at is not None
+        frozen = restored_review.repository.curation_batch_timing(batch.id)
+        await asyncio.sleep(0.02)
+        assert restored_review.repository.curation_batch_timing(batch.id) == frozen
+
+        monkeypatch.setattr(
+            restored_review.executions,
+            "run_prepared",
+            lambda prepared, *, graph_input: None,
+        )
+        paused_batch = restored_review.repository.get_batch(batch.id)
+        resumed = await restored_review.resume_curation_session(
+            session.id,
+            expected_batch_version=paused_batch.version,
+            idempotency_key="resume-after-timing-restart-0001",
+        )
+        resumed_execution_id = resumed["execution_id"]
+        assert resumed_execution_id != execution.id
+        connection = restored_review.sessions.repository.connection
+        connection.execute(
+            "UPDATE agent_runs SET status = 'completed', "
+            "started_at = datetime(?, '+1 hour'), "
+            "finished_at = datetime(?, '+1 hour', '+2 seconds') WHERE id = ?",
+            (
+                interrupted.finished_at,
+                interrupted.finished_at,
+                resumed_execution_id,
+            ),
+        )
+        connection.commit()
+
+        resumed_timing = restored_review.repository.curation_batch_timing(batch.id)
+        assert resumed_timing.current_elapsed_ms == 2_000
+        assert resumed_timing.cumulative_elapsed_ms == (
+            frozen.cumulative_elapsed_ms + 2_000
+        )
+    finally:
+        await second.close()
+
+
 @pytest.mark.asyncio
 async def test_interrupted_curation_command_requires_explicit_retry(
     tmp_path: Path,
