@@ -445,4 +445,6 @@
 - legacy Batch 与完整 Curation Session 共用执行管线时，warning 属于可选的 Curation 投影。领域候选已提交后，不能向不存在的投影写入并反向把 Execution 标记失败；投影存在性必须成为 warning 写入的显式前置条件。
 - 真实 GLM discovery 连续暴露三类“整体 JSON/Tool Call 有效、局部不完全符合领域 Schema”的输出：单个 seed 缺少 `source_ref`/含 null 引用、返回 21 项超过 20 项上限、主引用没有排在 `source_refs` 首位。把 Provider 响应直接绑定严格领域模型会让整个 Work Item 丢弃其余有效项。
 - 正确边界是分离 Provider 契约与领域契约：Provider 层只保证可解析的宽松形状，确定性 normalizer 截断至 20 项、删除无证据行、去除 null/空白/重复引用并把主引用移到首位，然后再构造严格 `QuestionSeedChunk`。未知引用和跨来源引用仍在 Agent 证据边界硬失败，不能被 normalizer 掩盖。
+- 该边界必须覆盖每个模型输出阶段，不能只覆盖 discovery。真实 enrichment 又返回了“第三个候选缺少 `title/topics`”和“种子有两个证据引用、候选只返回一个”的部分偏差；前者发生在 LangChain structured-output 解析层，后者发生在 Agent 的精确证据校验层。
+- Enrichment 的证据集合属于输入种子，而不是模型生成事实：Provider 仍需返回一个可识别的种子主引用，归一化器再从权威 seed 映射恢复完整顺序。缺失 title 可安全使用题干，缺失 topics 可进入“未分类”；未知引用、混入其他种子的引用和缺失核心答案/关键点不能伪造成有效领域候选。
 - `frontend/package.json` 没有 `typecheck` script；本阶段使用权威等价命令 `./node_modules/.bin/tsc --noEmit`，production build 自身也再次执行 `tsc`。计划中的不存在脚本不能被记录为成功。

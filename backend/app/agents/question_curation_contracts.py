@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -25,6 +25,22 @@ class ProviderQuestionSeed(_ProviderQuestionCurationOutput):
 
 class ProviderQuestionSeedChunk(_ProviderQuestionCurationOutput):
     seeds: list[ProviderQuestionSeed] = Field(default_factory=list)
+
+
+class ProviderQuestionCandidate(_ProviderQuestionCurationOutput):
+    title: str | None = None
+    question_text: str | None = None
+    reference_answer: str | None = None
+    topics: list[str | None] | None = None
+    difficulty: str | None = None
+    key_points: list[str | None] | None = None
+    follow_ups: list[str | None] | None = None
+    source_refs: list[str | None] | None = None
+    correction_note: str | None = None
+
+
+class ProviderQuestionCandidateChunk(_ProviderQuestionCurationOutput):
+    candidates: list[ProviderQuestionCandidate] = Field(default_factory=list)
 
 
 class QuestionCandidate(_StrictQuestionCurationOutput):
@@ -110,6 +126,75 @@ def normalize_provider_seed_chunk(value: object) -> QuestionSeedChunk:
             )
         )
     return QuestionSeedChunk(seeds=seeds)
+
+
+def normalize_provider_candidate_chunk(
+    value: object,
+    *,
+    seed_source_refs: Mapping[str, Sequence[str]],
+) -> QuestionCandidateChunk:
+    if isinstance(value, BaseModel):
+        value = value.model_dump()
+    raw = ProviderQuestionCandidateChunk.model_validate(value)
+    candidates: list[QuestionCandidate] = []
+    seen_primary_refs: set[str] = set()
+    for item in raw.candidates[:3]:
+        provider_refs: list[str] = []
+        for raw_ref in item.source_refs or ():
+            ref = (raw_ref or "").strip()
+            if ref and ref not in provider_refs:
+                provider_refs.append(ref)
+        if not provider_refs:
+            continue
+        primary_refs = [
+            ref for ref in provider_refs if ref in seed_source_refs
+        ]
+        if len(primary_refs) != 1:
+            raise ValueError("question enrichment returned an unknown source ref")
+        primary = primary_refs[0]
+        expected_refs = tuple(seed_source_refs.get(primary, ()))
+        if not expected_refs or any(
+            ref not in expected_refs for ref in provider_refs
+        ):
+            raise ValueError("question enrichment returned an unknown source ref")
+        if primary in seen_primary_refs:
+            continue
+
+        question_text = (item.question_text or "").strip()
+        reference_answer = (item.reference_answer or "").strip()
+        key_points = _non_blank_strings(item.key_points)
+        if (
+            not question_text
+            or not reference_answer
+            or item.difficulty not in {"easy", "medium", "hard"}
+            or not key_points
+        ):
+            continue
+        seen_primary_refs.add(primary)
+        candidates.append(
+            QuestionCandidate(
+                title=(item.title or "").strip() or question_text,
+                question_text=question_text,
+                reference_answer=reference_answer,
+                topics=_non_blank_strings(item.topics) or ["未分类"],
+                difficulty=item.difficulty,
+                key_points=key_points,
+                follow_ups=_non_blank_strings(item.follow_ups),
+                source_refs=list(expected_refs),
+                correction_note=(item.correction_note or "").strip()
+                or "未发现需要修正的明显错误",
+            )
+        )
+    return QuestionCandidateChunk(candidates=candidates)
+
+
+def _non_blank_strings(values: Sequence[str | None] | None) -> list[str]:
+    normalized: list[str] = []
+    for value in values or ():
+        text = (value or "").strip()
+        if text and text not in normalized:
+            normalized.append(text)
+    return normalized
 
 
 class QuestionCandidateChunk(_StrictQuestionCurationOutput):

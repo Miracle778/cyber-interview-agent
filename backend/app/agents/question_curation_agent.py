@@ -21,11 +21,13 @@ from app.agents.prompts.question_curation_prompts import (
     render_question_revision_input,
 )
 from app.agents.question_curation_contracts import (
+    ProviderQuestionCandidateChunk,
     ProviderQuestionSeedChunk,
     QuestionCandidateChunk,
     QuestionRevisionOutput,
     QuestionSeed,
     QuestionSeedChunk,
+    normalize_provider_candidate_chunk,
     normalize_provider_seed_chunk,
 )
 from app.review.curation_sections import SourceSection
@@ -76,7 +78,7 @@ class QuestionCurationAgents:
                     prompt=QUESTION_ENRICHMENT_PROMPT,
                     tools=tuple(tools),
                     middleware=middleware,
-                    response_format=QuestionCandidateChunk,
+                    response_format=ProviderQuestionCandidateChunk,
                     structured_output_handle_errors=False,
                     invocation_policy=_ENRICHMENT_POLICY,
                 ),
@@ -154,7 +156,9 @@ class QuestionCurationAgents:
             ),
             context=context,
         )
-        chunk = QuestionCandidateChunk.model_validate(_structured(result))
+        chunk = normalize_provider_candidate_chunk(
+            _structured(result), seed_source_refs=seed_refs
+        )
         candidates = []
         seen_refs: set[str] = set()
         for candidate in chunk.candidates:

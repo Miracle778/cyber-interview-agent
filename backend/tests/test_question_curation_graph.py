@@ -267,6 +267,15 @@ def test_strict_question_seed_chunk_rejects_ungrounded_rows() -> None:
         })
 
 
+def test_strict_question_candidate_chunk_rejects_missing_metadata() -> None:
+    raw = candidate(1).model_dump()
+    raw.pop("title")
+    raw.pop("topics")
+
+    with pytest.raises(ValidationError):
+        QuestionCandidateChunk.model_validate({"candidates": [raw]})
+
+
 def test_provider_seed_normalization_caps_the_raw_list_at_twenty() -> None:
     raw = curation_contracts.ProviderQuestionSeedChunk.model_validate({
         "seeds": [
@@ -335,6 +344,70 @@ def test_provider_seed_normalization_drops_only_rows_without_grounding() -> None
     ]
 
 
+def test_provider_candidate_normalization_repairs_metadata_and_seed_refs() -> None:
+    raw_candidate = candidate(1).model_dump()
+    raw_candidate.pop("title")
+    raw_candidate.pop("topics")
+    raw_candidate["source_refs"] = ["s1#section-0001"]
+    raw = curation_contracts.ProviderQuestionCandidateChunk.model_validate({
+        "candidates": [raw_candidate]
+    })
+
+    normalized = curation_contracts.normalize_provider_candidate_chunk(
+        raw,
+        seed_source_refs={
+            "s1#section-0001": (
+                "s1#section-0001",
+                "s1#section-0002",
+            )
+        },
+    )
+
+    assert normalized.candidates[0].title == normalized.candidates[0].question_text
+    assert normalized.candidates[0].topics == ["未分类"]
+    assert normalized.candidates[0].source_refs == [
+        "s1#section-0001",
+        "s1#section-0002",
+    ]
+
+
+def test_provider_candidate_normalization_rejects_unknown_evidence() -> None:
+    raw_candidate = candidate(1).model_dump()
+    raw_candidate["source_refs"] = [
+        "s1#section-0001",
+        "s1#section-9999",
+    ]
+
+    with pytest.raises(ValueError, match="unknown source ref"):
+        curation_contracts.normalize_provider_candidate_chunk(
+            {"candidates": [raw_candidate]},
+            seed_source_refs={"s1#section-0001": ("s1#section-0001",)},
+        )
+
+
+def test_provider_candidate_normalization_restores_primary_ref_order() -> None:
+    raw_candidate = candidate(1).model_dump()
+    raw_candidate["source_refs"] = [
+        "s1#section-0002",
+        "s1#section-0001",
+    ]
+
+    normalized = curation_contracts.normalize_provider_candidate_chunk(
+        {"candidates": [raw_candidate]},
+        seed_source_refs={
+            "s1#section-0001": (
+                "s1#section-0001",
+                "s1#section-0002",
+            )
+        },
+    )
+
+    assert normalized.candidates[0].source_refs == [
+        "s1#section-0001",
+        "s1#section-0002",
+    ]
+
+
 def test_question_curation_agents_use_stage_specific_retry_policies() -> None:
     class RecordingFactory:
         def __init__(self):
@@ -350,6 +423,10 @@ def test_question_curation_agents_use_stage_specific_retry_policies() -> None:
 
     discovery, enrichment, revision = factory.specs
     assert discovery.response_format is curation_contracts.ProviderQuestionSeedChunk
+    assert (
+        enrichment.response_format
+        is curation_contracts.ProviderQuestionCandidateChunk
+    )
     assert discovery.structured_output_handle_errors is False
     assert enrichment.structured_output_handle_errors is False
     assert revision.structured_output_handle_errors is True
