@@ -15,6 +15,7 @@ from app.api.routes_review import router as review_router
 from app.application.workspace_runtime import AgentApplication
 from app.agents.context_assembly import ContextSummary
 from app.knowledge.source_registry import KnowledgeSourceService
+from app.security.workspace_paths import PathPolicyError
 from app.knowledge.drafts import (
     CreateDraftCommand,
     DraftNotEditableError,
@@ -157,7 +158,7 @@ async def completed_command(app, session_id: str, response) -> dict:
 async def test_free_form_response_streams_real_chunks_and_persists_joined_text(
     api, application
 ) -> None:
-    app, source_ids = application
+    app, _source_ids = application
     async with AsyncClient(
         transport=ASGITransport(app=api), base_url="http://test"
     ) as client:
@@ -213,7 +214,7 @@ async def test_free_form_response_streams_real_chunks_and_persists_joined_text(
 async def test_ambiguous_side_effect_still_uses_classifier_without_streaming_reply(
     api, application
 ) -> None:
-    app, source_ids = application
+    app, _source_ids = application
     async with AsyncClient(
         transport=ASGITransport(app=api), base_url="http://test"
     ) as client:
@@ -305,6 +306,83 @@ async def test_conversation_stream_starts_before_overflow_summary_finishes(
             summary_release.set()
         await app.wait_execution(accepted.json()["executionId"])
         assert len(models.summarizer.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_all_unusable_sources_complete_without_preparing_a_provider_execution(
+    application, tmp_path: Path
+) -> None:
+    app, source_ids = application
+    sources = KnowledgeSourceService(tmp_path / "workspace", workspace_id="w1")
+    empty = await sources.create(
+        original_filename="empty.md",
+        content_type="text/markdown",
+        content=b" \n\t",
+    )
+    invalid = await sources.create(
+        original_filename="invalid.md",
+        content_type="text/markdown",
+        content=b"\xff\xfe",
+    )
+    review = app.review("w1")
+
+    resource = await review.create_curation_session(
+        source_refs=(empty.id, invalid.id)
+    )
+
+    assert resource["stage"] == "completed"
+    assert resource["batch_status"] == "completed"
+    assert resource["execution_id"] is None
+    assert resource["execution_status"] is None
+    assert resource["warnings"][-2:] == (
+        {"sourceId": empty.id, "code": "no_extractable_text"},
+        {"sourceId": invalid.id, "code": "unsupported_encoding"},
+    )
+    assert resource["warnings"][-1]["code"] != "failed"
+
+
+@pytest.mark.asyncio
+async def test_legacy_batch_start_completes_when_all_sources_are_unusable(
+    application, tmp_path: Path
+) -> None:
+    app, _source_ids = application
+    sources = KnowledgeSourceService(tmp_path / "workspace", workspace_id="w1")
+    empty = await sources.create(
+        original_filename="empty.md",
+        content_type="text/markdown",
+        content=b" \n\t",
+    )
+    invalid = await sources.create(
+        original_filename="invalid.md",
+        content_type="text/markdown",
+        content=b"\xff\xfe",
+    )
+
+    batch = await app.review("w1").create_question_batch(
+        source_refs=(empty.id, invalid.id)
+    )
+
+    assert batch.status == "completed"
+    assert batch.run_id is None
+
+
+@pytest.mark.asyncio
+async def test_workspace_escape_is_not_normalized_into_a_source_warning(
+    application,
+) -> None:
+    app, source_ids = application
+    review = app.review("w1")
+    source_id = source_ids[0]
+    review.repository._connection.execute(
+        "UPDATE knowledge_sources SET stored_path = ? WHERE id = ?",
+        ("../outside-secret.md", source_id),
+    )
+    review.repository._connection.commit()
+
+    with pytest.raises(PathPolicyError) as error:
+        await review.create_curation_session(source_refs=(source_id,))
+
+    assert "outside-secret.md" not in str(error.value)
 
 
 @pytest_asyncio.fixture

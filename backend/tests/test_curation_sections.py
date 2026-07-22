@@ -85,3 +85,28 @@ def test_discovery_units_enforce_section_and_character_limits():
     assert [unit.input_digest for unit in units] == [
         unit.input_digest for unit in pack_discovery_units(sections)
     ]
+
+
+def test_irregular_notes_keep_each_atomic_piece_in_exactly_one_bounded_section():
+    atoms = (
+        "Redis, TTL, eviction",
+        "How does cache penetration work",
+        "Answer: cache null values briefly.",
+        "1. This is numbered prose, not a question.",
+        "```python\n# Why does this retry?\nlogger.info('retry')\n```",
+        "2026-07-22 INFO retry exhausted request_id=abc",
+        "Kafka consumer groups, offset commits, rebalance risks.",
+        "x" * 4_100,
+    )
+    source = "s1:irregular.md\n" + "\n\n".join(atoms)
+
+    sections = section_sources((source,))
+
+    rendered = "\n".join(section.text for section in sections)
+    for atom in atoms[:-1]:
+        assert rendered.count(atom) == 1
+    assert rendered.count("x" * 100) == 41
+    assert all(len(section.text) <= 2_000 for section in sections)
+    assert [section.ref for section in sections] == [
+        f"s1#section-{index:04d}" for index in range(1, len(sections) + 1)
+    ]

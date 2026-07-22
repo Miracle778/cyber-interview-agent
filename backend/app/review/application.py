@@ -43,6 +43,7 @@ from app.review.curation_context import (
     CurationCommandInterpreter,
     CurationContextAdapter,
 )
+from app.review.curation_sources import prepare_curation_sources
 from app.review.models import (
     BulkPublicationPreflight,
     CurationSummary,
@@ -53,6 +54,7 @@ from app.review.selector import QuestionSelector
 from app.review.timeline import SessionTimelineProjector
 from app.middleware.usage_projection_middleware import ContextUsageProjection
 from app.services.document_ingestion import extract_text
+from app.security.workspace_paths import PathPolicyError, WorkspacePathPolicy
 
 
 _CURATION_TIMELINE_KINDS = frozenset(
@@ -134,6 +136,12 @@ class ReviewApplication:
             await source_service.get(source_id, include_deleted=False)
             for source_id in selected
         ]
+        prepared_sources = prepare_curation_sources(
+            tuple(
+                (source.id, self._curation_source_path(source.stored_path))
+                for source in sources
+            )
+        )
         existing = self.repository.list_curation_sessions(self.workspace_id)
         warnings: list[dict[str, object]] = []
         for source_id in selected:
@@ -155,6 +163,7 @@ class ReviewApplication:
                     ),
                 }
             )
+        warnings.extend(prepared_sources.warnings)
         visible_names = [source.original_filename for source in sources[:2]]
         suffix = "" if len(sources) <= 2 else f" 等 {len(sources)} 份资料"
         session = await self.sessions.create(
@@ -186,12 +195,12 @@ class ReviewApplication:
                 "stage": "reading_sources",
             },
         )
-        excerpts: list[str] = []
-        for index, source in enumerate(sources, start=1):
-            text = extract_text(self.workspace_root / source.stored_path)
-            excerpts.append(
-                f"{source.id}:{source.original_filename}\n{text}"
-            )
+        filenames = {source.id: source.original_filename for source in sources}
+        excerpts = [
+            f"{source_id}:{filenames[source_id]}\n{text}"
+            for source_id, text in prepared_sources.excerpts
+        ]
+        for index, _source in enumerate(sources, start=1):
             self.repository.update_curation_progress(
                 session.id,
                 stage="reading_sources",
@@ -204,6 +213,28 @@ class ReviewApplication:
             run_id=None,
             source_refs=selected,
         )
+        if not prepared_sources.has_usable_text:
+            self.repository.update_batch_status(batch.id, "completed")
+            self.repository.update_curation_progress(
+                session.id,
+                stage="completed",
+                completed_units=len(sources),
+                total_units=len(sources),
+                active_batch_id=batch.id,
+            )
+            await self.timeline.append(
+                session_id=session.id,
+                execution_id=None,
+                role="assistant",
+                message_kind="stage",
+                content="所选资料没有可提取文本，整理已完成",
+                payload={
+                    "resourceId": session.id,
+                    "version": 0,
+                    "stage": "completed",
+                },
+            )
+            return await self.curation_resource(session.id)
         self.repository.update_curation_progress(
             session.id,
             stage="generating",
@@ -245,6 +276,15 @@ class ReviewApplication:
             },
         )
         return await self.curation_resource(session.id)
+
+    def _curation_source_path(self, stored_path: str) -> Path:
+        filename = Path(stored_path).name
+        expected = f"artifacts/review/sources/{filename}"
+        if not filename or stored_path != expected:
+            raise PathPolicyError("review.sources")
+        return WorkspacePathPolicy(self.workspace_root).resolve_for_read(
+            "review.sources", filename
+        )
 
     async def curation_resource(self, session_id: str) -> dict[str, Any]:
         record = self.repository.get_curation_session(session_id)
@@ -1956,13 +1996,22 @@ class ReviewApplication:
         sources = KnowledgeSourceService(
             self.workspace_root, workspace_id=self.workspace_id
         )
-        excerpts = []
-        for source_id in source_refs:
-            source = await sources.get(source_id)
-            text = extract_text(self.workspace_root / source.stored_path)
-            excerpts.append(
-                f"{source.id}:{source.original_filename}\n{text[:20_000]}"
+        source_records = [
+            await sources.get(source_id) for source_id in source_refs
+        ]
+        prepared_sources = prepare_curation_sources(
+            tuple(
+                (source.id, self._curation_source_path(source.stored_path))
+                for source in source_records
             )
+        )
+        filenames = {
+            source.id: source.original_filename for source in source_records
+        }
+        excerpts = [
+            f"{source_id}:{filenames[source_id]}\n{text[:20_000]}"
+            for source_id, text in prepared_sources.excerpts
+        ]
         session = await self.sessions.create(
             workspace_id=self.workspace_id,
             kind="question.curate",
@@ -1974,7 +2023,10 @@ class ReviewApplication:
             run_id=None,
             source_refs=source_refs,
             rewrite_of_batch_id=rewrite_of_batch_id,
+            status="completed" if not prepared_sources.has_usable_text else "generating",
         )
+        if not prepared_sources.has_usable_text:
+            return batch
         execution = await self.executions.prepare(
             session,
             input={
