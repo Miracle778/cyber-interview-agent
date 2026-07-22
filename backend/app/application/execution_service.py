@@ -1226,11 +1226,45 @@ class AgentExecutionService:
                 curation = self._review_repository.get_curation_session(
                     session.id
                 )
-            for warning in state.get("warnings", ()):
-                if isinstance(warning, dict):
-                    self._review_repository.append_curation_warning(
-                        session.id, warning
-                    )
+            if curation is not None:
+                for warning in state.get("warnings", ()):
+                    if isinstance(warning, dict):
+                        self._review_repository.append_curation_warning(
+                            session.id, warning
+                        )
+            if curation is not None and not persisted:
+                await self._events.publish(
+                    session.id,
+                    execution.id,
+                    "curation.stage.changed",
+                    {
+                        "resourceId": session.id,
+                        "stage": "completed",
+                        "version": curation.summary_version,
+                    },
+                )
+                await timeline.append(
+                    session_id=session.id,
+                    execution_id=execution.id,
+                    role="assistant",
+                    message_kind="curation_summary",
+                    content="未从本次材料中识别到可整理的题目，无需确认。",
+                    payload={
+                        "resourceId": session.id,
+                        "version": curation.summary_version,
+                    },
+                )
+                await self._events.publish(
+                    session.id,
+                    execution.id,
+                    "curation.summary.ready",
+                    {
+                        "resourceId": session.id,
+                        "count": 0,
+                        "version": curation.summary_version,
+                    },
+                )
+                return
             if curation is not None:
                 await self._events.publish(
                     session.id,

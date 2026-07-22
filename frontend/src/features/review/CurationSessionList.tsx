@@ -9,19 +9,19 @@ const stageMeta: Record<string, { label: string; tone: string }> = {
 
 export function CurationSessionList({ sessions, candidateCount, publishedCount, onSelect, onCreate, onDelete, onOpenLibrary }: { sessions: CurationSession[]; candidateCount: number; publishedCount: number; onSelect: (id: string) => void; onCreate: () => void; onDelete: (id: string, hard: boolean) => void; onOpenLibrary: (status: QuestionCandidate["status"] | null) => void }) {
   const [onlyActive, setOnlyActive] = useState(false);
-  const active = sessions.filter((session) => !["completed", "failed", "terminated"].includes(session.stage));
+  const active = sessions.filter((session) => !["completed", "terminated"].includes(session.stage));
   const ordered = [...active, ...sessions.filter((session) => !active.includes(session))];
   const visibleSessions = onlyActive ? active : ordered;
   return <main className="curation-landing">
     <header><div><span>题库 Agent</span><h2>整理会话</h2><p>回到正在进行的资料整理，或选择一组文件开启新的 Agent 会话。</p></div><Button onClick={onCreate}><Plus size={16} />新建整理会话</Button></header>
     <section className="curation-landing__summary" aria-label="整理会话概览">
-      <button type="button" aria-pressed={onlyActive} title="包含排队、整理中、待确认和发布中的会话" onClick={() => setOnlyActive((current) => !current)}><strong>{active.length}</strong><span>待处理会话</span><small>{onlyActive ? "显示全部" : "查看会话"}<ArrowRight size={14} /></small></button>
+      <button type="button" aria-pressed={onlyActive} title="包含排队、整理中、可恢复失败、待确认和发布中的会话" onClick={() => setOnlyActive((current) => !current)}><strong>{active.length}</strong><span>待处理会话</span><small>{onlyActive ? "显示全部" : "查看会话"}<ArrowRight size={14} /></small></button>
       <button type="button" onClick={() => onOpenLibrary(null)}><strong>{candidateCount}</strong><span>题目总数</span><small>查看全部题目<ArrowRight size={14} /></small></button>
       <button type="button" onClick={() => onOpenLibrary("published")}><strong>{publishedCount}</strong><span>已发布</span><small>查看已发布题目<ArrowRight size={14} /></small></button>
     </section>
     {onlyActive ? <div className="curation-landing__filter"><span>仅显示待处理会话</span><button type="button" onClick={() => setOnlyActive(false)}>清除筛选</button></div> : null}
     <section className="curation-landing__list" aria-label="历史整理会话">
-      {visibleSessions.length === 0 ? <div className="curation-landing__empty"><FileStack size={28} /><h3>{onlyActive ? "没有待处理会话" : "还没有整理会话"}</h3><p>{onlyActive ? "当前会话均已完成或失败，可清除筛选查看历史记录。" : "选择一份或多份原材料，题匠会保留完整过程、候选总结和确认记录。"}</p>{onlyActive ? <Button variant="secondary" onClick={() => setOnlyActive(false)}>查看全部会话</Button> : <Button onClick={onCreate}><Plus size={16} />创建第一个会话</Button>}</div> : visibleSessions.map((session) => {
+      {visibleSessions.length === 0 ? <div className="curation-landing__empty"><FileStack size={28} /><h3>{onlyActive ? "没有待处理会话" : "还没有整理会话"}</h3><p>{onlyActive ? "当前会话均已完成或终止，可清除筛选查看历史记录。" : "选择一份或多份原材料，题匠会保留完整过程、候选总结和确认记录。"}</p>{onlyActive ? <Button variant="secondary" onClick={() => setOnlyActive(false)}>查看全部会话</Button> : <Button onClick={onCreate}><Plus size={16} />创建第一个会话</Button>}</div> : visibleSessions.map((session) => {
         const meta = stageMeta[session.stage] ?? { label: session.stage, tone: "neutral" };
         const candidateLimitReached = session.warnings?.some((warning) => warning.code === "candidate_limit_reached") ?? false;
         return <article key={session.id} className="curation-landing__item">

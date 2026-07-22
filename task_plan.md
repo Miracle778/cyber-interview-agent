@@ -30,7 +30,7 @@
 
 ### 2026-07-22 R2 题目整理长任务控制验收
 
-- 产品状态与证据：结构感知规划、单进程最多 3 并发、completed Work Item 跳过、失败/暂停/重启后原 Batch 恢复、渐进预览、实时耗时和 Trace v2 已完成自动验收；最终后端 `638 passed`、前端 `167 passed`，TypeScript 与 production build 通过。
+- 产品状态与证据：结构感知规划、单进程最多 3 并发、completed Work Item 跳过、失败/暂停/重启后原 Batch 恢复、渐进预览、实时耗时和 Trace v2 已完成自动验收；最终后端 `641 passed`、前端 `167 passed`，TypeScript 与 production build 通过。
 - 成熟度边界：当前是单进程内的 bounded scheduler 和 SQLite 持久恢复，不是分布式队列；Provider 调用是至少一次语义，已提交 Work Item 具有精确一次效果。
 - 产品修正：最终 reducer 现在把 Batch 推进到 `review_pending`，等待候选人工决定，不再沿用含糊的 `completed` 生成终态。
 - 所有权状态：产品自动门禁与隔离浏览器暂停/刷新/恢复/终止验收已完成；真实 Provider 性能与真实材料完整运行仍待具体授权，作为 pending practice，不阻塞回到 R3。

@@ -614,6 +614,90 @@ async def test_public_question_batch_graph_failure_terminalizes_without_session_
 
 
 @pytest.mark.asyncio
+async def test_empty_curation_session_reports_completion_without_confirmation(
+    tmp_path: Path,
+) -> None:
+    application, api, workspace = _real_curation_application(
+        tmp_path, EmptyCurationAgents()
+    )
+    source = await KnowledgeSourceService(
+        workspace, workspace_id="w1"
+    ).create(
+        original_filename="no-candidates.md",
+        content="1、什么是不会生成候选的测试题？\n答案。".encode(),
+        content_type="text/markdown",
+    )
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=api), base_url="http://test"
+        ) as client:
+            created = await client.post(
+                "/api/review/curation-sessions",
+                json={"workspaceId": "w1", "sourceRefs": [source.id]},
+            )
+            assert created.status_code == 202, created.text
+            resource = created.json()
+            terminal = await application.wait_execution(resource["executionId"])
+            assert terminal.status == "completed"
+            detail = await client.get(
+                f"/api/review/curation-sessions/{resource['id']}"
+            )
+
+        assert detail.status_code == 200, detail.text
+        value = detail.json()
+        assert value["stage"] == "completed"
+        assert value["batchStatus"] == "completed"
+        summaries = [
+            message["content"]
+            for message in value["messages"]
+            if message["messageKind"] == "curation_summary"
+        ]
+        assert summaries == ["未从本次材料中识别到可整理的题目，无需确认。"]
+        assert all("请确认" not in content for content in summaries)
+    finally:
+        await application.close()
+
+
+@pytest.mark.asyncio
+async def test_public_question_batch_warning_does_not_fail_committed_execution(
+    tmp_path: Path,
+) -> None:
+    application, api, workspace = _real_curation_application(
+        tmp_path, EmptyCurationAgents()
+    )
+    source = await KnowledgeSourceService(
+        workspace, workspace_id="w1"
+    ).create(
+        original_filename="large-question-list.md",
+        content="\n\n".join(
+            f"{index}、什么是边界场景 {index}？\n答案 {index}。"
+            for index in range(1, 202)
+        ).encode(),
+        content_type="text/markdown",
+    )
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=api), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/review/question-batches",
+                json={"workspaceId": "w1", "sourceRefs": [source.id]},
+            )
+
+        assert response.status_code == 202, response.text
+        batch = response.json()
+        terminal = await application.wait_execution(batch["runId"])
+        review = application.review("w1")
+        assert terminal.status == "completed", (
+            terminal.error_code,
+            terminal.error_message,
+        )
+        assert review.repository.get_batch(batch["id"]).status == "completed"
+    finally:
+        await application.close()
+
+
+@pytest.mark.asyncio
 async def test_public_question_batch_finalization_rejection_terminalizes_without_session_projection(
     tmp_path: Path, monkeypatch, caplog
 ) -> None:

@@ -587,3 +587,4 @@
 - 浏览器验收使用隔离数据完成桌面与 390px：实时耗时递增、处理中预览、暂停冻结、刷新恢复、新 Execution/同 Batch、终止确认、终态无恢复、resume 409、Trace UTC/北京时间和 console 0 均有证据。无模型绑定的恢复 Execution 按预期失败；未调用真实 Provider。
 - 浏览器发现会话列表直接显示 `paused` 且将 terminated 计入待处理；新增组件 RED 后补齐四种中文控制状态并修正终止态统计。相关前端 `37 passed`，最终前端全量 `167 passed`，TypeScript 与 build 通过。
 - 产品成熟度：单进程 bounded scheduler，不是分布式 jobs；真实 Provider 性能和真实材料完整运行仍待具体授权。下一产品任务回到 R3 Task 8；非阻塞练习见本地 verification 指南。
+- 最终整片审查发现并修复两个边界：零候选不再永久卡在 `review_pending`，而是把 Batch/Session 原子收口为 `completed`，跳过合并/总结中阶段并明确提示“无需确认”；legacy `/question-batches` 没有 Curation Session 投影时不再写 warning，避免 Execution `failed` 与已提交 Batch 终态分裂。可恢复 `failed` 会话同时纳入前端“待处理会话”。新增 RED 均稳定复现，修复后后端完整 `641 passed`、前端完整 `167 passed`，TypeScript、build 与 `git diff --check` 通过；整片复审 Approved。

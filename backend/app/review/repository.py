@@ -1051,14 +1051,18 @@ class ReviewRepository:
                         for index, item in enumerate(candidates, start=1)
                     )
                 )
+                terminal_stage = (
+                    "waiting_for_command" if candidate_ids else "completed"
+                )
                 cursor = self._connection.execute(
                     "UPDATE review_curation_sessions SET "
-                    "stage = 'waiting_for_command', completed_units = 1, "
+                    "stage = ?, completed_units = 1, "
                     "total_units = 1, summary_json = ?, "
                     "summary_version = summary_version + 1, "
                     "updated_at = CURRENT_TIMESTAMP WHERE session_id = ? "
                     "AND active_batch_id = ?",
                     (
+                        terminal_stage,
                         _canonical_json({"items": summary.items}),
                         batch.session_id,
                         batch.id,
@@ -1066,12 +1070,20 @@ class ReviewRepository:
                 )
                 if cursor.rowcount != 1:
                     raise LookupError(batch.session_id)
+            terminal_batch_status = (
+                "review_pending" if candidate_ids else "completed"
+            )
             cursor = self._connection.execute(
-                "UPDATE review_question_batches SET status = 'review_pending', "
+                "UPDATE review_question_batches SET status = ?, "
                 "version = version + 1, updated_at = CURRENT_TIMESTAMP "
                 "WHERE id = ? AND run_id = ? AND status = 'generating' "
                 "AND version = ? AND control_intent IS NULL",
-                (batch_id, execution_id, batch.version),
+                (
+                    terminal_batch_status,
+                    batch_id,
+                    execution_id,
+                    batch.version,
+                ),
             )
             if cursor.rowcount != 1:
                 raise ReviewConflictError("question batch finalization state changed")

@@ -1100,6 +1100,36 @@ def test_curation_finalization_is_exactly_once_for_same_owner(
     connection.close()
 
 
+def test_empty_curation_finalization_completes_without_human_review(
+    tmp_path: Path,
+) -> None:
+    connection = _connection(tmp_path)
+    repository = _validated_repository(tmp_path, connection)
+    repository.create_curation_session(
+        workspace_id="w1", session_id="s1", source_refs=("source-1",)
+    )
+    batch = repository.create_batch(
+        workspace_id="w1",
+        session_id="s1",
+        run_id="r1",
+        source_refs=("source-1",),
+        batch_id="batch-empty-final",
+    )
+    repository.claim_curation_finalization(batch.id, "r1")
+
+    assert repository.finalize_curation_candidates(
+        batch.id,
+        "r1",
+        candidates=(),
+    ) == ()
+    assert repository.get_batch(batch.id).status == "completed"
+    curation = repository.get_curation_session("s1")
+    assert curation.stage == "completed"
+    assert curation.summary.items == ()
+    assert curation.summary_version == 1
+    connection.close()
+
+
 def test_preparing_finalization_claim_revalidates_control_state(
     tmp_path: Path,
 ) -> None:
