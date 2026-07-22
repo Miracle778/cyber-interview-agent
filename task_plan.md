@@ -66,7 +66,7 @@
 | 21. Agent 会话视觉与运行事实统一 | 实现与自动验证完成，待重启后实页复核 | 深入讨论复用题库整理 Dock、运行详情和真实上下文 Token 进度 |
 | 22. 复习 Agent 工作台比例与组件统一 | 实现与自动验证完成，实页视觉待复核 | 深入讨论与普通复习互斥渲染、工作台填满可用视口、统一 Dock 与上下文进度侧栏 |
 | 23. Agent 代码结构整理第一阶段 | 已完成 | 显式 Agent/Middleware 模块命名、版本化 Prompt、共享 runnable 协议与 thread 配置；不改变 API、数据库、Graph 或 SSE 行为 |
-| 24. Progressive 题目整理、长任务控制与 Agent JSONL | 自动验收完成；真实 Provider/浏览器验收待显式授权 | 结构感知 planning、discovery/enrichment 最多 3 并发、可暂停/恢复/终止、渐进预览、实时耗时、同 Batch/Work Item 恢复、Trace v2；审核完成后批次原子进入 completed；最终 633/166/build 通过 |
+| 24. Progressive 题目整理、长任务控制与 Agent JSONL | 自动验收完成；真实 Provider/浏览器验收待显式授权 | 结构感知 planning、discovery/enrichment 最多 3 并发、可暂停/恢复/终止、渐进预览、实时耗时、同 Batch/Work Item 恢复、Trace v2；普通/修订批次按 committed candidate revision 原子完成；最终 637/166/build 通过 |
 
 ## 工作位置
 

@@ -435,6 +435,8 @@
 - 跨层 RED 暴露了一个遗留状态语义：最终 reducer 已生成正式待确认候选，却仍把 Batch 标为 `completed`。按已确认状态机修正为 `review_pending` 后，Batch 状态与候选人工审核阶段一致，兼容读取仍保留 `completed` 处理历史数据。
 - `review_pending` 不是永久终态：正式发布的单条/批量/逻辑重复修订最终都汇聚 `activate_question`，HITL 拒绝汇聚 `reject_candidate_for_draft`，自由命令拒绝汇聚 `update_candidate_status`。三条 Repository 写路径必须在同一事务内聚合候选状态；只检查“没有 review_pending”会把遗留 `draft` 候选误判完成，因此条件必须是至少有一项且不存在非 `published/rejected` 项。
 - SQLite `BEGIN IMMEDIATE` 串行化最后候选的并发决策；再配合 Batch 的 `status = 'review_pending'` 条件更新，确保只有一个事务增加版本并投影 Session `completed`，重复发布/拒绝不会重复终态副作用。
+- 修订 finalization 复用同一 Candidate ID 并有意保留其 origin `batch_id`；因此“Candidate 属于哪个历史批次”和“本次 Batch 提交了哪个 Draft Revision”不是同一关系。把 candidate 移到 rewrite Batch 会破坏血缘与唯一性，正确边界是独立持久化 `(batch_id, candidate_id, draft_id)` committed set。
+- 决策聚合必须只选择与 Candidate 当前 `draft_id` 匹配的 Batch 关联，并在 Batch 全量判定时再次要求每个关联 draft 仍是 Candidate 当前 draft。这样新修订发布/拒绝只完成 rewrite Batch，旧 Batch 不会借用新版本状态误完成；migration 025 从 committed finalization 恢复升级前修订关联，并只在 Draft run 与 owner Batch run 一致时回填普通归属。
 - 前端 interrupted hydrate → resume → 新 enrichment 快照 → 旧 discovery 快照晚到的契约直接通过；同 Batch/同版本按阶段拒绝回退，同阶段 completed/total/generated 取最大值，provisional 按稳定 ID 只增合并，因此页面不会倒退计数或缩短预览。
 - 当前恢复能力的成熟度是单进程 bounded scheduler + SQLite durable Work Item，不是分布式任务队列。进程退出时未提交的 Provider 调用允许重发，completed Work Item 不重放。
 - `frontend/package.json` 没有 `typecheck` script；本阶段使用权威等价命令 `./node_modules/.bin/tsc --noEmit`，production build 自身也再次执行 `tsc`。计划中的不存在脚本不能被记录为成功。

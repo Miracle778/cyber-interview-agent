@@ -581,4 +581,6 @@
 - `./node_modules/.bin/tsc --noEmit` 通过；`npm run build` 成功（保留既有 652.55 kB chunk 提示）。记录时间：2026-07-22 07:28 CST（UTC+08:00）。
 - Task 7 评审补齐人工审核终态：发布投影、正式拒绝和自由命令拒绝都在候选写事务内调用同一个 Repository 聚合器；仅当 Batch 至少有一个候选且全部为 `published/rejected` 时，原子推进 `review_pending -> completed` 并同步活动整理会话为 `completed`。
 - 新增最后发布、最后拒绝、尚有 pending、正式拒绝、并发最后两项和幂等回归；RED 为 `4 failed`，GREEN 为 `4 passed`，受影响套件 `94 passed`，最终后端 `633 passed`（1 条既有 warning）。记录时间：2026-07-22 07:44 CST（UTC+08:00）。
+- 第二轮评审修复修订 Batch 边界：新增 migration 025 的 `(batch_id, candidate_id, draft_id)` finalization 关联，保留候选原始 `batch_id` 与逻辑题血缘；发布/拒绝按当前 draft revision 聚合 rewrite Batch，origin 不被新修订决策误完成，活动 `question.revise` Session 同事务完成。
+- 修订发布/重启后拒绝 RED 为 `2 failed`（origin 被误完成）；旧库 committed revision 恢复 RED 为 `1 failed`（新 draft 被误回填至 origin）。GREEN 后 Repository+Migration `60 passed`、受影响 `168 passed`、完整后端 `637 passed`（1 条既有 warning）。记录时间：2026-07-22 07:59 CST（UTC+08:00）。
 - 产品成熟度：单进程 bounded scheduler，不是分布式 jobs；真实 Provider 性能、浏览器暂停/刷新/恢复/终止和真实材料完整运行未执行，也未声称通过。下一产品任务回到 R3 Task 8；非阻塞练习见本地 verification 指南。

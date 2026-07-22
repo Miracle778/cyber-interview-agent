@@ -66,12 +66,13 @@ def _mastery(version: int = 0) -> MasteryProjection:
     )
 
 
-def _connection(tmp_path: Path):
+def _connection(tmp_path: Path, *, graph_id: str = "review.round"):
     connection = connect_runtime_database(tmp_path)
     connection.execute(
         "INSERT INTO agent_sessions "
         "(id, workspace_id, graph_id, graph_version, title) "
-        "VALUES ('s1', 'w1', 'review.round', 1, 'Round')"
+        "VALUES ('s1', 'w1', ?, 1, 'Round')",
+        (graph_id,),
     )
     connection.execute(
         "INSERT INTO agent_runs (id, session_id, status) "
@@ -245,6 +246,128 @@ def _validated_repository(
         connection,
         validate_curation_artifact=drafts.validate_curation_artifact,
     )
+
+
+def _finalized_question_revision(tmp_path: Path):
+    connection = _connection(tmp_path, graph_id="question.revise")
+    repository = _validated_repository(tmp_path, connection)
+    repository.create_curation_session(
+        workspace_id="w1",
+        session_id="s1",
+        source_refs=("source-1",),
+    )
+    origin = repository.create_batch(
+        workspace_id="w1",
+        session_id="s1",
+        run_id="r1",
+        source_refs=("source-1",),
+        status="review_pending",
+        batch_id="batch-origin-revision-decision",
+    )
+    _seed_question_draft(connection, "draft-base-revision-decision")
+    repository.save_candidate(
+        batch_id=origin.id,
+        question=replace(
+            _snapshot("base"),
+            document_id="doc-base",
+            content_hash="b" * 64,
+        ),
+        draft_id="draft-base-revision-decision",
+        source_refs=("source-1#fragment-1",),
+        status="review_pending",
+        candidate_id="candidate-revision-decision",
+    )
+    connection.execute(
+        "UPDATE agent_runs SET status = 'interrupted' WHERE id = 'r1'"
+    )
+    connection.execute(
+        "INSERT INTO agent_runs (id, session_id, status) "
+        "VALUES ('r2', 's1', 'running')"
+    )
+    connection.commit()
+    rewrite = repository.create_batch(
+        workspace_id="w1",
+        session_id="s1",
+        run_id="r2",
+        source_refs=("source-1",),
+        rewrite_of_batch_id=origin.id,
+        batch_id="batch-rewrite-decision",
+    )
+    repository.update_curation_progress(
+        "s1",
+        stage="generating",
+        completed_units=0,
+        total_units=1,
+        active_batch_id=rewrite.id,
+    )
+    repository.claim_curation_finalization(rewrite.id, "r2")
+    revision = _finalization_candidate(
+        candidate_id="candidate-revision-decision",
+        draft_id="draft-revision-decision",
+        run_id="r2",
+        document_id="doc-base",
+        question_id="base",
+        revision_candidate_id="candidate-revision-decision",
+        expected_revision_draft_id="draft-base-revision-decision",
+        expected_revision_draft_version=1,
+        expected_revision_draft_hash="b" * 64,
+    )
+    revision["draft"] = {
+        **revision["draft"],  # type: ignore[arg-type]
+        "version": 2,
+    }
+    _register_staging(
+        connection,
+        batch_id=rewrite.id,
+        execution_id="r2",
+        candidates=(revision,),
+    )
+    persisted = repository.finalize_curation_candidates(
+        rewrite.id,
+        "r2",
+        candidates=(revision,),
+    )[0]
+    return connection, repository, origin, rewrite, persisted
+
+
+def _seed_completed_publication_for_draft(
+    connection,
+    *,
+    draft_id: str,
+    publication_id: str,
+    document_id: str,
+    content_hash: str,
+    expected_version: int,
+) -> None:
+    action_id = f"action-{publication_id}"
+    connection.execute(
+        "INSERT INTO pending_actions "
+        "(id, workspace_id, session_id, run_id, action_type, payload_json, "
+        "preview_json, status, idempotency_key) "
+        "VALUES (?, 'w1', 's1', 'r2', 'knowledge.publish', '{}', '{}', "
+        "'approved', ?)",
+        (action_id, f"key-{publication_id}"),
+    )
+    connection.execute(
+        "INSERT INTO publication_runs "
+        "(id, action_id, draft_id, expected_draft_version, "
+        "expected_content_hash, document_id, target_path, state) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 'completed')",
+        (
+            publication_id,
+            action_id,
+            draft_id,
+            expected_version,
+            content_hash,
+            document_id,
+            f"10_question_bank/{document_id}.md",
+        ),
+    )
+    connection.execute(
+        "UPDATE knowledge_drafts SET status = 'published' WHERE id = ?",
+        (draft_id,),
+    )
+    connection.commit()
 
 
 def test_curation_context_round_trips_with_compare_and_swap(
@@ -1294,6 +1417,100 @@ def test_successful_revision_retires_prior_draft(
         "WHERE id = 'draft-revision-retire'"
     ).fetchone()) == ("review_pending", 2)
     connection.close()
+
+
+def test_revision_publication_completes_only_the_rewrite_batch(
+    tmp_path: Path,
+) -> None:
+    connection, repository, origin, rewrite, candidate = (
+        _finalized_question_revision(tmp_path)
+    )
+    assert candidate.draft_id is not None
+    _seed_completed_publication_for_draft(
+        connection,
+        draft_id=candidate.draft_id,
+        publication_id="publication-revision-decision",
+        document_id=candidate.question.document_id,
+        content_hash=candidate.question.content_hash,
+        expected_version=2,
+    )
+
+    first = repository.activate_question(
+        candidate_id=candidate.id,
+        workspace_id="w1",
+        document_id=candidate.question.document_id,
+        draft_id=candidate.draft_id,
+        publication_id="publication-revision-decision",
+        content_hash=candidate.question.content_hash,
+    )
+    completed = repository.get_batch(rewrite.id)
+    second = repository.activate_question(
+        candidate_id=candidate.id,
+        workspace_id="w1",
+        document_id=candidate.question.document_id,
+        draft_id=candidate.draft_id,
+        publication_id="publication-revision-decision",
+        content_hash=candidate.question.content_hash,
+    )
+
+    assert first == second
+    assert candidate.batch_id == origin.id
+    assert repository.get_batch(origin.id).status == "review_pending"
+    assert repository.get_batch(origin.id).version == origin.version
+    assert completed.status == "completed"
+    assert completed.version == rewrite.version + 2
+    assert repository.get_batch(rewrite.id).version == completed.version
+    assert repository.get_curation_session("s1").stage == "completed"
+    assert connection.execute(
+        "SELECT COUNT(*) FROM review_question_catalog "
+        "WHERE publication_id = 'publication-revision-decision'"
+    ).fetchone()[0] == 1
+    assert [
+        tuple(row)
+        for row in connection.execute(
+            "SELECT batch_id, candidate_id, draft_id "
+            "FROM review_curation_batch_candidates "
+            "WHERE candidate_id = ? ORDER BY batch_id",
+            (candidate.id,),
+        )
+    ] == [
+        (
+            origin.id,
+            candidate.id,
+            "draft-base-revision-decision",
+        ),
+        (rewrite.id, candidate.id, candidate.draft_id),
+    ]
+    connection.close()
+
+
+def test_revision_rejection_completes_rewrite_batch_after_restart(
+    tmp_path: Path,
+) -> None:
+    connection, _repository, origin, rewrite, candidate = (
+        _finalized_question_revision(tmp_path)
+    )
+    assert candidate.draft_id is not None
+    connection.close()
+
+    restarted_connection = connect_runtime_database(tmp_path)
+    restarted = ReviewRepository(restarted_connection)
+    rejected = restarted.reject_candidate_for_draft(
+        candidate.draft_id,
+        reason="用户拒绝修订结果",
+        rejected_at="2026-07-22T12:30:00+08:00",
+        action_id="reject-revision-after-restart",
+    )
+
+    assert rejected is not None
+    assert rejected.status == "rejected"
+    assert rejected.batch_id == origin.id
+    assert restarted.get_batch(origin.id).status == "review_pending"
+    assert restarted.get_batch(origin.id).version == origin.version
+    assert restarted.get_batch(rewrite.id).status == "completed"
+    assert restarted.get_batch(rewrite.id).version == rewrite.version + 2
+    assert restarted.get_curation_session("s1").stage == "completed"
+    restarted_connection.close()
 
 
 @pytest.mark.asyncio

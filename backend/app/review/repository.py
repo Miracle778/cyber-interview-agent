@@ -994,6 +994,11 @@ class ReviewRepository:
                             raise ReviewConflictError(
                                 "revision base changed before retirement"
                             )
+                self._connection.execute(
+                    "INSERT INTO review_curation_batch_candidates "
+                    "(batch_id, candidate_id, draft_id) VALUES (?, ?, ?)",
+                    (batch_id, candidate_id, draft_id),
+                )
                 for link in cast(tuple[dict[str, object], ...], item["source_links"]):
                     self._connection.execute(
                         "INSERT OR IGNORE INTO review_question_source_links "
@@ -2245,6 +2250,11 @@ class ReviewRepository:
                     status,
                 ),
             )
+            self._connection.execute(
+                "INSERT INTO review_curation_batch_candidates "
+                "(batch_id, candidate_id, draft_id) VALUES (?, ?, ?)",
+                (batch_id, identifier, draft_id),
+            )
         return self.get_candidate(identifier)
 
     def get_candidate(self, candidate_id: str) -> QuestionCandidateRecord:
@@ -2506,7 +2516,7 @@ class ReviewRepository:
     ) -> QuestionCandidateRecord:
         with self._transaction():
             candidate = self._connection.execute(
-                "SELECT batch_id FROM review_question_candidates WHERE id = ?",
+                "SELECT draft_id FROM review_question_candidates WHERE id = ?",
                 (candidate_id,),
             ).fetchone()
             if candidate is None:
@@ -2519,8 +2529,11 @@ class ReviewRepository:
             if cursor.rowcount != 1:
                 raise LookupError(candidate_id)
             if status in {"published", "rejected"}:
-                self._complete_curation_batch_if_resolved(
-                    str(candidate["batch_id"])
+                self._complete_curation_batches_for_candidate(
+                    candidate_id,
+                    None
+                    if candidate["draft_id"] is None
+                    else str(candidate["draft_id"]),
                 )
         return self.get_candidate(candidate_id)
 
@@ -2548,8 +2561,9 @@ class ReviewRepository:
             )
             if cursor.rowcount != 1:
                 raise LookupError(draft_id)
-            self._complete_curation_batch_if_resolved(
-                str(candidate["batch_id"])
+            self._complete_curation_batches_for_candidate(
+                str(candidate["id"]),
+                draft_id,
             )
         return self.get_candidate_by_draft(draft_id)
 
@@ -2663,10 +2677,30 @@ class ReviewRepository:
                 "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (candidate_id,),
             )
-            self._complete_curation_batch_if_resolved(
-                str(candidate_row["batch_id"])
+            self._complete_curation_batches_for_candidate(
+                candidate_id,
+                draft_id,
             )
         return self._require_catalog(candidate.question.question_id)
+
+    def _complete_curation_batches_for_candidate(
+        self,
+        candidate_id: str,
+        draft_id: str | None,
+    ) -> tuple[str, ...]:
+        rows = self._connection.execute(
+            "SELECT batch_id FROM review_curation_batch_candidates "
+            "WHERE candidate_id = ? AND draft_id IS ? "
+            "ORDER BY created_at, batch_id",
+            (candidate_id, draft_id),
+        ).fetchall()
+        return tuple(
+            str(row["batch_id"])
+            for row in rows
+            if self._complete_curation_batch_if_resolved(
+                str(row["batch_id"])
+            )
+        )
 
     def _complete_curation_batch_if_resolved(self, batch_id: str) -> bool:
         cursor = self._connection.execute(
@@ -2674,12 +2708,16 @@ class ReviewRepository:
             "version = version + 1, updated_at = CURRENT_TIMESTAMP "
             "WHERE id = ? AND status = 'review_pending' "
             "AND EXISTS ("
-            "SELECT 1 FROM review_question_candidates c "
-            "WHERE c.batch_id = ?"
+            "SELECT 1 FROM review_curation_batch_candidates membership "
+            "WHERE membership.batch_id = ?"
             ") AND NOT EXISTS ("
-            "SELECT 1 FROM review_question_candidates c "
-            "WHERE c.batch_id = ? "
-            "AND c.status NOT IN ('published', 'rejected')"
+            "SELECT 1 FROM review_curation_batch_candidates membership "
+            "JOIN review_question_candidates c "
+            "ON c.id = membership.candidate_id "
+            "WHERE membership.batch_id = ? AND ("
+            "c.draft_id IS NOT membership.draft_id "
+            "OR c.status NOT IN ('published', 'rejected')"
+            ")"
             ")",
             (batch_id, batch_id, batch_id),
         )
