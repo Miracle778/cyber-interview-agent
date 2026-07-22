@@ -1535,13 +1535,7 @@ class ReviewRepository:
                 "AND status = 'running'",
                 (batch_id,),
             )
-            self._connection.execute(
-                "UPDATE review_curation_seed_tasks SET status = 'pending', "
-                "last_error_code = NULL, version = version + 1, "
-                "updated_at = CURRENT_TIMESTAMP WHERE batch_id = ? "
-                "AND status = 'interrupted'",
-                (batch_id,),
-            )
+            self._resume_interrupted_curation_seed_tasks_locked(batch_id)
             if existing is None:
                 self._connection.execute(
                     "INSERT INTO review_curation_control_receipts "
@@ -1951,32 +1945,31 @@ class ReviewRepository:
         self._validate_curation_error_code(error_code)
         with self._transaction():
             seed_rows = self._connection.execute(
-                "SELECT id FROM review_curation_seed_tasks "
-                "WHERE batch_id = ? AND status = 'running'",
+                "SELECT id, version, status FROM review_curation_seed_tasks "
+                "WHERE batch_id = ? AND status = 'running' "
+                "ORDER BY seed_ordinal, created_at, rowid",
                 (batch_id,),
             ).fetchall()
-            count = self._connection.execute(
-                "UPDATE review_curation_seed_tasks SET status = 'interrupted', "
-                "last_error_code = ?, version = version + 1, "
-                "updated_at = CURRENT_TIMESTAMP WHERE batch_id = ? "
-                "AND status = 'running'",
-                (error_code, batch_id),
-            ).rowcount
             for row in seed_rows:
+                cursor = self._connection.execute(
+                    "UPDATE review_curation_seed_tasks SET status = 'interrupted', "
+                    "last_error_code = ?, version = version + 1, "
+                    "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ? "
+                    "AND status = ?",
+                    (error_code, row["id"], row["version"], row["status"]),
+                )
+                if cursor.rowcount != 1:
+                    raise ReviewConflictError(
+                        "curation seed task interruption changed"
+                    )
                 self._finish_running_seed_retry_receipt(
                     str(row["id"]), "interrupted"
                 )
-            return count
+            return len(seed_rows)
 
     def resume_interrupted_curation_seed_tasks(self, batch_id: str) -> int:
         with self._transaction():
-            return self._connection.execute(
-                "UPDATE review_curation_seed_tasks SET status = 'pending', "
-                "last_error_code = NULL, version = version + 1, "
-                "updated_at = CURRENT_TIMESTAMP WHERE batch_id = ? "
-                "AND status = 'interrupted'",
-                (batch_id,),
-            ).rowcount
+            return self._resume_interrupted_curation_seed_tasks_locked(batch_id)
 
     def begin_curation_seed_retry(
         self,
@@ -2001,10 +1994,7 @@ class ReviewRepository:
             ).fetchone()
             if existing is not None:
                 receipt = self._curation_seed_retry_receipt_record(existing)
-                if (
-                    receipt.request_digest != request_digest
-                    or receipt.execution_id != execution_id
-                ):
+                if receipt.request_digest != request_digest:
                     raise ReviewConflictError(
                         "curation seed retry idempotency key changed"
                     )
@@ -4144,6 +4134,49 @@ class ReviewRepository:
             "AND result_status = 'running'",
             (result_status, seed_task_id),
         )
+
+    def _resume_interrupted_curation_seed_tasks_locked(
+        self, batch_id: str
+    ) -> int:
+        rows = self._connection.execute(
+            "SELECT task.id, task.version, task.status, "
+            "task.automatic_attempt_count, task.last_error_code, "
+            "EXISTS (SELECT 1 FROM review_curation_seed_retry_receipts receipt "
+            "WHERE receipt.seed_task_id = task.id "
+            "AND receipt.result_status = 'interrupted') AS manual_interrupted "
+            "FROM review_curation_seed_tasks task "
+            "WHERE task.batch_id = ? AND task.status = 'interrupted' "
+            "ORDER BY task.seed_ordinal, task.created_at, task.rowid",
+            (batch_id,),
+        ).fetchall()
+        for row in rows:
+            target_status = (
+                "skipped"
+                if row["automatic_attempt_count"] >= 2
+                or bool(row["manual_interrupted"])
+                else "pending"
+            )
+            last_error_code = (
+                row["last_error_code"]
+                if target_status == "skipped"
+                else None
+            )
+            cursor = self._connection.execute(
+                "UPDATE review_curation_seed_tasks SET status = ?, "
+                "last_error_code = ?, version = version + 1, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ? "
+                "AND status = ?",
+                (
+                    target_status,
+                    last_error_code,
+                    row["id"],
+                    row["version"],
+                    row["status"],
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError("curation seed task resume changed")
+        return len(rows)
 
     @staticmethod
     def _validate_control_request(idempotency_key: str, expected_version: int) -> None:

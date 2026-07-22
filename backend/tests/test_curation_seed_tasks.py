@@ -131,7 +131,9 @@ def test_automatic_claims_are_bounded_and_interrupted_requires_resume(
     repository.interrupt_running_curation_seed_tasks(
         "batch-1", error_code="curation_interrupted"
     )
-    repository.resume_interrupted_curation_seed_tasks("batch-1")
+    assert repository.resume_interrupted_curation_seed_tasks("batch-1") == 1
+    exhausted = repository.get_curation_seed_task(task.id)
+    assert (exhausted.status, exhausted.automatic_attempt_count) == ("skipped", 2)
     assert repository.claim_curation_seed_tasks(
         "batch-1", statuses=("pending",), limit=3
     ) == ()
@@ -169,16 +171,129 @@ def test_batch_resume_requeues_interrupted_seed_before_scheduler_claim(
     repository._connection.commit()
 
     batch = repository.get_batch("batch-1")
-    repository.resume_curation_batch(
-        batch.id,
-        execution_id="execution-2",
-        idempotency_key="resume-seeds-1",
-        expected_version=batch.version,
-        reason="interrupted",
-    )
+    statements: list[str] = []
+    repository._connection.set_trace_callback(statements.append)
+    try:
+        repository.resume_curation_batch(
+            batch.id,
+            execution_id="execution-2",
+            idempotency_key="resume-seeds-1",
+            expected_version=batch.version,
+            reason="interrupted",
+        )
+    finally:
+        repository._connection.set_trace_callback(None)
 
     resumed = repository.get_curation_seed_task(task.id)
     assert (resumed.status, resumed.automatic_attempt_count) == ("pending", 1)
+    seed_update = next(
+        statement
+        for statement in statements
+        if statement.startswith("UPDATE review_curation_seed_tasks SET status")
+    )
+    assert "WHERE id =" in seed_update
+    assert "version =" in seed_update
+    assert "status =" in seed_update
+
+
+def test_manual_interruption_resumes_as_skipped_not_automatic_work(
+    repository: ReviewRepository,
+) -> None:
+    task = _plan(repository)
+    automatic = repository.claim_curation_seed_tasks(
+        "batch-1", statuses=("pending",), limit=1
+    )[0]
+    skipped = repository.skip_curation_seed_task(
+        task.id,
+        expected_version=automatic.version,
+        error_code="candidate_incomplete",
+        normalization_issues=("missing_answer",),
+    )
+    receipt, _created = repository.begin_curation_seed_retry(
+        task.id,
+        expected_version=skipped.version,
+        idempotency_key="manual-interruption-1",
+        request_digest="f" * 64,
+        execution_id="execution-1",
+    )
+    manual = repository.claim_manual_curation_seed_retry(
+        receipt.id, expected_seed_version=skipped.version
+    )
+
+    assert repository.interrupt_running_curation_seed_tasks(
+        "batch-1", error_code="curation_interrupted"
+    ) == 1
+    assert repository.get_curation_seed_retry_receipt(
+        receipt.id
+    ).result_status == "interrupted"
+    assert repository.resume_interrupted_curation_seed_tasks("batch-1") == 1
+    resumed = repository.get_curation_seed_task(task.id)
+    assert (
+        resumed.status,
+        resumed.automatic_attempt_count,
+        resumed.manual_attempt_count,
+    ) == ("skipped", manual.automatic_attempt_count, 1)
+    assert repository.claim_curation_seed_tasks(
+        "batch-1", statuses=("pending", "retryable"), limit=1
+    ) == ()
+
+
+def test_bulk_interrupt_and_resume_use_row_version_and_status_cas(
+    repository: ReviewRepository,
+) -> None:
+    first = _plan(repository, ordinal=0)
+    second = _plan(repository, ordinal=1)
+    repository.claim_curation_seed_tasks(
+        "batch-1", statuses=("pending",), limit=2
+    )
+    statements: list[str] = []
+    repository._connection.set_trace_callback(statements.append)
+    try:
+        assert repository.interrupt_running_curation_seed_tasks(
+            "batch-1", error_code="curation_interrupted"
+        ) == 2
+        assert repository.resume_interrupted_curation_seed_tasks("batch-1") == 2
+    finally:
+        repository._connection.set_trace_callback(None)
+
+    seed_updates = [
+        statement
+        for statement in statements
+        if statement.startswith("UPDATE review_curation_seed_tasks SET status")
+    ]
+    assert len(seed_updates) == 4
+    assert all("WHERE id =" in statement for statement in seed_updates)
+    assert all("version =" in statement for statement in seed_updates)
+    assert all("status =" in statement for statement in seed_updates)
+    assert repository.get_curation_seed_task(first.id).status == "pending"
+    assert repository.get_curation_seed_task(second.id).status == "pending"
+
+
+def test_bulk_interrupt_cas_mismatch_rolls_back_every_seed(
+    repository: ReviewRepository,
+) -> None:
+    first = _plan(repository, ordinal=0)
+    second = _plan(repository, ordinal=1)
+    running = repository.claim_curation_seed_tasks(
+        "batch-1", statuses=("pending",), limit=2
+    )
+    repository._connection.execute(
+        "CREATE TEMP TRIGGER mutate_second_seed_version "
+        "AFTER UPDATE OF status ON review_curation_seed_tasks "
+        f"WHEN NEW.id = '{first.id}' AND NEW.status = 'interrupted' "
+        "BEGIN UPDATE review_curation_seed_tasks SET version = version + 1 "
+        f"WHERE id = '{second.id}'; END"
+    )
+
+    with pytest.raises(ReviewConflictError, match="interruption changed"):
+        repository.interrupt_running_curation_seed_tasks(
+            "batch-1", error_code="curation_interrupted"
+        )
+
+    after = repository.list_curation_seed_tasks("batch-1")
+    assert [(task.status, task.version) for task in after] == [
+        (task.status, task.version) for task in running
+    ]
 
 
 def test_retryable_is_claimed_once_and_second_content_failure_must_skip(
@@ -281,15 +396,16 @@ def test_manual_retry_receipt_is_idempotent_and_counts_separately(
         expected_version=skipped.version,
         idempotency_key="retry-seed-1",
         request_digest="d" * 64,
-        execution_id="execution-1",
+        execution_id="execution-2",
     ) == (receipt, False)
+    assert receipt.execution_id == "execution-1"
     with pytest.raises(ReviewConflictError, match="idempotency key changed"):
         repository.begin_curation_seed_retry(
             task.id,
             expected_version=skipped.version,
             idempotency_key="retry-seed-1",
             request_digest="e" * 64,
-            execution_id="execution-2",
+            execution_id="execution-1",
         )
 
     manual = repository.claim_manual_curation_seed_retry(

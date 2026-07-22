@@ -504,6 +504,103 @@ def test_migration_026_adds_seed_state_and_backfills_candidate_quality(
     migrated.close()
 
 
+def test_migration_026_rejects_invalid_counts_json_receipts_and_seed_links(
+    tmp_path: Path,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+    connection.execute(
+        "INSERT INTO agent_sessions "
+        "(id, workspace_id, graph_id, graph_version, title) "
+        "VALUES ('s26-checks', 'w1', 'question.curate', 1, 'Curation')"
+    )
+    connection.execute(
+        "INSERT INTO agent_runs (id, session_id, status) "
+        "VALUES ('run26-checks', 's26-checks', 'completed')"
+    )
+    connection.execute(
+        "INSERT INTO review_question_batches "
+        "(id, workspace_id, session_id, origin_session_id, source_refs_json, status) "
+        "VALUES ('b26-checks', 'w1', 's26-checks', 's26-checks', '[]', "
+        "'review_pending')"
+    )
+    connection.execute(
+        "INSERT INTO review_curation_work_items "
+        "(id, batch_id, stage, unit_index, input_digest, source_refs_json, status) "
+        "VALUES ('wi26-checks', 'b26-checks', 'discovery', 0, ?, '[]', "
+        "'completed')",
+        ("a" * 64,),
+    )
+    connection.execute(
+        "INSERT INTO review_curation_seed_tasks "
+        "(id, batch_id, discovery_work_item_id, seed_key, seed_ordinal, "
+        "question_text, primary_source_ref, source_refs_json, input_digest, "
+        "status) VALUES ('seed26-checks', 'b26-checks', 'wi26-checks', ?, 0, "
+        "'Q', 'source#1', '[\"source#1\"]', ?, 'skipped')",
+        ("b" * 64, "c" * 64),
+    )
+    connection.executemany(
+        "INSERT INTO review_question_candidates "
+        "(id, batch_id, question_json, status) VALUES (?, 'b26-checks', '{}', "
+        "'review_pending')",
+        (("candidate26-a",), ("candidate26-b",)),
+    )
+    connection.commit()
+
+    for column, invalid_value in (
+        ("automatic_attempt_count", -1),
+        ("automatic_attempt_count", 3),
+        ("manual_attempt_count", -1),
+    ):
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                f"UPDATE review_curation_seed_tasks SET {column} = ? "
+                "WHERE id = 'seed26-checks'",
+                (invalid_value,),
+            )
+    for column in (
+        "source_refs_json",
+        "candidate_json",
+        "normalization_issues_json",
+    ):
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                f"UPDATE review_curation_seed_tasks SET {column} = 'not-json' "
+                "WHERE id = 'seed26-checks'"
+            )
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            "UPDATE review_question_candidates "
+            "SET normalization_issues_json = 'not-json' "
+            "WHERE id = 'candidate26-a'"
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            "INSERT INTO review_curation_seed_retry_receipts "
+            "(id, seed_task_id, idempotency_key, request_digest, execution_id) "
+            "VALUES ('receipt26-bad-digest', 'seed26-checks', 'key-1', 'bad', "
+            "'run26-checks')"
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            "INSERT INTO review_curation_seed_retry_receipts "
+            "(id, seed_task_id, idempotency_key, request_digest, execution_id, "
+            "result_status) VALUES ('receipt26-bad-status', 'seed26-checks', "
+            "'key-2', ?, 'run26-checks', 'unknown')",
+            ("d" * 64,),
+        )
+    connection.execute(
+        "UPDATE review_question_candidates SET seed_task_id = 'seed26-checks' "
+        "WHERE id = 'candidate26-a'"
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            "UPDATE review_question_candidates SET seed_task_id = 'seed26-checks' "
+            "WHERE id = 'candidate26-b'"
+        )
+    assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    connection.close()
+
+
 def test_migration_020_adds_private_curation_finalization_claims(
     tmp_path: Path,
 ) -> None:
