@@ -88,7 +88,7 @@
 - Consumes: existing `AgentTraceWriter.append(identity, event_type, payload, terminal=False) -> bool`.
 - Produces: every new row has `schema_version=2`, canonical `timestamp`, `local_timestamp`, and `timezone`; terminal model/tool payloads contain non-negative monotonic `duration_ms`.
 
-- [ ] **Step 1: Write failing schema and duration tests**
+- [x] **Step 1: Write failing schema and duration tests**
 
 Add exact assertions to `test_agent_trace_writer.py`:
 
@@ -109,7 +109,7 @@ def test_writer_records_utc_and_beijing_time_for_the_same_instant(tmp_path: Path
 
 In `test_agent_trace_middleware.py`, invoke the fake model and tool handlers and assert terminal rows contain `duration_ms >= 0`. Retain a hand-written v1 line before a v2 append and assert `read_trace_rows` returns both in sequence.
 
-- [ ] **Step 2: Run the focused tests and confirm RED**
+- [x] **Step 2: Run the focused tests and confirm RED**
 
 Run:
 
@@ -119,7 +119,7 @@ cd backend && UV_CACHE_DIR=/tmp/cyber-interview-uv-cache uv run pytest -q tests/
 
 Expected: failures show schema version 1 and missing `local_timestamp`, `timezone`, or `duration_ms`.
 
-- [ ] **Step 3: Implement one-instant dual timestamps and monotonic durations**
+- [x] **Step 3: Implement one-instant dual timestamps and monotonic durations**
 
 Use one UTC instant for both representations:
 
@@ -153,11 +153,11 @@ payload = {"response": response, "duration_ms": max(0, int((time.monotonic() - s
 
 Do not derive duration from either ISO timestamp.
 
-- [ ] **Step 4: Run focused verification**
+- [x] **Step 4: Run focused verification**
 
 Run the Task 1 command again. Expected: all Trace writer/middleware tests pass and credential-redaction tests remain green. Run `git diff --check`.
 
-- [ ] **Step 5: Update local verification and commit**
+- [x] **Step 5: Update local verification and commit**
 
 Record schema v2, v1 compatibility, and monotonic duration evidence in `docs/verification/r2-complete-review-agent.md`, but stage only source/tests:
 
@@ -194,7 +194,7 @@ interrupt_running_curation_work_items(batch_id: str, *, error_code: str) -> int
 curation_batch_timing(batch_id: str) -> CurationBatchTiming
 ```
 
-- [ ] **Step 1: Write failing migration and repository state-machine tests**
+- [x] **Step 1: Write failing migration and repository state-machine tests**
 
 Extend `test_runtime_migrations.py` to expect migration 19, the new columns, attempt/control tables, indexes, and `PRAGMA foreign_key_check == []`.
 
@@ -230,7 +230,7 @@ with pytest.raises(ReviewConflictError):
 
 Also cover changed payload under the same idempotency key, stale expected version, one active attempt, cumulative timing excluding pauses, interrupted Work Item restart, and completed output immutability.
 
-- [ ] **Step 2: Run tests and confirm RED**
+- [x] **Step 2: Run tests and confirm RED**
 
 Run:
 
@@ -240,7 +240,7 @@ cd backend && UV_CACHE_DIR=/tmp/cyber-interview-uv-cache uv run pytest -q tests/
 
 Expected: migration version/columns and new repository symbols are missing.
 
-- [ ] **Step 3: Implement migration 019**
+- [x] **Step 3: Implement migration 019**
 
 Rebuild constrained tables while the migration runner has foreign keys disabled. Preserve every existing row and index. Add:
 
@@ -282,13 +282,13 @@ CREATE TABLE review_curation_control_receipts (
 
 Rebuild `review_curation_work_items` with `processor_kind IN ('deterministic','model')` and `status IN ('pending','running','completed','failed','interrupted')`. Rebuild `review_curation_sessions.stage` to accept paused/interrupted/terminated.
 
-- [ ] **Step 4: Implement typed records and transactional repository methods**
+- [x] **Step 4: Implement typed records and transactional repository methods**
 
 Add frozen records and Literal aliases to `models.py`. Implement every produced method with `BEGIN IMMEDIATE`, expected version/state predicates, canonical request digests, and stable errors. `start_curation_work_item` accepts only pending/failed/interrupted and never increments deterministic completed items.
 
 Timing aggregation must use all related `agent_runs.started_at/finished_at`; an active run uses the current UTC instant, and paused gaps are not present in any Execution interval.
 
-- [ ] **Step 5: Run focused tests and integrity checks**
+- [x] **Step 5: Run focused tests and integrity checks**
 
 Run the Task 2 command again. Then execute the existing repository regression:
 
@@ -298,7 +298,7 @@ cd backend && UV_CACHE_DIR=/tmp/cyber-interview-uv-cache uv run pytest -q tests/
 
 Expected: all pass, including existing generation-2 upgrade and foreign-key checks. Run `git diff --check`.
 
-- [ ] **Step 6: Update local verification and commit**
+- [x] **Step 6: Update local verification and commit**
 
 ```bash
 git add backend/app/db/migrations/runtime/019_curation_long_task_control.sql backend/app/review/models.py backend/app/review/repository.py backend/tests/test_runtime_migrations.py backend/tests/test_curation_work_items.py
@@ -346,7 +346,7 @@ def plan_curation_discovery(sections: tuple[SourceSection, ...]) -> CurationDisc
 
 `QuestionSeed` keeps `source_ref` as its primary anchor for stored-output compatibility and adds normalized ordered `source_refs: list[str]` with a maximum of 32 refs. `QuestionSeedChunk` allows at most 20 lightweight seeds.
 
-- [ ] **Step 1: Write failing coverage, quality, and compatibility tests**
+- [x] **Step 1: Write failing coverage, quality, and compatibility tests**
 
 Cover explicit question lines, question-like Markdown/bold headings, numbered questions, answer lists that must not become peer questions, mixed structured/prose input, and a 40,000-character unstructured source.
 
@@ -364,7 +364,7 @@ assert legacy.source_refs == ["s1#section-0001"]
 
 Add Agent validation tests for unknown secondary refs, cross-source refs, duplicate refs, and ordered normalization.
 
-- [ ] **Step 2: Run tests and confirm RED**
+- [x] **Step 2: Run tests and confirm RED**
 
 ```bash
 cd backend && UV_CACHE_DIR=/tmp/cyber-interview-uv-cache uv run pytest -q tests/test_curation_sections.py tests/test_curation_planner.py tests/test_question_curation_graph.py
@@ -372,7 +372,7 @@ cd backend && UV_CACHE_DIR=/tmp/cyber-interview-uv-cache uv run pytest -q tests/
 
 Expected: the planner module and multi-reference contract do not exist; the old packer still creates one unit per six short sections.
 
-- [ ] **Step 3: Implement coverage-first planning**
+- [x] **Step 3: Implement coverage-first planning**
 
 Keep atomic section/ref generation in `curation_sections.py`. Move Provider-call planning into `curation_planner.py`:
 
@@ -390,17 +390,17 @@ def _is_question_anchor(section: SourceSection) -> bool:
 
 Form a deterministic range from one strong anchor up to the next strong anchor in the same source. Put every remaining section into an ordered LLM window capped at 6,000 characters. Build and validate a coverage set; raise a stable planning error if any ref is missing or appears in incompatible ranges.
 
-- [ ] **Step 4: Implement the compatible seed contract and prompt**
+- [x] **Step 4: Implement the compatible seed contract and prompt**
 
 Use an after-validator so old `{source_ref}` output becomes `[source_ref]`, while new output requires the primary ref first, removes duplicate refs stably, and rejects more than 32 refs. Update discovery Prompt/rendering to allow no more than 20 seeds and require every cited ref to appear in the current window.
 
 Update `QuestionCurationAgents.discover` and `enrich` to validate all refs against the supplied sections. Set discovery policy to `ModelInvocationPolicy(2_048, 90, 1)` and enrichment to `ModelInvocationPolicy(4_096, 180, 1)`.
 
-- [ ] **Step 5: Run focused quality verification**
+- [x] **Step 5: Run focused quality verification**
 
 Run the Task 3 command again. Expected: all planner, legacy contract, Prompt, and Agent validation tests pass. Run `git diff --check`.
 
-- [ ] **Step 6: Validate the local authorized material without Provider calls and commit**
+- [x] **Step 6: Validate the local authorized material without Provider calls and commit**
 
 Run only the pure planner against the user-selected local material. Record character count, atomic section count, deterministic seed count, uncovered window count, and coverage equality in `docs/verification/r2-complete-review-agent.md`; do not copy source text.
 
@@ -447,7 +447,7 @@ async def run_curation_wave(
 
 Graph state exposes only IDs, phase, completed/total counts, generated candidate count, warnings, and final candidates. It does not copy full source text into Work Item rows or product Events.
 
-- [ ] **Step 1: Write failing scheduler and concurrent Graph tests**
+- [x] **Step 1: Write failing scheduler and concurrent Graph tests**
 
 Use an asyncio barrier fake Agent to measure active calls:
 
@@ -469,7 +469,7 @@ assert not result.failed
 
 Add Graph cases where completion order is reversed, one worker fails while two succeed, a cancellation interrupts running items, deterministic units perform zero Agent calls, a resumed Batch skips completed work, and enrichment receives no unbounded list of earlier generated questions. Add invocation-policy cases proving 429/5xx/network errors retry at most once and schema-validation errors do not retry.
 
-- [ ] **Step 2: Run tests and confirm RED**
+- [x] **Step 2: Run tests and confirm RED**
 
 ```bash
 cd backend && UV_CACHE_DIR=/tmp/cyber-interview-uv-cache uv run pytest -q tests/test_curation_scheduler.py tests/test_question_curation_graph.py tests/test_curation_work_items.py tests/test_checkpoint_serialization.py
@@ -477,13 +477,13 @@ cd backend && UV_CACHE_DIR=/tmp/cyber-interview-uv-cache uv run pytest -q tests/
 
 Expected: scheduler is missing and Graph peak concurrency remains one.
 
-- [ ] **Step 3: Implement the bounded wave scheduler**
+- [x] **Step 3: Implement the bounded wave scheduler**
 
 Use an asyncio semaphore and `gather(return_exceptions=True)`. Wait for every started worker before returning normal failures; do not let one Provider exception discard sibling successes. Re-raise outer `CancelledError` after worker cleanup so pause can finish promptly.
 
 Normalize error codes without Provider body text. Return completed IDs in input order and failed tuples in input order, independent of completion order.
 
-- [ ] **Step 4: Refactor the Graph into planning and wave nodes**
+- [x] **Step 4: Refactor the Graph into planning and wave nodes**
 
 Replace `discover_next`/`enrich_next` serial loops with bounded wave nodes:
 
@@ -499,13 +499,13 @@ Persist deterministic seed units as completed `processor_kind='deterministic'` W
 
 When a final 429/overload error occurs, atomically set the Batch concurrency limit to 1 before failing the Execution. Later resume reads the persisted limit; the reduction lasts only for that Batch, and a newly created Batch starts at 3.
 
-- [ ] **Step 5: Remove serial candidate dependencies and add provisional counts**
+- [x] **Step 5: Remove serial candidate dependencies and add provisional counts**
 
 For each enrichment unit, pass current seeds, their referenced sections, and at most 20 deterministically prefiltered active-question titles. Do not append earlier enrichment outputs. After every wave, compute generated count from completed enrichment output and return monotonic progress.
 
 Final reduction remains the only creator of formal candidates and continues to merge high-confidence duplicates and cap the result at 200.
 
-- [ ] **Step 6: Run focused verification and commit**
+- [x] **Step 6: Run focused verification and commit**
 
 Run the Task 4 command again. Expected: peak concurrency is exactly 3 when six tasks are ready, sibling success survives one failure, cancellation leaves no running items, and checkpoint serialization passes. Run `git diff --check`.
 
@@ -548,7 +548,7 @@ async def terminate_curation_session(session_id: str, *, expected_batch_version:
 
 The route reads `idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=200)]`; only `expectedBatchVersion` is sent in the JSON body. The curation resource returns Batch status/version, extended progress, timing, controls, and bounded provisional candidates.
 
-- [ ] **Step 1: Write failing API, race, and restart tests**
+- [x] **Step 1: Write failing API, race, and restart tests**
 
 Cover:
 
@@ -575,7 +575,7 @@ assert resumed.json()["activeBatchId"] == old_batch_id
 
 Also test duplicate idempotency keys, stale version 409, terminated resume 409, pause-vs-complete race, current/cumulative timing, provisional candidates hidden from normal candidate endpoints, legacy `/retry`, SSE replay, and restart conversion to interrupted/paused/terminated.
 
-- [ ] **Step 2: Run tests and confirm RED**
+- [x] **Step 2: Run tests and confirm RED**
 
 ```bash
 cd backend && UV_CACHE_DIR=/tmp/cyber-interview-uv-cache uv run pytest -q tests/test_curation_session_api.py tests/test_review_api_restart.py tests/test_agent_routes_v2.py
@@ -583,7 +583,7 @@ cd backend && UV_CACHE_DIR=/tmp/cyber-interview-uv-cache uv run pytest -q tests/
 
 Expected: endpoints/resources are missing and restart leaves the Batch projection generating.
 
-- [ ] **Step 3: Implement domain control methods**
+- [x] **Step 3: Implement domain control methods**
 
 For pause/terminate, persist control receipt first, publish a safe control event, call `AgentExecutionService.cancel`, interrupt any remaining running Work Items, and finalize the Batch/Session state. While `status='generating'` and `control_intent='pause'`, project the transient UI stage as `pausing`; it is not a durable Batch status. If natural completion already won the version/state predicate, return the completed resource rather than overwriting it.
 
@@ -591,13 +591,13 @@ For resume, validate Batch status, prepare a new Execution with the same immutab
 
 Initial curation creation must record the initial Batch attempt. Graph failure uses a repository method that atomically marks Batch/Session failed without destroying completed Work Items.
 
-- [ ] **Step 4: Implement startup reconciliation and safe events**
+- [x] **Step 4: Implement startup reconciliation and safe events**
 
 Extend the product event allowlist with `curation.control.changed`. Payload is limited to `resourceId`, `batchId`, `status`, `operation`, and `version`.
 
 At Workspace startup, reconcile interrupted executions and domain tasks before accepting requests. Do not automatically resume Provider calls.
 
-- [ ] **Step 5: Project timing, controls, and provisional candidates**
+- [x] **Step 5: Project timing, controls, and provisional candidates**
 
 Add resource models:
 
@@ -620,7 +620,7 @@ class ProvisionalCandidateResource(ReviewModel):
 
 Derive provisional IDs from `work_item_id + ordinal`, cap the resource at 200, and never create drafts or return publish controls for these items. `active_workers` is the current count of running Work Items, not a frontend guess.
 
-- [ ] **Step 6: Run focused backend verification and commit**
+- [x] **Step 6: Run focused backend verification and commit**
 
 Run the Task 5 command again plus:
 
@@ -668,7 +668,7 @@ terminateCurationSession(id: string, expectedBatchVersion: number, idempotencyKe
 
 Each frontend function serializes only `{ expectedBatchVersion }` in the body and sends the key as the `Idempotency-Key` header.
 
-- [ ] **Step 1: Run the required UI design gate and write failing interaction tests**
+- [x] **Step 1: Run the required UI design gate and write failing interaction tests**
 
 Use `ui-ux-pro-max` against the existing R2 semantic tokens. Keep the accepted layout: progress card is primary, pause is visible, terminate is separated as a dangerous secondary action, and provisional items are explicitly read-only.
 
@@ -685,7 +685,7 @@ expect(screen.getByText("本次运行 2 分 32 秒")).toBeInTheDocument();
 
 Also test terminal freeze, paused time not increasing, cumulative time, pause/resume/terminate callbacks, terminate confirmation, distinct semantic classes, active worker/candidate counts, provisional preview without edit/publish buttons, SSE refresh, and reload hydration.
 
-- [ ] **Step 2: Run frontend tests and confirm RED**
+- [x] **Step 2: Run frontend tests and confirm RED**
 
 ```bash
 cd frontend && npm test -- --run src/features/review/reviewApi.test.ts src/features/review/CurationRuntimePanel.test.tsx src/features/review/QuestionCatalog.test.tsx src/features/agent/useAgentEvents.test.tsx
@@ -693,11 +693,11 @@ cd frontend && npm test -- --run src/features/review/reviewApi.test.ts src/featu
 
 Expected: new types/functions/controls are missing and the existing test still asserts no elapsed time.
 
-- [ ] **Step 3: Implement API/types and SSE reconciliation**
+- [x] **Step 3: Implement API/types and SSE reconciliation**
 
 Extend `CurationStage` and `QuestionBatch.status`; add exact resource fields from Task 5. Use the existing `commandId()` UUID helper for control idempotency keys. Add `curation.control.changed` to the event union and refresh the selected session on control/progress/terminal events.
 
-- [ ] **Step 4: Implement the elapsed clock and controls**
+- [x] **Step 4: Implement the elapsed clock and controls**
 
 In `CurationRuntimePanel`, tick local `now` once per second only while Batch status is generating. Compute display time from server timing plus the latest execution start; freeze on non-running states. Do not put the ticking text in an assertive live region.
 
@@ -714,11 +714,11 @@ terminated   → 已终止，无恢复按钮
 
 Keep command/chat Execution cancellation on the existing generic endpoint; use domain endpoints only for the initial/long-running curation Batch.
 
-- [ ] **Step 5: Implement read-only provisional preview and semantic styles**
+- [x] **Step 5: Implement read-only provisional preview and semantic styles**
 
 `CurationProvisionalList` displays title, short question text, evidence count, and “处理中预览”. It must not reuse formal candidate action props. Use existing surface, border, primary, warning, danger, focus, spacing, and motion tokens; add no raw colors.
 
-- [ ] **Step 6: Run frontend verification and commit**
+- [x] **Step 6: Run frontend verification and commit**
 
 Run the Task 6 test command, then:
 
@@ -754,7 +754,7 @@ Reviewer gate: inspect 390px and desktop layouts, keyboard focus, reduced motion
 - Consumes: all previous Tasks.
 - Produces: one verified R2 curation slice with measured planner/call reduction, bounded concurrency, pause/resume/terminate, progressive preview, real-time timing, and Trace v2 evidence.
 
-- [ ] **Step 1: Add a deterministic cross-layer scenario**
+- [x] **Step 1: Add a deterministic cross-layer scenario**
 
 Create a fake Provider scenario that starts at least six enrichment items, blocks three concurrently, completes two, fails one, pauses the resumed attempt, restarts the Runtime, resumes again, and finishes.
 
@@ -770,7 +770,7 @@ assert all(row.status != "running" for row in repository.list_curation_work_item
 
 Add the frontend contract scenario that hydrates an interrupted session, resumes it, receives out-of-order progress events, and never displays a lower completed count.
 
-- [ ] **Step 2: Run the affected cross-layer tests**
+- [x] **Step 2: Run the affected cross-layer tests**
 
 ```bash
 cd backend && UV_CACHE_DIR=/tmp/cyber-interview-uv-cache uv run pytest -q tests/test_curation_sections.py tests/test_curation_planner.py tests/test_curation_scheduler.py tests/test_curation_work_items.py tests/test_question_curation_graph.py tests/test_curation_session_api.py tests/test_review_api_restart.py tests/test_agent_trace_writer.py tests/test_agent_trace_middleware.py
@@ -779,7 +779,7 @@ cd ../frontend && npm test -- --run src/features/review/QuestionCatalog.test.tsx
 
 Expected: all affected cross-layer tests pass.
 
-- [ ] **Step 3: Run the one post-integration full regression**
+- [x] **Step 3: Run the one post-integration full regression**
 
 ```bash
 cd backend && UV_CACHE_DIR=/tmp/cyber-interview-uv-cache uv run pytest -q
@@ -788,7 +788,7 @@ cd ../frontend && npm test -- --run && npm run typecheck && npm run build
 
 Expected: complete backend and frontend suites pass; build succeeds. Record exact counts and timestamp in local verification.
 
-- [ ] **Step 4: Complete local planner and browser acceptance without implicit data export**
+- [x] **Step 4: Complete local planner and browser acceptance without implicit data export**
 
 Run the pure planner against the user-selected local material and record only counts/digests. Start the app and verify:
 
@@ -802,7 +802,7 @@ Run the pure planner against the user-selected local material and record only co
 
 Do not send the original source to a real Provider unless the user explicitly authorizes that exact run. If authorized, record redacted counts, model ID, peak concurrency, time-to-first-preview, total active time, and retry counts; do not copy prompt/source/response bodies into verification.
 
-- [ ] **Step 5: Update project status and final local guide**
+- [x] **Step 5: Update project status and final local guide**
 
 Update root planning files with:
 
@@ -814,7 +814,7 @@ Update root planning files with:
 
 Reshape the relevant section of `docs/verification/r2-complete-review-agent.md` into the manual flow for timing, pause, resume, terminate, provisional preview, and Trace local time. Keep `docs/verification/` unstaged.
 
-- [ ] **Step 6: Run final diff/document checks and commit**
+- [x] **Step 6: Run final diff/document checks and commit**
 
 Run:
 
