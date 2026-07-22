@@ -437,6 +437,7 @@
 - SQLite `BEGIN IMMEDIATE` 串行化最后候选的并发决策；再配合 Batch 的 `status = 'review_pending'` 条件更新，确保只有一个事务增加版本并投影 Session `completed`，重复发布/拒绝不会重复终态副作用。
 - 修订 finalization 复用同一 Candidate ID 并有意保留其 origin `batch_id`；因此“Candidate 属于哪个历史批次”和“本次 Batch 提交了哪个 Draft Revision”不是同一关系。把 candidate 移到 rewrite Batch 会破坏血缘与唯一性，正确边界是独立持久化 `(batch_id, candidate_id, draft_id)` committed set。
 - 决策聚合必须只选择与 Candidate 当前 `draft_id` 匹配的 Batch 关联，并在 Batch 全量判定时再次要求每个关联 draft 仍是 Candidate 当前 draft。这样新修订发布/拒绝只完成 rewrite Batch，旧 Batch 不会借用新版本状态误完成；migration 025 从 committed finalization 恢复升级前修订关联，并只在 Draft run 与 owner Batch run 一致时回填普通归属。
+- migration 中的归属推断不能使用 NULL-safe `IS` 比较运行 ID：Session/Execution 永久删除会让 Draft 和 Batch 的 run_id 同时变成 NULL，同时 finalization claim 已 cascade 消失。只有双方 run_id 都非空且 `=` 才是普通归属证据；NULL/NULL 必须宁缺勿错，不得创建 origin 或 rewrite membership。Repository 中 `draft_id IS ?` / `IS NOT` 则比较已持久化 revision identity，属于刻意的 NULL-safe 等值，不是归属推断。
 - 前端 interrupted hydrate → resume → 新 enrichment 快照 → 旧 discovery 快照晚到的契约直接通过；同 Batch/同版本按阶段拒绝回退，同阶段 completed/total/generated 取最大值，provisional 按稳定 ID 只增合并，因此页面不会倒退计数或缩短预览。
 - 当前恢复能力的成熟度是单进程 bounded scheduler + SQLite durable Work Item，不是分布式任务队列。进程退出时未提交的 Provider 调用允许重发，completed Work Item 不重放。
 - `frontend/package.json` 没有 `typecheck` script；本阶段使用权威等价命令 `./node_modules/.bin/tsc --noEmit`，production build 自身也再次执行 `tsc`。计划中的不存在脚本不能被记录为成功。

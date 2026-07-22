@@ -104,6 +104,60 @@ def _create_runtime_at_version(workspace_root: Path, version: int) -> sqlite3.Co
     return connection
 
 
+def _seed_version_24_committed_revision(connection) -> None:
+    connection.execute(
+        "INSERT INTO agent_sessions "
+        "(id, workspace_id, graph_id, graph_version, title) "
+        "VALUES ('session-revision', 'w1', 'question.revise', 1, 'Revision')"
+    )
+    connection.executemany(
+        "INSERT INTO agent_runs (id, session_id, status) VALUES (?, ?, ?)",
+        (
+            ("run-origin", "session-revision", "interrupted"),
+            ("run-rewrite", "session-revision", "completed"),
+        ),
+    )
+    connection.execute(
+        "INSERT INTO review_question_batches "
+        "(id, workspace_id, session_id, origin_session_id, run_id, "
+        "source_refs_json, status) VALUES "
+        "('batch-origin', 'w1', 'session-revision', 'session-revision', "
+        "'run-origin', '[\"source-1\"]', 'review_pending')"
+    )
+    connection.execute(
+        "INSERT INTO review_question_batches "
+        "(id, workspace_id, session_id, origin_session_id, run_id, "
+        "source_refs_json, rewrite_of_batch_id, status) VALUES "
+        "('batch-rewrite', 'w1', 'session-revision', 'session-revision', "
+        "'run-rewrite', '[\"source-1\"]', 'batch-origin', "
+        "'review_pending')"
+    )
+    connection.execute(
+        "INSERT INTO knowledge_drafts "
+        "(id, workspace_id, session_id, run_id, domain, document_type, "
+        "document_id, title, content_path, content_hash, status, version) "
+        "VALUES ('draft-revision', 'w1', 'session-revision', 'run-rewrite', "
+        "'review', 'question', 'doc-revision', 'Revision', "
+        "'artifacts/review/drafts/draft-revision.md', ?, "
+        "'review_pending', 2)",
+        ("a" * 64,),
+    )
+    connection.execute(
+        "INSERT INTO review_question_candidates "
+        "(id, batch_id, draft_id, question_json, status) VALUES "
+        "('candidate-revision', 'batch-origin', 'draft-revision', '{}', "
+        "'review_pending')"
+    )
+    connection.execute(
+        "INSERT INTO review_curation_finalizations "
+        "(batch_id, execution_id, batch_version, state, "
+        "candidate_ids_json) VALUES "
+        "('batch-rewrite', 'run-rewrite', 1, 'committed', "
+        "'[\"candidate-revision\"]')"
+    )
+    connection.commit()
+
+
 def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
     connection = connect_runtime_database(tmp_path)
 
@@ -213,9 +267,20 @@ def test_migration_025_backfills_candidate_batch_revision_membership(
         "'review_pending')"
     )
     connection.execute(
+        "INSERT INTO knowledge_drafts "
+        "(id, workspace_id, session_id, run_id, domain, document_type, "
+        "document_id, title, content_path, content_hash, status) "
+        "VALUES ('draft-membership', 'w1', 'session-membership', "
+        "'run-membership', 'review', 'question', 'doc-membership', "
+        "'Membership', 'artifacts/review/drafts/draft-membership.md', ?, "
+        "'review_pending')",
+        ("b" * 64,),
+    )
+    connection.execute(
         "INSERT INTO review_question_candidates "
         "(id, batch_id, draft_id, question_json, status) VALUES "
-        "('candidate-membership', 'batch-membership', NULL, '{}', "
+        "('candidate-membership', 'batch-membership', "
+        "'draft-membership', '{}', "
         "'review_pending')"
     )
     connection.commit()
@@ -229,7 +294,7 @@ def test_migration_025_backfills_candidate_batch_revision_membership(
     ).fetchone()) == (
         "batch-membership",
         "candidate-membership",
-        None,
+        "draft-membership",
     )
     assert migrated.execute("PRAGMA foreign_key_check").fetchall() == []
     migrated.close()
@@ -239,57 +304,7 @@ def test_migration_025_recovers_committed_revision_without_reassigning_origin(
     tmp_path: Path,
 ) -> None:
     connection = _create_runtime_at_version(tmp_path, 24)
-    connection.execute(
-        "INSERT INTO agent_sessions "
-        "(id, workspace_id, graph_id, graph_version, title) "
-        "VALUES ('session-revision', 'w1', 'question.revise', 1, 'Revision')"
-    )
-    connection.executemany(
-        "INSERT INTO agent_runs (id, session_id, status) VALUES (?, ?, ?)",
-        (
-            ("run-origin", "session-revision", "interrupted"),
-            ("run-rewrite", "session-revision", "completed"),
-        ),
-    )
-    connection.execute(
-        "INSERT INTO review_question_batches "
-        "(id, workspace_id, session_id, origin_session_id, run_id, "
-        "source_refs_json, status) VALUES "
-        "('batch-origin', 'w1', 'session-revision', 'session-revision', "
-        "'run-origin', '[\"source-1\"]', 'review_pending')"
-    )
-    connection.execute(
-        "INSERT INTO review_question_batches "
-        "(id, workspace_id, session_id, origin_session_id, run_id, "
-        "source_refs_json, rewrite_of_batch_id, status) VALUES "
-        "('batch-rewrite', 'w1', 'session-revision', 'session-revision', "
-        "'run-rewrite', '[\"source-1\"]', 'batch-origin', "
-        "'review_pending')"
-    )
-    connection.execute(
-        "INSERT INTO knowledge_drafts "
-        "(id, workspace_id, session_id, run_id, domain, document_type, "
-        "document_id, title, content_path, content_hash, status, version) "
-        "VALUES ('draft-revision', 'w1', 'session-revision', 'run-rewrite', "
-        "'review', 'question', 'doc-revision', 'Revision', "
-        "'artifacts/review/drafts/draft-revision.md', ?, "
-        "'review_pending', 2)",
-        ("a" * 64,),
-    )
-    connection.execute(
-        "INSERT INTO review_question_candidates "
-        "(id, batch_id, draft_id, question_json, status) VALUES "
-        "('candidate-revision', 'batch-origin', 'draft-revision', '{}', "
-        "'review_pending')"
-    )
-    connection.execute(
-        "INSERT INTO review_curation_finalizations "
-        "(batch_id, execution_id, batch_version, state, "
-        "candidate_ids_json) VALUES "
-        "('batch-rewrite', 'run-rewrite', 1, 'committed', "
-        "'[\"candidate-revision\"]')"
-    )
-    connection.commit()
+    _seed_version_24_committed_revision(connection)
     connection.close()
 
     migrated = connect_runtime_database(tmp_path)
@@ -301,6 +316,41 @@ def test_migration_025_recovers_committed_revision_without_reassigning_origin(
     )] == [
         ("batch-rewrite", "candidate-revision", "draft-revision")
     ]
+    assert migrated.execute("PRAGMA foreign_key_check").fetchall() == []
+    migrated.close()
+
+
+def test_migration_025_does_not_infer_membership_after_session_hard_delete(
+    tmp_path: Path,
+) -> None:
+    connection = _create_runtime_at_version(tmp_path, 24)
+    _seed_version_24_committed_revision(connection)
+
+    connection.execute(
+        "DELETE FROM agent_sessions WHERE id = 'session-revision'"
+    )
+    connection.commit()
+
+    assert connection.execute(
+        "SELECT COUNT(*) FROM review_curation_finalizations"
+    ).fetchone()[0] == 0
+    assert [tuple(row) for row in connection.execute(
+        "SELECT id, run_id FROM review_question_batches ORDER BY id"
+    )] == [
+        ("batch-origin", None),
+        ("batch-rewrite", None),
+    ]
+    assert connection.execute(
+        "SELECT run_id FROM knowledge_drafts WHERE id = 'draft-revision'"
+    ).fetchone()[0] is None
+    connection.close()
+
+    migrated = connect_runtime_database(tmp_path)
+
+    assert migrated.execute(
+        "SELECT COUNT(*) FROM review_curation_batch_candidates "
+        "WHERE candidate_id = 'candidate-revision'"
+    ).fetchone()[0] == 0
     assert migrated.execute("PRAGMA foreign_key_check").fetchall() == []
     migrated.close()
 

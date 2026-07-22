@@ -19,7 +19,9 @@ SELECT candidate.batch_id, candidate.id, candidate.draft_id,
 FROM review_question_candidates candidate
 JOIN review_question_batches batch ON batch.id = candidate.batch_id
 LEFT JOIN knowledge_drafts draft ON draft.id = candidate.draft_id
-WHERE candidate.draft_id IS NULL OR draft.run_id IS batch.run_id;
+WHERE draft.run_id IS NOT NULL
+  AND batch.run_id IS NOT NULL
+  AND draft.run_id = batch.run_id;
 
 INSERT OR IGNORE INTO review_curation_batch_candidates (
     batch_id, candidate_id, draft_id, created_at
