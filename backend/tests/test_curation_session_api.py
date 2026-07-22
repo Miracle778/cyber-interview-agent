@@ -3,6 +3,7 @@ from dataclasses import replace
 from hashlib import sha256
 import asyncio
 import json
+import sqlite3
 
 import pytest
 import pytest_asyncio
@@ -2345,6 +2346,56 @@ async def test_candidate_rewrite_resumes_its_original_curation_session(
         )
         assert edited["status"] == "review_pending"
         assert edited["version"] == current["version"] + 1
+
+
+@pytest.mark.asyncio
+async def test_candidate_publication_retries_transient_projection_lock(
+    api, application, monkeypatch
+) -> None:
+    app, source_ids = application
+    review = app.review("w1")
+    handler = review.hitl._handlers.get("knowledge.publish")
+    original_after_publication = handler._after_publication
+    attempts = 0
+
+    def flaky_after_publication(draft, publication):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return original_after_publication(draft, publication)
+
+    monkeypatch.setattr(
+        handler, "_after_publication", flaky_after_publication
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = (
+            await client.post(
+                "/api/review/curation-sessions",
+                json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+            )
+        ).json()
+        await app.wait_execution(created["executionId"])
+        detail = (
+            await client.get(
+                f"/api/review/curation-sessions/{created['id']}"
+            )
+        ).json()
+        candidate_id = detail["summary"]["items"][0]["candidateId"]
+
+        published = await client.post(
+            f"/api/review/question-candidates/{candidate_id}/publish",
+            json={
+                "idempotencyKey": "publish-after-transient-lock",
+                "confirmAiSupplement": True,
+            },
+        )
+
+    assert published.status_code == 200, published.text
+    assert published.json()["status"] == "published"
+    assert attempts == 2
 
 
 @pytest.mark.asyncio

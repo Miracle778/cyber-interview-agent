@@ -130,7 +130,10 @@ describe("CurationRuntimePanel candidate status", () => {
       provisionalCandidates: [{ id: "seed-1", seedTaskId: "seed-1", title: "不完整问题", questionText: "Redis？", sourceRefs: ["s1"], status: "skipped", version: 3, answerBasis: "model", materialSupport: "minimal", needsReview: true, normalizationIssues: ["missing_answer"] }],
     }} onRetrySeed={onRetry} />);
 
-    expect(screen.getByRole("status", { name: "整理进度" })).toHaveTextContent("1 / 5");
+    expect(screen.getByRole("status", { name: "整理进度" })).toHaveTextContent("3 / 5");
+    expect(screen.getByText("已处理")).toBeInTheDocument();
+    expect(screen.getByText("已生成候选").closest("div")).toHaveTextContent("2");
+    expect(screen.queryByText(/降级保留/)).toBeNull();
     expect(screen.getAllByText(/主要由 AI 生成/).length).toBeGreaterThan(0);
     expect(screen.getByText("材料支持较少")).toBeInTheDocument();
     expect(screen.getByText("随手记.md").closest("li")).toHaveTextContent("有效内容较少");
@@ -162,7 +165,7 @@ describe("CurationRuntimePanel candidate status", () => {
     expect(screen.getByText("已生成 3 道候选")).toBeInTheDocument();
     const progress = screen.getByRole("status", { name: "整理进度" });
     expect(progress).toHaveAttribute("aria-live", "polite");
-    expect(progress).toHaveTextContent("正在补全候选");
+    expect(screen.getByText("正在补全候选")).toBeInTheDocument();
     expect(screen.getByText("本次运行 10 秒").closest("div")).toHaveAttribute("aria-live", "off");
 
     monotonicNow += 1_000;

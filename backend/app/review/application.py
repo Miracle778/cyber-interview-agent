@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from contextlib import nullcontext
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
@@ -79,6 +80,17 @@ def _is_curation_timeline_message(message: MessageRecord) -> bool:
         message.message_kind == "text"
         and message.role == "user"
         and isinstance(message.payload.get("resourceId"), str)
+    )
+
+
+def _is_transient_sqlite_lock(error: BaseException) -> bool:
+    return isinstance(error, sqlite3.OperationalError) and any(
+        marker in str(error).casefold()
+        for marker in (
+            "database is locked",
+            "database table is locked",
+            "database is busy",
+        )
     )
 
 
@@ -1965,13 +1977,18 @@ class ReviewApplication:
         )
         if len(pending) != 1:
             raise ReviewConflictError("publication action was not created")
-        await self.hitl.approve(
-            pending[0].id,
-            ResolveActionCommand(
-                version=pending[0].version,
-                idempotency_key=idempotency_key,
-            ),
+        command = ResolveActionCommand(
+            version=pending[0].version,
+            idempotency_key=idempotency_key,
         )
+        for retry_delay in (0.05, 0.15, None):
+            try:
+                await self.hitl.approve(pending[0].id, command)
+                break
+            except sqlite3.OperationalError as error:
+                if retry_delay is None or not _is_transient_sqlite_lock(error):
+                    raise
+                await asyncio.sleep(retry_delay)
         await self.executions.wait(execution.id)
 
     def _assert_candidate_publishable(

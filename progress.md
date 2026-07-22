@@ -601,3 +601,16 @@
 - 隔离真实数据库快照保留 80 completed discovery、22 completed enrichment，并恢复 66 个唯一 degraded Seed；两次 reconciliation 幂等、终态不可自动 claim、外键检查为 0、Provider 调用为 0。
 - 浏览器完成真实失败会话桌面/390px 语义与布局验收；未在用户材料上执行 Provider 重放。服务已停止。
 - 产品下一步回到 R3 Task 8；真实 Provider 下暂停/恢复/单题重试/mixed 发布作为非阻塞用户练习。
+
+## 2026-07-22：真实批量发布 SQLite 锁修复
+
+- 根因定位到 durable publication 完成后的候选投影回写：瞬时 SQLite writer contention 使 HITL delivery failed，随后 Operation 失败收口也被同一锁打断，造成 running item 悬挂。
+- 增加仅针对 SQLite locked/busy 的同回执有界重试，并补 retryable 终态 running item 的 reconcile；不重复文件发布，不重跑已完成条目。
+- 两个新增故障/恢复场景与既有批量取消重试场景共 `3 passed`。真实 Operation 已从 35 completed/1 running/89 pending 恢复并续跑到 125 completed，125 个候选均为 published。
+- 后端开发服务已重启并加载修复。下一产品任务仍为 R3 Task 8。
+
+## 2026-07-22：题库二级导航比例修正
+
+- 根因是 `catalog-workbench` 被外层 Grid 拉满剩余视口后，内部 auto rows 默认平分多余高度，导致工具栏和“整理会话/题目库”导航被纵向拉伸。
+- 工作台改为内容起始对齐；二级导航保持 54px 外框、44px 点击区，两项桌面端各 112px，390px 下各 176px 均分整行，并补 focus-visible。
+- 实页计算尺寸与桌面/390px 视觉检查通过；QuestionCatalog 定向语义测试 `1 passed`，`git diff --check` 通过。下一产品任务仍为 R3 Task 8。

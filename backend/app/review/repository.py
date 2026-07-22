@@ -2510,6 +2510,18 @@ class ReviewRepository:
         self, operation_id: str
     ) -> BulkPublicationRecord:
         operation = self.get_bulk_publication(operation_id)
+        if operation.status in {
+            "partial_failure",
+            "failed",
+            "cancelled",
+            "interrupted",
+        }:
+            if any(
+                item.status == "running"
+                for item in self.list_bulk_publication_items(operation.id)
+            ):
+                self.reset_running_bulk_publication_items(operation.id)
+            return self.get_bulk_publication(operation.id)
         if operation.status not in {"accepted", "running"}:
             return operation
         if operation.execution_id is None:
@@ -2531,6 +2543,7 @@ class ReviewRepository:
             if execution["status"] == "failed"
             else "interrupted"
         )
+        self.reset_running_bulk_publication_items(operation.id)
         return self.transition_bulk_publication(
             operation.id,
             expected=("accepted", "running"),

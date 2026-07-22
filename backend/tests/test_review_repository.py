@@ -581,6 +581,60 @@ def test_bulk_publication_persists_item_progress_and_retries_only_failures(
     connection.close()
 
 
+def test_bulk_publication_reconciliation_requeues_terminal_running_item(
+    tmp_path: Path,
+) -> None:
+    connection = _connection(tmp_path)
+    repository = ReviewRepository(connection)
+    repository.create_curation_session(
+        workspace_id="w1",
+        session_id="s1",
+        source_refs=("source-1",),
+    )
+    batch = repository.create_batch(
+        workspace_id="w1",
+        session_id="s1",
+        run_id="r1",
+        source_refs=("source-1",),
+    )
+    repository.save_candidate(
+        batch_id=batch.id,
+        question=_snapshot("a"),
+        draft_id=None,
+        candidate_id="candidate-a",
+    )
+    operation, _created = repository.create_bulk_publication(
+        session_id="s1",
+        summary_version=1,
+        idempotency_key="bulk-operation-interrupted",
+        candidate_ids=("candidate-a",),
+        operation_id="bulk-interrupted",
+    )
+    repository.attach_bulk_publication_execution(operation.id, "r1")
+    repository.transition_bulk_publication(
+        operation.id, expected=("accepted",), target="running"
+    )
+    item = repository.list_bulk_publication_items(operation.id)[0]
+    repository.transition_bulk_publication_item(
+        item.id, expected=("pending",), target="running"
+    )
+    repository.transition_bulk_publication(
+        operation.id, expected=("running",), target="cancelled"
+    )
+    connection.execute(
+        "UPDATE agent_runs SET status = 'cancelled' WHERE id = 'r1'"
+    )
+    connection.commit()
+
+    reconciled = repository.reconcile_bulk_publication(operation.id)
+
+    assert reconciled.status == "cancelled"
+    assert repository.list_bulk_publication_items(operation.id)[0].status == (
+        "pending"
+    )
+    connection.close()
+
+
 def test_batch_candidate_and_catalog_activation_are_idempotent(
     tmp_path: Path,
 ) -> None:

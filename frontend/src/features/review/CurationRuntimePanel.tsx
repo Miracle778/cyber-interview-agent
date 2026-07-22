@@ -143,6 +143,14 @@ export function CurationRuntimePanel({ session, candidates = null, activeModelLa
   const currentElapsed = activeClock.currentBase + activeDelta;
   const cumulativeElapsed = activeClock.cumulativeBase + activeDelta;
   const controlState = session?.stage === "pausing" ? "pausing" : session?.batchStatus;
+  const seedProgress = session?.seedProgress;
+  const processedSeedCount = seedProgress
+    ? seedProgress.completed + seedProgress.degraded + seedProgress.skipped
+    : session?.progress?.completed ?? 0;
+  const generatedSeedCount = seedProgress
+    ? seedProgress.completed + seedProgress.degraded
+    : session?.progress?.generatedCandidateCount ?? 0;
+  const totalSeedCount = seedProgress?.total ?? session?.progress?.total ?? 0;
   const controlPresentation = controlState ? {
     generating: { label: generationLabel ?? "正在整理", detail: "已提交的处理单元会持续保存", icon: Activity },
     pausing: { label: "正在暂停…", detail: "正在安全停止活动工作单元", icon: Pause },
@@ -167,8 +175,8 @@ export function CurationRuntimePanel({ session, candidates = null, activeModelLa
             <div><strong>{controlPresentation.label}</strong><small>{controlPresentation.detail}</small></div>
           </div>
           <div className="curation-control-state__progress" role="status" aria-label="整理进度" aria-live="polite" aria-atomic="true">
-            <div><strong>{session.seedProgress?.completed ?? session.progress?.completed ?? 0} / {session.seedProgress?.total ?? session.progress?.total ?? 0}</strong><span>{generationLabel ?? controlPresentation.label} · 题目处理完成</span></div>
-            <div><strong>{session.seedProgress?.degraded ?? 0}</strong><span>降级保留</span></div>
+            <div><strong>{processedSeedCount} / {totalSeedCount}</strong><span>已处理</span></div>
+            <div><strong>{generatedSeedCount}</strong><span>已生成候选</span></div>
             <div><strong>{session.seedProgress?.retrying ?? session.progress?.activeWorkers ?? 0}</strong><span>处理中或可重试</span></div>
             <div><strong>{session.seedProgress?.skipped ?? 0}</strong><span>已跳过</span></div>
             <div><strong>{session.seedProgress?.pending ?? 0}</strong><span>等待处理</span></div>

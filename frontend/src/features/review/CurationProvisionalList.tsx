@@ -3,7 +3,7 @@ import type { CurationProvisionalCandidate } from "./reviewTypes";
 
 const basisLabels = { source: "基于原资料", mixed: "含 AI 补全", model: "主要由 AI 生成", unknown: "来源依据待确认" } as const;
 const supportLabels = { sufficient: "材料充分", partial: "材料部分支持", minimal: "材料支持较少", unknown: "材料支持待确认" } as const;
-const statusLabels: Record<string, string> = { pending: "等待处理", running: "正在处理", retryable: "可重试", completed: "已完成", degraded: "已降级保留", skipped: "已跳过", interrupted: "已中断" };
+const statusLabels: Record<string, string> = { pending: "等待处理", running: "正在处理", retryable: "可重试", completed: "已生成", degraded: "已生成，待复核", skipped: "未生成候选", interrupted: "处理已中断" };
 
 export function CurationProvisionalList({ items, retryingSeedIds = new Set(), onRetry = () => undefined }: { items: CurationProvisionalCandidate[]; retryingSeedIds?: ReadonlySet<string>; onRetry?: (item: CurationProvisionalCandidate) => void }) {
   if (items.length === 0) return null;
@@ -13,7 +13,7 @@ export function CurationProvisionalList({ items, retryingSeedIds = new Set(), on
         <div><Eye size={16} /><strong>处理中预览</strong></div>
         <span>{items.length} 道</span>
       </header>
-      <p>这里同时保留处理中、降级和跳过的题目。黄色提示表示需要复核或可以恢复，不代表 Agent 执行失败。</p>
+      <p>这里会持续显示已生成、待复核和可以重试的题目。黄色提示表示需要你检查，不代表 Agent 执行失败。</p>
       <div className="curation-provisional__list" role="list">
         {items.map((item) => (
           <article key={item.id} role="listitem" className={item.needsReview || ["retryable", "skipped", "degraded"].includes(item.status ?? "") ? "is-warning" : ""}>
