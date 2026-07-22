@@ -256,6 +256,26 @@ def test_question_seed_preserves_legacy_primary_ref_and_normalizes_duplicates() 
         })
 
 
+def test_question_seed_chunk_discards_only_ungrounded_provider_rows() -> None:
+    chunk = QuestionSeedChunk.model_validate({
+        "seeds": [
+            {
+                "question_text": "什么是 MVCC？",
+                "source_ref": "s1#section-0001",
+                "source_refs": ["s1#section-0001"],
+            },
+            {
+                "question_text": "模型生成但没有证据引用的题目",
+                "source_refs": [None],
+            },
+        ]
+    })
+
+    assert [item.source_ref for item in chunk.seeds] == [
+        "s1#section-0001"
+    ]
+
+
 def test_question_curation_agents_use_stage_specific_retry_policies() -> None:
     class RecordingFactory:
         def __init__(self):

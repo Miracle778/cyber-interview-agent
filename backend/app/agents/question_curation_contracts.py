@@ -69,6 +69,37 @@ class QuestionSeed(_StrictQuestionCurationOutput):
 class QuestionSeedChunk(_StrictQuestionCurationOutput):
     seeds: list[QuestionSeed] = Field(default_factory=list, max_length=20)
 
+    @model_validator(mode="before")
+    @classmethod
+    def discard_ungrounded_raw_seeds(cls, value: object) -> object:
+        if not isinstance(value, Mapping):
+            return value
+        raw_seeds = value.get("seeds")
+        if not isinstance(raw_seeds, (list, tuple)):
+            return value
+        normalized = dict(value)
+        normalized["seeds"] = [
+            seed
+            for seed in raw_seeds
+            if isinstance(seed, QuestionSeed)
+            or (
+                isinstance(seed, Mapping)
+                and isinstance(seed.get("source_ref"), str)
+                and bool(seed["source_ref"].strip())
+                and (
+                    seed.get("source_refs") in (None, [])
+                    or (
+                        isinstance(seed.get("source_refs"), (list, tuple))
+                        and all(
+                            isinstance(ref, str) and bool(ref.strip())
+                            for ref in seed["source_refs"]
+                        )
+                    )
+                )
+            )
+        ]
+        return normalized
+
 
 class QuestionCandidateChunk(_StrictQuestionCurationOutput):
     candidates: list[QuestionCandidate] = Field(default_factory=list, max_length=3)
