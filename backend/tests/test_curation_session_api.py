@@ -158,7 +158,7 @@ async def completed_command(app, session_id: str, response) -> dict:
 async def test_free_form_response_streams_real_chunks_and_persists_joined_text(
     api, application
 ) -> None:
-    app, _source_ids = application
+    app, source_ids = application
     async with AsyncClient(
         transport=ASGITransport(app=api), base_url="http://test"
     ) as client:
@@ -214,7 +214,7 @@ async def test_free_form_response_streams_real_chunks_and_persists_joined_text(
 async def test_ambiguous_side_effect_still_uses_classifier_without_streaming_reply(
     api, application
 ) -> None:
-    app, _source_ids = application
+    app, source_ids = application
     async with AsyncClient(
         transport=ASGITransport(app=api), base_url="http://test"
     ) as client:
@@ -334,6 +334,7 @@ async def test_all_unusable_sources_complete_without_preparing_a_provider_execut
     assert resource["batch_status"] == "completed"
     assert resource["execution_id"] is None
     assert resource["execution_status"] is None
+    assert review.sessions.get(resource["id"]).status == "completed"
     assert resource["warnings"][-2:] == (
         {"sourceId": empty.id, "code": "no_extractable_text"},
         {"sourceId": invalid.id, "code": "unsupported_encoding"},
@@ -364,6 +365,48 @@ async def test_legacy_batch_start_completes_when_all_sources_are_unusable(
 
     assert batch.status == "completed"
     assert batch.run_id is None
+    review = app.review("w1")
+    assert review.sessions.get(batch.session_id).status == "completed"
+    assert review.repository.get_curation_session(batch.session_id).warnings == (
+        {"sourceId": empty.id, "code": "no_extractable_text"},
+        {"sourceId": invalid.id, "code": "unsupported_encoding"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_rewrite_source_intake_completes_without_execution_when_unusable(
+    application, tmp_path: Path
+) -> None:
+    app, _source_ids = application
+    review = app.review("w1")
+    sources = KnowledgeSourceService(tmp_path / "workspace", workspace_id="w1")
+    empty = await sources.create(
+        original_filename="rewrite-empty.md",
+        content_type="text/markdown",
+        content=b" \n\t",
+    )
+    session = await review.sessions.create(
+        workspace_id="w1", kind="question.curate", title="Rewrite"
+    )
+    review.repository.create_curation_session(
+        workspace_id="w1", session_id=session.id, source_refs=(empty.id,)
+    )
+
+    execution = await review._start_curation_execution(
+        session_id=session.id,
+        source_refs=(empty.id,),
+        rewrite_feedback="重新整理",
+        rewrite_of_batch_id=None,
+    )
+
+    assert execution is None
+    assert review.sessions.repository.latest_execution(session.id) is None
+    assert review.sessions.get(session.id).status == "completed"
+    curation = review.repository.get_curation_session(session.id)
+    assert curation.stage == "completed"
+    assert curation.warnings == (
+        {"sourceId": empty.id, "code": "no_extractable_text"},
+    )
 
 
 @pytest.mark.asyncio
@@ -2594,29 +2637,39 @@ async def test_legacy_retry_cannot_reopen_review_pending_batch(
 
 @pytest.mark.asyncio
 async def test_reused_sources_warn_but_do_not_block_new_session(
-    api, application
+    api, application, tmp_path: Path
 ) -> None:
-    app, source_ids = application
+    app, _source_ids = application
+    sources = KnowledgeSourceService(tmp_path / "workspace", workspace_id="w1")
+    low_signal = await sources.create(
+        original_filename="keywords.md",
+        content_type="text/markdown",
+        content=b"Redis TTL",
+    )
     async with AsyncClient(
         transport=ASGITransport(app=api), base_url="http://test"
     ) as client:
         first = await client.post(
             "/api/review/curation-sessions",
-            json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+            json={"workspaceId": "w1", "sourceRefs": [low_signal.id]},
         )
         assert first.status_code == 202
         await app.wait_execution(first.json()["executionId"])
 
         repeated = await client.post(
             "/api/review/curation-sessions",
-            json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+            json={"workspaceId": "w1", "sourceRefs": [low_signal.id]},
         )
 
         assert repeated.status_code == 202, repeated.text
         assert repeated.json()["id"] != first.json()["id"]
         assert repeated.json()["warnings"] == [
-            {"sourceId": source_ids[0], "code": "source_previously_curated"}
+            {"sourceId": low_signal.id, "code": "source_previously_curated"},
+            {"sourceId": low_signal.id, "code": "low_signal"},
         ]
+        assert repeated.json()["sources"][0]["organizationState"] == (
+            "previously_curated"
+        )
 
 
 @pytest.mark.asyncio

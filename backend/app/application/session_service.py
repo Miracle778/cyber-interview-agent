@@ -211,6 +211,31 @@ class ProductRepository:
         self.connection.commit()
         return self.get_session(session_id)
 
+    def complete_idle_session(self, session_id: str) -> SessionRecord:
+        current = self.get_session(session_id)
+        if current.status == "completed":
+            return current
+        active = self.connection.execute(
+            "SELECT 1 FROM agent_runs WHERE session_id = ? "
+            "AND status IN ('queued', 'running', 'waiting_for_input', "
+            "'waiting_for_approval') LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        if active is not None:
+            raise SessionBusyError("会话仍在运行，不能直接完成")
+        cursor = self.connection.execute(
+            "UPDATE agent_sessions SET status = 'completed', "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = ?",
+            (session_id, current.status),
+        )
+        if cursor.rowcount != 1:
+            self.connection.rollback()
+            raise InvalidExecutionTransitionError(
+                f"session {session_id} completion state changed"
+            )
+        self.connection.commit()
+        return self.get_session(session_id)
+
     def create_execution(
         self,
         session_id: str,
@@ -618,6 +643,9 @@ class AgentSessionService:
 
     def restore(self, session_id: str) -> SessionRecord:
         return self.repository.restore_session(session_id)
+
+    def complete_idle(self, session_id: str) -> SessionRecord:
+        return self.repository.complete_idle_session(session_id)
 
 
 def encode_sse_event(event: EventRecord) -> str:

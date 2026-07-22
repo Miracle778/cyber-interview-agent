@@ -53,7 +53,6 @@ from app.review.repository import ReviewRepository
 from app.review.selector import QuestionSelector
 from app.review.timeline import SessionTimelineProjector
 from app.middleware.usage_projection_middleware import ContextUsageProjection
-from app.services.document_ingestion import extract_text
 from app.security.workspace_paths import PathPolicyError, WorkspacePathPolicy
 
 
@@ -136,11 +135,8 @@ class ReviewApplication:
             await source_service.get(source_id, include_deleted=False)
             for source_id in selected
         ]
-        prepared_sources = prepare_curation_sources(
-            tuple(
-                (source.id, self._curation_source_path(source.stored_path))
-                for source in sources
-            )
+        prepared_sources, excerpts = self._prepare_curation_source_records(
+            sources
         )
         existing = self.repository.list_curation_sessions(self.workspace_id)
         warnings: list[dict[str, object]] = []
@@ -195,11 +191,6 @@ class ReviewApplication:
                 "stage": "reading_sources",
             },
         )
-        filenames = {source.id: source.original_filename for source in sources}
-        excerpts = [
-            f"{source_id}:{filenames[source_id]}\n{text}"
-            for source_id, text in prepared_sources.excerpts
-        ]
         for index, _source in enumerate(sources, start=1):
             self.repository.update_curation_progress(
                 session.id,
@@ -212,27 +203,15 @@ class ReviewApplication:
             session_id=session.id,
             run_id=None,
             source_refs=selected,
+            status=(
+                "generating" if prepared_sources.has_usable_text else "completed"
+            ),
         )
         if not prepared_sources.has_usable_text:
-            self.repository.update_batch_status(batch.id, "completed")
-            self.repository.update_curation_progress(
-                session.id,
-                stage="completed",
-                completed_units=len(sources),
-                total_units=len(sources),
-                active_batch_id=batch.id,
-            )
-            await self.timeline.append(
+            await self._complete_curation_without_text(
                 session_id=session.id,
-                execution_id=None,
-                role="assistant",
-                message_kind="stage",
-                content="所选资料没有可提取文本，整理已完成",
-                payload={
-                    "resourceId": session.id,
-                    "version": 0,
-                    "stage": "completed",
-                },
+                batch_id=batch.id,
+                source_count=len(sources),
             )
             return await self.curation_resource(session.id)
         self.repository.update_curation_progress(
@@ -284,6 +263,47 @@ class ReviewApplication:
             raise PathPolicyError("review.sources")
         return WorkspacePathPolicy(self.workspace_root).resolve_for_read(
             "review.sources", filename
+        )
+
+    def _prepare_curation_source_records(
+        self, sources, *, character_limit: int | None = None
+    ):
+        prepared = prepare_curation_sources(
+            tuple(
+                (source.id, self._curation_source_path(source.stored_path))
+                for source in sources
+            )
+        )
+        filenames = {source.id: source.original_filename for source in sources}
+        excerpts = [
+            f"{source_id}:{filenames[source_id]}\n"
+            + (text if character_limit is None else text[:character_limit])
+            for source_id, text in prepared.excerpts
+        ]
+        return prepared, excerpts
+
+    async def _complete_curation_without_text(
+        self, *, session_id: str, batch_id: str, source_count: int
+    ) -> None:
+        self.repository.update_curation_progress(
+            session_id,
+            stage="completed",
+            completed_units=source_count,
+            total_units=source_count,
+            active_batch_id=batch_id,
+        )
+        self.sessions.complete_idle(session_id)
+        await self.timeline.append(
+            session_id=session_id,
+            execution_id=None,
+            role="assistant",
+            message_kind="stage",
+            content="所选资料没有可提取文本，整理已完成",
+            payload={
+                "resourceId": session_id,
+                "version": 0,
+                "stage": "completed",
+            },
         )
 
     async def curation_resource(self, session_id: str) -> dict[str, Any]:
@@ -375,13 +395,15 @@ class ReviewApplication:
             and batch.control_intent == "pause"
             else record.stage
         )
-        warnings_by_source = {
+        organization_warnings_by_source = {
             str(item["sourceId"]): str(item["code"])
             for item in record.warnings
+            if item.get("code")
+            in {"source_curating", "source_previously_curated"}
         }
         source_resources = []
         for source in sources:
-            warning = warnings_by_source.get(source.id)
+            warning = organization_warnings_by_source.get(source.id)
             state = (
                 "in_progress"
                 if warning == "source_curating"
@@ -1542,7 +1564,9 @@ class ReviewApplication:
                         execution_id
                     )
                 rewrite_execution = await self._start_curation_execution(session_id=session_id, source_refs=curation.source_refs, rewrite_feedback=rewrite_feedback, rewrite_of_batch_id=candidate.batch_id)
-                result["rewriteExecutionId"] = rewrite_execution.id
+                result["rewriteExecutionId"] = (
+                    None if rewrite_execution is None else rewrite_execution.id
+                )
                 result["rewriteCandidateIds"] = list(parsed.rewrite_candidate_ids)
         elif parsed.kind == "rewrite":
             if _cancellation is not None:
@@ -1559,7 +1583,9 @@ class ReviewApplication:
                 rewrite_feedback=rewrite_feedback,
                 rewrite_of_batch_id=candidate.batch_id,
             )
-            result = {"executionId": execution.id}
+            result = {
+                "executionId": None if execution is None else execution.id
+            }
         else:
             refreshed = self._summarize_curation(session_id)
             result = {"summaryVersion": refreshed.summary_version}
@@ -1806,6 +1832,7 @@ class ReviewApplication:
         ):
             raise ReviewConflictError("question batch cannot be retried")
         execution_input: dict[str, Any]
+        current = self.repository.get_curation_session(session_id)
         if batch is not None:
             execution_input = self.repository.curation_batch_input(batch.id)
             raw_excerpts = execution_input.get("source_excerpts", [])
@@ -1815,12 +1842,18 @@ class ReviewApplication:
                 self.workspace_root, workspace_id=self.workspace_id
             )
             excerpts = [revision_context] if revision_context is not None else []
+            prepared_sources = None
             if revision_context is None:
-                for source_id in source_refs:
-                    source = await source_service.get(source_id)
-                    text = extract_text(self.workspace_root / source.stored_path)
-                    excerpts.append(
-                        f"{source.id}:{source.original_filename}\n{text}"
+                source_records = [
+                    await source_service.get(source_id)
+                    for source_id in source_refs
+                ]
+                prepared_sources, excerpts = (
+                    self._prepare_curation_source_records(source_records)
+                )
+                for warning in prepared_sources.warnings:
+                    self.repository.append_curation_warning(
+                        session_id, dict(warning)
                     )
             batch = self.repository.create_batch(
                 workspace_id=self.workspace_id,
@@ -1828,7 +1861,23 @@ class ReviewApplication:
                 run_id=None,
                 source_refs=source_refs,
                 rewrite_of_batch_id=rewrite_of_batch_id,
+                status=(
+                    "completed"
+                    if prepared_sources is not None
+                    and not prepared_sources.has_usable_text
+                    else "generating"
+                ),
             )
+            if (
+                prepared_sources is not None
+                and not prepared_sources.has_usable_text
+            ):
+                await self._complete_curation_without_text(
+                    session_id=session_id,
+                    batch_id=batch.id,
+                    source_count=len(source_refs),
+                )
+                return None
             execution_input = {
                 "batchId": batch.id,
                 "batch_id": batch.id,
@@ -1851,7 +1900,6 @@ class ReviewApplication:
                 "expectedRevisionDraftHash": expected_revision_draft_hash,
                 "expected_revision_draft_hash": expected_revision_draft_hash,
             }
-        current = self.repository.get_curation_session(session_id)
         self.repository.update_curation_progress(
             session_id,
             stage="generating",
@@ -1999,23 +2047,19 @@ class ReviewApplication:
         source_records = [
             await sources.get(source_id) for source_id in source_refs
         ]
-        prepared_sources = prepare_curation_sources(
-            tuple(
-                (source.id, self._curation_source_path(source.stored_path))
-                for source in source_records
-            )
+        prepared_sources, excerpts = self._prepare_curation_source_records(
+            source_records, character_limit=20_000
         )
-        filenames = {
-            source.id: source.original_filename for source in source_records
-        }
-        excerpts = [
-            f"{source_id}:{filenames[source_id]}\n{text[:20_000]}"
-            for source_id, text in prepared_sources.excerpts
-        ]
         session = await self.sessions.create(
             workspace_id=self.workspace_id,
             kind="question.curate",
             title="AI 题库整理",
+        )
+        self.repository.create_curation_session(
+            workspace_id=self.workspace_id,
+            session_id=session.id,
+            source_refs=source_refs,
+            warnings=prepared_sources.warnings,
         )
         batch = self.repository.create_batch(
             workspace_id=self.workspace_id,
@@ -2026,7 +2070,19 @@ class ReviewApplication:
             status="completed" if not prepared_sources.has_usable_text else "generating",
         )
         if not prepared_sources.has_usable_text:
+            await self._complete_curation_without_text(
+                session_id=session.id,
+                batch_id=batch.id,
+                source_count=len(source_records),
+            )
             return batch
+        self.repository.update_curation_progress(
+            session.id,
+            stage="generating",
+            completed_units=0,
+            total_units=max(1, len(excerpts)),
+            active_batch_id=batch.id,
+        )
         execution = await self.executions.prepare(
             session,
             input={
