@@ -584,4 +584,6 @@
 - 第二轮评审修复修订 Batch 边界：新增 migration 025 的 `(batch_id, candidate_id, draft_id)` finalization 关联，保留候选原始 `batch_id` 与逻辑题血缘；发布/拒绝按当前 draft revision 聚合 rewrite Batch，origin 不被新修订决策误完成，活动 `question.revise` Session 同事务完成。
 - 修订发布/重启后拒绝 RED 为 `2 failed`（origin 被误完成）；旧库 committed revision 恢复 RED 为 `1 failed`（新 draft 被误回填至 origin）。GREEN 后 Repository+Migration `60 passed`、受影响 `168 passed`、完整后端 `637 passed`（1 条既有 warning）。记录时间：2026-07-22 07:59 CST（UTC+08:00）。
 - 第三轮评审收紧 migration 025 推断：Session 永久删除会把 Draft/Batch run_id 同时置 NULL 并级联删除 finalization claim，`NULL IS NULL` 不能证明归属。新增 v24→永久删除→v25 RED（错误产生 1 条 origin membership），改为双方 run_id 非空且 `=` 后 GREEN；Repository+Migration `61 passed`、受影响 `169 passed`、完整后端 `638 passed`（1 条既有 warning）。记录时间：2026-07-22 08:09 CST（UTC+08:00）。
-- 产品成熟度：单进程 bounded scheduler，不是分布式 jobs；真实 Provider 性能、浏览器暂停/刷新/恢复/终止和真实材料完整运行未执行，也未声称通过。下一产品任务回到 R3 Task 8；非阻塞练习见本地 verification 指南。
+- 浏览器验收使用隔离数据完成桌面与 390px：实时耗时递增、处理中预览、暂停冻结、刷新恢复、新 Execution/同 Batch、终止确认、终态无恢复、resume 409、Trace UTC/北京时间和 console 0 均有证据。无模型绑定的恢复 Execution 按预期失败；未调用真实 Provider。
+- 浏览器发现会话列表直接显示 `paused` 且将 terminated 计入待处理；新增组件 RED 后补齐四种中文控制状态并修正终止态统计。相关前端 `37 passed`，最终前端全量 `167 passed`，TypeScript 与 build 通过。
+- 产品成熟度：单进程 bounded scheduler，不是分布式 jobs；真实 Provider 性能和真实材料完整运行仍待具体授权。下一产品任务回到 R3 Task 8；非阻塞练习见本地 verification 指南。

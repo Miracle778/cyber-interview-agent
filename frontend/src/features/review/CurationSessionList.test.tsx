@@ -52,4 +52,20 @@ describe("CurationSessionList", () => {
 
     expect(screen.getByText("已生成前 200 道候选题，请先审核当前结果")).toBeInTheDocument();
   });
+
+  it("localizes long-task control states in the session list", () => {
+    render(<CurationSessionList sessions={[
+      session("paused", "paused", 2, 0),
+      session("interrupted", "interrupted", 2, 0),
+      session("terminated", "terminated", 2, 0),
+    ]} candidateCount={6} publishedCount={0} onSelect={vi.fn()} onCreate={vi.fn()} onDelete={vi.fn()} onOpenLibrary={vi.fn()} />);
+
+    expect(screen.getByText("已暂停")).toBeInTheDocument();
+    expect(screen.getByText("服务中断")).toBeInTheDocument();
+    expect(screen.getByText("已终止")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /待处理会话/ })).toHaveTextContent("2");
+    expect(screen.queryByText("paused")).toBeNull();
+    expect(screen.queryByText("interrupted")).toBeNull();
+    expect(screen.queryByText("terminated")).toBeNull();
+  });
 });

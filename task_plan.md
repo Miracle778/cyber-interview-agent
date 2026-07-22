@@ -30,10 +30,10 @@
 
 ### 2026-07-22 R2 题目整理长任务控制验收
 
-- 产品状态与证据：结构感知规划、单进程最多 3 并发、completed Work Item 跳过、失败/暂停/重启后原 Batch 恢复、渐进预览、实时耗时和 Trace v2 已完成自动验收；最终后端 `638 passed`、前端 `166 passed`，TypeScript 与 production build 通过。
+- 产品状态与证据：结构感知规划、单进程最多 3 并发、completed Work Item 跳过、失败/暂停/重启后原 Batch 恢复、渐进预览、实时耗时和 Trace v2 已完成自动验收；最终后端 `638 passed`、前端 `167 passed`，TypeScript 与 production build 通过。
 - 成熟度边界：当前是单进程内的 bounded scheduler 和 SQLite 持久恢复，不是分布式队列；Provider 调用是至少一次语义，已提交 Work Item 具有精确一次效果。
 - 产品修正：最终 reducer 现在把 Batch 推进到 `review_pending`，等待候选人工决定，不再沿用含糊的 `completed` 生成终态。
-- 所有权状态：产品自动门禁已完成；真实 Provider 性能与浏览器暂停/恢复/终止验收仍待显式授权和人工执行，作为 pending practice，不阻塞回到 R3。
+- 所有权状态：产品自动门禁与隔离浏览器暂停/刷新/恢复/终止验收已完成；真实 Provider 性能与真实材料完整运行仍待具体授权，作为 pending practice，不阻塞回到 R3。
 - 下一产品任务：继续 R3 Task 8，接通材料、版本和 Evidence API。
 - 非阻塞练习：按本地 verification 指南完成一次暂停→刷新→恢复→终止，并核对新 Execution ID、单调预览和 UTC/北京时间 Trace。
 
@@ -66,7 +66,7 @@
 | 21. Agent 会话视觉与运行事实统一 | 实现与自动验证完成，待重启后实页复核 | 深入讨论复用题库整理 Dock、运行详情和真实上下文 Token 进度 |
 | 22. 复习 Agent 工作台比例与组件统一 | 实现与自动验证完成，实页视觉待复核 | 深入讨论与普通复习互斥渲染、工作台填满可用视口、统一 Dock 与上下文进度侧栏 |
 | 23. Agent 代码结构整理第一阶段 | 已完成 | 显式 Agent/Middleware 模块命名、版本化 Prompt、共享 runnable 协议与 thread 配置；不改变 API、数据库、Graph 或 SSE 行为 |
-| 24. Progressive 题目整理、长任务控制与 Agent JSONL | 自动验收完成；真实 Provider/浏览器验收待显式授权 | 结构感知 planning、discovery/enrichment 最多 3 并发、可暂停/恢复/终止、渐进预览、实时耗时、同 Batch/Work Item 恢复、Trace v2；普通/修订批次按 committed candidate revision 原子完成；最终 638/166/build 通过 |
+| 24. Progressive 题目整理、长任务控制与 Agent JSONL | 自动与隔离浏览器验收完成；真实 Provider 验收待具体授权 | 结构感知 planning、discovery/enrichment 最多 3 并发、可暂停/恢复/终止、渐进预览、实时耗时、同 Batch/Work Item 恢复、Trace v2；普通/修订批次按 committed candidate revision 原子完成；最终 638/167/build 通过 |
 
 ## 工作位置
 

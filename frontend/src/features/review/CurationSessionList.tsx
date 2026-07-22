@@ -4,12 +4,12 @@ import { Button } from "../../shared/ui/Button";
 import type { CurationSession, QuestionCandidate } from "./reviewTypes";
 
 const stageMeta: Record<string, { label: string; tone: string }> = {
-  queued: { label: "排队中", tone: "neutral" }, reading_sources: { label: "读取资料", tone: "primary" }, generating: { label: "生成候选", tone: "primary" }, merging: { label: "合并去重", tone: "primary" }, summarizing: { label: "生成总结", tone: "primary" }, waiting_for_command: { label: "待确认", tone: "warning" }, publishing: { label: "发布中", tone: "primary" }, completed: { label: "已完成", tone: "success" }, failed: { label: "失败", tone: "danger" },
+  queued: { label: "排队中", tone: "neutral" }, reading_sources: { label: "读取资料", tone: "primary" }, generating: { label: "生成候选", tone: "primary" }, pausing: { label: "正在暂停", tone: "warning" }, paused: { label: "已暂停", tone: "warning" }, interrupted: { label: "服务中断", tone: "warning" }, merging: { label: "合并去重", tone: "primary" }, summarizing: { label: "生成总结", tone: "primary" }, waiting_for_command: { label: "待确认", tone: "warning" }, publishing: { label: "发布中", tone: "primary" }, completed: { label: "已完成", tone: "success" }, failed: { label: "失败", tone: "danger" }, terminated: { label: "已终止", tone: "danger" },
 };
 
 export function CurationSessionList({ sessions, candidateCount, publishedCount, onSelect, onCreate, onDelete, onOpenLibrary }: { sessions: CurationSession[]; candidateCount: number; publishedCount: number; onSelect: (id: string) => void; onCreate: () => void; onDelete: (id: string, hard: boolean) => void; onOpenLibrary: (status: QuestionCandidate["status"] | null) => void }) {
   const [onlyActive, setOnlyActive] = useState(false);
-  const active = sessions.filter((session) => !["completed", "failed"].includes(session.stage));
+  const active = sessions.filter((session) => !["completed", "failed", "terminated"].includes(session.stage));
   const ordered = [...active, ...sessions.filter((session) => !active.includes(session))];
   const visibleSessions = onlyActive ? active : ordered;
   return <main className="curation-landing">

@@ -440,4 +440,5 @@
 - migration 中的归属推断不能使用 NULL-safe `IS` 比较运行 ID：Session/Execution 永久删除会让 Draft 和 Batch 的 run_id 同时变成 NULL，同时 finalization claim 已 cascade 消失。只有双方 run_id 都非空且 `=` 才是普通归属证据；NULL/NULL 必须宁缺勿错，不得创建 origin 或 rewrite membership。Repository 中 `draft_id IS ?` / `IS NOT` 则比较已持久化 revision identity，属于刻意的 NULL-safe 等值，不是归属推断。
 - 前端 interrupted hydrate → resume → 新 enrichment 快照 → 旧 discovery 快照晚到的契约直接通过；同 Batch/同版本按阶段拒绝回退，同阶段 completed/total/generated 取最大值，provisional 按稳定 ID 只增合并，因此页面不会倒退计数或缩短预览。
 - 当前恢复能力的成熟度是单进程 bounded scheduler + SQLite durable Work Item，不是分布式任务队列。进程退出时未提交的 Provider 调用允许重发，completed Work Item 不重放。
+- 隔离浏览器验收暴露了一个展示层遗漏：运行面板已中文化 paused/interrupted/terminated，但会话列表仍回退为原始枚举值，且 terminated 被计入“待处理”。状态词典必须覆盖新增阶段，终止态必须从 active 会话统计中排除。
 - `frontend/package.json` 没有 `typecheck` script；本阶段使用权威等价命令 `./node_modules/.bin/tsc --noEmit`，production build 自身也再次执行 `tsc`。计划中的不存在脚本不能被记录为成功。
