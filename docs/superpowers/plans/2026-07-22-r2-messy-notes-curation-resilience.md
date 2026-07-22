@@ -643,13 +643,13 @@ Reviewer gate: visually compare warning and failure side by side; they must rema
 - Update after implementation stabilizes: `progress.md`
 - Update formal architecture docs only if implementation reveals a material divergence from the accepted spec.
 
-- [ ] **Step 1: Add one cross-layer messy-notes acceptance fixture**
+- [x] **Step 1: Add one cross-layer messy-notes acceptance fixture**
 
 Use a fully synthetic, non-secret material containing keywords, bullets, incomplete questions, answers without questions, numbered prose, code, logs, repeated topics, long text, and one unusable source. Use a scripted fake Provider that returns one good, one repairable, one incomplete, one cross-ref, one malformed top-level response, and one transport failure in separate invocations.
 
 Assert final candidates, provenance counts, single-seed fallbacks, skipped reasons, Batch terminal state, no replay, safe events, and publication blocking.
 
-- [ ] **Step 2: Run the first full regression after integration**
+- [x] **Step 2: Run the first full regression after integration**
 
 ```bash
 cd backend && UV_CACHE_DIR=/tmp/cyber-interview-uv-cache uv run pytest -q
@@ -658,7 +658,7 @@ cd ../frontend && npm test -- --run && npm run build
 
 Fix only evidenced regressions. Re-run targeted affected tests first. Use a second full regression only after fixes that cross subsystem boundaries.
 
-- [ ] **Step 3: Validate migration and reconciliation on an isolated real-data copy**
+- [x] **Step 3: Validate migration and reconciliation on an isolated real-data copy**
 
 Repeat the Task 4 `/tmp` database-copy procedure after all schema/reducer work is final. Record only counts and stable IDs in local verification. Required evidence for Batch `907129b5-0a8c-47cb-b8a0-be42b73459a9`:
 
@@ -667,11 +667,11 @@ Repeat the Task 4 `/tmp` database-copy procedure after all schema/reducer work i
 - completed/degraded Seed Tasks are not claimable;
 - no Provider call occurs during migration, resource projection, or reconciliation.
 
-- [ ] **Step 4: Run browser acceptance**
+- [x] **Step 4: Run browser acceptance**
 
 Start local backend/frontend services and first run one minimal happy path. Then run one complete desktop and 390px acceptance pass for partial success, live elapsed/progress, warning vs failure semantics, pause/refresh/resume, one skipped-seed retry, quality filters, editing incomplete content, and strict publication confirmation. Re-run only affected scenarios after fixes. Stop services afterward.
 
-- [ ] **Step 5: Refresh documentation evidence and gates**
+- [x] **Step 5: Refresh documentation evidence and gates**
 
 Update `docs/verification/r2-complete-review-agent.md` as the final user guide and acceptance record, but keep it uncommitted per repository policy. Refresh the R2 learning ownership pack only after implementation stabilizes, classify it with the required risk profile, compare it with the previous same-profile stage, and run:
 
@@ -681,7 +681,7 @@ python3 scripts/check_stage_docs.py --verification docs/verification/r2-complete
 
 Unchecked browser acceptance or inconsistent evidence blocks “ready for manual verification.” Unfinished learning exercises remain non-blocking ownership debt.
 
-- [ ] **Step 6: Commit acceptance code and formal planning updates**
+- [x] **Step 6: Commit acceptance code and formal planning updates**
 
 Stage only the new acceptance test, required defect fixes, and formal/root planning updates. Inspect `git status --short` before committing so the two unrelated untracked documents and all local verification/learning files remain unstaged.
 

@@ -41,7 +41,7 @@ def test_extract_text_result_classifies_pdf_text_empty_and_parser_errors_safely(
 
     class TextPage:
         def extract_text(self) -> str:
-            return "PDF text layer question?"
+            return "How does PDF text layer question extraction work?"
 
     class TextReader:
         pages = (TextPage(),)

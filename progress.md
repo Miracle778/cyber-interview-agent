@@ -592,3 +592,12 @@
 - 以有效 RED 覆盖严格领域模型拒绝、Provider 超量、null/重复/顺序偏差和无证据行后，改为宽松 `ProviderQuestionSeedChunk` → 确定性 normalizer → 严格 `QuestionSeedChunk`；未知引用、跨来源引用仍硬失败。受影响的 Agent/Graph/Planner/Scheduler/Work Item/Trace 套件 `115 passed`，compileall 与 `git diff --check` 通过；未由 Codex 自动再次调用真实 Provider。
 - 第三次真实恢复 Execution `2f240749-d407-4f20-89fc-c2415101dd37` 已完成全部 5 个 model discovery 和 22/42 个 enrichment Work Item，随后同一并发波次出现两个失败：一个 GLM 候选缺少 `title/topics`，另一个候选把种子的两个合法引用缩成一个。Batch 保留 75 个 deterministic、5 个 model discovery 和 22 个 enrichment completed，仅 2 个 enrichment failed、18 个 pending。
 - 根因是 Provider/领域契约分离只落在 discovery，enrichment 仍直接使用严格 `QuestionCandidateChunk`。TDD RED 为 `3 failed`，补充引用顺序 RED 为 `1 failed`；现扩展为宽松 `ProviderQuestionCandidateChunk` → 基于 seed 的证据归一化 → 严格领域 Chunk，缺失 title/topics 使用确定性展示回退，未知/跨种子证据仍硬失败。受影响套件 `119 passed`；本次真实 Trace 中原先少一个引用的响应离线归一化后恢复 3 个候选和 `[1,2,4]` 引用长度，未调用 Provider。
+
+## 2026-07-22：随手记容错整理 Tasks 1–8 完成
+
+- 后端完成 migration 026、Seed Task/手工重试状态机、来源分类、Provider observation normalizer、旧 Work Item reconciliation、每次最多 3 Seed/最多 3 并发/单 Seed 最多 2 次自动调用、局部失败 reducer、质量资源、安全事件与统一发布门禁。
+- 前端完成五类 Seed 进度、来源警告、质量筛选、候选 provenance/support、单题重试和 AI 补充确认；黄色人工复核与红色执行失败语义分离，390px 无横向溢出。
+- 综合跨层验收 `1 passed`；前端完整 `172 passed` 与 build 通过。后端首次完整为 `683 passed, 1 failed`，修正旧 PDF 低信号测试夹具后受影响 `7 passed`，未做无必要的第二次完整回归。
+- 隔离真实数据库快照保留 80 completed discovery、22 completed enrichment，并恢复 66 个唯一 degraded Seed；两次 reconciliation 幂等、终态不可自动 claim、外键检查为 0、Provider 调用为 0。
+- 浏览器完成真实失败会话桌面/390px 语义与布局验收；未在用户材料上执行 Provider 重放。服务已停止。
+- 产品下一步回到 R3 Task 8；真实 Provider 下暂停/恢复/单题重试/mixed 发布作为非阻塞用户练习。

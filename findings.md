@@ -448,3 +448,11 @@
 - 该边界必须覆盖每个模型输出阶段，不能只覆盖 discovery。真实 enrichment 又返回了“第三个候选缺少 `title/topics`”和“种子有两个证据引用、候选只返回一个”的部分偏差；前者发生在 LangChain structured-output 解析层，后者发生在 Agent 的精确证据校验层。
 - Enrichment 的证据集合属于输入种子，而不是模型生成事实：Provider 仍需返回一个可识别的种子主引用，归一化器再从权威 seed 映射恢复完整顺序。缺失 title 可安全使用题干，缺失 topics 可进入“未分类”；未知引用、混入其他种子的引用和缺失核心答案/关键点不能伪造成有效领域候选。
 - `frontend/package.json` 没有 `typecheck` script；本阶段使用权威等价命令 `./node_modules/.bin/tsc --noEmit`，production build 自身也再次执行 `tsc`。计划中的不存在脚本不能被记录为成功。
+
+## 2026-07-22 随手记容错整理结论
+
+- Work Item 适合审计 Provider 调用，但粒度过大，不能作为不规范材料的恢复边界；Seed Task 才能独立保存 completed/degraded/skipped，避免一个坏题回滚同批兄弟题。
+- Provider 输出只能作为 observation。应用必须用稳定 seed key 和权威 source refs 关联结果，确定性补齐展示字段，无法建立核心答案或证据时跳过，不能靠位置猜测。
+- `source / mixed / ai` 与 `supported / partial / unsupported` 是发布安全事实，不是 UI 标签；所有发布入口必须复用同一个 validator，mixed/ai 需要显式确认。
+- 旧 Batch 的隔离快照显示 80 个 discovery、22 个 enrichment 均保留；22 个调用输出对应 66 个唯一 degraded Seed，重复 reconciliation 不改变任何计数且不触发 Provider。
+- 真实失败页证明黄色复核与红色失败可以并存；颜色之外还必须依靠图标、文案和动作语义区分。390px 无横向溢出。
