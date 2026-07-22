@@ -29,6 +29,7 @@ const EVENT_TYPES = [
   "session.message.created",
   "curation.stage.changed",
   "curation.progress.changed",
+  "curation.seed.changed",
   "curation.control.changed",
   "curation.summary.ready",
   "curation.command.resolved",

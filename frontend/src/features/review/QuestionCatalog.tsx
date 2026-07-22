@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, Library, MessagesSquare, RotateCcw, Sparkles, Trash2, Upload, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Library, MessagesSquare, RotateCcw, Sparkles, Trash2, TriangleAlert, Upload, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../shared/ui/Button";
 import { cancelAgentExecution } from "../agent/agentApi";
@@ -9,13 +9,14 @@ import { listProviders, type WorkspaceConfig } from "../settings/settingsApi";
 import { CurationConversation } from "./CurationConversation";
 import { CurationArtifactDetail } from "./CurationArtifactDetail";
 import { CurationRuntimePanel } from "./CurationRuntimePanel";
+import type { CurationQualityFilter } from "./CurationRuntimePanel";
 import { CurationRecycleBin } from "./CurationRecycleBin";
 import { CurationSessionList } from "./CurationSessionList";
 import { QuestionLibrary } from "./QuestionLibrary";
 import { groupLogicalQuestions } from "./questionGroups";
 import { SourceSelectionDialog } from "./SourceSelectionDialog";
-import { abandonCurationCommand, createCurationSession, CurationControlError, deleteCurationSession, getBulkPublication, getBulkPublicationPreflight, getCurationSession, getQuestionCandidateOriginSession, listAllQuestionCandidates, listCurationSessions, pauseCurationSession, publishQuestionCandidate, restoreCurationSession, resumeCurationSession, retryBulkPublication, retryCurationCommand, startBulkPublication, submitCurationCommand, terminateCurationSession, updateQuestionCandidateNote } from "./reviewApi";
-import type { BulkPublication, BulkPublicationPreflight, CurationMessage, CurationSession, QuestionCandidate } from "./reviewTypes";
+import { abandonCurationCommand, createCurationSession, CurationControlError, deleteCurationSession, getBulkPublication, getBulkPublicationPreflight, getCurationSession, getQuestionCandidateOriginSession, listAllQuestionCandidates, listCurationSessions, pauseCurationSession, publishQuestionCandidate, restoreCurationSession, resumeCurationSession, retryBulkPublication, retryCurationCommand, retryCurationSeedTask, startBulkPublication, submitCurationCommand, terminateCurationSession, updateQuestionCandidateNote } from "./reviewApi";
+import type { BulkPublication, BulkPublicationPreflight, CurationMessage, CurationProvisionalCandidate, CurationSession, QuestionCandidate } from "./reviewTypes";
 
 type CatalogView = "sessions" | "library";
 type CurationControlOperation = "pause" | "resume" | "terminate";
@@ -87,6 +88,9 @@ export function QuestionCatalog({ workspace }: { workspace: WorkspaceConfig }) {
   const [originSessionNotice, setOriginSessionNotice] = useState<{ status: "loading" | "recycled" | "projection_missing" | "missing" | "error"; sessionId: string; message: string } | null>(null);
   const [focusedCandidateId, setFocusedCandidateId] = useState<string | null>(null);
   const [candidateStatusFilter, setCandidateStatusFilter] = useState<QuestionCandidate["status"] | null>(null);
+  const [candidateQualityFilter, setCandidateQualityFilter] = useState<CurationQualityFilter | null>(null);
+  const [retryingSeedIds, setRetryingSeedIds] = useState<Set<string>>(new Set());
+  const [pendingAiPublishId, setPendingAiPublishId] = useState<string | null>(null);
   const [optimisticMessage, setOptimisticMessage] = useState<CurationMessage | null>(null);
   const [activeInteraction, setActiveInteraction] = useState<{ kind: "command" | "bulk"; executionId: string; commandId?: string; operationId?: string } | null>(null);
   const [selectedModelId, setSelectedModelId] = useState("");
@@ -95,6 +99,7 @@ export function QuestionCatalog({ workspace }: { workspace: WorkspaceConfig }) {
   const [bulkOperation, setBulkOperation] = useState<BulkPublication | null>(null);
   const [controlNotice, setControlNotice] = useState<CurationControlNotice | null>(null);
   const focusedWorkspaceRef = useRef<HTMLDivElement | null>(null);
+  const seedRetryKeys = useRef(new Map<string, string>());
   const sources = useQuery({ queryKey: ["knowledge-sources", workspace.id], queryFn: () => listSources(workspace.id) });
   const sessions = useQuery({
     queryKey: ["review-curation-sessions", workspace.id],
@@ -156,7 +161,7 @@ export function QuestionCatalog({ workspace }: { workspace: WorkspaceConfig }) {
     if (unhandled.length === 0) return;
     lastHandledEventId.current = Math.max(...unhandled.map((event) => event.id));
     const eventTypes = new Set(unhandled.map((event) => event.type));
-    if (["curation.stage.changed", "curation.progress.changed", "curation.control.changed", "curation.summary.ready", "session.message.created", "curation.command.resolved", "publication.changed", "execution.completed", "execution.cancelled", "execution.failed", "execution.interrupted"].some((type) => eventTypes.has(type))) {
+    if (["curation.stage.changed", "curation.progress.changed", "curation.control.changed", "curation.seed.changed", "curation.summary.ready", "session.message.created", "curation.command.resolved", "publication.changed", "execution.completed", "execution.cancelled", "execution.failed", "execution.interrupted"].some((type) => eventTypes.has(type))) {
       void refresh();
     }
     if (["curation.summary.ready", "curation.command.resolved", "publication.changed", "execution.completed"].some((type) => eventTypes.has(type))) {
@@ -251,8 +256,14 @@ export function QuestionCatalog({ workspace }: { workspace: WorkspaceConfig }) {
     onError: (_error, sessionId) => setOriginSessionNotice({ status: "error", sessionId, message: "恢复原生成会话失败，请从回收站检查会话状态后重试。" }),
   });
   const publishCandidate = useMutation({
-    mutationFn: (candidateId: string) => publishQuestionCandidate(candidateId, commandId()),
-    onSuccess: async () => { await Promise.all([refresh(), refreshCandidates()]); },
+    mutationFn: ({ candidateId, confirmAiSupplement = false }: { candidateId: string; confirmAiSupplement?: boolean }) => publishQuestionCandidate(candidateId, commandId(), confirmAiSupplement),
+    onSuccess: async () => { setPendingAiPublishId(null); await Promise.all([refresh(), refreshCandidates()]); },
+  });
+  const retrySeed = useMutation({
+    mutationFn: ({ item, idempotencyKey }: { item: CurationProvisionalCandidate; idempotencyKey: string }) => retryCurationSeedTask(selected!.id, item.seedTaskId!, item.version ?? 0, idempotencyKey),
+    onMutate: ({ item }) => setRetryingSeedIds((current) => new Set(current).add(item.seedTaskId!)),
+    onSuccess: async () => { await refresh(); },
+    onError: (_error, { item }) => setRetryingSeedIds((current) => { const next = new Set(current); next.delete(item.seedTaskId!); return next; }),
   });
   const saveNote = useMutation({
     mutationFn: ({ candidateId, note }: { candidateId: string; note: string }) => updateQuestionCandidateNote(candidateId, note),
@@ -270,6 +281,17 @@ export function QuestionCatalog({ workspace }: { workspace: WorkspaceConfig }) {
   const formalReplyExists = Boolean(activeInteraction && selected?.messages.some((message) => message.executionId === activeInteraction.executionId && message.role === "assistant" && message.messageKind === "command_receipt"));
   const streamingState = activeInteraction?.kind === "command" && !formalReplyExists ? agentEvents.streamingByExecution[activeInteraction.executionId] ?? (executionStatus ? { text: "", status: executionStatus as "running" | "cancelling" | "cancelled" | "completed" | "failed" | "interrupted" } : null) : null;
   const visibleOptimisticMessage = optimisticMessage && !selected?.messages.some((message) => message.role === "user" && message.payload.resourceId === optimisticMessage.id) ? optimisticMessage : null;
+
+  useEffect(() => {
+    if (!selected) return;
+    const retryableIds = new Set((selected.provisionalCandidates ?? []).filter((item) => ["retryable", "skipped"].includes(item.status ?? "")).map((item) => item.seedTaskId).filter((id): id is string => Boolean(id)));
+    setRetryingSeedIds((current) => {
+      const next = new Set([...current].filter((id) => retryableIds.has(id)));
+      if (next.size === current.size && [...next].every((id) => current.has(id))) return current;
+      for (const id of seedRetryKeys.current.keys()) if (!retryableIds.has(id)) seedRetryKeys.current.delete(id);
+      return next;
+    });
+  }, [selected?.provisionalCandidates]);
 
   function handleDeleteSession(id: string, hard: boolean) {
     const message = hard
@@ -298,6 +320,22 @@ export function QuestionCatalog({ workspace }: { workspace: WorkspaceConfig }) {
     command.mutate({ session: selected, text, idempotencyKey, modelId: selectedModelId, effort: reasoningEffort });
   }
 
+  function requestCandidatePublication(candidateId: string) {
+    const candidate = candidateMap[candidateId];
+    if (candidate && ["mixed", "model", "unknown"].includes(candidate.answerBasis ?? "source")) {
+      setPendingAiPublishId(candidateId);
+      return;
+    }
+    publishCandidate.mutate({ candidateId });
+  }
+
+  function retryOneSeed(item: CurationProvisionalCandidate) {
+    if (!item.seedTaskId || retryingSeedIds.has(item.seedTaskId)) return;
+    const idempotencyKey = seedRetryKeys.current.get(item.seedTaskId) ?? commandId();
+    seedRetryKeys.current.set(item.seedTaskId, idempotencyKey);
+    retrySeed.mutate({ item, idempotencyKey });
+  }
+
   async function handleUpload(file: File | undefined) {
     if (!file) return;
     await uploadSource(workspace.id, file);
@@ -313,10 +351,17 @@ export function QuestionCatalog({ workspace }: { workspace: WorkspaceConfig }) {
       </nav>
       {selected || view === "library" ? <nav className="catalog-context-nav" aria-label="当前位置导航"><button type="button" className="catalog-back" onClick={returnToCurationSessions}><ArrowLeft size={17} />返回整理会话</button><span aria-current="page">{selected ? selected.title : "题目库"}</span></nav> : null}
       {originSessionNotice ? <div className={`catalog-origin-notice${originSessionNotice.status === "error" || originSessionNotice.status === "missing" || originSessionNotice.status === "projection_missing" ? " catalog-origin-notice--error" : ""}`} role={originSessionNotice.status === "loading" ? "status" : "alert"}><AlertTriangle size={18} /><div><strong>{originSessionNotice.status === "loading" ? "正在定位会话" : "无法直接打开生成会话"}</strong><span>{originSessionNotice.message}</span></div>{originSessionNotice.status === "recycled" ? <Button size="sm" variant="secondary" loading={restoreOriginSession.isPending} onClick={() => restoreOriginSession.mutate(originSessionNotice.sessionId)}><RotateCcw size={15} />恢复并打开</Button> : null}<button type="button" aria-label="关闭会话提示" onClick={() => setOriginSessionNotice(null)}><X size={17} /></button></div> : null}
-      {view === "sessions" ? selected ? <section className="curation-session-workspace" aria-label="整理会话工作台"><div className="curation-source-stepper" aria-label="本次整理资料">{selected.sources.map((source, index) => <div key={source.id}><span>{index + 1}</span><p><small>资料 {index + 1}</small><strong title={source.filename}>{source.filename}</strong></p></div>)}</div><div ref={focusedWorkspaceRef} className="curation-focus-workspace"><CurationConversation session={selected} candidates={candidateMap} optimisticMessage={visibleOptimisticMessage} busy={interactionBusy || command.isPending} activeExecutionId={activeInteraction?.executionId} streamingState={streamingState} models={modelOptions} selectedModelId={selectedModelId} reasoningEffort={reasoningEffort} onModelChange={setSelectedModelId} onReasoningEffortChange={setReasoningEffort} onStop={() => activeInteraction && stop.mutate(activeInteraction.executionId)} onRetryCommand={() => activeInteraction?.commandId && retryCommand.mutate(activeInteraction.commandId)} onAbandonCommand={() => activeInteraction?.commandId && abandonCommand.mutate(activeInteraction.commandId)} onBulkPublish={() => bulkOperation?.status === "partial_failure" && activeInteraction?.operationId ? retryBulk.mutate(activeInteraction.operationId) : preflightBulk.mutate(selected.id)} bulkBusy={preflightBulk.isPending || startBulk.isPending || retryBulk.isPending || (activeInteraction?.kind === "bulk" && interactionBusy)} bulkRetryAvailable={bulkOperation?.status === "partial_failure"} artifactBusyId={publishCandidate.isPending ? publishCandidate.variables ?? null : saveNote.isPending ? saveNote.variables?.candidateId ?? null : null} onSubmit={sendCommand} onOpenCandidate={setFocusedCandidateId} onPublishCandidate={(candidateId) => publishCandidate.mutate(candidateId)} onSaveNote={(candidateId, note) => saveNote.mutate({ candidateId, note })} />{focusedCandidate ? <CurationArtifactDetail candidate={focusedCandidate} onClose={() => setFocusedCandidateId(null)} /> : <CurationRuntimePanel session={selected} candidates={candidates.isLoading ? null : selectedCandidates} activeModelLabel={modelOptions.find((model) => model.id === selectedModelId)?.label ?? selectedModelId} controlPending={curationControl.isPending ? curationControl.variables?.operation ?? null : null} controlNotice={controlNotice?.message ?? null} artifactBusyId={publishCandidate.isPending ? publishCandidate.variables ?? null : saveNote.isPending ? saveNote.variables?.candidateId ?? null : null} statusFilter={candidateStatusFilter} onStatusFilterChange={setCandidateStatusFilter} onOpenCandidate={setFocusedCandidateId} onPublishCandidate={(candidateId) => publishCandidate.mutate(candidateId)} onSaveNote={(candidateId, note) => saveNote.mutate({ candidateId, note })} onPause={() => curationControl.mutate({ operation: "pause", session: selected })} onResume={() => curationControl.mutate({ operation: "resume", session: selected })} onTerminate={() => curationControl.mutate({ operation: "terminate", session: selected })} />}</div></section> : <CurationSessionList sessions={sessions.data ?? []} candidateCount={logicalQuestionGroups.length} publishedCount={publishedCandidateCount} onSelect={(id) => { setDirectSession(null); setSelectedId(id); setFocusedCandidateId(null); setCandidateStatusFilter(null); setActiveInteraction(null); setBulkOperation(null); setControlNotice(null); }} onCreate={() => setDialogOpen(true)} onDelete={handleDeleteSession} onOpenLibrary={(status) => { setLibraryInitialStatus(status ?? ""); setView("library"); }} /> : <QuestionLibrary workspace={workspace} sources={sources.data ?? []} initialCandidateId={focusedCandidateId} initialStatus={libraryInitialStatus} onBackToSessions={() => setView("sessions")} onOpenSession={handleOpenOriginSession} onOpenDirectSession={(session) => { setDirectSession(session); setSelectedId(session.id); setFocusedCandidateId(null); setView("sessions"); }} />}
+      {view === "sessions" ? selected ? <section className="curation-session-workspace" aria-label="整理会话工作台">
+        <div className="curation-source-stepper" aria-label="本次整理资料">{selected.sources.map((source, index) => <div key={source.id}><span>{index + 1}</span><p><small>资料 {index + 1}</small><strong title={source.filename}>{source.filename}</strong></p></div>)}</div>
+        <div ref={focusedWorkspaceRef} className="curation-focus-workspace">
+          <CurationConversation session={selected} candidates={candidateMap} optimisticMessage={visibleOptimisticMessage} busy={interactionBusy || command.isPending} activeExecutionId={activeInteraction?.executionId} streamingState={streamingState} models={modelOptions} selectedModelId={selectedModelId} reasoningEffort={reasoningEffort} onModelChange={setSelectedModelId} onReasoningEffortChange={setReasoningEffort} onStop={() => activeInteraction && stop.mutate(activeInteraction.executionId)} onRetryCommand={() => activeInteraction?.commandId && retryCommand.mutate(activeInteraction.commandId)} onAbandonCommand={() => activeInteraction?.commandId && abandonCommand.mutate(activeInteraction.commandId)} onBulkPublish={() => bulkOperation?.status === "partial_failure" && activeInteraction?.operationId ? retryBulk.mutate(activeInteraction.operationId) : preflightBulk.mutate(selected.id)} bulkBusy={preflightBulk.isPending || startBulk.isPending || retryBulk.isPending || (activeInteraction?.kind === "bulk" && interactionBusy)} bulkRetryAvailable={bulkOperation?.status === "partial_failure"} artifactBusyId={publishCandidate.isPending ? publishCandidate.variables?.candidateId ?? null : saveNote.isPending ? saveNote.variables?.candidateId ?? null : null} onSubmit={sendCommand} onOpenCandidate={setFocusedCandidateId} onPublishCandidate={requestCandidatePublication} onSaveNote={(candidateId, note) => saveNote.mutate({ candidateId, note })} />
+          {focusedCandidate ? <CurationArtifactDetail candidate={focusedCandidate} onClose={() => setFocusedCandidateId(null)} /> : <CurationRuntimePanel session={selected} candidates={candidates.isLoading ? null : selectedCandidates} activeModelLabel={modelOptions.find((model) => model.id === selectedModelId)?.label ?? selectedModelId} controlPending={curationControl.isPending ? curationControl.variables?.operation ?? null : null} controlNotice={controlNotice?.message ?? null} artifactBusyId={publishCandidate.isPending ? publishCandidate.variables?.candidateId ?? null : saveNote.isPending ? saveNote.variables?.candidateId ?? null : null} statusFilter={candidateStatusFilter} qualityFilter={candidateQualityFilter} onStatusFilterChange={(value) => { setCandidateStatusFilter(value); if (value) setCandidateQualityFilter(null); }} onQualityFilterChange={(value) => { setCandidateQualityFilter(value); if (value) setCandidateStatusFilter(null); }} onOpenCandidate={setFocusedCandidateId} onPublishCandidate={requestCandidatePublication} onSaveNote={(candidateId, note) => saveNote.mutate({ candidateId, note })} onPause={() => curationControl.mutate({ operation: "pause", session: selected })} onResume={() => curationControl.mutate({ operation: "resume", session: selected })} onTerminate={() => curationControl.mutate({ operation: "terminate", session: selected })} retryingSeedIds={retryingSeedIds} onRetrySeed={retryOneSeed} />}
+        </div>
+      </section> : <CurationSessionList sessions={sessions.data ?? []} candidateCount={logicalQuestionGroups.length} publishedCount={publishedCandidateCount} onSelect={(id) => { setDirectSession(null); setSelectedId(id); setFocusedCandidateId(null); setCandidateStatusFilter(null); setCandidateQualityFilter(null); setActiveInteraction(null); setBulkOperation(null); setControlNotice(null); }} onCreate={() => setDialogOpen(true)} onDelete={handleDeleteSession} onOpenLibrary={(status) => { setLibraryInitialStatus(status ?? ""); setView("library"); }} /> : <QuestionLibrary workspace={workspace} sources={sources.data ?? []} initialCandidateId={focusedCandidateId} initialStatus={libraryInitialStatus} onBackToSessions={() => setView("sessions")} onOpenSession={handleOpenOriginSession} onOpenDirectSession={(session) => { setDirectSession(session); setSelectedId(session.id); setFocusedCandidateId(null); setView("sessions"); }} />}
       <SourceSelectionDialog open={dialogOpen} sources={sources.data ?? []} sourceStates={sourceStates} busy={create.isPending} onClose={() => setDialogOpen(false)} onConfirm={(ids) => create.mutate(ids)} />
       <CurationRecycleBin open={trashOpen} workspaceId={workspace.id} onClose={() => setTrashOpen(false)} />
       {bulkPreflight ? <div className="dialog-backdrop" role="presentation"><section className="bulk-publication-dialog" role="dialog" aria-modal="true" aria-labelledby="bulk-publication-title"><h3 id="bulk-publication-title">确认一键发布</h3><p>将发布 {bulkPreflight.publishable.length} 道推荐题；{bulkPreflight.needsReview.length + bulkPreflight.blocked.length} 道需复核题会被跳过。已发布题目不会重复处理。</p><dl><div><dt>可发布</dt><dd>{bulkPreflight.publishable.length}</dd></div><div><dt>需复核</dt><dd>{bulkPreflight.needsReview.length}</dd></div><div><dt>已发布</dt><dd>{bulkPreflight.alreadyPublished.length}</dd></div></dl><footer><Button variant="ghost" onClick={() => setBulkPreflight(null)}>取消</Button><Button disabled={bulkPreflight.publishable.length === 0} loading={startBulk.isPending} onClick={() => startBulk.mutate({ sessionId: bulkPreflight.sessionId, version: bulkPreflight.summaryVersion, candidateIds: bulkPreflight.publishable })}>确认发布</Button></footer></section></div> : null}
+      {pendingAiPublishId ? <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPendingAiPublishId(null); }}><section className="ai-publication-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-publication-title"><TriangleAlert size={22} /><div><h3 id="ai-publication-title">确认 AI 补全风险</h3><p>这道题的答案含 AI 补全、主要由 AI 生成，或来源依据尚未确认。请先核对题目、答案和来源证据。</p></div><footer><Button variant="ghost" onClick={() => setPendingAiPublishId(null)}>返回核对</Button><Button loading={publishCandidate.isPending} onClick={() => publishCandidate.mutate({ candidateId: pendingAiPublishId, confirmAiSupplement: true })}>我已核对，继续发布</Button></footer></section></div> : null}
     </section>
   );
 }

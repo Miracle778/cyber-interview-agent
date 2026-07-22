@@ -59,6 +59,11 @@ export interface QuestionCandidate {
   duplicateOfQuestionId: string | null;
   duplicateQuestion: CandidateQuestion | null;
   revisionOfQuestionId?: string | null;
+  seedTaskId?: string | null;
+  answerBasis?: CurationAnswerBasis;
+  materialSupport?: CurationMaterialSupport;
+  needsReview?: boolean;
+  normalizationIssues?: string[];
   isActiveVersion?: boolean;
   status: "draft" | "review_pending" | "rejected" | "published";
   deletedAt?: string | null;
@@ -67,6 +72,10 @@ export interface QuestionCandidate {
   createdAt: string;
   updatedAt: string;
 }
+
+export type CurationAnswerBasis = "source" | "mixed" | "model" | "unknown";
+export type CurationMaterialSupport = "sufficient" | "partial" | "minimal" | "unknown";
+export type CurationSeedTaskStatus = "pending" | "running" | "retryable" | "completed" | "degraded" | "skipped" | "interrupted";
 
 export interface CandidateOriginSession {
   status: "available" | "recycled" | "projection_missing" | "missing";
@@ -123,6 +132,14 @@ export interface CurationProvisionalCandidate {
   title: string;
   questionText: string;
   sourceRefs: string[];
+  seedTaskId?: string | null;
+  answerBasis?: CurationAnswerBasis;
+  materialSupport?: CurationMaterialSupport;
+  needsReview?: boolean;
+  normalizationIssues?: string[];
+  status?: CurationSeedTaskStatus | string;
+  version?: number;
+  errorCode?: string | null;
 }
 
 export interface CurationMessage {
@@ -180,6 +197,9 @@ export interface CurationSession {
   timing: { currentElapsedMs: number; cumulativeElapsedMs: number };
   controls: { canPause: boolean; canResume: boolean; canTerminate: boolean };
   provisionalCandidates: CurationProvisionalCandidate[];
+  seedProgress?: { total: number; completed: number; degraded: number; retrying: number; skipped: number; pending: number };
+  qualitySummary?: { source: number; mixed: number; model: number; unknown: number; needsReview: number };
+  sourceWarnings?: { sourceId: string; code: string }[];
   summary: { items: CurationSummaryItem[] };
   summaryVersion: number;
   warnings: { sourceId?: string; code: string; limit?: number }[];
@@ -216,6 +236,13 @@ export interface AcceptedCurationCommand {
   commandId: string;
   executionId: string;
   status: "accepted";
+}
+
+export interface AcceptedCurationSeedRetry {
+  receiptId: string;
+  seedTaskId: string;
+  executionId: string;
+  status: string;
 }
 
 export interface BulkPublicationPreflight {

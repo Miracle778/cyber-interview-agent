@@ -49,6 +49,13 @@ describe("QuestionDetailPanel", () => {
     expect(onOpenSession).toHaveBeenCalledWith("c1");
   });
 
+  it("keeps AI provenance and material support visible before publication", () => {
+    render(<QuestionDetailPanel candidate={{ ...candidate, answerBasis: "model", materialSupport: "minimal", needsReview: true, normalizationIssues: ["repaired_title"] }} sourceLabels={{}} busy={false} onSave={vi.fn()} onRewrite={vi.fn()} onConfirm={vi.fn()} onOpenSession={vi.fn()} />);
+    expect(screen.getByRole("note")).toHaveTextContent("主要由 AI 生成");
+    expect(screen.getByRole("note")).toHaveTextContent("原资料提供的支撑很少");
+    expect(screen.getByText(/下一步会要求明确确认/)).toBeInTheDocument();
+  });
+
   it("shows the rejection reason and carries it into the next revision", () => {
     const onRewrite = vi.fn();
     const onSave = vi.fn();

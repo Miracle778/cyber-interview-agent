@@ -11,6 +11,7 @@ import {
   startBulkPublication,
   terminateCurationSession,
   retryBulkPublication,
+  retryCurationSeedTask,
 } from "./reviewApi";
 import type { CurationSession, ReviewRound } from "./reviewTypes";
 
@@ -95,6 +96,7 @@ describe("reviewApi", () => {
       summaryVersion: 4,
       candidateIds: ["candidate-1"],
       idempotencyKey: "bulk-start-1",
+      confirmedAiCandidateIds: [],
     });
     await retryBulkPublication("bulk-1", "bulk-retry-1");
     expect(fetchMock).toHaveBeenLastCalledWith(
@@ -127,5 +129,15 @@ describe("reviewApi", () => {
         body: JSON.stringify({ expectedBatchVersion: 7 }),
       }),
     );
+  });
+
+  it("retries exactly one seed with versioned body and header idempotency", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ receiptId: "receipt-1", seedTaskId: "seed-1", executionId: "execution-1", status: "accepted" }, { status: 202 }));
+    await retryCurationSeedTask("curation-1", "seed-1", 3, "retry-seed-0001");
+    expect(fetchMock).toHaveBeenCalledWith("/api/review/curation-sessions/curation-1/seed-tasks/seed-1/retry", expect.objectContaining({
+      method: "POST",
+      headers: expect.objectContaining({ "Idempotency-Key": "retry-seed-0001" }),
+      body: JSON.stringify({ expectedVersion: 3 }),
+    }));
   });
 });

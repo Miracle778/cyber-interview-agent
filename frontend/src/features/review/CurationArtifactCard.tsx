@@ -1,4 +1,4 @@
-import { Check, Eye, FileText, MessageSquareText, Send } from "lucide-react";
+import { Check, Eye, FileText, MessageSquareText, Send, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { Button } from "../../shared/ui/Button";
 import type { QuestionCandidate } from "./reviewTypes";
@@ -32,15 +32,17 @@ export function CurationArtifactCard({ candidate, title, description, historical
   const [editingNote, setEditingNote] = useState(false);
   const [note, setNote] = useState(candidate.reviewNote);
   const published = candidate.status === "published";
+  const qualityWarning = candidate.needsReview || ["mixed", "model", "unknown"].includes(candidate.answerBasis ?? "unknown") || ["partial", "minimal", "unknown"].includes(candidate.materialSupport ?? "unknown");
   const filename = `${title ?? candidate.question.title}.md`;
   const metadata = description ?? `${candidate.question.topics.join(" / ") || "未分类"} · ${difficultyLabels[candidate.question.difficulty]}`;
 
-  return <article className={`curation-artifact-card${compact ? " is-compact" : ""}${published ? " is-published" : ""}`}>
+  return <article className={`curation-artifact-card${compact ? " is-compact" : ""}${published ? " is-published" : ""}${qualityWarning ? " is-quality-warning" : ""}`}>
     <div className="curation-artifact-card__main">
       <span className="curation-artifacts__file" aria-hidden="true"><FileText size={16} /></span>
       <div className="curation-artifact-card__copy"><strong title={filename}>{filename}</strong><small>{metadata}{candidate.reviewNote ? " · 已备注" : ""}</small></div>
       <div className="curation-artifact-card__badges">{historical ? <span className="curation-artifact-card__history">历史版本</span> : null}<em className={`candidate-status candidate-status--${candidate.status}`}>{published ? <Check size={13} /> : null}{statusLabels[candidate.status]}</em></div>
     </div>
+    {qualityWarning ? <div className="curation-quality-callout"><TriangleAlert size={14} /><span>{["model", "unknown"].includes(candidate.answerBasis ?? "unknown") ? "主要由 AI 生成" : candidate.answerBasis === "mixed" ? "含 AI 补全" : "材料依据需复核"} · {["partial", "minimal", "unknown"].includes(candidate.materialSupport ?? "unknown") ? "材料支持不足" : "需要人工复核"}</span></div> : null}
     {compact ? <p className="curation-artifact-card__excerpt">{candidate.question.questionText}</p> : null}
     <div className="curation-artifacts__actions">
       <button type="button" onClick={() => onOpen(candidate.id)}><Eye size={14} />查看</button>

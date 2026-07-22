@@ -118,6 +118,28 @@ describe("CurationRuntimePanel candidate status", () => {
     expect(failure).toHaveAttribute("aria-live", "polite");
   });
 
+  it("shows durable seed quality as warnings and exposes one-seed recovery", () => {
+    const onRetry = vi.fn();
+    render(<CurationRuntimePanel session={{
+      ...session,
+      batchStatus: "review_pending",
+      sources: [{ id: "s1", filename: "随手记.md", organizationState: "not_curated" }],
+      seedProgress: { total: 5, completed: 1, degraded: 1, retrying: 1, skipped: 1, pending: 1 },
+      qualitySummary: { source: 1, mixed: 1, model: 1, unknown: 0, needsReview: 2 },
+      sourceWarnings: [{ sourceId: "s1", code: "low_signal" }],
+      provisionalCandidates: [{ id: "seed-1", seedTaskId: "seed-1", title: "不完整问题", questionText: "Redis？", sourceRefs: ["s1"], status: "skipped", version: 3, answerBasis: "model", materialSupport: "minimal", needsReview: true, normalizationIssues: ["missing_answer"] }],
+    }} onRetrySeed={onRetry} />);
+
+    expect(screen.getByRole("status", { name: "整理进度" })).toHaveTextContent("1 / 5");
+    expect(screen.getAllByText(/主要由 AI 生成/).length).toBeGreaterThan(0);
+    expect(screen.getByText("材料支持较少")).toBeInTheDocument();
+    expect(screen.getByText("随手记.md").closest("li")).toHaveTextContent("有效内容较少");
+    const retry = screen.getByRole("button", { name: "重试这一题" });
+    fireEvent.click(retry);
+    expect(onRetry).toHaveBeenCalledWith(expect.objectContaining({ seedTaskId: "seed-1", version: 3 }));
+    expect(screen.queryByText("Agent 执行失败", { selector: "strong" })).toBeNull();
+  });
+
   it("ticks from the server snapshot with a monotonic clock and ignores wall-clock skew", () => {
     let monotonicNow = 5_000;
     vi.spyOn(performance, "now").mockImplementation(() => monotonicNow);

@@ -3,6 +3,7 @@ import type {
   ActiveQuestion,
   AcceptedBulkPublication,
   AcceptedCurationCommand,
+  AcceptedCurationSeedRetry,
   BulkPublication,
   BulkPublicationPreflight,
   CandidateOriginSession,
@@ -36,6 +37,21 @@ export function createCurationSession(workspaceId: string, sourceRefs: string[])
 
 export function retryCurationSession(id: string): Promise<CurationSession> {
   return apiPost(`/api/review/curation-sessions/${id}/retry`, {});
+}
+
+export async function retryCurationSeedTask(
+  sessionId: string,
+  seedTaskId: string,
+  expectedVersion: number,
+  idempotencyKey: string,
+): Promise<AcceptedCurationSeedRetry> {
+  const response = await fetch(`/api/review/curation-sessions/${sessionId}/seed-tasks/${seedTaskId}/retry`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify({ expectedVersion }),
+  });
+  if (!response.ok) throw new ApiError("seed_retry_failed", "重试未被接受");
+  return response.json() as Promise<AcceptedCurationSeedRetry>;
 }
 
 async function controlCurationSession(
@@ -124,11 +140,13 @@ export function startBulkPublication(
   summaryVersion: number,
   candidateIds: string[],
   idempotencyKey: string,
+  confirmedAiCandidateIds: string[] = [],
 ): Promise<AcceptedBulkPublication> {
   return apiPost(`/api/review/curation-sessions/${sessionId}/bulk-publications`, {
     summaryVersion,
     candidateIds,
     idempotencyKey,
+    confirmedAiCandidateIds,
   });
 }
 
@@ -189,12 +207,12 @@ export function updateQuestionCandidateNote(id: string, note: string): Promise<Q
   return apiPut(`/api/review/question-candidates/${id}/note`, { note });
 }
 
-export function publishQuestionCandidate(id: string, idempotencyKey: string): Promise<QuestionCandidate> {
-  return apiPost(`/api/review/question-candidates/${id}/publish`, { idempotencyKey });
+export function publishQuestionCandidate(id: string, idempotencyKey: string, confirmAiSupplement = false): Promise<QuestionCandidate> {
+  return apiPost(`/api/review/question-candidates/${id}/publish`, { idempotencyKey, confirmAiSupplement });
 }
 
-export function updateActiveQuestionVersion(id: string, targetQuestionId: string, expectedActiveHash: string, idempotencyKey: string): Promise<QuestionCandidate> {
-  return apiPost(`/api/review/question-candidates/${id}/update-active-version`, { targetQuestionId, expectedActiveHash, idempotencyKey });
+export function updateActiveQuestionVersion(id: string, targetQuestionId: string, expectedActiveHash: string, idempotencyKey: string, confirmAiSupplement = false): Promise<QuestionCandidate> {
+  return apiPost(`/api/review/question-candidates/${id}/update-active-version`, { targetQuestionId, expectedActiveHash, idempotencyKey, confirmAiSupplement });
 }
 
 export function deleteQuestionCandidate(id: string, expectedVersion: number | null, reason = ""): Promise<QuestionDeletionResult> {

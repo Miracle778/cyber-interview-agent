@@ -61,6 +61,28 @@ describe("QuestionCatalog", () => {
     expect(screen.getByRole("region", { name: "历史整理会话" })).toBeInTheDocument();
   });
 
+  it("requires explicit confirmation before publishing an AI-supplemented candidate", async () => {
+    const candidate = { id: "c-ai", batchId: "b1", curationSessionId: "cs-ai", sourceRefs: ["s1"], correctionNote: "", reviewNote: "", reviewNoteUpdatedAt: null, duplicateOfQuestionId: null, duplicateQuestion: null, status: "review_pending", draft: null, answerBasis: "model", materialSupport: "minimal", needsReview: true, normalizationIssues: [], createdAt: "now", updatedAt: "now", question: { questionId: "q-ai", documentId: "d-ai", contentHash: "h-ai", title: "Redis 恢复", questionText: "Redis 如何恢复？", referenceAnswer: "核对持久化文件。", topics: ["redis"], difficulty: "medium", keyPoints: [], followUps: [] } };
+    const curation = controlSession({ id: "cs-ai", title: "随手记.md", batchStatus: "review_pending", stage: "waiting_for_command", controls: { canPause: false, canResume: false, canTerminate: false }, progress: { phase: "enrichment", completed: 1, total: 1, generatedCandidateCount: 1, activeWorkers: 0 }, summary: { items: [{ ordinal: 1, candidateId: "c-ai", title: "Redis 恢复", topics: ["redis"], difficulty: "medium", sourceCount: 1, recommendation: "recommend_confirm" }] }, candidateCount: 1, pendingCount: 1 });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/review/question-candidates/c-ai/publish") && init?.method === "POST") return Response.json({ ...candidate, status: "published" });
+      if (url.includes("/api/review/question-candidates")) return Response.json([candidate]);
+      if (url.includes("/api/review/curation-sessions")) return Response.json([curation]);
+      if (url.includes("/api/knowledge/sources") || url.includes("/api/settings/providers")) return Response.json([]);
+      throw new Error(`unexpected ${url}`);
+    });
+    render(<QuestionCatalog workspace={workspace} />, { wrapper });
+    fireEvent.click(await screen.findByRole("button", { name: /随手记\.md/ }));
+    const runtime = await screen.findByRole("complementary", { name: "整理运行状态" });
+    fireEvent.click(within(runtime).getByRole("button", { name: /待确认/ }));
+    fireEvent.click(within(runtime).getByRole("button", { name: "发布" }));
+    const dialog = screen.getByRole("dialog", { name: "确认 AI 补全风险" });
+    expect(dialog).toHaveTextContent("主要由 AI 生成");
+    fireEvent.click(within(dialog).getByRole("button", { name: "我已核对，继续发布" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/review/question-candidates/c-ai/publish", expect.objectContaining({ body: expect.stringContaining('"confirmAiSupplement":true') })));
+  });
+
   it("selects sources in a dialog and warns without blocking repeated curation", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);

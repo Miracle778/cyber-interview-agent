@@ -133,6 +133,13 @@ describe("useAgentEvents", () => {
     ]);
   });
 
+  it("collects safe seed state events for targeted resource invalidation", () => {
+    const { result } = renderHook(() => useAgentEvents("s1", { createEventSource: (url) => new FakeEventSource(url) }));
+    act(() => FakeEventSource.instances[0].emit({ id: 13, type: "curation.seed.changed", sessionId: "s1", executionId: "r1", timestamp: "now", payload: { seedTaskId: "seed-1", status: "degraded", needsReview: true } }));
+    expect(result.current.events).toHaveLength(1);
+    expect(result.current.events[0].payload).not.toHaveProperty("questionText");
+  });
+
   it("bounds the retained event window", () => {
     const { result } = renderHook(() => useAgentEvents("s1", { createEventSource: (url) => new FakeEventSource(url) }));
     const source = FakeEventSource.instances[0];
