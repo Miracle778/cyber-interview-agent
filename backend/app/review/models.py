@@ -58,6 +58,19 @@ CurationControlOperation: TypeAlias = Literal["pause", "resume", "terminate"]
 CurationAttemptReason: TypeAlias = Literal[
     "initial", "paused", "failed", "interrupted"
 ]
+SeedTaskStatus: TypeAlias = Literal[
+    "pending",
+    "running",
+    "completed",
+    "degraded",
+    "retryable",
+    "interrupted",
+    "skipped",
+]
+AnswerBasis: TypeAlias = Literal["source", "mixed", "model", "unknown"]
+MaterialSupport: TypeAlias = Literal[
+    "sufficient", "partial", "minimal", "unknown"
+]
 
 _DIFFICULTIES = frozenset({"easy", "medium", "hard"})
 _MODES = frozenset(
@@ -194,6 +207,43 @@ class CurationWorkItemRecord:
     output: dict[str, object] | None
     attempt_count: int
     last_error_code: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class CurationSeedTaskRecord:
+    id: str
+    batch_id: str
+    discovery_work_item_id: str
+    seed_key: str
+    seed_ordinal: int
+    question_text: str
+    primary_source_ref: str
+    source_refs: tuple[str, ...]
+    input_digest: str
+    status: SeedTaskStatus
+    automatic_attempt_count: int
+    manual_attempt_count: int
+    candidate: dict[str, object] | None
+    answer_basis: AnswerBasis
+    material_support: MaterialSupport
+    needs_review: bool
+    normalization_issues: tuple[str, ...]
+    last_error_code: str | None
+    version: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class CurationSeedRetryReceiptRecord:
+    id: str
+    seed_task_id: str
+    idempotency_key: str
+    request_digest: str
+    execution_id: str
+    result_status: str
     created_at: str
     updated_at: str
 

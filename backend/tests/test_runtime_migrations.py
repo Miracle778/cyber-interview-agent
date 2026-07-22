@@ -42,6 +42,8 @@ R2_PROGRESSIVE_CURATION_TABLES = {
     "review_curation_finalizations",
     "review_curation_staged_drafts",
     "review_curation_work_items",
+    "review_curation_seed_tasks",
+    "review_curation_seed_retry_receipts",
 }
 
 R3_TABLES = {
@@ -167,7 +169,7 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
+        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26]
     assert "agent_context_usage" in _tables(connection)
     connection.close()
 
@@ -351,6 +353,153 @@ def test_migration_025_does_not_infer_membership_after_session_hard_delete(
         "SELECT COUNT(*) FROM review_curation_batch_candidates "
         "WHERE candidate_id = 'candidate-revision'"
     ).fetchone()[0] == 0
+    assert migrated.execute("PRAGMA foreign_key_check").fetchall() == []
+    migrated.close()
+
+
+def test_migration_026_adds_seed_state_and_backfills_candidate_quality(
+    tmp_path: Path,
+) -> None:
+    connection = _create_runtime_at_version(tmp_path, 25)
+    connection.execute(
+        "INSERT INTO agent_sessions "
+        "(id, workspace_id, graph_id, graph_version, title) "
+        "VALUES ('s26', 'w1', 'question.curate', 1, 'Curation')"
+    )
+    connection.execute(
+        "INSERT INTO review_question_batches "
+        "(id, workspace_id, session_id, origin_session_id, source_refs_json, status) "
+        "VALUES ('b26', 'w1', 's26', 's26', '[\"source-1\"]', 'review_pending')"
+    )
+    connection.execute(
+        "INSERT INTO review_curation_work_items "
+        "(id, batch_id, stage, unit_index, input_digest, source_refs_json, "
+        "processor_kind, status, output_json) VALUES "
+        "('wi26', 'b26', 'discovery', 0, ?, '[\"source-1#section-1\"]', "
+        "'model', 'completed', '{\"seeds\":[]}')",
+        ("a" * 64,),
+    )
+    connection.execute(
+        "INSERT INTO review_question_candidates "
+        "(id, batch_id, question_json, status) "
+        "VALUES ('candidate26', 'b26', '{}', 'review_pending')"
+    )
+    connection.commit()
+    connection.close()
+
+    migrated = connect_runtime_database(tmp_path)
+
+    assert {
+        "review_curation_seed_tasks",
+        "review_curation_seed_retry_receipts",
+    } <= _tables(migrated)
+    seed_columns = {
+        row[1]
+        for row in migrated.execute("PRAGMA table_info(review_curation_seed_tasks)")
+    }
+    assert {
+        "id",
+        "batch_id",
+        "discovery_work_item_id",
+        "seed_key",
+        "seed_ordinal",
+        "question_text",
+        "primary_source_ref",
+        "source_refs_json",
+        "input_digest",
+        "status",
+        "automatic_attempt_count",
+        "manual_attempt_count",
+        "candidate_json",
+        "answer_basis",
+        "material_support",
+        "needs_review",
+        "normalization_issues_json",
+        "last_error_code",
+        "version",
+        "created_at",
+        "updated_at",
+    } == seed_columns
+    receipt_columns = {
+        row[1]
+        for row in migrated.execute(
+            "PRAGMA table_info(review_curation_seed_retry_receipts)"
+        )
+    }
+    assert receipt_columns == {
+        "id",
+        "seed_task_id",
+        "idempotency_key",
+        "request_digest",
+        "execution_id",
+        "result_status",
+        "created_at",
+        "updated_at",
+    }
+    candidate_columns = {
+        row[1]
+        for row in migrated.execute("PRAGMA table_info(review_question_candidates)")
+    }
+    assert {
+        "seed_task_id",
+        "answer_basis",
+        "material_support",
+        "needs_review",
+        "normalization_issues_json",
+    } <= candidate_columns
+    assert tuple(
+        migrated.execute(
+            "SELECT seed_task_id, answer_basis, material_support, needs_review, "
+            "normalization_issues_json FROM review_question_candidates "
+            "WHERE id = 'candidate26'"
+        ).fetchone()
+    ) == (None, "unknown", "unknown", 1, '["legacy_quality_unknown"]')
+    indexes = {
+        row[0]
+        for row in migrated.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index'"
+        )
+    }
+    assert {
+        "ux_review_curation_seed_tasks_batch_key",
+        "idx_review_curation_seed_tasks_batch_status_ordinal",
+        "idx_review_curation_seed_retry_receipts_seed_created",
+        "ux_review_question_candidates_seed_task",
+    } <= indexes
+    migrated.execute(
+        "INSERT INTO review_curation_seed_tasks "
+        "(id, batch_id, discovery_work_item_id, seed_key, seed_ordinal, "
+        "question_text, primary_source_ref, source_refs_json, input_digest) "
+        "VALUES ('seed26', 'b26', 'wi26', ?, 0, 'Q', "
+        "'source-1#section-1', '[\"source-1#section-1\"]', ?)",
+        ("d" * 64, "e" * 64),
+    )
+    migrated.execute(
+        "UPDATE review_question_candidates SET seed_task_id = 'seed26' "
+        "WHERE id = 'candidate26'"
+    )
+    migrated.execute("DELETE FROM review_curation_seed_tasks WHERE id = 'seed26'")
+    assert migrated.execute(
+        "SELECT seed_task_id FROM review_question_candidates "
+        "WHERE id = 'candidate26'"
+    ).fetchone()[0] is None
+    assert migrated.execute(
+        "SELECT COUNT(*) FROM review_curation_work_items WHERE id = 'wi26'"
+    ).fetchone()[0] == 1
+    with pytest.raises(sqlite3.IntegrityError):
+        migrated.execute(
+            "INSERT INTO review_curation_seed_tasks "
+            "(id, batch_id, discovery_work_item_id, seed_key, seed_ordinal, "
+            "question_text, primary_source_ref, source_refs_json, input_digest, status) "
+            "VALUES ('invalid26', 'b26', 'wi26', ?, 0, 'Q', 'source-1#section-1', "
+            "'[]', ?, 'unknown')",
+            ("b" * 64, "c" * 64),
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        migrated.execute(
+            "UPDATE review_question_candidates SET answer_basis = 'claimed_source' "
+            "WHERE id = 'candidate26'"
+        )
     assert migrated.execute("PRAGMA foreign_key_check").fetchall() == []
     migrated.close()
 
@@ -630,7 +779,7 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-            ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
+            ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26]
     reopened.close()
 
 

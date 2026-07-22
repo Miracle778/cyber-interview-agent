@@ -16,6 +16,7 @@ from app.review.errors import (
     ReviewRoundNotFoundError,
 )
 from app.review.models import (
+    AnswerBasis,
     AttemptStatus,
     BulkPublicationItemRecord,
     BulkPublicationRecord,
@@ -28,6 +29,8 @@ from app.review.models import (
     CurationControlOperation,
     CurationControlReceiptRecord,
     CurationProcessorKind,
+    CurationSeedRetryReceiptRecord,
+    CurationSeedTaskRecord,
     CurationWorkItemRecord,
     CurationWorkStage,
     CurationWorkStatus,
@@ -39,6 +42,7 @@ from app.review.models import (
     InputKind,
     MasteryEntry,
     MasteryProjection,
+    MaterialSupport,
     QuestionBatchRecord,
     QuestionCandidateRecord,
     QuestionCatalogRecord,
@@ -54,6 +58,7 @@ from app.review.models import (
     ReviewRoundRecord,
     ReviewRoundSettings,
     RoundStatus,
+    SeedTaskStatus,
 )
 
 
@@ -1530,6 +1535,13 @@ class ReviewRepository:
                 "AND status = 'running'",
                 (batch_id,),
             )
+            self._connection.execute(
+                "UPDATE review_curation_seed_tasks SET status = 'pending', "
+                "last_error_code = NULL, version = version + 1, "
+                "updated_at = CURRENT_TIMESTAMP WHERE batch_id = ? "
+                "AND status = 'interrupted'",
+                (batch_id,),
+            )
             if existing is None:
                 self._connection.execute(
                     "INSERT INTO review_curation_control_receipts "
@@ -1675,6 +1687,395 @@ class ReviewRepository:
                 (_canonical_json(warnings), session_id),
             )
         return self.get_curation_session(session_id)
+
+    def plan_curation_seed_task(
+        self,
+        *,
+        batch_id: str,
+        discovery_work_item_id: str,
+        seed_ordinal: int,
+        question_text: str,
+        primary_source_ref: str,
+        source_refs: tuple[str, ...],
+        input_digest: str,
+    ) -> CurationSeedTaskRecord:
+        self._validate_seed_task_plan(
+            seed_ordinal=seed_ordinal,
+            question_text=question_text,
+            primary_source_ref=primary_source_ref,
+            source_refs=source_refs,
+            input_digest=input_digest,
+        )
+        seed_key = sha256(
+            f"{batch_id}{discovery_work_item_id}{seed_ordinal}{primary_source_ref}".encode(
+                "utf-8"
+            )
+        ).hexdigest()
+        with self._transaction():
+            origin = self._connection.execute(
+                "SELECT batch_id, stage FROM review_curation_work_items WHERE id = ?",
+                (discovery_work_item_id,),
+            ).fetchone()
+            if origin is None:
+                raise LookupError(discovery_work_item_id)
+            if origin["batch_id"] != batch_id or origin["stage"] != "discovery":
+                raise ReviewConflictError("seed task discovery origin changed")
+            existing = self._connection.execute(
+                "SELECT * FROM review_curation_seed_tasks "
+                "WHERE batch_id = ? AND seed_key = ?",
+                (batch_id, seed_key),
+            ).fetchone()
+            if existing is not None:
+                record = self._curation_seed_task_record(existing)
+                if (
+                    record.discovery_work_item_id != discovery_work_item_id
+                    or record.seed_ordinal != seed_ordinal
+                    or record.question_text != question_text
+                    or record.primary_source_ref != primary_source_ref
+                    or record.source_refs != source_refs
+                    or record.input_digest != input_digest
+                ):
+                    raise ReviewConflictError("curation seed task input changed")
+                return record
+            identifier = str(uuid4())
+            self._connection.execute(
+                "INSERT INTO review_curation_seed_tasks "
+                "(id, batch_id, discovery_work_item_id, seed_key, seed_ordinal, "
+                "question_text, primary_source_ref, source_refs_json, input_digest) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    identifier,
+                    batch_id,
+                    discovery_work_item_id,
+                    seed_key,
+                    seed_ordinal,
+                    question_text,
+                    primary_source_ref,
+                    _canonical_json(source_refs),
+                    input_digest,
+                ),
+            )
+        return self.get_curation_seed_task(identifier)
+
+    def get_curation_seed_task(
+        self, seed_task_id: str
+    ) -> CurationSeedTaskRecord:
+        row = self._connection.execute(
+            "SELECT * FROM review_curation_seed_tasks WHERE id = ?",
+            (seed_task_id,),
+        ).fetchone()
+        if row is None:
+            raise LookupError(seed_task_id)
+        return self._curation_seed_task_record(row)
+
+    def list_curation_seed_tasks(
+        self, batch_id: str
+    ) -> tuple[CurationSeedTaskRecord, ...]:
+        rows = self._connection.execute(
+            "SELECT * FROM review_curation_seed_tasks WHERE batch_id = ? "
+            "ORDER BY seed_ordinal, created_at, rowid",
+            (batch_id,),
+        ).fetchall()
+        return tuple(self._curation_seed_task_record(row) for row in rows)
+
+    def claim_curation_seed_tasks(
+        self,
+        batch_id: str,
+        *,
+        statuses: tuple[str, ...],
+        limit: int,
+    ) -> tuple[CurationSeedTaskRecord, ...]:
+        known = {
+            "pending",
+            "running",
+            "completed",
+            "degraded",
+            "retryable",
+            "interrupted",
+            "skipped",
+        }
+        if not statuses or any(status not in known for status in statuses):
+            raise ValueError("unsupported curation seed task status")
+        if not 1 <= limit <= 100:
+            raise ValueError("curation seed task claim limit must be between 1 and 100")
+        eligible = tuple(
+            status for status in statuses if status in {"pending", "retryable"}
+        )
+        if not eligible:
+            return ()
+        placeholders = ",".join("?" for _status in eligible)
+        claimed_ids: list[str] = []
+        with self._transaction():
+            rows = self._connection.execute(
+                "SELECT id, version FROM review_curation_seed_tasks "
+                "WHERE batch_id = ? "
+                f"AND status IN ({placeholders}) "
+                "AND automatic_attempt_count < 2 "
+                "ORDER BY seed_ordinal, created_at, rowid LIMIT ?",
+                (batch_id, *eligible, limit),
+            ).fetchall()
+            for row in rows:
+                cursor = self._connection.execute(
+                    "UPDATE review_curation_seed_tasks SET status = 'running', "
+                    "automatic_attempt_count = automatic_attempt_count + 1, "
+                    "last_error_code = NULL, version = version + 1, "
+                    "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ? "
+                    "AND status IN ('pending', 'retryable') "
+                    "AND automatic_attempt_count < 2",
+                    (row["id"], row["version"]),
+                )
+                if cursor.rowcount != 1:
+                    raise ReviewConflictError("curation seed task claim changed")
+                claimed_ids.append(str(row["id"]))
+        return tuple(self.get_curation_seed_task(item_id) for item_id in claimed_ids)
+
+    def complete_curation_seed_task(
+        self,
+        seed_task_id: str,
+        *,
+        expected_version: int,
+        status: Literal["completed", "degraded"],
+        candidate: dict[str, object],
+        answer_basis: str,
+        material_support: str,
+        needs_review: bool,
+        normalization_issues: tuple[str, ...],
+    ) -> CurationSeedTaskRecord:
+        if status not in {"completed", "degraded"}:
+            raise ValueError("unsupported curation seed completion status")
+        self._validate_seed_quality(
+            answer_basis=answer_basis,
+            material_support=material_support,
+            normalization_issues=normalization_issues,
+        )
+        encoded_candidate = _canonical_json(candidate)
+        if not isinstance(candidate, dict) or not candidate:
+            raise ValueError("curation seed candidate must be a non-empty object")
+        if len(encoded_candidate.encode("utf-8")) > 100_000:
+            raise ValueError("curation seed candidate exceeds its byte bound")
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_curation_seed_tasks SET status = ?, candidate_json = ?, "
+                "answer_basis = ?, material_support = ?, needs_review = ?, "
+                "normalization_issues_json = ?, last_error_code = NULL, "
+                "version = version + 1, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND version = ? AND status = 'running' "
+                "AND candidate_json IS NULL",
+                (
+                    status,
+                    encoded_candidate,
+                    answer_basis,
+                    material_support,
+                    int(needs_review),
+                    _canonical_json(normalization_issues),
+                    seed_task_id,
+                    expected_version,
+                ),
+            )
+            if cursor.rowcount != 1:
+                self._raise_seed_transition_conflict(seed_task_id)
+            self._finish_running_seed_retry_receipt(seed_task_id, status)
+        return self.get_curation_seed_task(seed_task_id)
+
+    def mark_curation_seed_retryable(
+        self,
+        seed_task_id: str,
+        *,
+        expected_version: int,
+        error_code: str,
+        normalization_issues: tuple[str, ...],
+    ) -> CurationSeedTaskRecord:
+        self._validate_curation_error_code(error_code)
+        self._validate_normalization_issues(normalization_issues)
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_curation_seed_tasks SET status = 'retryable', "
+                "normalization_issues_json = ?, last_error_code = ?, "
+                "version = version + 1, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND version = ? AND status = 'running' "
+                "AND automatic_attempt_count < 2",
+                (
+                    _canonical_json(normalization_issues),
+                    error_code,
+                    seed_task_id,
+                    expected_version,
+                ),
+            )
+            if cursor.rowcount != 1:
+                current = self._connection.execute(
+                    "SELECT automatic_attempt_count FROM review_curation_seed_tasks "
+                    "WHERE id = ?",
+                    (seed_task_id,),
+                ).fetchone()
+                if current is None:
+                    raise LookupError(seed_task_id)
+                if current["automatic_attempt_count"] >= 2:
+                    raise ReviewConflictError(
+                        "curation seed task automatic retry limit reached"
+                    )
+                raise ReviewConflictError("curation seed task version changed")
+            self._finish_running_seed_retry_receipt(seed_task_id, "retryable")
+        return self.get_curation_seed_task(seed_task_id)
+
+    def skip_curation_seed_task(
+        self,
+        seed_task_id: str,
+        *,
+        expected_version: int,
+        error_code: str,
+        normalization_issues: tuple[str, ...],
+    ) -> CurationSeedTaskRecord:
+        self._validate_curation_error_code(error_code)
+        self._validate_normalization_issues(normalization_issues)
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_curation_seed_tasks SET status = 'skipped', "
+                "normalization_issues_json = ?, last_error_code = ?, "
+                "version = version + 1, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND version = ? AND status = 'running'",
+                (
+                    _canonical_json(normalization_issues),
+                    error_code,
+                    seed_task_id,
+                    expected_version,
+                ),
+            )
+            if cursor.rowcount != 1:
+                self._raise_seed_transition_conflict(seed_task_id)
+            self._finish_running_seed_retry_receipt(seed_task_id, "skipped")
+        return self.get_curation_seed_task(seed_task_id)
+
+    def interrupt_running_curation_seed_tasks(
+        self, batch_id: str, *, error_code: str
+    ) -> int:
+        self._validate_curation_error_code(error_code)
+        with self._transaction():
+            seed_rows = self._connection.execute(
+                "SELECT id FROM review_curation_seed_tasks "
+                "WHERE batch_id = ? AND status = 'running'",
+                (batch_id,),
+            ).fetchall()
+            count = self._connection.execute(
+                "UPDATE review_curation_seed_tasks SET status = 'interrupted', "
+                "last_error_code = ?, version = version + 1, "
+                "updated_at = CURRENT_TIMESTAMP WHERE batch_id = ? "
+                "AND status = 'running'",
+                (error_code, batch_id),
+            ).rowcount
+            for row in seed_rows:
+                self._finish_running_seed_retry_receipt(
+                    str(row["id"]), "interrupted"
+                )
+            return count
+
+    def resume_interrupted_curation_seed_tasks(self, batch_id: str) -> int:
+        with self._transaction():
+            return self._connection.execute(
+                "UPDATE review_curation_seed_tasks SET status = 'pending', "
+                "last_error_code = NULL, version = version + 1, "
+                "updated_at = CURRENT_TIMESTAMP WHERE batch_id = ? "
+                "AND status = 'interrupted'",
+                (batch_id,),
+            ).rowcount
+
+    def begin_curation_seed_retry(
+        self,
+        seed_task_id: str,
+        *,
+        expected_version: int,
+        idempotency_key: str,
+        request_digest: str,
+        execution_id: str,
+    ) -> tuple[CurationSeedRetryReceiptRecord, bool]:
+        if not idempotency_key.strip() or len(idempotency_key) > 200:
+            raise ValueError("idempotency key must be non-empty and bounded")
+        if re.fullmatch(r"[0-9a-f]{64}", request_digest) is None:
+            raise ValueError("request digest must be a sha256 digest")
+        if not execution_id.strip():
+            raise ValueError("execution id must not be empty")
+        with self._transaction():
+            existing = self._connection.execute(
+                "SELECT * FROM review_curation_seed_retry_receipts "
+                "WHERE seed_task_id = ? AND idempotency_key = ?",
+                (seed_task_id, idempotency_key),
+            ).fetchone()
+            if existing is not None:
+                receipt = self._curation_seed_retry_receipt_record(existing)
+                if (
+                    receipt.request_digest != request_digest
+                    or receipt.execution_id != execution_id
+                ):
+                    raise ReviewConflictError(
+                        "curation seed retry idempotency key changed"
+                    )
+                return receipt, False
+            task = self._connection.execute(
+                "SELECT version, status FROM review_curation_seed_tasks WHERE id = ?",
+                (seed_task_id,),
+            ).fetchone()
+            if task is None:
+                raise LookupError(seed_task_id)
+            if task["version"] != expected_version:
+                raise ReviewConflictError("curation seed task version changed")
+            if task["status"] not in {"retryable", "skipped"}:
+                raise ReviewConflictError("curation seed task cannot be retried")
+            identifier = str(uuid4())
+            self._connection.execute(
+                "INSERT INTO review_curation_seed_retry_receipts "
+                "(id, seed_task_id, idempotency_key, request_digest, execution_id) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    identifier,
+                    seed_task_id,
+                    idempotency_key,
+                    request_digest,
+                    execution_id,
+                ),
+            )
+        return self.get_curation_seed_retry_receipt(identifier), True
+
+    def get_curation_seed_retry_receipt(
+        self, receipt_id: str
+    ) -> CurationSeedRetryReceiptRecord:
+        row = self._connection.execute(
+            "SELECT * FROM review_curation_seed_retry_receipts WHERE id = ?",
+            (receipt_id,),
+        ).fetchone()
+        if row is None:
+            raise LookupError(receipt_id)
+        return self._curation_seed_retry_receipt_record(row)
+
+    def claim_manual_curation_seed_retry(
+        self, receipt_id: str, *, expected_seed_version: int
+    ) -> CurationSeedTaskRecord:
+        with self._transaction():
+            receipt = self._connection.execute(
+                "SELECT * FROM review_curation_seed_retry_receipts WHERE id = ?",
+                (receipt_id,),
+            ).fetchone()
+            if receipt is None:
+                raise LookupError(receipt_id)
+            if receipt["result_status"] != "accepted":
+                raise ReviewConflictError("curation seed retry receipt already claimed")
+            cursor = self._connection.execute(
+                "UPDATE review_curation_seed_tasks SET status = 'running', "
+                "manual_attempt_count = manual_attempt_count + 1, "
+                "last_error_code = NULL, version = version + 1, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ? "
+                "AND status IN ('retryable', 'skipped')",
+                (receipt["seed_task_id"], expected_seed_version),
+            )
+            if cursor.rowcount != 1:
+                self._raise_seed_transition_conflict(str(receipt["seed_task_id"]))
+            cursor = self._connection.execute(
+                "UPDATE review_curation_seed_retry_receipts "
+                "SET result_status = 'running', updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND result_status = 'accepted'",
+                (receipt_id,),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError("curation seed retry receipt already claimed")
+        return self.get_curation_seed_task(str(receipt["seed_task_id"]))
 
     def plan_curation_work_item(
         self,
@@ -3680,6 +4081,71 @@ class ReviewRepository:
             raise ValueError("unsupported curation work item processor kind")
 
     @staticmethod
+    def _validate_seed_task_plan(
+        *,
+        seed_ordinal: int,
+        question_text: str,
+        primary_source_ref: str,
+        source_refs: tuple[str, ...],
+        input_digest: str,
+    ) -> None:
+        if seed_ordinal < 0:
+            raise ValueError("curation seed ordinal must not be negative")
+        if not question_text.strip():
+            raise ValueError("curation seed question must not be empty")
+        if not source_refs or any(not ref.strip() for ref in source_refs):
+            raise ValueError("curation seed source refs must not be empty")
+        if primary_source_ref != source_refs[0]:
+            raise ValueError("curation seed primary source ref must be first")
+        if re.fullmatch(r"[0-9a-f]{64}", input_digest) is None:
+            raise ValueError("curation seed input digest must be a sha256 digest")
+
+    @classmethod
+    def _validate_seed_quality(
+        cls,
+        *,
+        answer_basis: str,
+        material_support: str,
+        normalization_issues: tuple[str, ...],
+    ) -> None:
+        if answer_basis not in {"source", "mixed", "model", "unknown"}:
+            raise ValueError("unsupported curation seed answer basis")
+        if material_support not in {
+            "sufficient",
+            "partial",
+            "minimal",
+            "unknown",
+        }:
+            raise ValueError("unsupported curation seed material support")
+        cls._validate_normalization_issues(normalization_issues)
+
+    @staticmethod
+    def _validate_normalization_issues(issues: tuple[str, ...]) -> None:
+        if len(issues) > 100 or any(
+            re.fullmatch(r"[a-z][a-z0-9_]{0,99}", issue) is None
+            for issue in issues
+        ):
+            raise ValueError("normalization issues must be stable and bounded")
+
+    def _raise_seed_transition_conflict(self, seed_task_id: str) -> None:
+        if self._connection.execute(
+            "SELECT 1 FROM review_curation_seed_tasks WHERE id = ?",
+            (seed_task_id,),
+        ).fetchone() is None:
+            raise LookupError(seed_task_id)
+        raise ReviewConflictError("curation seed task version changed")
+
+    def _finish_running_seed_retry_receipt(
+        self, seed_task_id: str, result_status: str
+    ) -> None:
+        self._connection.execute(
+            "UPDATE review_curation_seed_retry_receipts SET result_status = ?, "
+            "updated_at = CURRENT_TIMESTAMP WHERE seed_task_id = ? "
+            "AND result_status = 'running'",
+            (result_status, seed_task_id),
+        )
+
+    @staticmethod
     def _validate_control_request(idempotency_key: str, expected_version: int) -> None:
         if not idempotency_key.strip() or len(idempotency_key) > 200:
             raise ValueError("idempotency key must be non-empty and bounded")
@@ -3789,6 +4255,61 @@ class ReviewRepository:
             output=None if output is None else cast(dict[str, object], json.loads(output)),
             attempt_count=row["attempt_count"],
             last_error_code=row["last_error_code"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    @staticmethod
+    def _curation_seed_task_record(row: sqlite3.Row) -> CurationSeedTaskRecord:
+        candidate_json = row["candidate_json"]
+        raw_error_code = row["last_error_code"]
+        safe_error_code = (
+            raw_error_code
+            if raw_error_code is None
+            or re.fullmatch(r"[a-z][a-z0-9_]{0,99}", raw_error_code)
+            else "curation_provider_error"
+        )
+        return CurationSeedTaskRecord(
+            id=row["id"],
+            batch_id=row["batch_id"],
+            discovery_work_item_id=row["discovery_work_item_id"],
+            seed_key=row["seed_key"],
+            seed_ordinal=row["seed_ordinal"],
+            question_text=row["question_text"],
+            primary_source_ref=row["primary_source_ref"],
+            source_refs=tuple(json.loads(row["source_refs_json"])),
+            input_digest=row["input_digest"],
+            status=cast(SeedTaskStatus, row["status"]),
+            automatic_attempt_count=row["automatic_attempt_count"],
+            manual_attempt_count=row["manual_attempt_count"],
+            candidate=(
+                None
+                if candidate_json is None
+                else cast(dict[str, object], json.loads(candidate_json))
+            ),
+            answer_basis=cast(AnswerBasis, row["answer_basis"]),
+            material_support=cast(MaterialSupport, row["material_support"]),
+            needs_review=bool(row["needs_review"]),
+            normalization_issues=tuple(
+                json.loads(row["normalization_issues_json"])
+            ),
+            last_error_code=safe_error_code,
+            version=row["version"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    @staticmethod
+    def _curation_seed_retry_receipt_record(
+        row: sqlite3.Row,
+    ) -> CurationSeedRetryReceiptRecord:
+        return CurationSeedRetryReceiptRecord(
+            id=row["id"],
+            seed_task_id=row["seed_task_id"],
+            idempotency_key=row["idempotency_key"],
+            request_digest=row["request_digest"],
+            execution_id=row["execution_id"],
+            result_status=row["result_status"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
