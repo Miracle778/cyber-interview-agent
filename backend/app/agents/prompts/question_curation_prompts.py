@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from app.agents.prompts.prompt_spec import PromptSpec
 from app.agents.question_curation_contracts import QuestionSeed
 from app.review.curation_sections import SourceSection
+from app.review.models import CurationSeedTaskRecord
 
 
 QUESTION_DISCOVERY_PROMPT = PromptSpec(
@@ -19,20 +20,22 @@ QUESTION_DISCOVERY_PROMPT = PromptSpec(
 )
 QUESTION_ENRICHMENT_PROMPT = PromptSpec(
     id="question-enrichment",
-    version="3.0",
+    version="4.0",
     system=(
-        "把不超过 3 个题目种子补全为可复习的中文面试题候选。纠正明显错误，填写标题、参考答案、"
-        "topic、难度、关键点、必要追问和简短修正说明。每个候选必须保留对应种子的全部有序引用，"
-        "且 source_refs 第一项仍是主锚点；"
+        "把不超过 3 个题目种子补全为可复习的中文面试题候选。每个候选必须原样回显 seed_key，"
+        "把材料直接支持的答案写入 source_answer，把通用知识补充写入 supplemental_answer；不要混写。"
+        "纠正明显错误，填写标题、topic、难度、关键点、必要追问和简短修正说明。每个候选必须保留"
+        "对应种子的全部有序引用，且 source_refs 第一项仍是主锚点；"
         "不得自动发布。"
     ),
 )
 QUESTION_REVISION_PROMPT = PromptSpec(
     id="question-revision",
-    version="2.0",
+    version="3.0",
     system=(
-        "根据来源和重写要求只修订一个中文面试题候选，返回 exactly one candidate。"
-        "保留可验证来源引用，不得自动发布。"
+        "根据来源和重写要求只修订一个中文面试题候选，在 candidates 中返回 exactly one candidate。"
+        "原样回显 seed_key；把材料直接支持的答案写入 source_answer，把通用知识补充写入 "
+        "supplemental_answer。保留权威来源引用，不得增加引用或自动发布。"
     ),
 )
 
@@ -56,14 +59,14 @@ def render_question_discovery_input(sections: Sequence[SourceSection]) -> str:
 
 
 def render_question_enrichment_input(
-    seeds: Sequence[QuestionSeed],
+    seeds: Sequence[QuestionSeed | CurationSeedTaskRecord],
     *,
     sections: Sequence[SourceSection],
     known_questions: Sequence[str],
 ) -> str:
     body = [
         "题目种子：",
-        json.dumps([seed.model_dump() for seed in seeds], ensure_ascii=False),
+        json.dumps([_seed_row(seed) for seed in seeds], ensure_ascii=False),
         "对应来源：",
         *_section_rows(sections),
     ]
@@ -72,12 +75,31 @@ def render_question_enrichment_input(
     return "\n\n".join(body)
 
 
+def _seed_row(seed: QuestionSeed | CurationSeedTaskRecord) -> dict[str, object]:
+    if isinstance(seed, CurationSeedTaskRecord):
+        return {
+            "seed_key": seed.seed_key,
+            "question_text": seed.question_text,
+            "source_ref": seed.primary_source_ref,
+            "source_refs": list(seed.source_refs),
+        }
+    return seed.model_dump()
+
+
 def render_question_revision_input(
-    source_excerpts: Sequence[str], *, rewrite_feedback: str
+    source_excerpts: Sequence[str],
+    *,
+    rewrite_feedback: str,
+    seed: CurationSeedTaskRecord | None = None,
 ) -> str:
-    return "\n\n".join(
-        ("来源：", *source_excerpts, "重写要求：", rewrite_feedback)
-    )
+    body = ["来源：", *source_excerpts]
+    if seed is not None:
+        body.extend((
+            "权威题目种子：",
+            json.dumps(_seed_row(seed), ensure_ascii=False),
+        ))
+    body.extend(("重写要求：", rewrite_feedback))
+    return "\n\n".join(body)
 
 
 def render_question_curation_input(

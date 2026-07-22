@@ -1871,6 +1871,34 @@ class ReviewRepository:
             self._finish_running_seed_retry_receipt(seed_task_id, status)
         return self.get_curation_seed_task(seed_task_id)
 
+    def restore_legacy_curation_seed_task(
+        self,
+        seed_task_id: str,
+        *,
+        candidate: dict[str, object],
+    ) -> CurationSeedTaskRecord:
+        """Idempotently project immutable pre-Seed-Task output during upgrade."""
+        encoded_candidate = _canonical_json(candidate)
+        if not isinstance(candidate, dict) or not candidate:
+            raise ValueError("curation seed candidate must be a non-empty object")
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_curation_seed_tasks SET status = 'degraded', "
+                "candidate_json = ?, answer_basis = 'unknown', "
+                "material_support = 'unknown', needs_review = 1, "
+                "normalization_issues_json = '[\"legacy_quality_unknown\"]', "
+                "last_error_code = NULL, version = version + 1, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? "
+                "AND status = 'pending' AND candidate_json IS NULL",
+                (encoded_candidate, seed_task_id),
+            )
+            if cursor.rowcount == 0:
+                current = self.get_curation_seed_task(seed_task_id)
+                if current.status in {"completed", "degraded"}:
+                    return current
+                self._raise_seed_transition_conflict(seed_task_id)
+        return self.get_curation_seed_task(seed_task_id)
+
     def mark_curation_seed_retryable(
         self,
         seed_task_id: str,
@@ -1966,6 +1994,35 @@ class ReviewRepository:
                     str(row["id"]), "interrupted"
                 )
             return len(seed_rows)
+
+    def interrupt_curation_seed_task(
+        self,
+        seed_task_id: str,
+        *,
+        expected_version: int,
+        error_code: str,
+        refund_automatic_attempt: bool = False,
+    ) -> CurationSeedTaskRecord:
+        self._validate_curation_error_code(error_code)
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_curation_seed_tasks SET status = 'interrupted', "
+                "last_error_code = ?, automatic_attempt_count = "
+                "automatic_attempt_count - ?, version = version + 1, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ? "
+                "AND status = 'running' AND automatic_attempt_count >= ?",
+                (
+                    error_code,
+                    int(refund_automatic_attempt),
+                    seed_task_id,
+                    expected_version,
+                    int(refund_automatic_attempt),
+                ),
+            )
+            if cursor.rowcount != 1:
+                self._raise_seed_transition_conflict(seed_task_id)
+            self._finish_running_seed_retry_receipt(seed_task_id, "interrupted")
+        return self.get_curation_seed_task(seed_task_id)
 
     def resume_interrupted_curation_seed_tasks(self, batch_id: str) -> int:
         with self._transaction():

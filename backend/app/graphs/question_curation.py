@@ -1,33 +1,36 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from typing import Any, Literal, TypedDict
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
+from pydantic import ValidationError
 
 from app.agents.context import AgentContext
 from app.agents.question_curation_agent import QuestionCurationAgents
+from app.agents.question_curation_normalization import (
+    normalize_provider_candidate_observation,
+)
 from app.agents.question_curation_contracts import (
     QuestionCandidate,
     QuestionCandidateBatch,
-    QuestionCandidateChunk,
-    QuestionSeed,
     QuestionSeedChunk,
 )
 from app.review.curation_planner import plan_curation_discovery
+from app.review.curation_seed_reconciliation import reconcile_curation_seed_tasks
 from app.review.curation_scheduler import (
     CurationWaveResult,
     curation_error_code,
     is_curation_overload_error,
+    run_curation_invocation_wave,
     run_curation_wave,
 )
 from app.review.curation_sections import SourceSection, section_sources
+from app.review.models import CurationSeedTaskRecord, QuestionCandidateRecord
 from app.review.question_similarity import question_similarity, same_question
 from app.review.repository import ReviewRepository
 
@@ -48,6 +51,7 @@ class QuestionCurationState(TypedDict, total=False):
     revision_candidate_id: str | None
     discovery_work_item_ids: list[str]
     enrichment_work_item_ids: list[str]
+    seed_task_ids: list[str]
     generation_phase: Literal["discovery", "enrichment"]
     completed_units: int
     total_units: int
@@ -113,23 +117,71 @@ def create_question_curation_graph(
         config: RunnableConfig,
         runtime: Runtime[AgentContext],
     ) -> dict[str, object]:
-        invocation_input = invocation_inputs.load(_batch_id(state))
-        output = await agents.revise(
-            source_excerpts=invocation_input.source_excerpts,
-            rewrite_feedback=(
-                invocation_input.rewrite_feedback or "按审核意见改进题目"
-            ),
-            context=runtime.context,
-            config=dict(config),
-        )
-        invocation_inputs.discard(_batch_id(state))
+        batch_id = _batch_id(state)
+        invocation_input = invocation_inputs.load(batch_id)
+        candidate_id = str(state.get("revision_candidate_id") or "")
+        try:
+            original = repository.get_candidate(candidate_id)
+        except LookupError:
+            # Compatibility for isolated graph consumers without product records.
+            output = await agents.revise(
+                source_excerpts=invocation_input.source_excerpts,
+                rewrite_feedback=(
+                    invocation_input.rewrite_feedback or "按审核意见改进题目"
+                ),
+                context=runtime.context,
+                config=dict(config),
+            )
+            invocation_inputs.discard(batch_id)
+            candidate = getattr(output, "candidate", None)
+            return {
+                "candidates": (
+                    []
+                    if candidate is None
+                    else [candidate.model_dump(mode="json")]
+                ),
+                "generation_phase": "enrichment",
+                "completed_units": 1,
+                "total_units": 1,
+                "generated_candidate_count": int(candidate is not None),
+                "warnings": [],
+            }
+
+        seed = _revision_seed_task(batch_id, original)
+        outcome = None
+        for attempt in (1, 2):
+            running = replace(
+                seed,
+                automatic_attempt_count=attempt,
+                version=attempt,
+            )
+            output = await agents.revise(
+                source_excerpts=invocation_input.source_excerpts,
+                rewrite_feedback=(
+                    invocation_input.rewrite_feedback or "按审核意见改进题目"
+                ),
+                seed=running,
+                context=runtime.context,
+                config=dict(config),
+            )
+            outcome = normalize_provider_candidate_observation(
+                output, seed_tasks=(running,)
+            )[0]
+            if outcome.status != "retryable":
+                break
+        invocation_inputs.discard(batch_id)
+        normalized = None if outcome is None else outcome.candidate
         return {
-            "candidates": [output.candidate.model_dump(mode="json")],
+            "candidates": [] if normalized is None else [normalized],
             "generation_phase": "enrichment",
             "completed_units": 1,
             "total_units": 1,
-            "generated_candidate_count": 1,
-            "warnings": [],
+            "generated_candidate_count": int(normalized is not None),
+            "warnings": (
+                []
+                if normalized is not None
+                else [{"code": "revision_candidate_skipped"}]
+            ),
         }
 
     async def plan_sections(state: QuestionCurationInput) -> dict[str, object]:
@@ -243,38 +295,22 @@ def create_question_curation_graph(
 
     async def plan_enrichment(state: QuestionCurationState) -> dict[str, object]:
         batch_id = _batch_id(state)
-        seeds = _completed_seeds(repository, batch_id)
+        reconciliation = reconcile_curation_seed_tasks(repository, batch_id)
+        seeds = list(repository.list_curation_seed_tasks(batch_id))
         warnings = list(state.get("warnings", []))
+        for warning in reconciliation.warnings:
+            if warning not in warnings:
+                warnings.append(warning)
         if len(seeds) > 200:
             seeds = seeds[:200]
             warning = {"code": "candidate_limit_reached", "limit": 200}
             if warning not in warnings:
                 warnings.append(warning)
-        items = []
-        for unit_index, start in enumerate(range(0, len(seeds), 3)):
-            chunk = seeds[start : start + 3]
-            encoded = json.dumps(
-                [seed.model_dump(mode="json") for seed in chunk],
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            source_refs = tuple(dict.fromkeys(
-                ref for seed in chunk for ref in seed.source_refs
-            ))
-            items.append(repository.plan_curation_work_item(
-                batch_id=batch_id,
-                stage="enrichment",
-                unit_index=unit_index,
-                input_digest=sha256(encoded.encode("utf-8")).hexdigest(),
-                source_refs=source_refs,
-                processor_kind="model",
-            ))
         return {
-            "enrichment_work_item_ids": [item.id for item in items],
+            "seed_task_ids": [item.id for item in seeds],
             "generation_phase": "enrichment",
-            "completed_units": sum(item.status == "completed" for item in items),
-            "total_units": len(items),
+            "completed_units": sum(_seed_terminal(item.status) for item in seeds),
+            "total_units": len(seeds),
             "generated_candidate_count": _completed_candidate_count(
                 repository, batch_id
             ),
@@ -287,26 +323,37 @@ def create_question_curation_graph(
         runtime: Runtime[AgentContext],
     ) -> dict[str, object]:
         batch_id = _batch_id(state)
-        all_seeds = _completed_seeds(repository, batch_id)[:200]
         by_ref = {
             section.ref: section
             for section in _sections_for_batch(invocation_inputs, batch_id)
         }
         similar_titles = _similar_titles_for_batch(invocation_inputs, batch_id)
         limit = repository.get_batch(batch_id).concurrency_limit
-        pending_ids = tuple(
-            item_id
-            for item_id in state.get("enrichment_work_item_ids", [])
-            if repository.get_curation_work_item(item_id).status != "completed"
-        )[:limit]
+        selected_ids = set(state.get("seed_task_ids", []))
+        selected = [
+            task for task in repository.list_curation_seed_tasks(batch_id)
+            if task.id in selected_ids
+        ]
+        if any(task.status == "pending" for task in selected):
+            claimed = tuple(
+                task for task in repository.claim_curation_seed_tasks(
+                    batch_id, statuses=("pending",), limit=min(9, limit * 3)
+                ) if task.id in selected_ids
+            )
+            invocations = tuple(
+                tuple(task.id for task in claimed[start : start + 3])
+                for start in range(0, len(claimed), 3)
+            )
+        else:
+            claimed = tuple(
+                task for task in repository.claim_curation_seed_tasks(
+                    batch_id, statuses=("retryable",), limit=limit
+                ) if task.id in selected_ids
+            )
+            invocations = tuple((task.id,) for task in claimed)
 
-        async def worker(work_item_id: str) -> None:
-            running = repository.start_curation_work_item(work_item_id)
-            if running.status == "completed":
-                return
-            seeds = all_seeds[
-                running.unit_index * 3 : running.unit_index * 3 + 3
-            ]
+        async def worker(seed_task_ids: tuple[str, ...]) -> None:
+            seeds = tuple(repository.get_curation_seed_task(item_id) for item_id in seed_task_ids)
             section_refs = tuple(dict.fromkeys(
                 ref for seed in seeds for ref in seed.source_refs
             ))
@@ -319,33 +366,79 @@ def create_question_curation_graph(
                     known_questions=known_questions,
                     context=runtime.context,
                     config=dict(config),
-                    unit_index=running.unit_index,
-                )
-                repository.complete_curation_work_item(
-                    running.id, output=output.model_dump(mode="json")
+                    unit_index=seeds[0].seed_ordinal,
                 )
             except asyncio.CancelledError:
-                repository.interrupt_running_curation_work_items(
-                    batch_id, error_code="curation_interrupted"
+                _interrupt_seed_invocation(
+                    repository,
+                    seeds,
+                    "curation_interrupted",
+                    refund_automatic_attempt=True,
                 )
                 raise
+            except (ValidationError, ValueError):
+                output = {"candidates": "invalid"}
             except Exception as error:
-                if repository.get_curation_work_item(running.id).status == "running":
-                    repository.fail_curation_work_item(
-                        running.id, error_code=curation_error_code(error)
+                _interrupt_seed_invocation(
+                    repository, seeds, curation_error_code(error)
+                )
+                raise
+            try:
+                outcomes = normalize_provider_candidate_observation(
+                    output, seed_tasks=seeds
+                )
+                for outcome in outcomes:
+                    current = repository.get_curation_seed_task(
+                        outcome.seed_task_id
                     )
+                    if outcome.status in {"completed", "degraded"}:
+                        repository.complete_curation_seed_task(
+                            current.id,
+                            expected_version=current.version,
+                            status=outcome.status,
+                            candidate=outcome.candidate or {},
+                            answer_basis=outcome.answer_basis,
+                            material_support=outcome.material_support,
+                            needs_review=outcome.needs_review,
+                            normalization_issues=outcome.normalization_issues,
+                        )
+                    elif current.automatic_attempt_count >= 2:
+                        repository.skip_curation_seed_task(
+                            current.id,
+                            expected_version=current.version,
+                            error_code=(
+                                outcome.error_code or "invalid_candidate"
+                            ),
+                            normalization_issues=outcome.normalization_issues,
+                        )
+                    else:
+                        repository.mark_curation_seed_retryable(
+                            current.id,
+                            expected_version=current.version,
+                            error_code=(
+                                outcome.error_code or "invalid_candidate"
+                            ),
+                            normalization_issues=outcome.normalization_issues,
+                        )
+            except Exception as error:
+                _interrupt_seed_invocation(
+                    repository, seeds, curation_error_code(error)
+                )
                 raise
 
-        result = await run_curation_wave(
-            pending_ids,
+        result = await run_curation_invocation_wave(
+            invocations,
             limit=limit,
             worker=worker,
         )
         _raise_wave_failure(repository, batch_id, result)
-        items = repository.list_curation_work_items(batch_id, stage="enrichment")
+        items = [
+            task for task in repository.list_curation_seed_tasks(batch_id)
+            if task.id in selected_ids
+        ]
         return {
             "generation_phase": "enrichment",
-            "completed_units": sum(item.status == "completed" for item in items),
+            "completed_units": sum(_seed_terminal(item.status) for item in items),
             "total_units": len(items),
             "generated_candidate_count": _completed_candidate_count(
                 repository, batch_id
@@ -354,14 +447,11 @@ def create_question_curation_graph(
 
     async def reduce_candidates(state: QuestionCurationState) -> dict[str, object]:
         candidates: list[QuestionCandidate] = []
-        for item in repository.list_curation_work_items(
-            _batch_id(state), stage="enrichment"
-        ):
-            if item.status != "completed" or item.output is None:
+        selected_ids = set(state.get("seed_task_ids", []))
+        for item in repository.list_curation_seed_tasks(_batch_id(state)):
+            if item.id not in selected_ids or item.candidate is None:
                 continue
-            for candidate in QuestionCandidateChunk.model_validate(
-                item.output
-            ).candidates:
+            for candidate in (QuestionCandidate.model_validate(item.candidate),):
                 existing_index = next(
                     (
                         position
@@ -391,7 +481,7 @@ def create_question_curation_graph(
                     ])),
                 })
         batch = QuestionCandidateBatch(candidates=candidates[:200])
-        total = len(state.get("enrichment_work_item_ids", []))
+        total = len(state.get("seed_task_ids", []))
         generated_candidate_count = _completed_candidate_count(
             repository, _batch_id(state)
         )
@@ -421,8 +511,8 @@ def create_question_curation_graph(
         return (
             "pending"
             if any(
-                repository.get_curation_work_item(item_id).status != "completed"
-                for item_id in state.get("enrichment_work_item_ids", [])
+                not _seed_terminal(repository.get_curation_seed_task(item_id).status)
+                for item_id in state.get("seed_task_ids", [])
             )
             else "done"
         )
@@ -485,28 +575,14 @@ def _similar_titles_for_batch(
     return invocation_inputs.load(batch_id).similar_questions
 
 
-def _completed_seeds(
-    repository: ReviewRepository, batch_id: str
-) -> list[QuestionSeed]:
-    seeds: list[QuestionSeed] = []
-    seen: set[str] = set()
-    for item in repository.list_curation_work_items(batch_id, stage="discovery"):
-        if item.status != "completed" or item.output is None:
-            continue
-        for seed in QuestionSeedChunk.model_validate(item.output).seeds:
-            normalized = re.sub(r"\s+", "", seed.question_text).casefold()
-            if normalized in seen:
-                continue
-            seen.add(normalized)
-            seeds.append(seed)
-    return seeds
-
-
 def _completed_candidate_count(
     repository: ReviewRepository, batch_id: str
 ) -> int:
+    seed_tasks = repository.list_curation_seed_tasks(batch_id)
+    if seed_tasks:
+        return sum(task.candidate is not None for task in seed_tasks)
     return sum(
-        len(QuestionCandidateChunk.model_validate(item.output).candidates)
+        len(item.output.get("candidates", ()))
         for item in repository.list_curation_work_items(
             batch_id, stage="enrichment"
         )
@@ -515,7 +591,10 @@ def _completed_candidate_count(
 
 
 def _prefilter_similar_titles(
-    seeds: list[QuestionSeed], titles: tuple[str, ...], *, limit: int = 20
+    seeds: tuple[CurationSeedTaskRecord, ...],
+    titles: tuple[str, ...],
+    *,
+    limit: int = 20,
 ) -> tuple[str, ...]:
     unique_titles = tuple(dict.fromkeys(
         title.strip() for title in titles if title.strip()
@@ -534,6 +613,61 @@ def _prefilter_similar_titles(
         ),
     )
     return tuple(title for _index, title in ranked[:limit])
+
+
+def _seed_terminal(status: str) -> bool:
+    return status in {"completed", "degraded", "skipped"}
+
+
+def _revision_seed_task(
+    batch_id: str, candidate: QuestionCandidateRecord
+) -> CurationSeedTaskRecord:
+    source_refs = candidate.source_refs
+    if not source_refs:
+        raise ValueError("revision candidate has no authoritative source refs")
+    seed_key = sha256(f"{batch_id}{candidate.id}".encode("utf-8")).hexdigest()
+    question_text = candidate.question.question_text
+    return CurationSeedTaskRecord(
+        id=f"revision:{candidate.id}",
+        batch_id=batch_id,
+        discovery_work_item_id=f"revision:{candidate.id}",
+        seed_key=seed_key,
+        seed_ordinal=0,
+        question_text=question_text,
+        primary_source_ref=source_refs[0],
+        source_refs=source_refs,
+        input_digest=sha256(question_text.encode("utf-8")).hexdigest(),
+        status="running",
+        automatic_attempt_count=0,
+        manual_attempt_count=0,
+        candidate=None,
+        answer_basis="unknown",
+        material_support="unknown",
+        needs_review=True,
+        normalization_issues=(),
+        last_error_code=None,
+        version=0,
+        created_at="",
+        updated_at="",
+    )
+
+
+def _interrupt_seed_invocation(
+    repository: ReviewRepository,
+    seeds: tuple[CurationSeedTaskRecord, ...],
+    error_code: str,
+    *,
+    refund_automatic_attempt: bool = False,
+) -> None:
+    for seed in seeds:
+        current = repository.get_curation_seed_task(seed.id)
+        if current.status == "running":
+            repository.interrupt_curation_seed_task(
+                current.id,
+                expected_version=current.version,
+                error_code=error_code,
+                refund_automatic_attempt=refund_automatic_attempt,
+            )
 
 
 def _raise_wave_failure(

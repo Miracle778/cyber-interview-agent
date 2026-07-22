@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -17,10 +17,13 @@ class _ProviderQuestionCurationOutput(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
+ProviderStringList: TypeAlias = str | list[str | None] | None
+
+
 class ProviderQuestionSeed(_ProviderQuestionCurationOutput):
     question_text: str | None = None
     source_ref: str | None = None
-    source_refs: list[str | None] | None = None
+    source_refs: ProviderStringList = None
 
 
 class ProviderQuestionSeedChunk(_ProviderQuestionCurationOutput):
@@ -28,14 +31,18 @@ class ProviderQuestionSeedChunk(_ProviderQuestionCurationOutput):
 
 
 class ProviderQuestionCandidate(_ProviderQuestionCurationOutput):
+    seed_key: str | None = None
     title: str | None = None
     question_text: str | None = None
+    source_answer: str | None = None
+    supplemental_answer: str | None = None
+    # Kept only as a compatibility observation for pre-R3 Provider output.
     reference_answer: str | None = None
-    topics: list[str | None] | None = None
+    topics: ProviderStringList = None
     difficulty: str | None = None
-    key_points: list[str | None] | None = None
-    follow_ups: list[str | None] | None = None
-    source_refs: list[str | None] | None = None
+    key_points: ProviderStringList = None
+    follow_ups: ProviderStringList = None
+    source_refs: ProviderStringList = None
     correction_note: str | None = None
 
 
@@ -111,7 +118,7 @@ def normalize_provider_seed_chunk(value: object) -> QuestionSeedChunk:
         if not question_text or not primary:
             continue
         secondary_refs: list[str] = []
-        for raw_ref in item.source_refs or ():
+        for raw_ref in _provider_values(item.source_refs):
             ref = (raw_ref or "").strip()
             if not ref or ref == primary or ref in secondary_refs:
                 continue
@@ -140,7 +147,7 @@ def normalize_provider_candidate_chunk(
     seen_primary_refs: set[str] = set()
     for item in raw.candidates[:3]:
         provider_refs: list[str] = []
-        for raw_ref in item.source_refs or ():
+        for raw_ref in _provider_values(item.source_refs):
             ref = (raw_ref or "").strip()
             if ref and ref not in provider_refs:
                 provider_refs.append(ref)
@@ -188,13 +195,17 @@ def normalize_provider_candidate_chunk(
     return QuestionCandidateChunk(candidates=candidates)
 
 
-def _non_blank_strings(values: Sequence[str | None] | None) -> list[str]:
+def _non_blank_strings(values: ProviderStringList) -> list[str]:
     normalized: list[str] = []
-    for value in values or ():
+    for value in _provider_values(values):
         text = (value or "").strip()
         if text and text not in normalized:
             normalized.append(text)
     return normalized
+
+
+def _provider_values(values: ProviderStringList) -> Sequence[str | None]:
+    return [values] if isinstance(values, str) else values or ()
 
 
 class QuestionCandidateChunk(_StrictQuestionCurationOutput):

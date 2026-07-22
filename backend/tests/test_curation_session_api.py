@@ -550,6 +550,7 @@ async def test_six_item_curation_resumes_after_failure_pause_and_runtime_restart
             self.first_wave_started = asyncio.Event()
             self.release_first_wave = asyncio.Event()
             self.pause_wave_started = asyncio.Event()
+            self.fail_unit_index: int | None = None
 
         async def discover(self, *_args, **_kwargs) -> QuestionSeedChunk:
             return QuestionSeedChunk(seeds=[])
@@ -572,9 +573,10 @@ async def test_six_item_curation_resumes_after_failure_pause_and_runtime_restart
             try:
                 if phase == "fail":
                     if self.active == 3:
+                        self.fail_unit_index = unit_index
                         self.first_wave_started.set()
                     await self.release_first_wave.wait()
-                    if unit_index == 2:
+                    if unit_index == self.fail_unit_index:
                         raise ControlledProviderError("private provider body")
                 elif phase == "pause":
                     if self.active == 3:
@@ -645,19 +647,16 @@ async def test_six_item_curation_resumes_after_failure_pause_and_runtime_restart
     assert failed_execution.status == "failed"
 
     first_review = first.review("w1")
-    first_items = first_review.repository.list_curation_work_items(
-        batch_id, stage="enrichment"
-    )
-    assert len(first_items) == 6
-    assert [item.status for item in first_items[:3]] == [
-        "completed",
-        "completed",
-        "failed",
+    first_items = first_review.repository.list_curation_seed_tasks(batch_id)
+    assert len(first_items) == 18
+    assert [item.status for item in first_items[:9]] == [
+        *(["degraded"] * 6),
+        *(["interrupted"] * 3),
     ]
     completed_invocations = {
-        item.unit_index: agents.invocations[item.unit_index]
+        item.id: item.automatic_attempt_count
         for item in first_items
-        if item.status == "completed"
+        if item.status in {"completed", "degraded"}
     }
 
     agents.phase = "pause"
@@ -669,8 +668,9 @@ async def test_six_item_curation_resumes_after_failure_pause_and_runtime_restart
     )
     await asyncio.wait_for(agents.pause_wave_started.wait(), timeout=2)
     assert all(
-        agents.invocations[index] == count
-        for index, count in completed_invocations.items()
+        first_review.repository.get_curation_seed_task(item_id).automatic_attempt_count
+        == count
+        for item_id, count in completed_invocations.items()
     )
     generating_batch = first_review.repository.get_batch(batch_id)
     paused = await first_review.pause_curation_session(
@@ -680,10 +680,10 @@ async def test_six_item_curation_resumes_after_failure_pause_and_runtime_restart
     )
     assert paused["batch_status"] == "paused"
     assert resumed["execution_id"] != created["execution_id"]
-    assert all(
-        item.status != "running"
-        for item in first_review.repository.list_curation_work_items(batch_id)
-    )
+    assert all(item.status != "running" for item in (
+        *first_review.repository.list_curation_work_items(batch_id),
+        *first_review.repository.list_curation_seed_tasks(batch_id),
+    ))
     await first.close()
 
     agents.phase = "finish"
@@ -702,16 +702,15 @@ async def test_six_item_curation_resumes_after_failure_pause_and_runtime_restart
 
         final_batch = second_review.repository.get_batch(batch_id)
         final_items = second_review.repository.list_curation_work_items(batch_id)
-        enrichment_items = [
-            item for item in final_items if item.stage == "enrichment"
-        ]
+        final_seed_tasks = second_review.repository.list_curation_seed_tasks(batch_id)
         assert agents.peak == 3
         assert all(
-            agents.invocations[index] == count
-            for index, count in completed_invocations.items()
+            second_review.repository.get_curation_seed_task(item_id).automatic_attempt_count
+            == count
+            for item_id, count in completed_invocations.items()
         )
         assert final_batch.status == "review_pending"
-        assert enrichment_items[-1].status == "completed"
+        assert all(item.status in {"completed", "degraded"} for item in final_seed_tasks)
         assert all(item.status != "running" for item in final_items)
     finally:
         await second.close()

@@ -21,7 +21,10 @@ from app.agents.context_assembly import (
     ContextSummary,
 )
 from app.agents.curation_command_agents import CurationCommandAgents
-from app.agents.question_curation_contracts import QuestionCandidateChunk
+from app.agents.question_curation_contracts import (
+    QuestionCandidate,
+    QuestionCandidateChunk,
+)
 from app.agents.agent_factory import ModelOverride
 from app.application.session_service import (
     AgentSessionService,
@@ -44,6 +47,7 @@ from app.review.curation_context import (
     CurationContextAdapter,
 )
 from app.review.curation_sources import prepare_curation_sources
+from app.review.curation_seed_reconciliation import reconcile_curation_seed_tasks
 from app.review.models import (
     BulkPublicationPreflight,
     CurationSummary,
@@ -337,6 +341,16 @@ class ReviewApplication:
             if record.active_batch_id is None
             else self.repository.get_batch(record.active_batch_id)
         )
+        seed_tasks = ()
+        if batch is not None:
+            reconciliation = reconcile_curation_seed_tasks(
+                self.repository, batch.id
+            )
+            for warning in reconciliation.warnings:
+                self.repository.append_curation_warning(session_id, warning)
+            if reconciliation.warnings:
+                record = self.repository.get_curation_session(session_id)
+            seed_tasks = self.repository.list_curation_seed_tasks(batch.id)
         latest = (
             self.sessions.repository.latest_execution(session_id)
             if batch is None or batch.run_id is None
@@ -349,39 +363,65 @@ class ReviewApplication:
         )
         phase = self._active_curation_phase(record)
         phase_items = (
-            tuple(item for item in work_items if item.stage == phase)
+            seed_tasks
+            if phase == "enrichment" and seed_tasks
+            else tuple(item for item in work_items if item.stage == phase)
             if phase is not None
             else ()
         )
         provisional_candidates: list[dict[str, object]] = []
         generated_candidate_count = 0
-        for item in work_items:
-            if (
-                item.stage != "enrichment"
-                or item.status != "completed"
-                or item.output is None
-            ):
-                continue
-            chunk = QuestionCandidateChunk.model_validate(item.output)
-            generated_candidate_count += len(chunk.candidates)
+        if seed_tasks:
+            generated_candidate_count = sum(
+                item.candidate is not None for item in seed_tasks
+            )
             if batch is None or batch.status not in {
                 "generating",
                 "paused",
                 "interrupted",
                 "failed",
             }:
-                continue
-            for ordinal, candidate in enumerate(chunk.candidates):
+                seed_tasks = ()
+            for item in seed_tasks:
+                if item.candidate is None:
+                    continue
+                candidate = QuestionCandidate.model_validate(item.candidate)
                 if len(provisional_candidates) >= 200:
                     break
                 provisional_candidates.append(
                     {
-                        "id": f"{item.id}:{ordinal}",
+                        "id": item.id,
                         "title": candidate.title,
                         "question_text": candidate.question_text,
                         "source_refs": candidate.source_refs,
                     }
                 )
+        else:
+            for item in work_items:
+                if (
+                    item.stage != "enrichment"
+                    or item.status != "completed"
+                    or item.output is None
+                ):
+                    continue
+                chunk = QuestionCandidateChunk.model_validate(item.output)
+                generated_candidate_count += len(chunk.candidates)
+                if batch is None or batch.status not in {
+                    "generating",
+                    "paused",
+                    "interrupted",
+                    "failed",
+                }:
+                    continue
+                for ordinal, candidate in enumerate(chunk.candidates):
+                    if len(provisional_candidates) >= 200:
+                        break
+                    provisional_candidates.append({
+                        "id": f"{item.id}:{ordinal}",
+                        "title": candidate.title,
+                        "question_text": candidate.question_text,
+                        "source_refs": candidate.source_refs,
+                    })
         timing = (
             None
             if batch is None
@@ -442,14 +482,22 @@ class ReviewApplication:
             "progress": {
                 "phase": phase,
                 "completed": (
-                    sum(item.status == "completed" for item in phase_items)
+                    sum(
+                        item.status in {"completed", "degraded", "skipped"}
+                        for item in phase_items
+                    )
                     if phase_items
                     else record.completed_units
                 ),
                 "total": len(phase_items) if phase_items else record.total_units,
                 "generated_candidate_count": generated_candidate_count,
                 "active_workers": sum(
-                    item.status == "running" for item in work_items
+                    item.status == "running"
+                    for item in (
+                        seed_tasks
+                        if phase == "enrichment" and seed_tasks
+                        else work_items
+                    )
                 ),
             },
             "timing": {

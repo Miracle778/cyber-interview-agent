@@ -57,6 +57,22 @@ async def run_curation_wave(
     return CurationWaveResult(tuple(completed), tuple(failed))
 
 
+async def run_curation_invocation_wave(
+    invocations: tuple[tuple[str, ...], ...],
+    *,
+    limit: int,
+    worker: Callable[[tuple[str, ...]], Awaitable[None]],
+) -> CurationWaveResult:
+    """Run bounded Provider calls while each call owns one or more Seed Tasks."""
+    indexed = tuple(str(index) for index in range(len(invocations)))
+    by_index = dict(zip(indexed, invocations, strict=True))
+
+    async def run_one(index: str) -> None:
+        await worker(by_index[index])
+
+    return await run_curation_wave(indexed, limit=limit, worker=run_one)
+
+
 def curation_error_code(error: BaseException) -> str:
     """Return a stable safe code without using Provider response text."""
     raw_code = getattr(error, "code", None)
