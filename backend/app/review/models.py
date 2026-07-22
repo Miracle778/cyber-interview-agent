@@ -294,6 +294,11 @@ class QuestionCandidateRecord:
     duplicate_of_question_id: str | None
     revision_of_question_id: str | None
     revision_base_hash: str | None
+    seed_task_id: str | None
+    answer_basis: AnswerBasis
+    material_support: MaterialSupport
+    needs_review: bool
+    normalization_issues: tuple[str, ...]
     status: str
     deleted_at: str | None
     deletion_reason: str

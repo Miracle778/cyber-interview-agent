@@ -712,8 +712,106 @@ async def test_six_item_curation_resumes_after_failure_pause_and_runtime_restart
         assert final_batch.status == "review_pending"
         assert all(item.status in {"completed", "degraded"} for item in final_seed_tasks)
         assert all(item.status != "running" for item in final_items)
+        resource = await second_review.curation_resource(session_id)
+        assert resource["seed_progress"] == {
+            "total": 18,
+            "completed": 0,
+            "degraded": 18,
+            "retrying": 0,
+            "skipped": 0,
+            "pending": 0,
+        }
+        assert resource["quality_summary"] == {
+            "source": 0,
+            "mixed": 0,
+            "model": 0,
+            "unknown": 18,
+            "needs_review": 18,
+        }
+        formal_candidates = second_review.repository.list_candidates("w1")
+        assert all(item.seed_task_id is not None for item in formal_candidates)
+        assert all(item.answer_basis == "unknown" for item in formal_candidates)
     finally:
         await second.close()
+
+
+@pytest.mark.asyncio
+async def test_seed_retry_api_is_idempotent_and_schedules_one_execution(
+    application, monkeypatch
+) -> None:
+    app, source_ids = application
+    review = app.review("w1")
+    session, batch, execution = await _seed_running_curation(
+        review, source_ids[0]
+    )
+    review.sessions.repository.transition_execution(
+        execution.id, expected=("queued", "running"), target="completed"
+    )
+    source_ref = f"{source_ids[0]}#section-0001"
+    discovery = review.repository.plan_curation_work_item(
+        batch_id=batch.id,
+        stage="discovery",
+        unit_index=0,
+        input_digest="d" * 64,
+        source_refs=(source_ref,),
+        processor_kind="deterministic",
+    )
+    review.repository.complete_deterministic_curation_work_item(
+        discovery.id,
+        output={"seeds": [{
+            "question_text": "如何恢复单题？",
+            "source_ref": source_ref,
+            "source_refs": [source_ref],
+        }]},
+    )
+    seed_task = review.repository.plan_curation_seed_task(
+        batch_id=batch.id,
+        discovery_work_item_id=discovery.id,
+        seed_ordinal=0,
+        question_text="如何恢复单题？",
+        primary_source_ref=source_ref,
+        source_refs=(source_ref,),
+        input_digest="e" * 64,
+    )
+    running = review.repository.claim_curation_seed_tasks(
+        batch.id, statuses=("pending",), limit=1
+    )[0]
+    skipped = review.repository.skip_curation_seed_task(
+        running.id,
+        expected_version=running.version,
+        error_code="missing_answer",
+        normalization_issues=("missing_answer",),
+    )
+    scheduled: list[str] = []
+    monkeypatch.setattr(
+        review.executions,
+        "run_prepared",
+        lambda prepared, *, graph_input: scheduled.append(prepared.id),
+    )
+    api = _api_with_review_conflicts(app)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        path = (
+            f"/api/review/curation-sessions/{session.id}/seed-tasks/"
+            f"{seed_task.id}/retry"
+        )
+        first = await client.post(
+            path,
+            headers={"Idempotency-Key": "retry-one-seed-0001"},
+            json={"expectedVersion": skipped.version},
+        )
+        repeated = await client.post(
+            path,
+            headers={"Idempotency-Key": "retry-one-seed-0001"},
+            json={"expectedVersion": skipped.version},
+        )
+
+    assert first.status_code == repeated.status_code == 202
+    assert repeated.json() == first.json()
+    assert first.json()["seedTaskId"] == seed_task.id
+    assert scheduled == [first.json()["executionId"]]
 
 
 @pytest.mark.asyncio
@@ -1219,12 +1317,28 @@ async def test_curation_resource_projects_timing_workers_and_read_only_provision
             "title": "Durable pause",
             "questionText": "Explain Durable pause",
             "sourceRefs": [f"{source_ids[0]}#section-0001"],
+            "seedTaskId": None,
+            "answerBasis": "unknown",
+            "materialSupport": "unknown",
+            "needsReview": True,
+            "normalizationIssues": [],
+            "status": "completed",
+            "version": 0,
+            "errorCode": None,
         },
         {
             "id": f"{completed_item.id}:1",
             "title": "Durable resume",
             "questionText": "Explain Durable resume",
             "sourceRefs": [f"{source_ids[0]}#section-0001"],
+            "seedTaskId": None,
+            "answerBasis": "unknown",
+            "materialSupport": "unknown",
+            "needsReview": True,
+            "normalizationIssues": [],
+            "status": "completed",
+            "version": 0,
+            "errorCode": None,
         },
     ]
     assert formal_candidates.status_code == 200
@@ -1983,9 +2097,10 @@ async def test_bulk_publication_cancel_then_retry_skips_completed_item(
                 document_id="doc-bulk-second",
                 content_hash="b" * 64,
                 title="bulk second",
-            ),
-            draft_id=second_draft.id,
-            status="review_pending",
+                ),
+                draft_id=second_draft.id,
+                source_refs=(source_ids[0],),
+                status="review_pending",
             candidate_id="bulk-second",
         )
         summary = type(curation.summary)(
@@ -2009,7 +2124,9 @@ async def test_bulk_publication_cancel_then_retry_skips_completed_item(
         release = asyncio.Event()
         calls: list[tuple[str, str]] = []
 
-        async def fake_publish(candidate_id, *, idempotency_key):
+        async def fake_publish(
+            candidate_id, *, idempotency_key, confirm_ai_supplement=False
+        ):
             calls.append((candidate_id, idempotency_key))
             if candidate_id == first.id and not release.is_set():
                 entered.set()
@@ -2027,6 +2144,7 @@ async def test_bulk_publication_cancel_then_retry_skips_completed_item(
                     "summaryVersion": updated.summary_version,
                     "idempotencyKey": "bulk-start-1",
                     "candidateIds": [first.id, second.id],
+                    "confirmedAiCandidateIds": [first.id, second.id],
                 },
             )
         ).json()
@@ -2246,9 +2364,17 @@ async def test_duplicate_generation_links_evidence_to_published_question_and_blo
             f"/api/review/curation-sessions/{first['id']}"
         )).json()
         first_candidate_id = first_detail["summary"]["items"][0]["candidateId"]
+        with pytest.raises(ReviewConflictError, match="AI supplement"):
+            await app.review("w1").publish_candidate(
+                first_candidate_id,
+                idempotency_key="publish-without-ai-confirmation",
+            )
         published = await client.post(
             f"/api/review/question-candidates/{first_candidate_id}/publish",
-            json={"idempotencyKey": "publish-original-question"},
+            json={
+                "idempotencyKey": "publish-original-question",
+                "confirmAiSupplement": True,
+            },
         )
         assert published.status_code == 200, published.text
         published_question_id = published.json()["question"]["questionId"]
@@ -2286,11 +2412,12 @@ async def test_duplicate_generation_links_evidence_to_published_question_and_blo
         assert edited.status_code == 200, edited.text
         updated = await client.post(
             f"/api/review/question-candidates/{duplicate_id}/update-active-version",
-            json={
-                "targetQuestionId": published_question_id,
-                "expectedActiveHash": published.json()["question"]["contentHash"],
-                "idempotencyKey": "promote-duplicate-as-revision",
-            },
+                json={
+                    "targetQuestionId": published_question_id,
+                    "expectedActiveHash": published.json()["question"]["contentHash"],
+                    "idempotencyKey": "promote-duplicate-as-revision",
+                    "confirmAiSupplement": True,
+                },
         )
         assert updated.status_code == 200, updated.text
         assert updated.json()["question"]["questionId"] == published_question_id

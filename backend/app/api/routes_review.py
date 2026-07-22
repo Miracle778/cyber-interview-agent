@@ -18,6 +18,7 @@ from app.schemas.review import (
     CurationSessionResource,
     CurationCommandReceiptResource,
     AcceptedCurationCommandResource,
+    AcceptedCurationSeedRetryResource,
     AcceptedBulkPublicationResource,
     BulkPublicationPreflightResource,
     BulkPublicationResource,
@@ -31,6 +32,7 @@ from app.schemas.review import (
     SkipReviewInputCommand,
     SubmitReviewInputCommand,
     RetryReviewEvaluationCommand,
+    RetryCurationSeedTaskCommand,
     SubmitCurationCommand,
     StartBulkPublicationCommand,
     RetryBulkPublicationCommand,
@@ -154,6 +156,30 @@ async def terminate_curation_session(
 
 
 @router.post(
+    "/curation-sessions/{session_id}/seed-tasks/{seed_task_id}/retry",
+    response_model=AcceptedCurationSeedRetryResource,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_curation_seed_task(
+    session_id: str,
+    seed_task_id: str,
+    command: RetryCurationSeedTaskCommand,
+    idempotency_key: Annotated[
+        str,
+        Header(alias="Idempotency-Key", min_length=8, max_length=200),
+    ],
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_review_session(session_id)
+    return await review.retry_curation_seed_task(
+        session_id,
+        seed_task_id=seed_task_id,
+        expected_version=command.expected_version,
+        idempotency_key=idempotency_key,
+    )
+
+
+@router.post(
     "/curation-sessions/{session_id}/retry",
     response_model=CurationSessionResource,
     status_code=status.HTTP_202_ACCEPTED,
@@ -240,6 +266,7 @@ async def start_bulk_publication(
         summary_version=command.summary_version,
         idempotency_key=command.idempotency_key,
         candidate_ids=tuple(command.candidate_ids),
+        confirmed_ai_candidate_ids=tuple(command.confirmed_ai_candidate_ids),
     )
 
 
@@ -465,7 +492,9 @@ async def publish_question_candidate(
 ):
     review = application.locate_review_candidate(candidate_id)
     return await review.publish_candidate(
-        candidate_id, idempotency_key=command.idempotency_key
+        candidate_id,
+        idempotency_key=command.idempotency_key,
+        confirm_ai_supplement=command.confirm_ai_supplement,
     )
 
 
@@ -484,6 +513,7 @@ async def update_active_question_version(
         target_question_id=command.target_question_id,
         expected_active_hash=command.expected_active_hash,
         idempotency_key=command.idempotency_key,
+        confirm_ai_supplement=command.confirm_ai_supplement,
     )
 
 

@@ -68,6 +68,10 @@ class ControlCurationSessionCommand(ReviewModel):
     expected_batch_version: int = Field(ge=1)
 
 
+class RetryCurationSeedTaskCommand(ReviewModel):
+    expected_version: int = Field(ge=0)
+
+
 class SubmitCurationCommand(ReviewModel):
     text: str = Field(min_length=1, max_length=5000)
     summary_version: int = Field(ge=0)
@@ -80,6 +84,7 @@ class StartBulkPublicationCommand(ReviewModel):
     summary_version: int = Field(ge=0)
     idempotency_key: str = Field(min_length=8, max_length=200)
     candidate_ids: list[str] = Field(min_length=1)
+    confirmed_ai_candidate_ids: list[str] = Field(default_factory=list)
 
 
 class RetryBulkPublicationCommand(ReviewModel):
@@ -125,12 +130,14 @@ class UpdateQuestionCandidateNoteCommand(ReviewModel):
 
 class PublishQuestionCandidateCommand(ReviewModel):
     idempotency_key: str = Field(min_length=8, max_length=200)
+    confirm_ai_supplement: bool = False
 
 
 class UpdateActiveQuestionVersionCommand(ReviewModel):
     target_question_id: str = Field(min_length=1)
     expected_active_hash: str = Field(min_length=64, max_length=64)
     idempotency_key: str = Field(min_length=8, max_length=200)
+    confirm_ai_supplement: bool = False
 
 
 class CreateReviewRoundCommand(ReviewRoundSettings):
@@ -199,6 +206,13 @@ class QuestionCandidateResource(ReviewModel):
     duplicate_of_question_id: str | None
     duplicate_question: QuestionSnapshotResource | None
     revision_of_question_id: str | None
+    seed_task_id: str | None = None
+    answer_basis: Literal["source", "mixed", "model", "unknown"] = "unknown"
+    material_support: Literal[
+        "sufficient", "partial", "minimal", "unknown"
+    ] = "unknown"
+    needs_review: bool = True
+    normalization_issues: list[str] = Field(default_factory=list)
     is_active_version: bool
     status: str
     deleted_at: str | None
@@ -357,6 +371,33 @@ class ProvisionalCandidateResource(ReviewModel):
     title: str
     question_text: str
     source_refs: list[str]
+    seed_task_id: str | None = None
+    answer_basis: Literal["source", "mixed", "model", "unknown"] = "unknown"
+    material_support: Literal[
+        "sufficient", "partial", "minimal", "unknown"
+    ] = "unknown"
+    needs_review: bool = True
+    normalization_issues: list[str] = Field(default_factory=list)
+    status: str = "completed"
+    version: int = Field(default=0, ge=0)
+    error_code: str | None = None
+
+
+class CurationSeedProgressResource(ReviewModel):
+    total: int = Field(ge=0)
+    completed: int = Field(ge=0)
+    degraded: int = Field(ge=0)
+    retrying: int = Field(ge=0)
+    skipped: int = Field(ge=0)
+    pending: int = Field(ge=0)
+
+
+class CurationQualitySummaryResource(ReviewModel):
+    source: int = Field(ge=0)
+    mixed: int = Field(ge=0)
+    model: int = Field(ge=0)
+    unknown: int = Field(ge=0)
+    needs_review: int = Field(ge=0)
 
 
 class CurationSessionResource(ReviewModel):
@@ -392,6 +433,22 @@ class CurationSessionResource(ReviewModel):
     provisional_candidates: list[ProvisionalCandidateResource] = Field(
         default_factory=list, max_length=200
     )
+    seed_progress: CurationSeedProgressResource = Field(
+        default_factory=lambda: CurationSeedProgressResource(
+            total=0,
+            completed=0,
+            degraded=0,
+            retrying=0,
+            skipped=0,
+            pending=0,
+        )
+    )
+    quality_summary: CurationQualitySummaryResource = Field(
+        default_factory=lambda: CurationQualitySummaryResource(
+            source=0, mixed=0, model=0, unknown=0, needs_review=0
+        )
+    )
+    source_warnings: list[dict[str, Any]] = Field(default_factory=list)
     summary: dict[str, Any]
     summary_version: int
     warnings: list[dict[str, Any]]
@@ -439,6 +496,13 @@ class AcceptedCurationCommandResource(ReviewModel):
     command_id: str
     execution_id: str
     status: Literal["accepted"] = "accepted"
+
+
+class AcceptedCurationSeedRetryResource(ReviewModel):
+    receipt_id: str
+    seed_task_id: str
+    execution_id: str
+    status: str
 
 
 class BulkPublicationPreflightResource(ReviewModel):

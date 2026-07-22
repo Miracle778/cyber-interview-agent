@@ -900,8 +900,11 @@ class ReviewRepository:
                     self._connection.execute(
                         "INSERT INTO review_question_candidates "
                         "(id, batch_id, draft_id, question_json, source_refs_json, "
-                        "correction_note, duplicate_of_question_id, status) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, 'review_pending')",
+                        "correction_note, duplicate_of_question_id, seed_task_id, "
+                        "answer_basis, material_support, needs_review, "
+                        "normalization_issues_json, status) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                        "'review_pending')",
                         (
                             candidate_id,
                             batch_id,
@@ -910,6 +913,16 @@ class ReviewRepository:
                             _canonical_json(source_refs),
                             str(item.get("correction_note", "")),
                             item.get("duplicate_of_question_id"),
+                            item.get("seed_task_id"),
+                            item.get("answer_basis", "unknown"),
+                            item.get("material_support", "unknown"),
+                            int(bool(item.get("needs_review", True))),
+                            _canonical_json(tuple(
+                                item.get(
+                                    "normalization_issues",
+                                    ("legacy_quality_unknown",),
+                                )
+                            )),
                         ),
                     )
                 else:
@@ -2091,6 +2104,20 @@ class ReviewRepository:
         if row is None:
             raise LookupError(receipt_id)
         return self._curation_seed_retry_receipt_record(row)
+
+    def find_curation_seed_retry_receipt(
+        self, seed_task_id: str, idempotency_key: str
+    ) -> CurationSeedRetryReceiptRecord | None:
+        row = self._connection.execute(
+            "SELECT * FROM review_curation_seed_retry_receipts "
+            "WHERE seed_task_id = ? AND idempotency_key = ?",
+            (seed_task_id, idempotency_key),
+        ).fetchone()
+        return (
+            None
+            if row is None
+            else self._curation_seed_retry_receipt_record(row)
+        )
 
     def claim_manual_curation_seed_retry(
         self, receipt_id: str, *, expected_seed_version: int
@@ -4521,6 +4548,13 @@ class ReviewRepository:
             duplicate_of_question_id=row["duplicate_of_question_id"],
             revision_of_question_id=row["revision_of_question_id"],
             revision_base_hash=row["revision_base_hash"],
+            seed_task_id=row["seed_task_id"],
+            answer_basis=cast(AnswerBasis, row["answer_basis"]),
+            material_support=cast(MaterialSupport, row["material_support"]),
+            needs_review=bool(row["needs_review"]),
+            normalization_issues=tuple(
+                json.loads(row["normalization_issues_json"])
+            ),
             status=row["status"],
             deleted_at=row["deleted_at"],
             deletion_reason=row["deletion_reason"],

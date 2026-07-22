@@ -53,6 +53,27 @@ from app.profile.storage import MaterialStorage
 logger = logging.getLogger(__name__)
 
 
+def _seed_quality_for_candidate(
+    seed_tasks, raw: dict[str, Any]
+) -> dict[str, object]:
+    for task in seed_tasks:
+        if task.candidate == raw:
+            return {
+                "seed_task_id": task.id,
+                "answer_basis": task.answer_basis,
+                "material_support": task.material_support,
+                "needs_review": task.needs_review,
+                "normalization_issues": task.normalization_issues,
+            }
+    return {
+        "seed_task_id": None,
+        "answer_basis": "unknown",
+        "material_support": "unknown",
+        "needs_review": True,
+        "normalization_issues": ("legacy_quality_unknown",),
+    }
+
+
 class UnsupportedInterruptError(ValueError):
     code = "unsupported_interrupt"
 
@@ -996,6 +1017,9 @@ class AgentExecutionService:
             except LookupError:
                 curation = None
             raw_candidates = tuple(state.get("candidates", ()))
+            seed_tasks = self._review_repository.list_curation_seed_tasks(
+                batch_id
+            )
             active = self._review_repository.list_active_questions(
                 self._workspace_id
             )
@@ -1208,6 +1232,7 @@ class AgentExecutionService:
                         "correction_note": raw["correction_note"],
                         "duplicate_of_question_id": duplicate_of_question_id,
                         "source_links": tuple(source_links),
+                        **_seed_quality_for_candidate(seed_tasks, raw),
                     }
                 )
             try:
@@ -1609,8 +1634,40 @@ class AgentExecutionService:
                 )
                 return
 
-            if session.kind in {"question.curate", "question.revise"}:
+            if (
+                session.kind in {"question.curate", "question.revise"}
+                and not execution.input.get("manual_seed_task_id")
+                and not execution.input.get("manualSeedTaskId")
+            ):
                 await persist_question_candidates(final_state)
+
+            manual_seed_task_id = (
+                execution.input.get("manual_seed_task_id")
+                or execution.input.get("manualSeedTaskId")
+            )
+            if manual_seed_task_id and self._review_repository is not None:
+                seed_task = self._review_repository.get_curation_seed_task(
+                    str(manual_seed_task_id)
+                )
+                await self._events.publish(
+                    session.id,
+                    execution.id,
+                    "curation.seed.changed",
+                    {
+                        "sessionId": session.id,
+                        "batchId": seed_task.batch_id,
+                        "seedTaskId": seed_task.id,
+                        "status": seed_task.status,
+                        "automaticAttemptCount": (
+                            seed_task.automatic_attempt_count
+                        ),
+                        "manualAttemptCount": seed_task.manual_attempt_count,
+                        "answerBasis": seed_task.answer_basis,
+                        "materialSupport": seed_task.material_support,
+                        "needsReview": seed_task.needs_review,
+                        "errorCode": seed_task.last_error_code,
+                    },
+                )
 
             response = _assistant_content(final_state)
             if response:

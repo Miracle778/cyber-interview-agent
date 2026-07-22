@@ -4,6 +4,7 @@ import asyncio
 from contextlib import nullcontext
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Callable, Literal
 from uuid import uuid4
@@ -79,6 +80,44 @@ def _is_curation_timeline_message(message: MessageRecord) -> bool:
         and message.role == "user"
         and isinstance(message.payload.get("resourceId"), str)
     )
+
+
+def _seed_progress_resource(seed_tasks) -> dict[str, int]:
+    statuses = [item.status for item in seed_tasks]
+    return {
+        "total": len(statuses),
+        "completed": statuses.count("completed"),
+        "degraded": statuses.count("degraded"),
+        "retrying": sum(
+            status in {"running", "retryable", "interrupted"}
+            for status in statuses
+        ),
+        "skipped": statuses.count("skipped"),
+        "pending": statuses.count("pending"),
+    }
+
+
+def _quality_summary_resource(seed_tasks) -> dict[str, int]:
+    candidates = [item for item in seed_tasks if item.candidate is not None]
+    return {
+        basis: sum(item.answer_basis == basis for item in candidates)
+        for basis in ("source", "mixed", "model", "unknown")
+    } | {"needs_review": sum(item.needs_review for item in candidates)}
+
+
+def _seed_event_payload(session_id: str, task) -> dict[str, object]:
+    return {
+        "sessionId": session_id,
+        "batchId": task.batch_id,
+        "seedTaskId": task.id,
+        "status": task.status,
+        "automaticAttemptCount": task.automatic_attempt_count,
+        "manualAttemptCount": task.manual_attempt_count,
+        "answerBasis": task.answer_basis,
+        "materialSupport": task.material_support,
+        "needsReview": task.needs_review,
+        "errorCode": task.last_error_code,
+    }
 
 
 class ReviewApplication:
@@ -375,25 +414,45 @@ class ReviewApplication:
             generated_candidate_count = sum(
                 item.candidate is not None for item in seed_tasks
             )
-            if batch is None or batch.status not in {
+            show_provisional = batch is not None and batch.status in {
                 "generating",
                 "paused",
                 "interrupted",
                 "failed",
-            }:
-                seed_tasks = ()
+            }
+            formal_seed_ids = {
+                candidate.seed_task_id
+                for candidate in candidates
+                if candidate.seed_task_id is not None
+            }
             for item in seed_tasks:
-                if item.candidate is None:
+                if not show_provisional and item.id in formal_seed_ids:
                     continue
-                candidate = QuestionCandidate.model_validate(item.candidate)
+                candidate = (
+                    None
+                    if item.candidate is None
+                    else QuestionCandidate.model_validate(item.candidate)
+                )
                 if len(provisional_candidates) >= 200:
                     break
                 provisional_candidates.append(
                     {
                         "id": item.id,
-                        "title": candidate.title,
-                        "question_text": candidate.question_text,
-                        "source_refs": candidate.source_refs,
+                        "title": (
+                            item.question_text
+                            if candidate is None
+                            else candidate.title
+                        ),
+                        "question_text": item.question_text,
+                        "source_refs": item.source_refs,
+                        "seed_task_id": item.id,
+                        "answer_basis": item.answer_basis,
+                        "material_support": item.material_support,
+                        "needs_review": item.needs_review,
+                        "normalization_issues": item.normalization_issues,
+                        "status": item.status,
+                        "version": item.version,
+                        "error_code": item.last_error_code,
                     }
                 )
         else:
@@ -510,6 +569,12 @@ class ReviewApplication:
             },
             "controls": controls,
             "provisional_candidates": provisional_candidates,
+            "seed_progress": _seed_progress_resource(seed_tasks),
+            "quality_summary": _quality_summary_resource(seed_tasks),
+            "source_warnings": [
+                warning for warning in record.warnings
+                if isinstance(warning.get("sourceId"), str)
+            ],
             "summary": asdict(record.summary),
             "summary_version": record.summary_version,
             "warnings": record.warnings,
@@ -823,6 +888,79 @@ class ReviewApplication:
             idempotency_key=f"legacy-retry:{latest.id}",
         )
 
+    async def retry_curation_seed_task(
+        self,
+        session_id: str,
+        *,
+        seed_task_id: str,
+        expected_version: int,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        curation = self.repository.get_curation_session(session_id)
+        if curation.workspace_id != self.workspace_id:
+            raise LookupError(session_id)
+        task = self.repository.get_curation_seed_task(seed_task_id)
+        if (
+            curation.active_batch_id is None
+            or task.batch_id != curation.active_batch_id
+        ):
+            raise LookupError(seed_task_id)
+        digest = sha256(str(expected_version).encode("ascii")).hexdigest()
+        existing = self.repository.find_curation_seed_retry_receipt(
+            seed_task_id, idempotency_key
+        )
+        if existing is not None:
+            if existing.request_digest != digest:
+                raise ReviewConflictError(
+                    "curation seed retry idempotency key changed"
+                )
+            return self._accepted_seed_retry_resource(existing)
+
+        session = self.sessions.get(session_id)
+        execution_input = self.repository.curation_batch_input(task.batch_id)
+        execution_input.update({
+            "manualSeedTaskId": task.id,
+            "manual_seed_task_id": task.id,
+            "manualSeedExpectedVersion": expected_version,
+            "manual_seed_expected_version": expected_version,
+            "manualSeedRetryKey": idempotency_key,
+            "manual_seed_retry_key": idempotency_key,
+        })
+        execution = await self.executions.prepare(
+            session, input=execution_input, project_input_message=False
+        )
+        try:
+            receipt, created = self.repository.begin_curation_seed_retry(
+                task.id,
+                expected_version=expected_version,
+                idempotency_key=idempotency_key,
+                request_digest=digest,
+                execution_id=execution.id,
+            )
+        except Exception:
+            await self.executions.cancel(execution.id)
+            raise
+        if not created:
+            await self.executions.cancel(execution.id)
+            return self._accepted_seed_retry_resource(receipt)
+        await self.events.publish(
+            session_id,
+            execution.id,
+            "curation.seed.changed",
+            _seed_event_payload(session_id, task),
+        )
+        self.executions.run_prepared(execution, graph_input=execution.input)
+        return self._accepted_seed_retry_resource(receipt)
+
+    @staticmethod
+    def _accepted_seed_retry_resource(receipt) -> dict[str, str]:
+        return {
+            "receipt_id": receipt.id,
+            "seed_task_id": receipt.seed_task_id,
+            "execution_id": receipt.execution_id,
+            "status": receipt.result_status,
+        }
+
     async def list_curation_resources(
         self, *, deleted_only: bool = False
     ) -> tuple[dict[str, Any], ...]:
@@ -882,6 +1020,7 @@ class ReviewApplication:
         summary_version: int,
         idempotency_key: str,
         candidate_ids: tuple[str, ...],
+        confirmed_ai_candidate_ids: tuple[str, ...] = (),
     ) -> dict[str, Any]:
         preflight = self.preflight_bulk_publication(session_id)
         if preflight.summary_version != summary_version:
@@ -891,6 +1030,14 @@ class ReviewApplication:
         if candidate_ids != preflight.publishable:
             raise ReviewConflictError(
                 "bulk publication eligibility changed"
+            )
+        confirmed = set(confirmed_ai_candidate_ids)
+        if not confirmed.issubset(candidate_ids):
+            raise ReviewConflictError("AI confirmation candidate set changed")
+        for candidate_id in candidate_ids:
+            self._assert_candidate_publishable(
+                self.repository.get_candidate(candidate_id),
+                confirm_ai_supplement=candidate_id in confirmed,
             )
         operation, created = self.repository.create_bulk_publication(
             session_id=session_id,
@@ -951,6 +1098,7 @@ class ReviewApplication:
                             await self._publish_curation_candidate(
                                 item.candidate_id,
                                 idempotency_key=item.idempotency_key,
+                                confirm_ai_supplement=True,
                             )
                             item = self.repository.transition_bulk_publication_item(
                                 item.id,
@@ -1585,6 +1733,7 @@ class ReviewApplication:
                             idempotency_key=(
                                 f"{idempotency_key}:{candidate_id}"
                             ),
+                            confirm_ai_supplement=True,
                         )
                     published.append(candidate_id)
                 except Exception:
@@ -1774,12 +1923,18 @@ class ReviewApplication:
         return "\n".join(lines)
 
     async def _publish_curation_candidate(
-        self, candidate_id: str, *, idempotency_key: str
+        self,
+        candidate_id: str,
+        *,
+        idempotency_key: str,
+        confirm_ai_supplement: bool = False,
     ) -> None:
         candidate = self.repository.get_candidate(candidate_id)
         if candidate.status == "published":
             return
-        self._assert_candidate_publishable(candidate)
+        self._assert_candidate_publishable(
+            candidate, confirm_ai_supplement=confirm_ai_supplement
+        )
         if candidate.draft_id is None:
             raise ReviewConflictError("candidate has no draft")
         draft = await self.drafts.get(candidate.draft_id)
@@ -1819,9 +1974,23 @@ class ReviewApplication:
         )
         await self.executions.wait(execution.id)
 
-    def _assert_candidate_publishable(self, candidate) -> None:
+    def _assert_candidate_publishable(
+        self, candidate, *, confirm_ai_supplement: bool = False
+    ) -> None:
         if candidate.status == "rejected":
             raise ReviewConflictError("rejected candidate cannot be published")
+        question = candidate.question
+        if not all((
+            question.title.strip(),
+            question.question_text.strip(),
+            question.reference_answer.strip(),
+            question.topics,
+            question.key_points,
+            candidate.source_refs,
+        )):
+            raise ReviewConflictError("candidate has incomplete required fields")
+        if question.difficulty not in {"easy", "medium", "hard"}:
+            raise ReviewConflictError("candidate difficulty is invalid")
         if (
             candidate.duplicate_of_question_id is not None
             and candidate.revision_of_question_id
@@ -1829,6 +1998,13 @@ class ReviewApplication:
         ):
             raise ReviewConflictError(
                 "duplicate candidate must be resolved before publication"
+            )
+        if (
+            candidate.answer_basis in {"mixed", "model", "unknown"}
+            and not confirm_ai_supplement
+        ):
+            raise ReviewConflictError(
+                "candidate AI supplement requires explicit confirmation"
             )
         from app.review.question_similarity import same_question
 
@@ -2236,6 +2412,11 @@ class ReviewApplication:
                 None if duplicate is None else asdict(duplicate)
             ),
             "revision_of_question_id": candidate.revision_of_question_id,
+            "seed_task_id": candidate.seed_task_id,
+            "answer_basis": candidate.answer_basis,
+            "material_support": candidate.material_support,
+            "needs_review": candidate.needs_review,
+            "normalization_issues": candidate.normalization_issues,
             "is_active_version": is_active_version,
             "status": candidate.status,
             "deleted_at": candidate.deleted_at,
@@ -2326,15 +2507,25 @@ class ReviewApplication:
         return await self.candidate_resource(candidate_id)
 
     async def publish_candidate(
-        self, candidate_id: str, *, idempotency_key: str
+        self,
+        candidate_id: str,
+        *,
+        idempotency_key: str,
+        confirm_ai_supplement: bool = False,
     ) -> dict[str, Any]:
         candidate = self.repository.get_candidate(candidate_id)
         batch = self.repository.get_batch(candidate.batch_id)
         if batch.workspace_id != self.workspace_id:
             raise LookupError(candidate_id)
-        self._assert_candidate_publishable(candidate)
+        if candidate.status == "published":
+            return await self.candidate_resource(candidate_id)
+        self._assert_candidate_publishable(
+            candidate, confirm_ai_supplement=confirm_ai_supplement
+        )
         await self._publish_curation_candidate(
-            candidate_id, idempotency_key=idempotency_key
+            candidate_id,
+            idempotency_key=idempotency_key,
+            confirm_ai_supplement=confirm_ai_supplement,
         )
         return await self.candidate_resource(candidate_id)
 
@@ -2345,6 +2536,7 @@ class ReviewApplication:
         target_question_id: str,
         expected_active_hash: str,
         idempotency_key: str,
+        confirm_ai_supplement: bool = False,
     ) -> dict[str, Any]:
         candidate = self.repository.prepare_candidate_revision(
             workspace_id=self.workspace_id,
@@ -2352,9 +2544,15 @@ class ReviewApplication:
             target_question_id=target_question_id,
             expected_active_hash=expected_active_hash,
         )
-        self._assert_candidate_publishable(candidate)
+        if candidate.status == "published":
+            return await self.candidate_resource(candidate_id)
+        self._assert_candidate_publishable(
+            candidate, confirm_ai_supplement=confirm_ai_supplement
+        )
         await self._publish_curation_candidate(
-            candidate_id, idempotency_key=idempotency_key
+            candidate_id,
+            idempotency_key=idempotency_key,
+            confirm_ai_supplement=confirm_ai_supplement,
         )
         return await self.candidate_resource(candidate_id)
 

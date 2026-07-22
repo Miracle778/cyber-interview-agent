@@ -44,6 +44,9 @@ class CurationWaveFailed(RuntimeError):
 class QuestionCurationInput(TypedDict, total=False):
     batch_id: str
     revision_candidate_id: str | None
+    manual_seed_task_id: str | None
+    manual_seed_expected_version: int
+    manual_seed_retry_key: str
 
 
 class QuestionCurationState(TypedDict, total=False):
@@ -182,6 +185,80 @@ def create_question_curation_graph(
                 if normalized is not None
                 else [{"code": "revision_candidate_skipped"}]
             ),
+        }
+
+    async def retry_one_seed(
+        state: QuestionCurationInput,
+        config: RunnableConfig,
+        runtime: Runtime[AgentContext],
+    ) -> dict[str, object]:
+        batch_id = _batch_id(state)
+        task_id = str(state.get("manual_seed_task_id") or "")
+        retry_key = str(state.get("manual_seed_retry_key") or "")
+        expected_version = int(state.get("manual_seed_expected_version", -1))
+        receipt = repository.find_curation_seed_retry_receipt(task_id, retry_key)
+        if receipt is None:
+            raise ValueError("manual curation seed retry receipt is missing")
+        running = repository.claim_manual_curation_seed_retry(
+            receipt.id, expected_seed_version=expected_version
+        )
+        by_ref = {
+            section.ref: section
+            for section in _sections_for_batch(invocation_inputs, batch_id)
+        }
+        sections = tuple(by_ref[ref] for ref in running.source_refs)
+        try:
+            output = await agents.enrich(
+                (running,),
+                sections=sections,
+                known_questions=_prefilter_similar_titles(
+                    (running,), _similar_titles_for_batch(invocation_inputs, batch_id)
+                ),
+                context=runtime.context,
+                config=dict(config),
+                unit_index=running.seed_ordinal,
+            )
+        except (ValidationError, ValueError):
+            output = {"candidates": "invalid"}
+        except asyncio.CancelledError:
+            _interrupt_seed_invocation(
+                repository, (running,), "curation_interrupted"
+            )
+            raise
+        except Exception as error:
+            _interrupt_seed_invocation(
+                repository, (running,), curation_error_code(error)
+            )
+            raise
+        outcome = normalize_provider_candidate_observation(
+            output, seed_tasks=(running,)
+        )[0]
+        if outcome.status in {"completed", "degraded"}:
+            repository.complete_curation_seed_task(
+                running.id,
+                expected_version=running.version,
+                status=outcome.status,
+                candidate=outcome.candidate or {},
+                answer_basis=outcome.answer_basis,
+                material_support=outcome.material_support,
+                needs_review=outcome.needs_review,
+                normalization_issues=outcome.normalization_issues,
+            )
+        else:
+            repository.skip_curation_seed_task(
+                running.id,
+                expected_version=running.version,
+                error_code=outcome.error_code or "invalid_candidate",
+                normalization_issues=outcome.normalization_issues,
+            )
+        invocation_inputs.discard(batch_id)
+        return {
+            "candidates": [],
+            "generation_phase": "enrichment",
+            "completed_units": 1,
+            "total_units": 1,
+            "generated_candidate_count": int(outcome.candidate is not None),
+            "warnings": [],
         }
 
     async def plan_sections(state: QuestionCurationInput) -> dict[str, object]:
@@ -495,6 +572,8 @@ def create_question_curation_graph(
         }
 
     def route_mode(state: QuestionCurationInput) -> str:
+        if state.get("manual_seed_task_id"):
+            return "manual_retry"
         return "revision" if state.get("revision_candidate_id") else "curate"
 
     def discovery_route(state: QuestionCurationState) -> str:
@@ -526,6 +605,9 @@ def create_question_curation_graph(
         "revise_one", revise_one, input_schema=QuestionCurationInput
     )
     graph.add_node(
+        "retry_one_seed", retry_one_seed, input_schema=QuestionCurationInput
+    )
+    graph.add_node(
         "plan_sections", plan_sections, input_schema=QuestionCurationInput
     )
     graph.add_node("discover_wave", discover_wave)
@@ -533,8 +615,15 @@ def create_question_curation_graph(
     graph.add_node("enrich_wave", enrich_wave)
     graph.add_node("reduce_candidates", reduce_candidates)
     graph.add_conditional_edges(
-        START, route_mode, {"revision": "revise_one", "curate": "plan_sections"}
+        START,
+        route_mode,
+        {
+            "manual_retry": "retry_one_seed",
+            "revision": "revise_one",
+            "curate": "plan_sections",
+        },
     )
+    graph.add_edge("retry_one_seed", END)
     graph.add_edge("revise_one", END)
     graph.add_edge("plan_sections", "discover_wave")
     graph.add_conditional_edges(

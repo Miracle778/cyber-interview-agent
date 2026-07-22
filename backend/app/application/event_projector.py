@@ -27,6 +27,18 @@ _CUSTOM_KEYS = {
         "target_path",
         "index_stale",
     },
+    "curation.seed.changed": {
+        "sessionId",
+        "batchId",
+        "seedTaskId",
+        "status",
+        "automaticAttemptCount",
+        "manualAttemptCount",
+        "answerBasis",
+        "materialSupport",
+        "needsReview",
+        "errorCode",
+    },
     "execution.warning": {"code", "message"},
 }
 

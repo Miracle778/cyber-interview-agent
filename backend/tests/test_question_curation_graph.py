@@ -1188,6 +1188,101 @@ async def test_single_revision_bypasses_discovery_and_enrichment(
 
 
 @pytest.mark.asyncio
+async def test_manual_seed_retry_runs_exactly_one_seed_attempt(
+    repository: ReviewRepository, batch, tmp_path: Path
+):
+    source_ref = "s1#section-0001"
+    discovery = repository.plan_curation_work_item(
+        batch_id=batch.id,
+        stage="discovery",
+        unit_index=0,
+        input_digest="a" * 64,
+        source_refs=(source_ref,),
+        processor_kind="deterministic",
+    )
+    repository.complete_deterministic_curation_work_item(
+        discovery.id,
+        output=QuestionSeedChunk(seeds=[QuestionSeed(
+            question_text="问题 1？", source_ref=source_ref
+        )]).model_dump(mode="json"),
+    )
+    task = repository.plan_curation_seed_task(
+        batch_id=batch.id,
+        discovery_work_item_id=discovery.id,
+        seed_ordinal=0,
+        question_text="问题 1？",
+        primary_source_ref=source_ref,
+        source_refs=(source_ref,),
+        input_digest="b" * 64,
+    )
+    running = repository.claim_curation_seed_tasks(
+        batch.id, statuses=("pending",), limit=1
+    )[0]
+    skipped = repository.skip_curation_seed_task(
+        running.id,
+        expected_version=running.version,
+        error_code="missing_answer",
+        normalization_issues=("missing_answer",),
+    )
+    repository._connection.execute(
+        "UPDATE agent_runs SET status = 'completed' WHERE id = 'r1'"
+    )
+    repository._connection.execute(
+        "INSERT INTO agent_runs (id, session_id, status) "
+        "VALUES ('manual-execution', 's1', 'queued')"
+    )
+    repository._connection.commit()
+    receipt, _created = repository.begin_curation_seed_retry(
+        task.id,
+        expected_version=skipped.version,
+        idempotency_key="manual-retry-0001",
+        request_digest="c" * 64,
+        execution_id="manual-execution",
+    )
+
+    class ManualAgents(RecordingCurationAgents):
+        async def enrich(
+            self, seeds, *, sections, known_questions, context, config, unit_index
+        ):
+            self.enrichment_calls.append(EnrichmentCall(
+                unit_index, tuple(seeds), tuple(sections), tuple(known_questions)
+            ))
+            seed_task = seeds[0]
+            return {"candidates": [{
+                "seed_key": seed_task.seed_key,
+                "question_text": seed_task.question_text,
+                "source_answer": "恢复后的材料答案",
+                "topics": ["runtime"],
+                "difficulty": "medium",
+                "key_points": ["可恢复"],
+                "follow_ups": [],
+                "source_refs": list(seed_task.source_refs),
+                "correction_note": "无需修正",
+            }]}
+
+    agents = ManualAgents()
+    graph = create_question_curation_graph(agents, repository=repository)
+    graph_input = persist_graph_input(
+        repository, curation_input(batch.id, section_count=1)
+    )
+    graph_input.update({
+        "manual_seed_task_id": task.id,
+        "manual_seed_expected_version": skipped.version,
+        "manual_seed_retry_key": "manual-retry-0001",
+    })
+
+    await graph.ainvoke(graph_input, context=context(tmp_path))
+
+    restored = repository.get_curation_seed_task(task.id)
+    assert len(agents.enrichment_calls) == 1
+    assert (restored.status, restored.manual_attempt_count) == ("degraded", 1)
+    assert (
+        repository.get_curation_seed_retry_receipt(receipt.id).result_status
+        == "degraded"
+    )
+
+
+@pytest.mark.asyncio
 async def test_graph_caps_dense_sources_at_200_with_explicit_warning(
     repository: ReviewRepository, batch, tmp_path: Path
 ):

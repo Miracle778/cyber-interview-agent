@@ -89,3 +89,36 @@ def test_unknown_custom_events_and_unsafe_payload_keys_are_not_forwarded():
         }
     )[0]
     assert event.payload == {"draft_id": "d1", "status": "published"}
+
+
+def test_curation_seed_event_drops_content_and_provider_details():
+    event = AgentEventProjector().project({
+        "type": "custom",
+        "ns": (),
+        "data": {
+            "type": "curation.seed.changed",
+            "payload": {
+                "sessionId": "session-1",
+                "batchId": "batch-1",
+                "seedTaskId": "seed-1",
+                "status": "degraded",
+                "manualAttemptCount": 1,
+                "answerBasis": "mixed",
+                "needsReview": True,
+                "questionText": "secret question",
+                "referenceAnswer": "secret answer",
+                "providerOutput": {"secret": True},
+                "path": "/private/workspace",
+            },
+        },
+    })[0]
+
+    assert event.payload == {
+        "sessionId": "session-1",
+        "batchId": "batch-1",
+        "seedTaskId": "seed-1",
+        "status": "degraded",
+        "manualAttemptCount": 1,
+        "answerBasis": "mixed",
+        "needsReview": True,
+    }
