@@ -21,10 +21,12 @@ from app.agents.prompts.question_curation_prompts import (
     render_question_revision_input,
 )
 from app.agents.question_curation_contracts import (
+    ProviderQuestionSeedChunk,
     QuestionCandidateChunk,
     QuestionRevisionOutput,
     QuestionSeed,
     QuestionSeedChunk,
+    normalize_provider_seed_chunk,
 )
 from app.review.curation_sections import SourceSection
 
@@ -61,7 +63,7 @@ class QuestionCurationAgents:
                     execution_name="question_discovery",
                     prompt=QUESTION_DISCOVERY_PROMPT,
                     middleware=middleware,
-                    response_format=QuestionSeedChunk,
+                    response_format=ProviderQuestionSeedChunk,
                     structured_output_handle_errors=False,
                     invocation_policy=_DISCOVERY_POLICY,
                 ),
@@ -109,7 +111,7 @@ class QuestionCurationAgents:
             ),
             context=context,
         )
-        chunk = QuestionSeedChunk.model_validate(_structured(result))
+        chunk = normalize_provider_seed_chunk(_structured(result))
         allowed = {section.ref: section.source_id for section in sections}
         seeds: list[QuestionSeed] = []
         seen_refs: set[str] = set()

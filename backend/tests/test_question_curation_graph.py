@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from app.agents import question_curation_contracts as curation_contracts
 from app.agents.context import AgentContext
 from app.agents.prompts.question_curation_prompts import (
     QUESTION_DISCOVERY_PROMPT,
@@ -256,23 +257,81 @@ def test_question_seed_preserves_legacy_primary_ref_and_normalizes_duplicates() 
         })
 
 
-def test_question_seed_chunk_discards_only_ungrounded_provider_rows() -> None:
-    chunk = QuestionSeedChunk.model_validate({
+def test_strict_question_seed_chunk_rejects_ungrounded_rows() -> None:
+    with pytest.raises(ValidationError):
+        QuestionSeedChunk.model_validate({
+            "seeds": [{
+                "question_text": "模型生成但没有证据引用的题目",
+                "source_refs": [None],
+            }]
+        })
+
+
+def test_provider_seed_normalization_caps_the_raw_list_at_twenty() -> None:
+    raw = curation_contracts.ProviderQuestionSeedChunk.model_validate({
         "seeds": [
             {
-                "question_text": "什么是 MVCC？",
+                "question_text": f"问题 {index}？",
+                "source_ref": f"s1#section-{index:04d}",
+                "source_refs": [f"s1#section-{index:04d}"],
+            }
+            for index in range(1, 22)
+        ]
+    })
+
+    normalized = curation_contracts.normalize_provider_seed_chunk(raw)
+
+    assert len(normalized.seeds) == 20
+    assert normalized.seeds[-1].source_ref == "s1#section-0020"
+
+
+def test_provider_seed_normalization_repairs_reference_order_and_nulls() -> None:
+    raw = curation_contracts.ProviderQuestionSeedChunk.model_validate({
+        "seeds": [{
+            "question_text": "什么是引用归一化？",
+            "source_ref": "s1#section-0002",
+            "source_refs": [
+                "s1#section-0001",
+                None,
+                "s1#section-0002",
+                "s1#section-0001",
+            ],
+        }]
+    })
+
+    normalized = curation_contracts.normalize_provider_seed_chunk(raw)
+
+    assert normalized.seeds[0].source_refs == [
+        "s1#section-0002",
+        "s1#section-0001",
+    ]
+
+
+def test_provider_seed_normalization_drops_only_rows_without_grounding() -> None:
+    raw = curation_contracts.ProviderQuestionSeedChunk.model_validate({
+        "seeds": [
+            {
+                "question_text": "有效题目？",
                 "source_ref": "s1#section-0001",
                 "source_refs": ["s1#section-0001"],
             },
             {
-                "question_text": "模型生成但没有证据引用的题目",
+                "question_text": "无证据题目？",
                 "source_refs": [None],
+            },
+            {
+                "question_text": "未知引用题目？",
+                "source_ref": "s1#section-9999",
+                "source_refs": ["s1#section-9999"],
             },
         ]
     })
 
-    assert [item.source_ref for item in chunk.seeds] == [
-        "s1#section-0001"
+    normalized = curation_contracts.normalize_provider_seed_chunk(raw)
+
+    assert [item.source_ref for item in normalized.seeds] == [
+        "s1#section-0001",
+        "s1#section-9999",
     ]
 
 
@@ -290,6 +349,7 @@ def test_question_curation_agents_use_stage_specific_retry_policies() -> None:
     QuestionCurationAgents.create(factory, model_bindings={})
 
     discovery, enrichment, revision = factory.specs
+    assert discovery.response_format is curation_contracts.ProviderQuestionSeedChunk
     assert discovery.structured_output_handle_errors is False
     assert enrichment.structured_output_handle_errors is False
     assert revision.structured_output_handle_errors is True
@@ -308,6 +368,41 @@ def test_question_curation_agents_use_stage_specific_retry_policies() -> None:
         revision.invocation_policy.request_timeout_seconds,
         revision.invocation_policy.max_retries,
     ) == (4_096, 180, 0)
+
+
+@pytest.mark.asyncio
+async def test_concrete_agents_normalize_provider_discovery_output(
+    tmp_path: Path,
+) -> None:
+    class Runnable:
+        async def ainvoke(self, _input, config=None, *, context=None):
+            return {
+                "structured_response": {
+                    "seeds": [{
+                        "question_text": "什么是引用归一化？",
+                        "source_ref": "s1#section-0002",
+                        "source_refs": [
+                            "s1#section-0001",
+                            "s1#section-0002",
+                        ],
+                    }]
+                }
+            }
+
+    agents = QuestionCurationAgents(Runnable(), Runnable(), Runnable())
+    sections = (
+        SourceSection("s1", "s1#section-0001", 1, "正文一", "a" * 64),
+        SourceSection("s1", "s1#section-0002", 2, "正文二", "b" * 64),
+    )
+
+    result = await agents.discover(
+        sections, context=context(tmp_path), config={}, unit_index=0
+    )
+
+    assert result.seeds[0].source_refs == [
+        "s1#section-0002",
+        "s1#section-0001",
+    ]
 
 
 @pytest.mark.parametrize("_transport_failure", ["429", "5xx", "network"])
@@ -1006,7 +1101,7 @@ async def test_schema_validation_is_not_retried_by_the_curation_agent(
 
         async def ainvoke(self, _input, config=None, *, context=None):
             self.calls += 1
-            return {"structured_response": {"seeds": [{"source_ref": "s1"}]}}
+            return {"structured_response": {"seeds": "not-a-list"}}
 
     runnable = Runnable()
     agents = QuestionCurationAgents(runnable, runnable, runnable)

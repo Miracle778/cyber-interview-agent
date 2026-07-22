@@ -443,5 +443,6 @@
 - 隔离浏览器验收暴露了一个展示层遗漏：运行面板已中文化 paused/interrupted/terminated，但会话列表仍回退为原始枚举值，且 terminated 被计入“待处理”。状态词典必须覆盖新增阶段，终止态必须从 active 会话统计中排除。
 - “没有识别出候选题”不是等待人工决策：空集合若仍进入 `review_pending`，既没有可操作候选，也无法满足要求非空 membership 的完成聚合器。零候选必须在 finalization 事务中直接将 Batch/Session 收口为 `completed`；只有非空候选集进入 `review_pending`。
 - legacy Batch 与完整 Curation Session 共用执行管线时，warning 属于可选的 Curation 投影。领域候选已提交后，不能向不存在的投影写入并反向把 Execution 标记失败；投影存在性必须成为 warning 写入的显式前置条件。
-- 真实 GLM discovery 可能返回“整体 JSON/Tool Call 有效，但单个 seed 缺少 `source_ref`、`source_refs=[null]`”的部分坏输出。若让 Chunk 整体校验失败，会丢弃同一响应中的其余有效 seed；正确容错边界是只丢弃无证据引用的 raw seed，随后仍由 Agent 对未知引用、跨来源引用和顺序契约做硬校验。
+- 真实 GLM discovery 连续暴露三类“整体 JSON/Tool Call 有效、局部不完全符合领域 Schema”的输出：单个 seed 缺少 `source_ref`/含 null 引用、返回 21 项超过 20 项上限、主引用没有排在 `source_refs` 首位。把 Provider 响应直接绑定严格领域模型会让整个 Work Item 丢弃其余有效项。
+- 正确边界是分离 Provider 契约与领域契约：Provider 层只保证可解析的宽松形状，确定性 normalizer 截断至 20 项、删除无证据行、去除 null/空白/重复引用并把主引用移到首位，然后再构造严格 `QuestionSeedChunk`。未知引用和跨来源引用仍在 Agent 证据边界硬失败，不能被 normalizer 掩盖。
 - `frontend/package.json` 没有 `typecheck` script；本阶段使用权威等价命令 `./node_modules/.bin/tsc --noEmit`，production build 自身也再次执行 `tsc`。计划中的不存在脚本不能被记录为成功。

@@ -13,6 +13,20 @@ class _StrictQuestionCurationOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class _ProviderQuestionCurationOutput(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+
+class ProviderQuestionSeed(_ProviderQuestionCurationOutput):
+    question_text: str | None = None
+    source_ref: str | None = None
+    source_refs: list[str | None] | None = None
+
+
+class ProviderQuestionSeedChunk(_ProviderQuestionCurationOutput):
+    seeds: list[ProviderQuestionSeed] = Field(default_factory=list)
+
+
 class QuestionCandidate(_StrictQuestionCurationOutput):
     title: str = Field(min_length=1)
     question_text: str = Field(min_length=1)
@@ -69,36 +83,33 @@ class QuestionSeed(_StrictQuestionCurationOutput):
 class QuestionSeedChunk(_StrictQuestionCurationOutput):
     seeds: list[QuestionSeed] = Field(default_factory=list, max_length=20)
 
-    @model_validator(mode="before")
-    @classmethod
-    def discard_ungrounded_raw_seeds(cls, value: object) -> object:
-        if not isinstance(value, Mapping):
-            return value
-        raw_seeds = value.get("seeds")
-        if not isinstance(raw_seeds, (list, tuple)):
-            return value
-        normalized = dict(value)
-        normalized["seeds"] = [
-            seed
-            for seed in raw_seeds
-            if isinstance(seed, QuestionSeed)
-            or (
-                isinstance(seed, Mapping)
-                and isinstance(seed.get("source_ref"), str)
-                and bool(seed["source_ref"].strip())
-                and (
-                    seed.get("source_refs") in (None, [])
-                    or (
-                        isinstance(seed.get("source_refs"), (list, tuple))
-                        and all(
-                            isinstance(ref, str) and bool(ref.strip())
-                            for ref in seed["source_refs"]
-                        )
-                    )
-                )
+
+def normalize_provider_seed_chunk(value: object) -> QuestionSeedChunk:
+    if isinstance(value, BaseModel):
+        value = value.model_dump()
+    raw = ProviderQuestionSeedChunk.model_validate(value)
+    seeds: list[QuestionSeed] = []
+    for item in raw.seeds[:20]:
+        question_text = (item.question_text or "").strip()
+        primary = (item.source_ref or "").strip()
+        if not question_text or not primary:
+            continue
+        secondary_refs: list[str] = []
+        for raw_ref in item.source_refs or ():
+            ref = (raw_ref or "").strip()
+            if not ref or ref == primary or ref in secondary_refs:
+                continue
+            secondary_refs.append(ref)
+        seeds.append(
+            QuestionSeed(
+                question_text=question_text,
+                source_ref=primary,
+                source_refs=[primary, *secondary_refs][
+                    :MAX_QUESTION_SEED_SOURCE_REFS
+                ],
             )
-        ]
-        return normalized
+        )
+    return QuestionSeedChunk(seeds=seeds)
 
 
 class QuestionCandidateChunk(_StrictQuestionCurationOutput):
