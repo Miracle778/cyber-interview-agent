@@ -12,7 +12,7 @@ from app.agents.profile_contracts import (
     ProfileAssessmentProposal,
     ProfileAssessmentRecommendation,
 )
-from app.application.session_service import ProductRepository
+from app.application.session_service import ProductEventStream, ProductRepository
 from app.graphs.profile_assess import create_profile_assess_graph
 from app.graphs.profile_ingest import create_profile_ingest_graph
 from app.infrastructure.runtime_database import connect_runtime_database
@@ -140,17 +140,15 @@ async def test_ingest_parses_redacts_extracts_and_persists_proposals(profile_run
     root, connection, repository, storage = profile_runtime
     version = _seed(repository, storage, b"Python\nLed a team of five")
     _seed_execution(connection, version.id)
-    events = []
-
-    async def publish(session_id, execution_id, event_type, payload):
-        events.append((session_id, execution_id, event_type, payload))
+    product = ProductRepository(connection)
+    events = ProductEventStream(product, workspace_root=root)
 
     agent = EvidenceGroundedExtractionAgent()
     graph = create_profile_ingest_graph(
         agent,
         repository=repository,
         storage=storage,
-        publish_event=publish,
+        publish_event=events.publish,
     )
     result = await graph.ainvoke(
         {"material_id": version.material_id, "version_id": version.id},
@@ -164,7 +162,7 @@ async def test_ingest_parses_redacts_extracts_and_persists_proposals(profile_run
     proposals = repository.list_proposals("w1", status="pending")
     assert len(proposals) == 1
     assert proposals[0].evidence_ids == (evidence[0].id,)
-    assert [item[2] for item in events] == [
+    assert [item.type for item in product.list_events(version.id, after_id=None)] == [
         "profile.ingest.parsing",
         "profile.ingest.extracting",
         "profile.claims.proposed",

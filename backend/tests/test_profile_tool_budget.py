@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -164,3 +165,35 @@ async def test_budget_normalizes_argument_key_order(tmp_path):
 
     assert third.status == "error"
     assert "repeated" in third.content
+
+
+@pytest.mark.asyncio
+async def test_profile_tool_lifecycles_are_serialized_per_execution(tmp_path):
+    middleware = ProfileToolBudgetMiddleware()
+    active = 0
+    peak_active = 0
+
+    async def tracked_handler(_request):
+        nonlocal active, peak_active
+        active += 1
+        peak_active = max(peak_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return await _ok_handler(_request)
+
+    await asyncio.gather(
+        *(
+            middleware.awrap_tool_call(
+                _request(
+                    tmp_path,
+                    tool_name="read_personal_evidence",
+                    args={"evidence_id": f"parallel-{index}"},
+                    call_id=f"parallel-{index}",
+                ),
+                tracked_handler,
+            )
+            for index in range(5)
+        )
+    )
+
+    assert peak_active == 1

@@ -28,6 +28,14 @@ class ProfileMaterialVersionNotFound(ProfileDomainError):
         super().__init__(f"profile material version not found: {version_id}")
 
 
+class ProfileMaterialVersionConflict(ProfileDomainError):
+    code = "profile_material_version_conflict"
+
+
+class ProfileIngestBusy(ProfileDomainError):
+    code = "profile_ingest_busy"
+
+
 class ProfileEvidenceMismatch(ProfileDomainError):
     code = "profile_evidence_mismatch"
 
@@ -56,6 +64,34 @@ class ProfileClaimVersionConflict(ProfileDomainError):
     code = "profile_claim_version_conflict"
 
 
+class ProfileClaimSelectedForPublication(ProfileClaimVersionConflict):
+    code = "profile_claim_selected_for_publication"
+
+
+class ProfileDeletionPlanConflict(ProfileClaimVersionConflict):
+    code = "profile_deletion_plan_conflict"
+
+
+class ProfileDeletionPlanNotFound(ProfileDomainError):
+    code = "profile_deletion_plan_not_found"
+
+
+class ProfileDeletionPlanExpired(ProfileDeletionPlanConflict):
+    code = "profile_deletion_plan_expired"
+
+
+class ProfilePublicationRevocationRequired(ProfileDeletionPlanConflict):
+    code = "profile_publication_revocation_required"
+
+
+class ProfilePublicationRevocationUnavailable(ProfileDomainError):
+    code = "profile_publication_revocation_unavailable"
+
+
+class ProfileMaterialRoleConflict(ProfileClaimVersionConflict):
+    code = "profile_material_role_conflict"
+
+
 class ProfileIdempotencyConflict(ProfileDomainError):
     code = "profile_idempotency_conflict"
 
@@ -78,6 +114,10 @@ class ProfileActionPlanItemNotFound(ProfileDomainError):
     def __init__(self, item_id: str) -> None:
         self.item_id = item_id
         super().__init__(f"profile action plan item not found: {item_id}")
+
+
+class ProfileActionPlanInvalid(ProfileDomainError):
+    code = "profile_action_plan_invalid"
 
 
 class ProfilePublicationSelectionNotFound(ProfileDomainError):

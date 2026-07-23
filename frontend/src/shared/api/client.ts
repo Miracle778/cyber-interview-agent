@@ -7,9 +7,11 @@ export class ApiError extends Error {
   }
 }
 
-interface RequestOptions {
+export interface RequestOptions {
   method?: string;
-  body?: string;
+  body?: BodyInit;
+  headers?: HeadersInit;
+  signal?: AbortSignal;
 }
 
 async function readErrorBody(response: Response): Promise<{ code?: string; message?: string }> {
@@ -30,14 +32,15 @@ async function readErrorBody(response: Response): Promise<{ code?: string; messa
  * treats 204 No Content as an empty (void) result without parsing a body.
  */
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const headers: Record<string, string> = {};
-  if (options.body !== undefined) {
-    headers["Content-Type"] = "application/json";
+  const headers = new Headers(options.headers);
+  if (options.body !== undefined && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
   }
   const response = await fetch(path, {
     method: options.method ?? "GET",
     headers,
     body: options.body,
+    signal: options.signal,
   });
   if (!response.ok) {
     const errorBody = await readErrorBody(response);
@@ -49,12 +52,16 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   return (await response.json()) as T;
 }
 
-export async function apiGet<T>(path: string): Promise<T> {
-  return apiRequest<T>(path, { method: "GET" });
+export async function apiGet<T>(path: string, options: Omit<RequestOptions, "method" | "body"> = {}): Promise<T> {
+  return apiRequest<T>(path, { ...options, method: "GET" });
 }
 
-export async function apiPost<TRequest, TResponse>(path: string, payload: TRequest): Promise<TResponse> {
-  return apiRequest<TResponse>(path, { method: "POST", body: JSON.stringify(payload) });
+export async function apiPost<TRequest, TResponse>(path: string, payload: TRequest, options: Omit<RequestOptions, "method" | "body"> = {}): Promise<TResponse> {
+  return apiRequest<TResponse>(path, { ...options, method: "POST", body: JSON.stringify(payload) });
+}
+
+export function apiUpload<T>(path: string, formData: FormData, options: Omit<RequestOptions, "method" | "body"> = {}): Promise<T> {
+  return apiRequest<T>(path, { ...options, method: "POST", body: formData });
 }
 
 export const apiPatch = <TRequest, TResponse>(path: string, payload: TRequest): Promise<TResponse> =>

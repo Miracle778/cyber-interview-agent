@@ -5,6 +5,7 @@ import { getHealth } from "../../shared/api/health";
 import { KnowledgePage } from "../../features/knowledge/KnowledgePage";
 import { ReviewPage } from "../../features/review/ReviewPage";
 import type { ReviewQuestion } from "../../features/review/reviewTypes";
+import { ProfilePage } from "../../features/profile/ProfilePage";
 import { SettingsPage } from "../../features/settings/SettingsPage";
 import { getWorkspace, type WorkspaceConfig } from "../../features/settings/settingsApi";
 import { MobileNavigation } from "../navigation/MobileNavigation";
@@ -120,6 +121,20 @@ export function AppShell() {
                     }}
                     onVaultRescanned={setIndexedCount}
                   />
+                </PageFrame>
+              }
+            />
+            <Route
+              path="/profile"
+              element={
+                <PageFrame
+                  title="个人资料"
+                  description="管理简历版本、可追溯证据和个人画像。"
+                  health={health}
+                  workspace={workspace}
+                  workspaceMode
+                >
+                  <ProfilePage workspace={workspace} />
                 </PageFrame>
               }
             />

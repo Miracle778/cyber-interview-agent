@@ -38,6 +38,14 @@ ActionPlanStatus: TypeAlias = Literal[
     "expired",
 ]
 ActionPlanItemStatus: TypeAlias = Literal["pending", "completed", "failed", "skipped"]
+ActionPlanOperation: TypeAlias = Literal[
+    "propose_claim_create",
+    "propose_claim_update",
+    "propose_claim_reject",
+    "propose_material_derived_version",
+    "set_publication_selection",
+    "request_reassessment",
+]
 PublicationSelectionStatus: TypeAlias = Literal["draft", "submitted", "superseded"]
 PublicationState: TypeAlias = Literal["pending", "published", "revoked", "failed"]
 
@@ -189,6 +197,18 @@ class ProfileActionPlanRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class ProfileAgentFocus:
+    session_id: str
+    workspace_id: str
+    material_id: str | None
+    material_version_id: str | None
+    claim_id: str | None
+    proposal_id: str | None
+    version: int
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
 class PublicationSelectionRecord:
     id: str
     workspace_id: str
@@ -247,6 +267,7 @@ class DecideProposalCommand:
     proposal_id: str
     decision: ProposalDecision
     expected_status: ProposalStatus = "pending"
+    expected_claim_version: int | None = None
     edited_value: dict[str, object] | None = None
     idempotency_key: str | None = None
 
@@ -308,3 +329,72 @@ class BatchClaimDecisionResult:
     completed: tuple[ClaimDecisionResult, ...]
     conflicts: tuple[str, ...]
     failed: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimReviewDetail:
+    claim: ProfileClaimRecord
+    current_version: ProfileClaimVersionRecord
+    versions: tuple[ProfileClaimVersionRecord, ...]
+    proposals: tuple[ClaimProposalRecord, ...]
+    conflicts: tuple[ClaimConflictRecord, ...]
+    evidence: tuple[EvidenceRecord, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimReviewSnapshot:
+    workspace_id: str
+    profile_version: str | None
+    claims: tuple[ClaimReviewDetail, ...]
+    proposals: tuple[ClaimProposalRecord, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class MaterialDeletionPlanRecord:
+    id: str
+    workspace_id: str
+    material_id: str
+    material_version: int
+    status: str
+    impact: dict[str, object]
+    result: dict[str, object]
+    expires_at: str
+    created_at: str
+    updated_at: str
+    completed_at: str | None
+
+    @property
+    def affected_evidence_ids(self) -> tuple[str, ...]:
+        return tuple(str(item) for item in self.impact.get("evidenceIds", []))
+
+    @property
+    def affected_claim_ids(self) -> tuple[str, ...]:
+        return tuple(
+            str(item["claimId"])
+            for item in self.impact.get("claims", [])
+            if isinstance(item, dict) and "claimId" in item
+        )
+
+    @property
+    def publication_selection_ids(self) -> tuple[str, ...]:
+        return tuple(str(item) for item in self.impact.get("selectionIds", []))
+
+    @property
+    def active_publication_ids(self) -> tuple[str, ...]:
+        return tuple(str(item) for item in self.impact.get("publicationIds", []))
+
+
+@dataclass(frozen=True, slots=True)
+class DeletionItemReceipt:
+    kind: str
+    target_id: str
+    status: str
+    action: str
+    error_code: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MaterialDeletionResult:
+    plan_id: str
+    status: str
+    items: tuple[DeletionItemReceipt, ...]

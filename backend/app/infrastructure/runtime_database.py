@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from pathlib import Path
+from typing import Any
 
 
 CURRENT_SCHEMA_GENERATION = 2
@@ -47,6 +49,85 @@ def connect_runtime_database(workspace_root: Path) -> sqlite3.Connection:
         connection.close()
         raise
     return connection
+
+
+class ThreadLocalRuntimeConnection:
+    """Connection-compatible proxy with one SQLite connection per thread."""
+
+    def __init__(
+        self, path: Path, initial_connection: sqlite3.Connection
+    ) -> None:
+        self._path = path
+        self._local = threading.local()
+        self._lock = threading.Lock()
+        self._closed = False
+        self._connections: dict[int, sqlite3.Connection] = {
+            id(initial_connection): initial_connection
+        }
+        self._local.connection = initial_connection
+
+    def execute(
+        self, sql: str, parameters: tuple[Any, ...] = ()
+    ) -> sqlite3.Cursor:
+        return self._current().execute(sql, parameters)
+
+    def executescript(self, sql_script: str) -> sqlite3.Cursor:
+        return self._current().executescript(sql_script)
+
+    def commit(self) -> None:
+        self._current().commit()
+
+    def rollback(self) -> None:
+        self._current().rollback()
+
+    @property
+    def in_transaction(self) -> bool:
+        return self._current().in_transaction
+
+    @property
+    def row_factory(self):
+        return self._current().row_factory
+
+    @row_factory.setter
+    def row_factory(self, value) -> None:
+        self._current().row_factory = value
+
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            connections = tuple(self._connections.values())
+            self._connections.clear()
+        for connection in connections:
+            connection.close()
+        self._local.connection = None
+
+    def __getattr__(self, name: str):
+        return getattr(self._current(), name)
+
+    def _current(self) -> sqlite3.Connection:
+        connection = getattr(self._local, "connection", None)
+        if connection is not None:
+            return connection
+        with self._lock:
+            if self._closed:
+                raise sqlite3.ProgrammingError("runtime database connection is closed")
+        connection = _open_connection(self._path)
+        with self._lock:
+            if self._closed:
+                connection.close()
+                raise sqlite3.ProgrammingError("runtime database connection is closed")
+            self._connections[id(connection)] = connection
+        self._local.connection = connection
+        return connection
+
+
+def connect_thread_local_runtime_database(
+    workspace_root: Path,
+) -> ThreadLocalRuntimeConnection:
+    initial = connect_runtime_database(workspace_root)
+    return ThreadLocalRuntimeConnection(runtime_database_path(workspace_root), initial)
 
 
 def _apply_runtime_migrations(connection: sqlite3.Connection) -> None:

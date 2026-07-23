@@ -63,8 +63,8 @@ def test_upload_material_creates_immutable_version_and_hidden_session(
 
     # Execution input carries IDs/locators only, no source content.
     execution = ProductRepository(connection).get_execution(result.execution_id)
-    assert execution.input["versionId"] == result.version.id
-    assert execution.input["materialId"] == result.material.id
+    assert execution.input["version_id"] == result.version.id
+    assert execution.input["material_id"] == result.material.id
     assert "hello resume" not in str(execution.input)
 
     # No user-visible upload/chat message is created.

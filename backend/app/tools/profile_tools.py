@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -56,7 +57,15 @@ PROFILE_CHAT_BUDGET = ProfileChatBudget(max_calls=6, max_identical_calls=2)
 
 
 class _StrictInput(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True,
+        arbitrary_types_allowed=True,
+    )
+    # Keep runtime in the validation schema so ToolNode can detect and inject it.
+    # It is an injected marker and is therefore excluded from the model-visible
+    # tool call schema.
+    runtime: ToolRuntime[AgentContext]
 
 
 class NoInput(_StrictInput):
@@ -569,6 +578,10 @@ class ProfileToolBudgetMiddleware(AgentMiddleware):
         self._executions: OrderedDict[
             tuple[str, str, str], tuple[int, dict[str, int]]
         ] = OrderedDict()
+        # LangGraph may dispatch several Tool calls from one model response in
+        # parallel. Profile tools share the workspace SQLite database for audit
+        # and product events, so keep each Execution's Tool lifecycle ordered.
+        self._execution_locks: dict[tuple[str, str, str], asyncio.Lock] = {}
 
     async def awrap_tool_call(self, request, handler):
         context: AgentContext = request.runtime.context
@@ -586,8 +599,14 @@ class ProfileToolBudgetMiddleware(AgentMiddleware):
         self._executions[key] = (total + 1, next_repeated)
         self._executions.move_to_end(key)
         while len(self._executions) > 1000:
-            self._executions.popitem(last=False)
-        return await handler(request)
+            stale_key, _ = self._executions.popitem(last=False)
+            stale_lock = self._execution_locks.get(stale_key)
+            if stale_lock is not None and not stale_lock.locked():
+                self._execution_locks.pop(stale_key, None)
+
+        lock = self._execution_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            return await handler(request)
 
     @staticmethod
     def _fingerprint(tool_name: str, args: object) -> str:

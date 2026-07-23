@@ -14,10 +14,13 @@ from app.agents.profile_contracts import (
     ProfileExtractionOutput,
 )
 from app.application.graph_factory import ProductionGraphFactory
+from app.application.session_service import ProductRepository
 from app.infrastructure.runtime_database import connect_runtime_database
 from app.knowledge.workspace_layout import initialize_knowledge_artifacts
 from app.profile.repository import ProfileRepository
+from app.profile.service import ProfileService
 from app.profile.storage import MaterialStorage
+from app.tools.profile_tools import PROFILE_TOOL_NAMES
 
 
 class StubRunnable:
@@ -121,6 +124,9 @@ def test_production_graph_factory_explicitly_wires_profile_graphs(tmp_path: Path
         def resolve_model(self, _role, **_kwargs):
             return GenericFakeChatModel(messages=iter([AIMessage(content="summary")]))
 
+    profile_repository = ProfileRepository(connection)
+    profile_storage = MaterialStorage(root)
+    product_repository = ProductRepository(connection)
     dependencies = {
         "model_bindings": {
             "profile_extraction": "m1",
@@ -132,15 +138,25 @@ def test_production_graph_factory_explicitly_wires_profile_graphs(tmp_path: Path
         "audit": object(),
         "observability": object(),
         "checkpointer": None,
-        "profile_repository": ProfileRepository(connection),
-        "profile_storage": MaterialStorage(root),
+        "profile_repository": profile_repository,
+        "profile_storage": profile_storage,
+        "product_repository": product_repository,
+        "profile_service": ProfileService(
+            workspace_id="w1",
+            root=root,
+            repository=profile_repository,
+            storage=profile_storage,
+            product_repository=product_repository,
+        ),
         "publish_event": None,
         "project_profile_card": None,
+        "project_profile_action_plan_card": None,
     }
     factory = ProductionGraphFactory(GraphAgentFactory())
     try:
         ingest = factory("profile.ingest", **dependencies)
         assess = factory("profile.assess", **dependencies)
+        manage = factory("profile.manage", **dependencies)
     finally:
         connection.close()
 
@@ -160,3 +176,21 @@ def test_production_graph_factory_explicitly_wires_profile_graphs(tmp_path: Path
         "validate_persist_and_project",
         "__end__",
     }
+    assert set(manage.get_graph().nodes) == {
+        "__start__",
+        "assemble_context",
+        "classify_intent",
+        "chat",
+        "assess",
+        "single_change",
+        "plan",
+        "clarify",
+        "__end__",
+    }
+    production_chat_specs = [
+        spec for spec in factory._agents.specs if spec.execution_name == "profile_chat"
+    ]
+    assert production_chat_specs
+    assert {tool.name for tool in production_chat_specs[-1].tools} == set(
+        PROFILE_TOOL_NAMES
+    )

@@ -48,6 +48,8 @@ from app.review.repository import ReviewRepository
 from app.review.timeline import SessionTimelineProjector
 from app.profile.repository import ProfileRepository
 from app.profile.storage import MaterialStorage
+from app.profile.service import ProfileService
+from app.tools.profile_tools import PROFILE_TOOL_NAMES, PROFILE_TOOL_SCOPES
 
 
 logger = logging.getLogger(__name__)
@@ -745,13 +747,23 @@ class AgentExecutionService:
             workspace_root=self._workspace_root,
             session_id=session.id,
             run_id=execution.id,
-            allowed_tools=frozenset(),
-            allowed_scopes=frozenset(),
+            allowed_tools=(
+                frozenset(PROFILE_TOOL_NAMES)
+                if session.kind == "profile.manage"
+                else frozenset()
+            ),
+            allowed_scopes=(
+                frozenset(PROFILE_TOOL_SCOPES.values())
+                if session.kind == "profile.manage"
+                else frozenset()
+            ),
             agent_role=(
                 "profile_extraction"
                 if session.kind == "profile.ingest"
                 else "profile_assessment"
                 if session.kind == "profile.assess"
+                else "profile_chat"
+                if session.kind == "profile.manage"
                 else None
             ),
         )
@@ -789,6 +801,29 @@ class AgentExecutionService:
                     "assessmentId": assessment_id,
                     "proposalIds": proposal_ids,
                     **summary,
+                },
+            )
+
+        async def project_profile_action_plan_card(plan) -> None:
+            existing = any(
+                message.message_kind == "action_plan_card"
+                and message.payload.get("resourceId") == plan.id
+                for message in self._repository.list_messages(session.id)
+            )
+            if existing:
+                return
+            self._repository.append_message(
+                session.id,
+                execution_id=execution.id,
+                role="assistant",
+                message_kind="action_plan_card",
+                content="画像修改方案已生成，请确认后执行。",
+                payload={
+                    "resourceId": plan.id,
+                    "version": plan.version,
+                    "planId": plan.id,
+                    "status": plan.status,
+                    "itemCount": len(plan.items),
                 },
             )
 
@@ -1403,7 +1438,32 @@ class AgentExecutionService:
                     profile_repository=self._profile_repository,
                     profile_storage=self._profile_storage,
                     project_profile_card=project_profile_card,
+                    product_repository=self._repository,
+                    profile_service=(
+                        ProfileService(
+                            workspace_id=self._workspace_id,
+                            root=self._workspace_root,
+                            repository=self._profile_repository,
+                            storage=self._profile_storage,
+                            product_repository=self._repository,
+                            publish_event=lambda session_id, run_id, event_type, payload: self._repository.append_event(
+                                session_id, run_id, event_type, payload
+                            ),
+                        )
+                        if session.kind == "profile.manage"
+                        and self._profile_repository is not None
+                        and self._profile_storage is not None
+                        else None
+                    ),
+                    project_profile_action_plan_card=project_profile_action_plan_card,
                 )
+                if session.kind == "profile.manage" and isinstance(
+                    graph_input, dict
+                ):
+                    graph_input = {
+                        **graph_input,
+                        "message": _user_content(graph_input),
+                    }
                 async for part in graph.astream(
                     graph_input,
                     config={"configurable": {"thread_id": session.id}},
@@ -1782,8 +1842,44 @@ class AgentExecutionService:
                 if batch_id:
                     await KnowledgeDraftService(
                         self._workspace_root, workspace_id=self._workspace_id
-                    ).cleanup_curation_staging(
-                        batch_id=batch_id, execution_id=execution.id
+                        ).cleanup_curation_staging(
+                            batch_id=batch_id, execution_id=execution.id
+                        )
+            if session.kind == "profile.ingest" and self._profile_repository is not None:
+                try:
+                    version_id = str(
+                        execution.input.get("versionId")
+                        or execution.input.get("version_id", "")
+                    )
+                    if version_id:
+                        version = self._profile_repository.get_material_version(
+                            version_id
+                        )
+                        if version.processing_status not in {
+                            "parse_failed",
+                            "extraction_failed",
+                            "ready",
+                        }:
+                            # Graph construction can fail before its first node
+                            # (for example when the extraction model is not
+                            # configured). Persist a retryable terminal material
+                            # state instead of leaving the UI polling an
+                            # execution that already failed.
+                            failure_status = (
+                                "parse_failed"
+                                if version.processing_status in {"uploaded", "parsing"}
+                                else "extraction_failed"
+                            )
+                            self._profile_repository.set_version_processing_status(
+                                version_id, failure_status
+                            )
+                except Exception:
+                    # Material status projection is best-effort. Never let a
+                    # secondary persistence error prevent the authoritative
+                    # Execution from reaching its failed terminal state.
+                    logger.exception(
+                        "failed to persist profile ingest failure",
+                        extra={"execution_id": execution.id},
                     )
             if session.kind == "review.round" and self._review_repository is not None:
                 try:

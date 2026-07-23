@@ -28,6 +28,11 @@ MessageKind = Literal[
     "review_answer",
     "evaluation_card",
     "command_receipt",
+    "claim_card",
+    "proposal_card",
+    "assessment_card",
+    "action_plan_card",
+    "receipt",
     "error",
 ]
 _MESSAGE_KINDS = frozenset(
@@ -40,6 +45,11 @@ _MESSAGE_KINDS = frozenset(
         "review_answer",
         "evaluation_card",
         "command_receipt",
+        "claim_card",
+        "proposal_card",
+        "assessment_card",
+        "action_plan_card",
+        "receipt",
         "error",
     }
 )
@@ -55,6 +65,13 @@ class SessionBusyError(RuntimeError):
 
 class InvalidExecutionTransitionError(RuntimeError):
     pass
+
+
+def _is_transient_sqlite_lock(error: BaseException) -> bool:
+    return isinstance(error, sqlite3.OperationalError) and any(
+        marker in str(error).lower()
+        for marker in ("database is locked", "database table is locked", "database is busy")
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -439,12 +456,16 @@ class ProductRepository:
         event_type: str,
         payload: dict[str, Any],
     ) -> EventRecord:
-        cursor = self.connection.execute(
-            "INSERT INTO agent_events(session_id, run_id, type, payload_json) "
-            "VALUES (?, ?, ?, ?)",
-            (session_id, execution_id, event_type, _json(payload)),
-        )
-        self.connection.commit()
+        try:
+            cursor = self.connection.execute(
+                "INSERT INTO agent_events(session_id, run_id, type, payload_json) "
+                "VALUES (?, ?, ?, ?)",
+                (session_id, execution_id, event_type, _json(payload)),
+            )
+            self.connection.commit()
+        except sqlite3.Error:
+            self.connection.rollback()
+            raise
         return self.get_event(int(cursor.lastrowid))
 
     def get_event(self, event_id: int) -> EventRecord:
@@ -551,6 +572,11 @@ class ProductEventStream:
             "agent.tool.started",
             "agent.tool.completed",
             "agent.tool.failed",
+            "profile.ingest.parsing",
+            "profile.ingest.extracting",
+            "profile.claims.proposed",
+            "profile.action_plan.created",
+            "profile.action_plan.item_completed",
         }
     )
 
@@ -576,9 +602,16 @@ class ProductEventStream:
         if event_type not in self._allowed:
             raise ValueError(f"unsupported product event: {event_type}")
         safe = _scrub(payload)
-        event = self._repository.append_event(
-            session_id, execution_id, event_type, safe
-        )
+        for attempt in range(3):
+            try:
+                event = self._repository.append_event(
+                    session_id, execution_id, event_type, safe
+                )
+                break
+            except sqlite3.OperationalError as error:
+                if not _is_transient_sqlite_lock(error) or attempt == 2:
+                    raise
+                await asyncio.sleep(0.05 * (attempt + 1))
         condition = self._conditions.setdefault(session_id, asyncio.Condition())
         async with condition:
             condition.notify_all()

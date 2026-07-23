@@ -43,6 +43,61 @@
 - Ingest Proposal 幂等键必须稳定绑定 MaterialVersion，而不是每次重试的新 Execution ID；否则“写入成功、Event 失败”的重试会生成重复候选。created_by_execution_id 是审计归因，不属于幂等请求正文。
 - Assessment 在保存前必须预校验所有 Evidence、material version、proposal target/base 和 snapshot version；只在完整校验后写 Assessment/Proposal，并由 typed-card projector 自身做 resource ID 去重。
 
+## 2026-07-22 R3 Task 8 API 边界
+
+- 非 Workspace 路径的材料/版本接口必须显式携带 `workspaceId`，并通过 MaterialVersion → Material 关联再次校验归属；稳定 ID 不能替代 Workspace 授权。
+- Profile API 只投影安全文件名、处理阶段、Evidence locator/有界 excerpt、Proposal 计数和隐藏 ingest Execution 摘要；`storage_ref`、`text_ref`、完整标准化文本与 system Session ID 不进入响应。
+- 上传、追加版本、重试和材料生命周期写入使用 `Idempotency-Key`；归档、恢复、主版本切换同时校验 Material aggregate `expectedVersion`。相同 key/相同请求返回原 Operation 标识，不同请求稳定冲突。
+- `profile.ingest` 重试路由必须运行在异步 handler 中；若由同步 FastAPI handler 的线程池调用 scheduler，`asyncio.create_task` 无法取得主事件循环。
+
+## 2026-07-22 R3 Task 9 页面与失败恢复边界
+
+- `/profile` 使用现有 App Shell 和设计 Token；材料总览、版本工作区与 Evidence 详情是领域资源页面，不模拟聊天。桌面保持版本列表/主区/操作栏，767px 以下改为单列卡片。
+- multipart 客户端必须让浏览器生成 boundary，不能复用 JSON `Content-Type`；`apiUpload` 同时保留 error envelope、AbortSignal 和幂等 Header。
+- 处理阶段固定投影为“上传、文本提取、脱敏、Claim 提取、等待审核”，红色只用于真实终态失败；失败文案必须说明原文件和已完成步骤已保存。
+- 浏览器暴露了自动测试未覆盖的跨层缺口：Graph 在首节点前因模型绑定缺失而失败时，Execution 已终止但 MaterialVersion 仍是 `uploaded/parsing`，前端会无限轮询。Execution failure handler 现在同步写入 retryable material 终态，页面显示配置模型后继续，无需重新上传。
+- 响应式验收以 `documentElement.scrollWidth === clientWidth` 为硬证据；390、768、1024、1440 四档均无页面级横向滚动，console 无 warning/error。
+
+## 2026-07-22 R3 Task 10 Claim 审核与安全删除边界
+
+- 删除预检不是临时确认框，而是 15 分钟有效、可跨进程恢复的领域快照；因此新增持久 `profile_deletion_plans`，并锁定材料 aggregate version、Evidence、ClaimVersion、待决 Proposal、发布选择和活动发布关系。任一关系变化都返回 409，要求重新预检。
+- Proposal 接受时必须再次校验 Evidence 仍属于当前 Workspace 且未 tombstone；仅在创建 Proposal 时校验无法覆盖“预检后并发接受/删除”的竞态。
+- 永久删除先处理依赖发布，再在单事务中更新 Claim 支持状态或删除未受选择保护的 Claim、清空并 tombstone Evidence、标记材料删除；数据库保留无敏感正文的审计骨架，私有 artifact 在提交后按引用计数清理。
+- 删除使用 item receipt 和幂等 operation receipt。artifact 清理失败时保存已完成阶段，重试只继续未完成清理，不重复 ClaimVersion、Evidence 或材料变更。
+- Active Knowledge 的正式撤销状态机属于 Task 16；Task 10 只定义显式 revoker 协作接口。存在活动发布但尚未注入 revoker 时安全返回可重试冲突，不伪装撤销成功。
+
+## 2026-07-22 R3 Task 11 Claim 审核交互边界
+
+- 审核工作台直接投影 Claim/Proposal/Evidence 领域资源：队列负责筛选和状态，主区负责当前值与建议值对比，Evidence 按 materialVersionId 打开对应版本，避免把旧版本证据误标成当前简历。
+- 批量选择在服务端回执前始终保留；部分冲突只移除 completed 项，冲突项继续留在选择中并刷新快照，避免用户重新勾选未受影响项目。
+- 冲突、待确认和删除风险都使用图标加明确文案，不依赖颜色。永久删除与归档分开表达，必须先完成依赖预检、逐 Claim 选择、活动发布撤销确认和“永久删除”文本确认。
+- 模态框打开后焦点进入关闭按钮，Tab 保持在框内，Escape 关闭并返回触发按钮；真实 1280/390px 页面无横向溢出，console 无 warning/error。
+
+## 2026-07-22 R3 Task 12 Assessment 与受约束 Plan-and-Execute
+
+- Assessment 只接受当前 confirmed profile snapshot，并递归校验结构化结果中的 Evidence ID；没有引用、引用已 tombstone 或快照过期都不能持久化，Assessment 文本不会自动成为 Claim。
+- Action Plan 只接受六个显式 operation，创建前一次性校验顺序、目标、before snapshot、expected Claim version 和 Evidence；dispatch 使用固定分支，没有反射、任意方法名、代码执行、自由路径或直接知识发布。
+- 每个 Item 独立记录 completed/failed/receipt，整体状态由逐项事实归并。重试只执行 failed/pending，completed 的 Receipt 保持不变；创建 Proposal 和 PublicationSelection 继续使用领域幂等键。
+- 派生简历用稳定 `action-plan:<plan>:<item>` creator 标识恢复中间状态；即使“版本已创建、文本未写完”失败，重试复用同一 derived_draft，不制造重复版本，确认执行完成后才切为当前版本。
+- `profile.action_plan.created/item_completed` Event 只含 plan/item ID、operation、ordinal、status 和计数；不包含 before/after、Evidence 正文或模型推理。
+
+## 2026-07-23 R3 Task 13 Profile Manage 上下文与恢复边界
+
+- `profile.manage` 的领域事实和对话记忆必须分开：每轮从 Repository 重建 confirmed snapshot 与稳定 focus ID；聊天历史由 `<session>:profile_chat` checkpoint 和既有 compaction 管理，不能再把产品消息全量拼进 Prompt，否则会与 Agent checkpoint 重复并放大 Token。
+- 外层 Graph 使用 session thread，Chat/Assessment 使用 session 派生 thread，Planner 使用 execution 派生 thread。Planner 不继承跨 Execution 隐藏状态，唯一可恢复产物是持久 Action Plan。
+- Runtime 的完整 Profile Tool 集只是服务端上限；Graph 再按问题是否涉及证据、版本或知识状态缩小 allowlist，并同时收紧 scope。模型无法通过输入扩大权限，Assessment 和 Planner 默认零 Tool。
+- 同一 session checkpoint 会跨轮合并 state，因此每轮 assemble 必须显式清空旧 response/assessment/plan ID，并把 `text` 规范化为当前 `message`；否则上一轮终态可能泄漏到下一轮响应。
+- Action Plan 必须按 execution ID 幂等，而不仅是 Item 执行幂等。这样进程在“计划已持久化、Execution 尚未完成”之间退出时，恢复不会生成第二份计划或重复 created Event。
+- 无法确定目标、空计划或单项请求被模型扩展为多项时，安全返回澄清文本且不持久化；领域版本/Evidence 校验失败仍由服务端拒绝，模型永远不获得写工具。
+
+## 2026-07-23 R3 Task 14 Profile Manage API 边界
+
+- Profile 会话不是第二套 Runtime：只新增限定 `kind='profile.manage'` 的创建/列表入口，Execution、Cancel、Event replay/SSE、消息和 usage 继续使用 `/api/agent` 统一协议。
+- `profile.ingest` 与 `profile.assess` 是 system Session，必须在通用用户创建入口显式拒绝；仅依赖“列表隐藏”不足以阻止用户伪造可执行 system graph。
+- Action Plan 卡片只保存资源 ID 和安全摘要，完整 diff、Evidence、Receipt、stale/capability 每次从领域资源 API 读取，避免把可变计划状态复制进消息 payload。
+- Plan GET 同时返回 base/current profile version；Confirm 再做服务端 freshness 校验。前端展示的 `canConfirm=false` 只是交互提示，真正并发保护仍是 expected plan version + profile snapshot 的 409。
+- 重启恢复的验收对象是领域 Plan/Item/Receipt，不是模型 checkpoint：应用在计划创建后重启，确认仍执行固定领域 dispatch；再次重启读取到相同 Receipt，证明没有依赖进程内对象。
+
 ## 2026-07-20 Agent State 与 Context Offload 边界
 
 - 自定义 `state_schema` 只用于单一 `create_agent` 循环中产生、被后续步骤消费、需随 checkpoint 恢复且不属于领域事实的可变工作状态；输入、输出、可信权限、业务状态和跨 Session 记忆分别归消息/response、`context_schema`、领域层和 Store。
@@ -456,3 +511,10 @@
 - `source / mixed / ai` 与 `supported / partial / unsupported` 是发布安全事实，不是 UI 标签；所有发布入口必须复用同一个 validator，mixed/ai 需要显式确认。
 - 旧 Batch 的隔离快照显示 80 个 discovery、22 个 enrichment 均保留；22 个调用输出对应 66 个唯一 degraded Seed，重复 reconciliation 不改变任何计数且不触发 Provider。
 - 真实失败页证明黄色复核与红色失败可以并存；颜色之外还必须依靠图标、文案和动作语义区分。390px 无横向溢出。
+
+## 2026-07-23：Profile API 假 404 与 SQLite 连接所有权
+
+- 目标材料版本始终存在且归属正确；同一 URL 在 404 前后均能返回 200，因此不是数据删除、Workspace 参数错误或前端缓存。
+- 同期日志出现游标行字段异常、`sqlite3.InterfaceError` 和偶发 404。根因是 FastAPI 同步路由在多个 worker thread 中并发复用同一个 `sqlite3.Connection`；`check_same_thread=False` 只关闭线程检查，不提供并发连接所有权。
+- Runtime 现在保留兼容现有 Repository 接口的连接代理，每个 worker thread 延迟创建并独占真实 SQLite connection；迁移只在初始连接执行，各连接继续启用 WAL、foreign keys 和 busy timeout。
+- 线程隔离 RED/GREEN 测试证明 worker 不再看到创建线程的 TEMP 表；Profile API、画像 Tool 与时间线相关回归 `49 passed`。

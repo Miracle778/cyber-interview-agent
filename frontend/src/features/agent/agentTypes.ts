@@ -46,6 +46,8 @@ export interface AgentMessage {
   executionId: string | null;
   role: "user" | "assistant" | "system" | "tool";
   content: string;
+  messageKind?: string;
+  payload?: Record<string, unknown>;
   createdAt: string;
 }
 

@@ -1,3 +1,4 @@
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -75,4 +76,38 @@ def test_product_messages_reject_unknown_kind_and_non_object_payload(
             message_kind="stage",
             payload=[],  # type: ignore[arg-type]
         )
+    connection.close()
+
+
+@pytest.mark.asyncio
+async def test_product_event_retries_a_transient_sqlite_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+    repository = ProductRepository(connection)
+    session = repository.create_session(
+        workspace_id="w1", kind="profile.chat", title="Profile"
+    )
+    events = ProductEventStream(repository, workspace_root=tmp_path)
+    original_append = repository.append_event
+    attempts = 0
+
+    def append_with_transient_lock(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return original_append(*args, **kwargs)
+
+    monkeypatch.setattr(repository, "append_event", append_with_transient_lock)
+
+    event = await events.publish(
+        session.id,
+        None,
+        "execution.started",
+        {"executionId": "r1"},
+    )
+
+    assert event.type == "execution.started"
+    assert attempts == 2
     connection.close()

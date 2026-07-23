@@ -291,8 +291,8 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
 - Modify: `backend/app/main.py`
 - Test: `backend/tests/test_profile_material_api.py`
 
-- [ ] Write failing API tests for the exact R3 material/version endpoints, `202 Accepted` upload payload, multipart validation, background Execution resource, version detail, Evidence pagination, archive/restore/primary actions, retry, idempotency/version headers, workspace isolation, and stable error envelopes.
-- [ ] Implement:
+- [x] Write failing API tests for the exact R3 material/version endpoints, `202 Accepted` upload payload, multipart validation, background Execution resource, version detail, Evidence pagination, archive/restore/primary actions, retry, idempotency/version headers, workspace isolation, and stable error envelopes.
+- [x] Implement:
 
   ```text
   POST /api/workspaces/{workspaceId}/profile/materials
@@ -306,10 +306,10 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
   POST /api/profile/materials/{materialId}/primary
   ```
 
-- [ ] Return camelCase resources with parse/extraction stages, safe filenames/metadata, Evidence locators/excerpts, proposal counts, hidden ingest Execution status, and retry capability. Never return `source_path`, `text_path`, full normalized text, or system Session IDs as navigable Agent sessions.
-- [ ] Map parser/storage/domain failures to 400/404/409/413/422 with `code`, user-facing Chinese `message`, and retryability; unexpected failures remain redacted 500 responses.
-- [ ] Run `cd backend && uv run pytest -q tests/test_profile_material_api.py`. Expected: all material/version/Evidence API contract tests pass.
-- [ ] Reviewer gate: snapshot representative JSON and confirm it matches the frontend type map and privacy constraints.
+- [x] Return camelCase resources with parse/extraction stages, safe filenames/metadata, Evidence locators/excerpts, proposal counts, hidden ingest Execution status, and retry capability. Never return `source_path`, `text_path`, full normalized text, or system Session IDs as navigable Agent sessions.
+- [x] Map parser/storage/domain failures to 400/404/409/413/422 with `code`, user-facing Chinese `message`, and retryability; unexpected failures remain redacted 500 responses.
+- [x] Run `cd backend && uv run pytest -q tests/test_profile_material_api.py`. Expected: all material/version/Evidence API contract tests pass.
+- [x] Reviewer gate: snapshot representative JSON and confirm it matches the frontend type map and privacy constraints.
 
 ## Task 9: Build the Material Version and Evidence Frontend
 
@@ -331,15 +331,15 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
 - Test: `frontend/src/features/profile/EvidenceDetail.test.tsx`
 - Test: `frontend/src/shared/api/client.test.ts`
 
-- [ ] Write failing component tests for empty/loading/error states, drag/drop and picker upload, size/type validation, deterministic ingest stages, retry, version selection, archive/restore/primary actions, Evidence locator display, keyboard navigation, and 390 px layout behavior.
-- [ ] Add `apiUpload<T>(path, formData)` without setting a JSON `Content-Type`; preserve the existing error-envelope behavior and abort support.
-- [ ] Add `/profile` as a top-level workspace route and `UserRound` navigation item. Keep `/review` as the default route for R3 unless a later product decision changes onboarding.
-- [ ] Implement the overview, versions table, and Evidence detail according to the committed reference images. Use current `--color-*`, spacing, radius, typography, focus, and motion tokens only.
-- [ ] Show stage text `上传 -> 文本提取 -> 脱敏 -> Claim 提取 -> 等待审核`, with failed-stage reason and retry action. Do not present upload as a chat conversation.
-- [ ] Keep desktop information density while collapsing tables into labeled cards below 768 px; keep primary actions reachable and touch targets at least 44 px.
-- [ ] Run `cd frontend && npm test -- --run src/shared/api/client.test.ts src/features/profile/ProfilePage.test.tsx src/features/profile/ResumeVersions.test.tsx src/features/profile/EvidenceDetail.test.tsx`. Expected: all focused UI/API tests pass.
-- [ ] Run `cd frontend && npm run typecheck`. Expected: zero TypeScript errors.
-- [ ] Reviewer gate: compare 390/768/1024/1440 screenshots with the three committed material/evidence references; record deltas in the R3 verification document.
+- [x] Write failing component tests for empty/loading/error states, drag/drop and picker upload, size/type validation, deterministic ingest stages, retry, version selection, archive/restore/primary actions, Evidence locator display, keyboard navigation, and 390 px layout behavior.
+- [x] Add `apiUpload<T>(path, formData)` without setting a JSON `Content-Type`; preserve the existing error-envelope behavior and abort support.
+- [x] Add `/profile` as a top-level workspace route and `UserRound` navigation item. Keep `/review` as the default route for R3 unless a later product decision changes onboarding.
+- [x] Implement the overview, versions table, and Evidence detail according to the committed reference images. Use current `--color-*`, spacing, radius, typography, focus, and motion tokens only.
+- [x] Show stage text `上传 -> 文本提取 -> 脱敏 -> Claim 提取 -> 等待审核`, with failed-stage reason and retry action. Do not present upload as a chat conversation.
+- [x] Keep desktop information density while collapsing tables into labeled cards below 768 px; keep primary actions reachable and touch targets at least 44 px.
+- [x] Run `cd frontend && ./node_modules/.bin/vitest run src/shared/api/client.test.ts src/features/profile/ProfilePage.test.tsx src/features/profile/ResumeVersions.test.tsx src/features/profile/EvidenceDetail.test.tsx`. Expected: all focused UI/API tests pass.
+- [x] Run `cd frontend && ./node_modules/.bin/tsc --noEmit`. Expected: zero TypeScript errors.
+- [x] Reviewer gate: compare 390/768/1024/1440 screenshots with the three committed material/evidence references; record deltas in the R3 verification document.
 
 ## Task 10: Implement Claim Proposal Review and Deletion Impact Analysis
 
@@ -352,8 +352,8 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
 - Test: `backend/tests/test_profile_claim_service.py`
 - Test: `backend/tests/test_profile_claim_api.py`
 
-- [ ] Write failing tests for claim/proposal list/detail/version history, accept/edit-and-accept/reject idempotency, partial batch receipts, evidence traceability, conflicting proposals, stale decisions, delete-preview dependency counts, unsupported retention, and selection-protected permanent deletion.
-- [ ] Implement Claim read APIs and proposal decision APIs:
+- [x] Write failing tests for claim/proposal list/detail/version history, accept/edit-and-accept/reject idempotency, partial batch receipts, evidence traceability, conflicting proposals, stale decisions, delete-preview dependency counts, unsupported retention, and selection-protected permanent deletion.
+- [x] Implement Claim read APIs and proposal decision APIs:
 
   ```text
   GET  /api/workspaces/{workspaceId}/profile/claims
@@ -364,10 +364,10 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
   POST /api/profile/claim-proposals/batch-decide
   ```
 
-- [ ] Add deletion APIs from the spec. `deletion-preview` returns `deletionPlanId`, material version, expiry, affected Evidence/Claims, Claims that would become unsupported, publication selections, and active knowledge publication. `permanent-delete` requires the unexpired plan, exact per-Claim choices, Active Knowledge revocation choice, idempotency key, and expected material version.
-- [ ] For permanent deletion, let the user choose per affected confirmed Claim: delete it, retain it as `unsupported`, or cancel the deletion. Require explicit Active Knowledge revocation or cancel. Revoke dependent publication first, tombstone Evidence without recoverable sensitive text, delete unreferenced private artifacts last, and return item-level receipts. If a stage fails, preserve sufficient state for safe retry and do not claim completion.
-- [ ] Run `cd backend && uv run pytest -q tests/test_profile_claim_service.py tests/test_profile_claim_api.py`. Expected: claim review and deletion-safety tests pass.
-- [ ] Reviewer gate: simulate concurrent acceptance and deletion; verify stale operations return 409 and no accepted Claim references missing Evidence.
+- [x] Add deletion APIs from the spec. `deletion-preview` returns `deletionPlanId`, material version, expiry, affected Evidence/Claims, Claims that would become unsupported, publication selections, and active knowledge publication. `permanent-delete` requires the unexpired plan, exact per-Claim choices, Active Knowledge revocation choice, idempotency key, and expected material version.
+- [x] For permanent deletion, let the user choose per affected confirmed Claim: delete it, retain it as `unsupported`, or cancel the deletion. Require explicit Active Knowledge revocation or cancel. Revoke dependent publication first, tombstone Evidence without recoverable sensitive text, delete unreferenced private artifacts last, and return item-level receipts. If a stage fails, preserve sufficient state for safe retry and do not claim completion.
+- [x] Run `cd backend && uv run pytest -q tests/test_profile_claim_service.py tests/test_profile_claim_api.py`. Expected: claim review and deletion-safety tests pass.
+- [x] Reviewer gate: simulate concurrent acceptance and deletion; verify stale operations return 409 and no accepted Claim references missing Evidence.
 
 ## Task 11: Build the Claim Review Frontend
 
@@ -382,12 +382,12 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
 - Test: `frontend/src/features/profile/ClaimReview.test.tsx`
 - Test: `frontend/src/features/profile/DeletionImpactDialog.test.tsx`
 
-- [ ] Write failing tests for filters, conflict badges, side-by-side diff, Evidence navigation, single and batch decisions, partial selection, stale 409 refresh, deletion preview, typed confirmation, focus trap/return, and non-color-only status cues.
-- [ ] Implement the Claim review workspace from the committed reference: category/status filters, proposal queue, current-vs-proposed diff, Evidence citations, rationale, and explicit accept/reject controls.
-- [ ] Keep batch decisions visible as a pending selection until the API succeeds; on conflict refresh the affected Claim and preserve unaffected selections.
-- [ ] Implement a destructive-action dialog that displays dependency counts and receipts, requires typed confirmation, and clearly distinguishes archive from permanent deletion.
-- [ ] Run `cd frontend && npm test -- --run src/features/profile/ClaimReview.test.tsx src/features/profile/DeletionImpactDialog.test.tsx`. Expected: all focused interaction/accessibility tests pass.
-- [ ] Reviewer gate: keyboard-only complete the accept/reject and delete-preview flows; compare the Claim screen with `claim-review-reference.png`.
+- [x] Write failing tests for filters, conflict badges, side-by-side diff, Evidence navigation, single and batch decisions, partial selection, stale 409 refresh, deletion preview, typed confirmation, focus trap/return, and non-color-only status cues.
+- [x] Implement the Claim review workspace from the committed reference: category/status filters, proposal queue, current-vs-proposed diff, Evidence citations, rationale, and explicit accept/reject controls.
+- [x] Keep batch decisions visible as a pending selection until the API succeeds; on conflict refresh the affected Claim and preserve unaffected selections.
+- [x] Implement a destructive-action dialog that displays dependency counts and receipts, requires typed confirmation, and clearly distinguishes archive from permanent deletion.
+- [x] Run `cd frontend && npm test -- --run src/features/profile/ClaimReview.test.tsx src/features/profile/DeletionImpactDialog.test.tsx`. Expected: all focused interaction/accessibility tests pass.
+- [x] Reviewer gate: keyboard-only complete the accept/reject and delete-preview flows; compare the Claim screen with `claim-review-reference.png`.
 
 ## Task 12: Implement Assessment, Constrained Planning, and Action Receipts
 
@@ -399,9 +399,9 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
 - Test: `backend/tests/test_profile_assessment.py`
 - Test: `backend/tests/test_profile_action_plans.py`
 
-- [ ] Write failing tests for assessment on confirmed snapshots only, evidence citation validation, deterministic assessment persistence, simple single-change commands, multi-item plan creation, confirm/cancel/retry, stale base profile version, per-item optimistic locking, partial failure, and idempotent receipts.
-- [ ] Implement assessment persistence with strengths, gaps, risks, evidence-backed recommendations, and proposal candidates. Assessment text never becomes a confirmed Claim automatically.
-- [ ] Define the constrained Plan-and-Execute operations accepted by deterministic services:
+- [x] Write failing tests for assessment on confirmed snapshots only, evidence citation validation, deterministic assessment persistence, simple single-change commands, multi-item plan creation, confirm/cancel/retry, stale base profile version, per-item optimistic locking, partial failure, and idempotent receipts.
+- [x] Implement assessment persistence with strengths, gaps, risks, evidence-backed recommendations, and proposal candidates. Assessment text never becomes a confirmed Claim automatically.
+- [x] Define the constrained Plan-and-Execute operations accepted by deterministic services:
 
   ```text
   propose_claim_create
@@ -412,12 +412,12 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
   request_reassessment
   ```
 
-- [ ] Validate an Agent-produced plan into immutable ordered items with before/after diff and expected Claim versions. Unsupported verbs or missing Evidence invalidate the whole plan before confirmation.
-- [ ] Implement resume polishing as `propose_material_derived_version`: create an immutable `source_type='derived_draft'` version linked by `derived_from_version_id`; it remains a draft until explicit confirmation makes it the material's current version.
-- [ ] Apply confirmed items sequentially through `ProfileService`; persist `completed`, `failed`, or `skipped` per item plus a receipt. Retry only failed/unapplied items after revalidation; never silently replay completed mutations.
-- [ ] Publish safe Events `profile.action_plan.created` and `profile.action_plan.item_completed` with IDs, operation, ordinal, and status only.
-- [ ] Run `cd backend && uv run pytest -q tests/test_profile_assessment.py tests/test_profile_action_plans.py`. Expected: assessment and constrained plan state-machine tests pass.
-- [ ] Reviewer gate: inspect every operation dispatch and confirm there is no generic method/tool invocation, arbitrary Python/code execution, free-form path, or publish mutation.
+- [x] Validate an Agent-produced plan into immutable ordered items with before/after diff and expected Claim versions. Unsupported verbs or missing Evidence invalidate the whole plan before confirmation.
+- [x] Implement resume polishing as `propose_material_derived_version`: create an immutable `source_type='derived_draft'` version linked by `derived_from_version_id`; it remains a draft until explicit confirmation makes it the material's current version.
+- [x] Apply confirmed items sequentially through `ProfileService`; persist `completed`, `failed`, or `skipped` per item plus a receipt. Retry only failed/unapplied items after revalidation; never silently replay completed mutations.
+- [x] Publish safe Events `profile.action_plan.created` and `profile.action_plan.item_completed` with IDs, operation, ordinal, and status only.
+- [x] Run `cd backend && uv run pytest -q tests/test_profile_assessment.py tests/test_profile_action_plans.py`. Expected: assessment and constrained plan state-machine tests pass.
+- [x] Reviewer gate: inspect every operation dispatch and confirm there is no generic method/tool invocation, arbitrary Python/code execution, free-form path, or publish mutation.
 
 ## Task 13: Build `profile.manage` and the Bounded Chat Tool Loop
 
@@ -433,8 +433,8 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
 - Test: `backend/tests/test_profile_manage_graph.py`
 - Test: `backend/tests/test_profile_chat_tool_loop.py`
 
-- [ ] Write failing graph tests for intent classification, simple Q&A, assessment, single proposal change, multi-item plan, clarification, cancellation, restart recovery, thread IDs, Tool allowlists, Tool budgets, and invalid Agent output.
-- [ ] Build `profile.manage` with deterministic routing around explicit Agent nodes and the standalone assessment subgraph:
+- [x] Write failing graph tests for intent classification, simple Q&A, assessment, single proposal change, multi-item plan, clarification, cancellation, restart recovery, thread IDs, Tool allowlists, Tool budgets, and invalid Agent output.
+- [x] Build `profile.manage` with deterministic routing around explicit Agent nodes and the standalone assessment subgraph:
 
   ```text
   assemble confirmed snapshot and focus
@@ -447,12 +447,12 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
     -> project safe response/receipt
   ```
 
-- [ ] Use thread IDs `<session_id>` for the outer graph, `<session_id>:profile_chat`, `<session_id>:profile_assessment`, and `<execution_id>:profile_action_planner`. Planner state does not survive across Executions except as the persisted domain Action Plan.
-- [ ] Assemble current Material/Claim/Proposal focus from `profile_agent_context`, not from old chat messages. Use existing context compaction for conversation history; Tool results and domain snapshots are rehydratable context and must not be summarized into domain truth.
-- [ ] Allocate Tools by classified intent and intersect them with `AgentContext.allowed_tools/allowed_scopes`. Denied or exhausted calls produce safe assistant guidance and a terminal Execution state.
-- [ ] Project assistant text, assessment cards, action-plan cards, diffs, receipts, and safe Tool stages using typed Message/Event kinds; never project raw structured prompts or ToolMessage content.
-- [ ] Run `cd backend && uv run pytest -q tests/test_profile_manage_graph.py tests/test_profile_chat_tool_loop.py tests/test_agent_context_assembly.py`. Expected: all routing, budget, context, and recovery tests pass.
-- [ ] Reviewer gate: inspect model inputs for one long session and prove current profile facts come from fresh domain projection while conversational history follows existing compaction thresholds.
+- [x] Use thread IDs `<session_id>` for the outer graph, `<session_id>:profile_chat`, `<session_id>:profile_assessment`, and `<execution_id>:profile_action_planner`. Planner state does not survive across Executions except as the persisted domain Action Plan.
+- [x] Assemble current Material/Claim/Proposal focus from `profile_agent_context`, not from old chat messages. Use existing context compaction for conversation history; Tool results and domain snapshots are rehydratable context and must not be summarized into domain truth.
+- [x] Allocate Tools by classified intent and intersect them with `AgentContext.allowed_tools/allowed_scopes`. Denied or exhausted calls produce safe assistant guidance and a terminal Execution state.
+- [x] Project assistant text, assessment cards, action-plan cards, diffs, receipts, and safe Tool stages using typed Message/Event kinds; never project raw structured prompts or ToolMessage content.
+- [x] Run the focused Graph/Tool/context suite (`test_context_assembly.py` is the repository's actual context test filename). Routing, budget, context, cancellation, thread and recovery coverage passes.
+- [x] Reviewer gate: inspect model inputs for one long session and prove current profile facts come from fresh domain projection while conversational history follows existing compaction thresholds.
 
 ## Task 14: Expose Profile Manage, Assessment, and Action Plan APIs
 
@@ -464,9 +464,9 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
 - Test: `backend/tests/test_profile_manage_api.py`
 - Test: `backend/tests/test_profile_action_plan_api.py`
 
-- [ ] Write failing API tests for creating/listing profile sessions, starting/cancelling Executions, SSE replay/reconnect, assessment resources, plan detail, confirm/cancel/retry, stale conflicts, and restart recovery.
-- [ ] Reuse generic Agent Session/Execution/Event endpoints for user-visible `profile.manage` sessions, but add profile-specific creation validation and resource aggregation so callers cannot create `profile.ingest` sessions.
-- [ ] Implement Action Plan endpoints:
+- [x] Write failing API tests for creating/listing profile sessions, starting/cancelling Executions, SSE replay/reconnect, assessment resources, plan detail, confirm/cancel/retry, stale conflicts, and restart recovery.
+- [x] Reuse generic Agent Session/Execution/Event endpoints for user-visible `profile.manage` sessions, but add profile-specific creation validation and resource aggregation so callers cannot create `profile.ingest` sessions.
+- [x] Implement Action Plan endpoints:
 
   ```text
   GET  /api/profile/action-plans/{planId}
@@ -475,10 +475,10 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
   POST /api/profile/action-plans/{planId}/retry
   ```
 
-- [ ] Return typed card payloads with base/current profile versions, item diffs, Evidence links, per-item status, receipts, and retryability. Use 409 for stale snapshot/version conflicts.
-- [ ] Ensure SSE `Last-Event-ID` replay includes profile Tool/action events in order and cancellation reaches a terminal Event without orphaning an active Execution.
-- [ ] Run `cd backend && uv run pytest -q tests/test_profile_manage_api.py tests/test_profile_action_plan_api.py tests/test_agent_routes_v2.py`. Expected: profile manage API, SSE, cancel, and recovery tests pass.
-- [ ] Reviewer gate: restart the application between plan creation and confirmation, then confirm/retry through the API and verify identical persisted receipts.
+- [x] Return typed card payloads with base/current profile versions, item diffs, Evidence links, per-item status, receipts, and retryability. Use 409 for stale snapshot/version conflicts.
+- [x] Ensure SSE `Last-Event-ID` replay includes profile Tool/action events in order and cancellation reaches a terminal Event without orphaning an active Execution.
+- [x] Run the focused profile manage/action-plan API and shared Agent route suite. Profile session, SSE/cancel, stale and recovery coverage passes.
+- [x] Reviewer gate: restart the application between plan creation and confirmation, then confirm/retry through the API and verify identical persisted receipts.
 
 ## Task 15: Build the Profile Agent Workspace Frontend
 
@@ -498,12 +498,12 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
 - Test: `frontend/src/features/profile/ProfileToolStage.test.tsx`
 
 - [ ] Write failing tests for session list/create, context focus, streaming reply, reconnect/replay, safe Tool stages, assessment card, Action Plan diff, confirm/cancel/retry, stale conflict refresh, stop control, reduced motion, and mobile composer behavior.
-- [ ] Implement the committed Agent workspace reference with a compact session rail, current profile focus, conversation timeline, evidence-linked cards, and persistent composer/stop control.
-- [ ] Render Tool activity from safe lifecycle Events as stages (`正在读取已确认画像`, `已比较两个版本`) and expose IDs/status/duration only in detail. Never display raw Tool JSON.
-- [ ] Render Action Plans as user-confirmable ordered diffs with base-version warning, item status, receipt, and retry controls. Do not imply that an unconfirmed plan has changed the profile.
-- [ ] Reuse the existing SSE reconnect cursor and cancellation behavior; extend rather than fork `useAgentEvents`.
-- [ ] Run `cd frontend && npm test -- --run src/features/profile/ProfileAgentWorkspace.test.tsx src/features/profile/ProfileActionPlanCard.test.tsx src/features/profile/ProfileToolStage.test.tsx`. Expected: focused Agent workspace tests pass.
-- [ ] Run `cd frontend && npm run typecheck`. Expected: zero TypeScript errors.
+- [x] Implement the committed Agent workspace reference with a compact session rail, current profile focus, conversation timeline, evidence-linked cards, and persistent composer/stop control.
+- [x] Render Tool activity from safe lifecycle Events as stages (`正在读取已确认画像`, `已比较两个版本`) and expose IDs/status/duration only in detail. Never display raw Tool JSON.
+- [x] Render Action Plans as user-confirmable ordered diffs with base-version warning, item status, receipt, and retry controls. Do not imply that an unconfirmed plan has changed the profile.
+- [x] Reuse the existing SSE reconnect cursor and cancellation behavior; extend rather than fork `useAgentEvents`.
+- [x] Run `cd frontend && npm test -- --run src/features/profile/ProfileAgentWorkspace.test.tsx src/features/profile/ProfileActionPlanCard.test.tsx src/features/profile/ProfileToolStage.test.tsx`. Expected: focused Agent workspace tests pass.
+- [x] Run the repository's available equivalent `npx tsc --noEmit` (there is no `typecheck` npm script). Zero TypeScript errors.
 - [ ] Reviewer gate: compare desktop/mobile screenshots with `profile-agent-reference.png`; verify keyboard focus after stream completion, cancel, dialog close, and retry.
 
 ## Task 16: Complete Selective Knowledge Publication and Revocation

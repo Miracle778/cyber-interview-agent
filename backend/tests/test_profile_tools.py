@@ -5,6 +5,9 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from langchain_core.messages import AIMessage, ToolMessage
+from langgraph.graph import END, START, MessagesState, StateGraph
+from langgraph.prebuilt import ToolNode
 
 from app.agents.context import AgentContext
 from app.infrastructure.runtime_database import connect_runtime_database
@@ -330,3 +333,65 @@ def test_tool_schemas_are_strict_and_business_only(
         tools["read_personal_evidence"].args_schema.model_validate(
             {"evidence_id": "ev", "workspace_id": "foreign"}
         )
+
+
+@pytest.mark.asyncio
+async def test_all_profile_tools_receive_runtime_through_real_tool_node(
+    repository: ProfileRepository, context: AgentContext, tmp_path: Path
+) -> None:
+    material, version, evidence = _seed_resume(repository)
+    accepted = _confirm_claim(repository, version.id, evidence.id)
+    tools = create_profile_tools(
+        repository=repository,
+        storage=MaterialStorage(tmp_path / "ws"),
+    )
+    graph = StateGraph(MessagesState, context_schema=AgentContext)
+    graph.add_node("tools", ToolNode(tools))
+    graph.add_edge(START, "tools")
+    graph.add_edge("tools", END)
+    calls = [
+        {"name": "list_personal_materials", "args": {}, "id": "call-1"},
+        {
+            "name": "search_personal_materials",
+            "args": {"query": "team"},
+            "id": "call-2",
+        },
+        {
+            "name": "read_personal_evidence",
+            "args": {"evidence_id": evidence.id},
+            "id": "call-3",
+        },
+        {"name": "get_profile_claims", "args": {}, "id": "call-4"},
+        {
+            "name": "get_profile_claim_evidence",
+            "args": {"claim_id": accepted.claim_id},
+            "id": "call-5",
+        },
+        {
+            "name": "compare_material_versions",
+            "args": {
+                "version_a_id": version.id,
+                "version_b_id": version.id,
+            },
+            "id": "call-6",
+        },
+        {
+            "name": "search_active_knowledge",
+            "args": {"query": "team"},
+            "id": "call-7",
+        },
+        {"name": "get_profile_publication_status", "args": {}, "id": "call-8"},
+    ]
+
+    result = await graph.compile().ainvoke(
+        {"messages": [AIMessage(content="", tool_calls=calls)]},
+        context=replace(
+            context,
+            allowed_scopes=frozenset({"profile.materials", "knowledge.active"}),
+        ),
+    )
+
+    messages = [item for item in result["messages"] if isinstance(item, ToolMessage)]
+    assert len(messages) == len(PROFILE_TOOL_NAMES)
+    assert {item.name for item in messages} == set(PROFILE_TOOL_NAMES)
+    assert all("missing 1 required positional argument" not in item.content for item in messages)

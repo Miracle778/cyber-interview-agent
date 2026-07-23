@@ -3,12 +3,15 @@ import logging
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.api.routes_agent import router as agent_router
 from app.api.routes_drafts import router as drafts_router
 from app.api.routes_hitl import router as hitl_router
 from app.api.routes_knowledge import router as knowledge_router
+from app.api.routes_profile import router as profile_router
 from app.api.routes_review import router as review_router
 from app.api.routes_settings import router as settings_router
 from app.agents.agent_factory import AgentFactory
@@ -51,6 +54,33 @@ from app.review.errors import (
     InsufficientQuestionsError,
     ReviewConflictError,
     ReviewRoundNotFoundError,
+)
+from app.profile.errors import (
+    ProfileActionPlanInvalid,
+    ProfileActionPlanNotFound,
+    ProfileAssessmentNotFound,
+    ProfileClaimNotFound,
+    ProfileClaimSelectedForPublication,
+    ProfileClaimVersionConflict,
+    ProfileDeletionPlanConflict,
+    ProfileDeletionPlanNotFound,
+    ProfileProposalNotFound,
+    ProfilePublicationRevocationUnavailable,
+    ProfileDomainError,
+    ProfileEncryptedDocument,
+    ProfileFileNameInvalid,
+    ProfileIdempotencyConflict,
+    ProfileIngestBusy,
+    ProfileMaterialNotFound,
+    ProfileMaterialRoleConflict,
+    ProfileMaterialVersionConflict,
+    ProfileMaterialVersionNotFound,
+    ProfileNoExtractableText,
+    ProfileParseError,
+    ProfileStorageError,
+    ProfileSnapshotChanged,
+    ProfileUnsupportedFileType,
+    ProfileUploadTooLarge,
 )
 from app.services.secrets import (
     EnvironmentSecretStore,
@@ -124,11 +154,146 @@ app.include_router(settings_router)
 app.include_router(knowledge_router)
 app.include_router(drafts_router)
 app.include_router(review_router)
+app.include_router(profile_router)
 
 
 def _error(status_code: int, code: str, message: str) -> JSONResponse:
     content = ErrorResponse(code=code, message=message).model_dump()
     return JSONResponse(status_code=status_code, content=content)
+
+
+def _profile_error(
+    status_code: int, code: str, message: str, *, retryable: bool
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={"code": code, "message": message, "retryable": retryable},
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def invalid_request(
+    request: Request, error: RequestValidationError
+) -> JSONResponse:
+    path = request.url.path
+    is_profile_path = path.startswith("/api/profile/") or (
+        path.startswith("/api/workspaces/") and "/profile/" in path
+    )
+    if not is_profile_path:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": jsonable_encoder(error.errors())},
+        )
+    return _profile_error(
+        422,
+        "invalid_request",
+        "请求参数不完整或格式错误",
+        retryable=False,
+    )
+
+
+@app.exception_handler(ProfileDomainError)
+async def profile_domain_error(
+    _request: Request, error: ProfileDomainError
+) -> JSONResponse:
+    if isinstance(error, ProfileMaterialNotFound):
+        return _profile_error(
+            404, error.code, "个人材料不存在或无权访问", retryable=False
+        )
+    if isinstance(error, ProfileMaterialVersionNotFound):
+        return _profile_error(
+            404, error.code, "材料版本不存在或无权访问", retryable=False
+        )
+    if isinstance(
+        error,
+        (
+            ProfileClaimNotFound,
+            ProfileProposalNotFound,
+            ProfileDeletionPlanNotFound,
+            ProfileActionPlanNotFound,
+            ProfileAssessmentNotFound,
+        ),
+    ):
+        return _profile_error(
+            404, error.code, "画像记录不存在或无权访问", retryable=False
+        )
+    if isinstance(error, ProfileUploadTooLarge):
+        return _profile_error(
+            413, error.code, "上传文件超过 10 MiB 限制", retryable=False
+        )
+    if isinstance(error, ProfileUnsupportedFileType):
+        return _profile_error(
+            422,
+            error.code,
+            "仅支持 PDF、DOCX、Markdown 和 UTF-8 文本",
+            retryable=False,
+        )
+    if isinstance(error, ProfileFileNameInvalid):
+        return _profile_error(
+            422, error.code, "文件名不符合上传要求", retryable=False
+        )
+    if isinstance(error, (ProfileEncryptedDocument, ProfileNoExtractableText)):
+        return _profile_error(
+            422, error.code, "材料无法提取可用文本", retryable=False
+        )
+    if isinstance(error, ProfileParseError):
+        return _profile_error(
+            422, error.code, "材料解析失败，请检查文件后重试", retryable=True
+        )
+    if isinstance(error, ProfileStorageError):
+        return _profile_error(
+            500, error.code, "材料暂时无法保存，请稍后重试", retryable=True
+        )
+    if isinstance(
+        error,
+        (
+            ProfileMaterialRoleConflict,
+            ProfileMaterialVersionConflict,
+            ProfileClaimVersionConflict,
+            ProfileDeletionPlanConflict,
+            ProfileIdempotencyConflict,
+            ProfileIngestBusy,
+            ProfileSnapshotChanged,
+        ),
+    ):
+        messages = {
+            "profile_material_role_conflict": (
+                "同一用途已有活动材料，请先归档或更新现有材料"
+            ),
+            "profile_material_version_conflict": "材料版本已变化，请刷新后重试",
+            "profile_claim_version_conflict": "画像状态已变化，请刷新后重试",
+            "profile_claim_selected_for_publication": "该画像仍在发布选择中，请先调整发布范围",
+            "profile_deletion_plan_conflict": "删除影响已变化，请重新预检",
+            "profile_deletion_plan_expired": "删除预检已过期，请重新预检",
+            "profile_publication_revocation_required": "必须先确认撤销受影响的已发布知识",
+            "profile_idempotency_conflict": "重复请求的内容不一致",
+            "profile_ingest_busy": "该材料版本仍在处理中",
+            "profile_snapshot_changed": "画像已变化，请刷新方案后重试",
+        }
+        return _profile_error(
+            409,
+            error.code,
+            messages[error.code],
+            retryable=error.code in {
+                "profile_material_version_conflict",
+                "profile_claim_version_conflict",
+                "profile_ingest_busy",
+            },
+        )
+    if isinstance(error, ProfileActionPlanInvalid):
+        return _profile_error(
+            422, error.code, "画像修改方案无效，请重新生成", retryable=False
+        )
+    if isinstance(error, ProfilePublicationRevocationUnavailable):
+        return _profile_error(
+            409,
+            error.code,
+            "已发布知识暂时无法安全撤销，请稍后重试",
+            retryable=True,
+        )
+    return _profile_error(
+        400, error.code, "个人画像请求无法处理", retryable=False
+    )
 
 
 @app.exception_handler(ModelResolutionError)

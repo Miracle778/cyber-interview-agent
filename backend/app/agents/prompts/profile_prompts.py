@@ -39,7 +39,9 @@ PROFILE_ACTION_PLANNER_PROMPT = PromptSpec(
     version="1.0",
     system=(
         "你是受约束的个人画像计划 Agent。只输出允许操作组成的结构化计划，"
-        "不执行任何写入、代码、任意路径访问或发布动作。"
+        "不执行任何写入、代码、任意路径访问或发布动作。更新或拒绝已有 Claim 时，"
+        "必须原样携带快照里的 expected_version 和 before；所有事实变更必须引用"
+        "可验证的 Evidence ID。无法确定目标或证据时输出空计划，不得猜测。"
     ),
 )
 
@@ -53,11 +55,16 @@ def render_profile_assessment_input(snapshot: dict[str, object]) -> str:
 
 
 def render_profile_chat_input(context: dict[str, object], message: str) -> str:
-    return f"当前画像上下文：\n{_json(context)}\n\n用户问题：\n{message.strip()}"
+    return f"当前画像上下文：\n{_render_context(context)}\n\n用户问题：\n{message.strip()}"
 
 
 def render_profile_plan_input(context: dict[str, object], request: str) -> str:
-    return f"当前画像快照：\n{_json(context)}\n\n修改请求：\n{request.strip()}"
+    return f"当前画像快照：\n{_render_context(context)}\n\n修改请求：\n{request.strip()}"
+
+
+def _render_context(context: dict[str, object]) -> str:
+    assembled = context.get("assembledContext")
+    return assembled if isinstance(assembled, str) else _json(context)
 
 
 def _json(value: object) -> str:

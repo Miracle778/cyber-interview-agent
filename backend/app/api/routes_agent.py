@@ -31,11 +31,14 @@ async def create_session(
     command: CreateSessionCommand,
     application: AgentApplication = Depends(get_agent_application),
 ) -> SessionRecord:
-    return await application.create_session(
-        workspace_id=command.workspace_id,
-        kind=command.kind,
-        title=command.title,
-    )
+    try:
+        return await application.create_session(
+            workspace_id=command.workspace_id,
+            kind=command.kind,
+            title=command.title,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @router.get("/sessions", response_model=list[SessionResource])

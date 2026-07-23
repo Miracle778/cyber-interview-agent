@@ -19,6 +19,7 @@ from app.graphs.review_discussion import create_review_discussion_graph
 from app.graphs.review_round import create_review_round_graph
 from app.graphs.profile_assess import create_profile_assess_graph
 from app.graphs.profile_ingest import create_profile_ingest_graph
+from app.graphs.profile_manage import create_profile_manage_graph
 from app.middleware.middleware_stack import (
     PROFILE_CHAT_BUDGET_PROFILE,
     REVIEW_ROUND_BUDGET,
@@ -99,7 +100,7 @@ class ProductionGraphFactory:
         )
 
     def __call__(self, kind: str, **dependencies):
-        if kind in {"profile.ingest", "profile.assess"}:
+        if kind in {"profile.ingest", "profile.assess", "profile.manage"}:
             bindings = dependencies["model_bindings"]
             context_limit_tokens = min(
                 self._agents.resolve_context_limit(
@@ -151,10 +152,29 @@ class ProductionGraphFactory:
                     publish_event=dependencies.get("publish_event"),
                     checkpointer=dependencies["checkpointer"],
                 )
-            return create_profile_assess_graph(
+            assessment_graph = create_profile_assess_graph(
                 agents,
                 repository=profile_repository,
                 project_card=dependencies.get("project_profile_card"),
+                checkpointer=(
+                    dependencies["checkpointer"]
+                    if kind == "profile.assess"
+                    else None
+                ),
+            )
+            if kind == "profile.assess":
+                return assessment_graph
+            profile_service = dependencies.get("profile_service")
+            if profile_service is None:
+                raise RuntimeError("profile manage dependencies are not configured")
+            return create_profile_manage_graph(
+                agents,
+                repository=profile_repository,
+                service=profile_service,
+                assessment_graph=assessment_graph,
+                project_action_plan_card=dependencies.get(
+                    "project_profile_action_plan_card"
+                ),
                 checkpointer=dependencies["checkpointer"],
             )
         if kind in {"question.curate", "question.revise", "review.round", "review.discussion"}:

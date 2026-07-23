@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiPut } from "./client";
+import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiPut, apiUpload } from "./client";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -75,5 +75,31 @@ describe("apiDelete", () => {
   it("converts 409 conflict to ApiError with code", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ code: "resource_in_use", message: "占用" }), { status: 409 })));
     await expect(apiDelete("/api/x")).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe("apiUpload", () => {
+  it("sends multipart data without forcing a JSON content type and keeps abort/error behavior", async () => {
+    const fetchMock = vi.fn(async (_input: unknown, init?: RequestInit) => {
+      expect(init?.body).toBeInstanceOf(FormData);
+      expect(new Headers(init?.headers).has("Content-Type")).toBe(false);
+      return new Response(JSON.stringify({ versionId: "version-1" }), { status: 202 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+    const formData = new FormData();
+    formData.set("file", new File(["resume"], "resume.md", { type: "text/markdown" }));
+
+    await expect(apiUpload<{ versionId: string }>("/api/profile", formData, {
+      signal: controller.signal,
+      headers: { "Idempotency-Key": "upload-test-key" },
+    })).resolves.toEqual({ versionId: "version-1" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/profile", expect.objectContaining({
+      method: "POST",
+      signal: controller.signal,
+    }));
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ code: "profile_upload_too_large", message: "文件过大" }), { status: 413 })));
+    await expect(apiUpload("/api/profile", formData)).rejects.toMatchObject({ code: "profile_upload_too_large", message: "文件过大" });
   });
 });

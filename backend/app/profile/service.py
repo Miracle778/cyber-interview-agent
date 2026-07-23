@@ -2,23 +2,63 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from uuid import uuid4
 
 from app.application.session_service import (
     ProductRepository,
     SessionBusyError,
 )
 from app.profile.models import (
+    BatchClaimDecisionResult,
+    ClaimReviewDetail,
+    ClaimReviewSnapshot,
+    CreateActionPlanCommand,
+    CreateClaimProposalSpec,
     CreateMaterialCommand,
+    CreatePublicationSelectionCommand,
+    DecideProposalCommand,
+    DeletionItemReceipt,
+    MaterialDeletionPlanRecord,
+    MaterialDeletionResult,
     ProfileMaterialRecord,
     ProfileMaterialVersionRecord,
+    ProfileActionPlanRecord,
+    ProfileAssessmentRecord,
+    SaveAssessmentCommand,
 )
 from app.profile.repository import ProfileRepository
 from app.profile.storage import MaterialStorage
+from app.profile.errors import (
+    ProfileActionPlanInvalid,
+    ProfileActionPlanNotFound,
+    ProfileAssessmentNotFound,
+    ProfileClaimNotFound,
+    ProfileClaimVersionConflict,
+    ProfileDomainError,
+    ProfileDeletionPlanConflict,
+    ProfileDeletionPlanExpired,
+    ProfileMaterialNotFound,
+    ProfileMaterialVersionConflict,
+    ProfileProposalNotFound,
+    ProfilePublicationRevocationRequired,
+    ProfilePublicationRevocationUnavailable,
+)
 
 _ACTIVE_EXECUTION_STATUSES = frozenset(
     {"queued", "running", "waiting_for_input", "waiting_for_approval"}
+)
+_ACTION_PLAN_OPERATIONS = frozenset(
+    {
+        "propose_claim_create",
+        "propose_claim_update",
+        "propose_claim_reject",
+        "propose_material_derived_version",
+        "set_publication_selection",
+        "request_reassessment",
+    }
 )
 
 
@@ -28,6 +68,7 @@ class MaterialUploadResult:
     version: ProfileMaterialVersionRecord
     execution_id: str
     session_id: str
+    accepted_processing_status: str
 
 
 class ProfileService:
@@ -45,6 +86,9 @@ class ProfileService:
         storage: MaterialStorage,
         product_repository: ProductRepository,
         run_ingest: Callable[[object], None] | None = None,
+        revoke_publication: Callable[[str], None] | None = None,
+        publish_event: Callable[[str, str | None, str, dict[str, object]], None]
+        | None = None,
     ) -> None:
         self.workspace_id = workspace_id
         self.root = root
@@ -52,6 +96,8 @@ class ProfileService:
         self.storage = storage
         self.product_repository = product_repository
         self._run_ingest = run_ingest
+        self._revoke_publication = revoke_publication
+        self._publish_event = publish_event
         self.connection: sqlite3.Connection = repository.connection
 
     def upload_material(
@@ -61,8 +107,24 @@ class ProfileService:
         content: bytes,
         title: str,
         primary_role: str = "resume",
+        idempotency_key: str | None = None,
     ) -> MaterialUploadResult:
         stored = self.storage.persist_upload(file_name=file_name, content=content)
+        request = {
+            "fileName": file_name,
+            "contentSha256": stored.content_sha256,
+            "title": title,
+            "primaryRole": primary_role,
+        }
+        if idempotency_key is not None:
+            existing = self.repository.load_operation_receipt(
+                workspace_id=self.workspace_id,
+                operation="profile.material.upload",
+                idempotency_key=idempotency_key,
+                request=request,
+            )
+            if existing is not None:
+                return self._upload_result_from_receipt(existing)
         material = self.repository.create_material(
             CreateMaterialCommand(
                 workspace_id=self.workspace_id,
@@ -81,20 +143,47 @@ class ProfileService:
             text_ref="",
         )
         execution_id = self._start_ingest_execution(material.id, version, file_name)
-        return MaterialUploadResult(
+        result = MaterialUploadResult(
             material=material,
             version=version,
             execution_id=execution_id,
             session_id=version.id,
+            accepted_processing_status=version.processing_status,
         )
+        self._store_upload_receipt(
+            operation="profile.material.upload",
+            idempotency_key=idempotency_key,
+            request=request,
+            result=result,
+        )
+        return result
 
     def add_material_version(
-        self, *, material_id: str, file_name: str, content: bytes
+        self,
+        *,
+        material_id: str,
+        file_name: str,
+        content: bytes,
+        idempotency_key: str | None = None,
     ) -> MaterialUploadResult:
         material = self.repository.get_material(
             material_id, workspace_id=self.workspace_id
         )
         stored = self.storage.persist_upload(file_name=file_name, content=content)
+        request = {
+            "materialId": material.id,
+            "fileName": file_name,
+            "contentSha256": stored.content_sha256,
+        }
+        if idempotency_key is not None:
+            existing = self.repository.load_operation_receipt(
+                workspace_id=self.workspace_id,
+                operation="profile.material.version.add",
+                idempotency_key=idempotency_key,
+                request=request,
+            )
+            if existing is not None:
+                return self._upload_result_from_receipt(existing)
         version = self.repository.add_material_version(
             material_id=material.id,
             source_type="upload",
@@ -105,12 +194,20 @@ class ProfileService:
             text_ref="",
         )
         execution_id = self._start_ingest_execution(material.id, version, file_name)
-        return MaterialUploadResult(
+        result = MaterialUploadResult(
             material=material,
             version=version,
             execution_id=execution_id,
             session_id=version.id,
+            accepted_processing_status=version.processing_status,
         )
+        self._store_upload_receipt(
+            operation="profile.material.version.add",
+            idempotency_key=idempotency_key,
+            request=request,
+            result=result,
+        )
+        return result
 
     def _start_ingest_execution(
         self,
@@ -131,11 +228,11 @@ class ProfileService:
         execution = self.product_repository.create_execution(
             version.id,
             input={
-                "materialId": material_id,
-                "versionId": version.id,
-                "storageRef": version.storage_ref,
-                "mimeType": version.mime_type,
-                "fileName": file_name,
+                "material_id": material_id,
+                "version_id": version.id,
+                "storage_ref": version.storage_ref,
+                "mime_type": version.mime_type,
+                "file_name": file_name,
             },
             model_bindings={},
             configuration={},
@@ -144,8 +241,20 @@ class ProfileService:
             self._run_ingest(execution)
         return execution.id
 
-    def retry_version_ingest(self, version_id: str) -> object:
+    def retry_version_ingest(
+        self, version_id: str, *, idempotency_key: str | None = None
+    ) -> object:
         version = self._require_workspace_version(version_id)
+        request = {"versionId": version.id}
+        if idempotency_key is not None:
+            existing = self.repository.load_operation_receipt(
+                workspace_id=self.workspace_id,
+                operation="profile.material.version.retry",
+                idempotency_key=idempotency_key,
+                request=request,
+            )
+            if existing is not None:
+                return self.product_repository.get_execution(str(existing["executionId"]))
         latest = self.product_repository.latest_execution(version_id)
         if latest is not None and latest.status in _ACTIVE_EXECUTION_STATUSES:
             raise SessionBusyError("该材料版本仍有进行中的摄入任务，请稍后重试")
@@ -153,11 +262,11 @@ class ProfileService:
         execution = self.product_repository.create_execution(
             version_id,
             input={
-                "materialId": version.material_id,
-                "versionId": version.id,
-                "storageRef": version.storage_ref,
-                "mimeType": version.mime_type,
-                "fileName": version.file_name,
+                "material_id": version.material_id,
+                "version_id": version.id,
+                "storage_ref": version.storage_ref,
+                "mime_type": version.mime_type,
+                "file_name": version.file_name,
                 "retry": True,
             },
             model_bindings={},
@@ -165,6 +274,14 @@ class ProfileService:
         )
         if self._run_ingest is not None:
             self._run_ingest(execution)
+        if idempotency_key is not None:
+            self.repository.store_operation_receipt(
+                workspace_id=self.workspace_id,
+                operation="profile.material.version.retry",
+                idempotency_key=idempotency_key,
+                request=request,
+                result={"executionId": execution.id, "versionId": version.id},
+            )
         return execution
 
     def record_ingest_failure(
@@ -190,19 +307,772 @@ class ProfileService:
                 target="completed",
             )
 
-    def archive_material(self, material_id: str) -> ProfileMaterialRecord:
-        self.repository.get_material(material_id, workspace_id=self.workspace_id)
-        return self.repository.archive_material(material_id)
+    def archive_material(
+        self,
+        material_id: str,
+        *,
+        expected_version: int | None = None,
+        idempotency_key: str | None = None,
+    ) -> ProfileMaterialRecord:
+        return self._material_action(
+            material_id=material_id,
+            operation="profile.material.archive",
+            request={"materialId": material_id, "expectedVersion": expected_version},
+            expected_version=expected_version,
+            idempotency_key=idempotency_key,
+            action=lambda: self.repository.archive_material(material_id),
+        )
 
-    def restore_material(self, material_id: str) -> ProfileMaterialRecord:
-        self.repository.get_material(material_id, workspace_id=self.workspace_id)
-        return self.repository.restore_material(material_id)
+    def restore_material(
+        self,
+        material_id: str,
+        *,
+        expected_version: int | None = None,
+        idempotency_key: str | None = None,
+    ) -> ProfileMaterialRecord:
+        return self._material_action(
+            material_id=material_id,
+            operation="profile.material.restore",
+            request={"materialId": material_id, "expectedVersion": expected_version},
+            expected_version=expected_version,
+            idempotency_key=idempotency_key,
+            action=lambda: self.repository.restore_material(material_id),
+        )
 
     def set_primary_version(
-        self, material_id: str, version_id: str
+        self,
+        material_id: str,
+        version_id: str,
+        *,
+        expected_version: int | None = None,
+        idempotency_key: str | None = None,
     ) -> ProfileMaterialRecord:
-        self.repository.get_material(material_id, workspace_id=self.workspace_id)
-        return self.repository.set_primary_version(material_id, version_id)
+        return self._material_action(
+            material_id=material_id,
+            operation="profile.material.primary",
+            request={
+                "materialId": material_id,
+                "versionId": version_id,
+                "expectedVersion": expected_version,
+            },
+            expected_version=expected_version,
+            idempotency_key=idempotency_key,
+            action=lambda: self.repository.set_primary_version(material_id, version_id),
+        )
+
+    def get_material(self, material_id: str) -> ProfileMaterialRecord:
+        return self.repository.get_material(
+            material_id, workspace_id=self.workspace_id
+        )
+
+    def list_materials(
+        self, *, include_archived: bool = False
+    ) -> tuple[ProfileMaterialRecord, ...]:
+        return self.repository.list_materials(
+            self.workspace_id, include_archived=include_archived
+        )
+
+    def list_material_versions(
+        self, material_id: str
+    ) -> tuple[ProfileMaterialVersionRecord, ...]:
+        self.get_material(material_id)
+        return self.repository.list_material_versions(material_id)
+
+    def get_material_version(
+        self, version_id: str
+    ) -> ProfileMaterialVersionRecord:
+        return self._require_workspace_version(version_id)
+
+    def latest_execution(self, version_id: str):
+        self._require_workspace_version(version_id)
+        return self.product_repository.latest_execution(version_id)
+
+    # --- Claim review ---
+
+    def claim_review_snapshot(self) -> ClaimReviewSnapshot:
+        snapshot = self.repository.profile_snapshot(self.workspace_id)
+        return ClaimReviewSnapshot(
+            workspace_id=self.workspace_id,
+            profile_version=snapshot.profile_version,
+            claims=tuple(
+                self.get_claim_review(claim.id)
+                for claim in self.repository.list_claims(self.workspace_id)
+                if claim.current_confirmed_version_id is not None
+            ),
+            proposals=self.repository.list_proposals(self.workspace_id),
+        )
+
+    def get_claim_review(self, claim_id: str) -> ClaimReviewDetail:
+        claim = self.repository.get_claim(claim_id)
+        if claim.workspace_id != self.workspace_id:
+            raise ProfileClaimNotFound(claim_id)
+        if claim.current_confirmed_version_id is None:
+            raise ProfileClaimNotFound(claim_id)
+        versions = self.repository.list_claim_versions(claim.id)
+        current = self.repository.get_claim_version(claim.current_confirmed_version_id)
+        proposals = tuple(
+            item
+            for item in self.repository.list_proposals(self.workspace_id)
+            if item.target_claim_id == claim.id
+        )
+        conflicts = self.repository.list_conflicts_for_claim(claim.id)
+        evidence = tuple(
+            self.repository.get_evidence(evidence_id)
+            for evidence_id in current.evidence_ids
+        )
+        return ClaimReviewDetail(
+            claim=claim,
+            current_version=current,
+            versions=versions,
+            proposals=proposals,
+            conflicts=conflicts,
+            evidence=evidence,
+        )
+
+    def decide_claim_proposal(
+        self,
+        proposal_id: str,
+        *,
+        decision: str,
+        expected_version: int,
+        edited_value: dict[str, object] | None = None,
+        idempotency_key: str,
+    ):
+        proposal = self.repository.get_proposal(proposal_id)
+        if proposal.workspace_id != self.workspace_id:
+            raise ProfileProposalNotFound(proposal_id)
+        return self.repository.decide_proposal(
+            proposal_id,
+            DecideProposalCommand(
+                proposal_id=proposal_id,
+                decision=decision,
+                expected_status="pending",
+                expected_claim_version=expected_version,
+                edited_value=edited_value,
+                idempotency_key=idempotency_key,
+            ),
+        )
+
+    def batch_decide_claim_proposals(
+        self, commands: tuple[DecideProposalCommand, ...]
+    ) -> BatchClaimDecisionResult:
+        for command in commands:
+            proposal = self.repository.get_proposal(command.proposal_id)
+            if proposal.workspace_id != self.workspace_id:
+                raise ProfileProposalNotFound(command.proposal_id)
+        return self.repository.batch_decide_proposals(commands)
+
+    # --- Assessment and constrained action plans ---
+
+    def save_assessment(
+        self,
+        *,
+        base_profile_version: str,
+        result: dict[str, object],
+        created_by_execution_id: str | None = None,
+    ) -> ProfileAssessmentRecord:
+        snapshot = self.repository.profile_snapshot(self.workspace_id)
+        if not snapshot.claims or snapshot.profile_version != base_profile_version:
+            raise ProfileClaimVersionConflict(
+                "assessment requires the current confirmed profile snapshot"
+            )
+        evidence_ids = self._assessment_evidence_ids(result)
+        if not evidence_ids:
+            raise ProfileActionPlanInvalid("assessment must cite evidence")
+        self._validate_evidence_ids(evidence_ids)
+        return self.repository.save_assessment(
+            SaveAssessmentCommand(
+                workspace_id=self.workspace_id,
+                base_profile_version=base_profile_version,
+                result=result,
+                created_by_execution_id=created_by_execution_id,
+            )
+        )
+
+    def get_assessment(self, assessment_id: str) -> ProfileAssessmentRecord:
+        assessment = self.repository.get_assessment(assessment_id)
+        if assessment.workspace_id != self.workspace_id:
+            raise ProfileAssessmentNotFound(assessment_id)
+        return assessment
+
+    def get_action_plan(self, plan_id: str) -> ProfileActionPlanRecord:
+        return self._workspace_action_plan(plan_id)
+
+    def create_action_plan(
+        self, command: CreateActionPlanCommand
+    ) -> ProfileActionPlanRecord:
+        if command.workspace_id != self.workspace_id:
+            raise ProfileActionPlanNotFound("workspace")
+        current_version = self.repository.profile_snapshot(
+            self.workspace_id
+        ).profile_version or ""
+        if command.base_profile_version != current_version:
+            raise ProfileClaimVersionConflict("action plan base profile is stale")
+        if not command.items:
+            raise ProfileActionPlanInvalid("action plan must contain an item")
+        if len(command.items) > 50:
+            raise ProfileActionPlanInvalid("action plan exceeds 50 items")
+        if [item.ordinal for item in command.items] != list(
+            range(1, len(command.items) + 1)
+        ) or len({item.item_id for item in command.items}) != len(command.items):
+            raise ProfileActionPlanInvalid("action plan item order is invalid")
+        for item in command.items:
+            if item.operation not in _ACTION_PLAN_OPERATIONS:
+                raise ProfileActionPlanInvalid(
+                    f"unsupported action plan operation: {item.operation}"
+                )
+            self._validate_action_plan_item(item)
+        plan = self.repository.create_action_plan(command)
+        if plan.status == "proposed":
+            plan = self.repository.update_action_plan_status(plan.id, status="validated")
+            self._emit_action_plan_event(
+                plan,
+                "profile.action_plan.created",
+                {
+                    "planId": plan.id,
+                    "itemCount": len(plan.items),
+                    "status": plan.status,
+                },
+            )
+        return plan
+
+    def confirm_action_plan(
+        self, plan_id: str, *, expected_version: int
+    ) -> ProfileActionPlanRecord:
+        plan = self._workspace_action_plan(plan_id)
+        if plan.status == "completed":
+            return plan
+        self.repository.validate_action_plan_fresh(plan_id)
+        executing = self.repository.transition_action_plan_status(
+            plan_id,
+            expected_version=expected_version,
+            from_statuses=("validated", "awaiting_confirmation"),
+            status="executing",
+        )
+        return self._execute_action_plan(executing)
+
+    def retry_action_plan(self, plan_id: str) -> ProfileActionPlanRecord:
+        plan = self._workspace_action_plan(plan_id)
+        if plan.status == "completed":
+            return plan
+        self.repository.validate_action_plan_fresh(plan_id)
+        executing = self.repository.transition_action_plan_status(
+            plan_id,
+            expected_version=plan.version,
+            from_statuses=("failed", "partially_completed"),
+            status="executing",
+        )
+        return self._execute_action_plan(executing)
+
+    def cancel_action_plan(
+        self, plan_id: str, *, expected_version: int
+    ) -> ProfileActionPlanRecord:
+        plan = self._workspace_action_plan(plan_id)
+        return self.repository.transition_action_plan_status(
+            plan_id,
+            expected_version=expected_version,
+            from_statuses=("proposed", "validated", "awaiting_confirmation"),
+            status="cancelled",
+        )
+
+    def _execute_action_plan(
+        self, plan: ProfileActionPlanRecord
+    ) -> ProfileActionPlanRecord:
+        for item in plan.items:
+            if item.status in {"completed", "skipped"}:
+                continue
+            try:
+                receipt_id = self._dispatch_action_plan_item(plan, item)
+                self.repository.apply_action_plan_item(
+                    item.item_id,
+                    expected_claim_version=item.expected_version,
+                    status="completed",
+                    receipt_id=receipt_id,
+                )
+                self._emit_action_plan_event(
+                    plan,
+                    "profile.action_plan.item_completed",
+                    {
+                        "planId": plan.id,
+                        "itemId": item.item_id,
+                        "operation": item.operation,
+                        "ordinal": item.ordinal,
+                        "status": "completed",
+                    },
+                )
+            except Exception as error:
+                error_code = (
+                    error.code
+                    if isinstance(error, ProfileDomainError)
+                    else "profile_action_plan_item_failed"
+                )
+                self.repository.record_action_plan_item_failure(
+                    item.item_id, error_code=error_code
+                )
+        current = self.repository.get_action_plan(plan.id)
+        failed = [item for item in current.items if item.status == "failed"]
+        completed = [item for item in current.items if item.status == "completed"]
+        final_status = (
+            "completed"
+            if not failed
+            else "partially_completed"
+            if completed
+            else "failed"
+        )
+        return self.repository.transition_action_plan_status(
+            plan.id,
+            expected_version=current.version,
+            from_statuses=("executing",),
+            status=final_status,
+        )
+
+    def _dispatch_action_plan_item(self, plan, item) -> str:
+        if item.operation.startswith("propose_claim_"):
+            evidence = self._validate_evidence_ids(item.evidence_ids)
+            version_id = evidence[0].material_version_id
+            proposal_type = {
+                "propose_claim_create": "create",
+                "propose_claim_update": "update",
+                "propose_claim_reject": "reject",
+            }[item.operation]
+            claim_id = item.target.get("claimId")
+            base_version_id = None
+            if claim_id is not None:
+                claim = self.repository.get_claim(str(claim_id))
+                base_version_id = claim.current_confirmed_version_id
+            proposal = self.repository.create_claim_proposals(
+                version_id,
+                (
+                    CreateClaimProposalSpec(
+                        proposal_type=proposal_type,
+                        target_claim_id=None if claim_id is None else str(claim_id),
+                        base_claim_version_id=base_version_id,
+                        proposed_value=item.after,
+                        reason=f"Action Plan {plan.id}",
+                        evidence_ids=item.evidence_ids,
+                        source="action_plan",
+                    ),
+                ),
+                created_by_execution_id=plan.execution_id,
+                idempotency_key=f"action-plan:{plan.id}:{item.item_id}",
+            )[0]
+            return proposal.id
+        if item.operation == "propose_material_derived_version":
+            material_id = str(item.target["materialId"])
+            source_version_id = str(item.target["sourceVersionId"])
+            file_name = str(item.after.get("fileName", "resume-polished.md"))
+            content = str(item.after["content"])
+            creator = f"action-plan:{plan.id}:{item.item_id}"
+            stored = self.storage.persist_upload(
+                file_name=file_name, content=content.encode("utf-8")
+            )
+            version = self.repository.find_material_version_by_creator(
+                material_id, creator
+            )
+            if version is None:
+                version = self.repository.add_material_version(
+                    material_id=material_id,
+                    source_type="derived_draft",
+                    file_name=file_name,
+                    mime_type=stored.mime_type,
+                    content_sha256=stored.content_sha256,
+                    storage_ref=stored.storage_ref,
+                    text_ref="",
+                    created_by=creator,
+                    derived_from_version_id=source_version_id,
+                )
+            elif (
+                version.content_sha256 != stored.content_sha256
+                or version.derived_from_version_id != source_version_id
+            ):
+                raise ProfileActionPlanInvalid("derived version receipt input changed")
+            if version.processing_status != "ready":
+                text_ref = self.storage.write_text(version_id=version.id, text=content)
+                if version.processing_status in {"uploaded", "parsing", "parse_failed"}:
+                    self.repository.mark_version_parsed(
+                        version.id,
+                        text_path=text_ref,
+                        content_sha256=stored.content_sha256,
+                    )
+                self.repository.set_version_processing_status(version.id, "ready")
+            if self.get_material(material_id).current_version_id != version.id:
+                self.repository.set_primary_version(material_id, version.id)
+            return version.id
+        if item.operation == "set_publication_selection":
+            snapshot = self.repository.profile_snapshot(self.workspace_id)
+            selection = self.repository.create_publication_selection(
+                CreatePublicationSelectionCommand(
+                    workspace_id=self.workspace_id,
+                    profile_version=snapshot.profile_version or "",
+                    claim_version_ids=tuple(
+                        str(value) for value in item.after.get("claimVersionIds", [])
+                    ),
+                    excluded_sensitive_fields=tuple(
+                        str(value)
+                        for value in item.after.get("excludedSensitiveFields", [])
+                    ),
+                    idempotency_key=f"action-plan:{plan.id}:{item.item_id}",
+                )
+            )
+            return selection.id
+        if item.operation == "request_reassessment":
+            return f"reassessment:{plan.id}:{item.item_id}"
+        raise ProfileActionPlanInvalid("unsupported action plan operation")
+
+    def _validate_action_plan_item(self, item) -> None:
+        if item.operation.startswith("propose_claim_"):
+            if not item.evidence_ids:
+                raise ProfileActionPlanInvalid("claim proposal item requires evidence")
+            self._validate_evidence_ids(item.evidence_ids)
+        if item.operation in {"propose_claim_update", "propose_claim_reject"}:
+            claim_id = item.target.get("claimId")
+            if not claim_id or item.expected_version is None:
+                raise ProfileActionPlanInvalid("claim mutation requires target and version")
+            claim = self.repository.get_claim(str(claim_id))
+            if claim.workspace_id != self.workspace_id or claim.version != item.expected_version:
+                raise ProfileClaimVersionConflict("target claim changed")
+            current = self.repository.get_claim_version(
+                claim.current_confirmed_version_id or ""
+            )
+            if item.before is not None and item.before != current.value:
+                raise ProfileClaimVersionConflict("action plan before snapshot changed")
+        elif item.operation == "propose_claim_create" and item.expected_version not in {None, 0}:
+            raise ProfileActionPlanInvalid("claim create expected version must be zero")
+        elif item.operation == "propose_material_derived_version":
+            material = self.get_material(str(item.target.get("materialId", "")))
+            source = self.repository.get_material_version(
+                str(item.target.get("sourceVersionId", ""))
+            )
+            if source.material_id != material.id or not str(item.after.get("content", "")):
+                raise ProfileActionPlanInvalid("derived version input is invalid")
+        elif item.operation == "set_publication_selection":
+            version_ids = tuple(item.after.get("claimVersionIds", []))
+            if not version_ids:
+                raise ProfileActionPlanInvalid("publication selection is empty")
+            for version_id in version_ids:
+                version = self.repository.get_claim_version(str(version_id))
+                claim = self.repository.get_claim(version.claim_id)
+                if claim.workspace_id != self.workspace_id:
+                    raise ProfileClaimNotFound(claim.id)
+
+    def _validate_evidence_ids(self, evidence_ids):
+        records = []
+        version_ids = set()
+        for evidence_id in evidence_ids:
+            evidence = self.repository.get_evidence(str(evidence_id))
+            if evidence.tombstoned_at is not None:
+                raise ProfileActionPlanInvalid("evidence was removed")
+            version = self.repository.get_material_version(evidence.material_version_id)
+            material = self.repository.get_material(
+                version.material_id, workspace_id=self.workspace_id
+            )
+            if material.workspace_id != self.workspace_id:
+                raise ProfileActionPlanInvalid("evidence workspace mismatch")
+            records.append(evidence)
+            version_ids.add(evidence.material_version_id)
+        if len(version_ids) > 1:
+            raise ProfileActionPlanInvalid(
+                "one proposal item must cite one material version"
+            )
+        return tuple(records)
+
+    @staticmethod
+    def _assessment_evidence_ids(value: object) -> tuple[str, ...]:
+        found: list[str] = []
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in {"evidenceIds", "evidence_ids"} and isinstance(item, list):
+                    found.extend(str(entry) for entry in item)
+                else:
+                    found.extend(ProfileService._assessment_evidence_ids(item))
+        elif isinstance(value, list):
+            for item in value:
+                found.extend(ProfileService._assessment_evidence_ids(item))
+        return tuple(dict.fromkeys(found))
+
+    def _workspace_action_plan(self, plan_id: str) -> ProfileActionPlanRecord:
+        plan = self.repository.get_action_plan(plan_id)
+        if plan.workspace_id != self.workspace_id:
+            raise ProfileActionPlanNotFound(plan_id)
+        return plan
+
+    def _emit_action_plan_event(
+        self,
+        plan: ProfileActionPlanRecord,
+        event_type: str,
+        payload: dict[str, object],
+    ) -> None:
+        if self._publish_event is not None and plan.session_id is not None:
+            self._publish_event(
+                plan.session_id, plan.execution_id, event_type, payload
+            )
+
+    # --- Permanent deletion ---
+
+    def preview_material_deletion(
+        self,
+        material_id: str,
+        *,
+        expected_version: int,
+        idempotency_key: str,
+    ) -> MaterialDeletionPlanRecord:
+        material = self.get_material(material_id)
+        if material.version != expected_version:
+            raise ProfileMaterialVersionConflict(
+                "profile material changed before deletion preview"
+            )
+        impact = self.repository.build_material_deletion_impact(
+            material_id, workspace_id=self.workspace_id
+        )
+        expires_at = (
+            datetime.now(timezone.utc) + timedelta(minutes=15)
+        ).isoformat()
+        return self.repository.create_material_deletion_plan(
+            workspace_id=self.workspace_id,
+            material_id=material_id,
+            material_version=material.version,
+            impact=impact,
+            expires_at=expires_at,
+            idempotency_key=idempotency_key,
+        )
+
+    def permanently_delete_material(
+        self,
+        material_id: str,
+        *,
+        deletion_plan_id: str,
+        expected_version: int,
+        claim_choices: dict[str, str],
+        active_publication_action: str,
+        idempotency_key: str,
+    ) -> MaterialDeletionResult:
+        request = {
+            "materialId": material_id,
+            "deletionPlanId": deletion_plan_id,
+            "expectedVersion": expected_version,
+            "claimChoices": dict(sorted(claim_choices.items())),
+            "activePublicationAction": active_publication_action,
+        }
+        operation = f"profile.material.permanent_delete:{material_id}"
+        existing = self.repository.load_operation_receipt(
+            workspace_id=self.workspace_id,
+            operation=operation,
+            idempotency_key=idempotency_key,
+            request=request,
+        )
+        if existing is not None:
+            return self._deletion_result(existing)
+        plan = self.repository.get_material_deletion_plan(deletion_plan_id)
+        if plan.workspace_id != self.workspace_id or plan.material_id != material_id:
+            raise ProfileDeletionPlanConflict("deletion plan target mismatch")
+        if plan.status not in {"planned", "failed"}:
+            raise ProfileDeletionPlanConflict("deletion plan is no longer executable")
+        expires_at = datetime.fromisoformat(plan.expires_at.replace("Z", "+00:00"))
+        if expires_at <= datetime.now(timezone.utc):
+            self.repository.set_material_deletion_plan_status(
+                plan.id, status="expired"
+            )
+            raise ProfileDeletionPlanExpired("deletion plan expired")
+        if active_publication_action == "cancel" or "cancel" in claim_choices.values():
+            cancelled = MaterialDeletionResult(
+                plan_id=plan.id, status="cancelled", items=()
+            )
+            self.repository.set_material_deletion_plan_status(
+                plan.id, status="cancelled", result=self._deletion_result_payload(cancelled)
+            )
+            return cancelled
+        if plan.active_publication_ids:
+            if active_publication_action != "revoke":
+                raise ProfilePublicationRevocationRequired(
+                    "active publication must be revoked before deletion"
+                )
+            if self._revoke_publication is None:
+                raise ProfilePublicationRevocationUnavailable(
+                    "publication revocation is not wired yet"
+                )
+        elif active_publication_action not in {"not_applicable", "revoke"}:
+            raise ProfileDeletionPlanConflict("invalid publication deletion choice")
+
+        receipts = [
+            self._deletion_receipt(item)
+            for item in plan.result.get("items", [])
+            if isinstance(item, dict)
+        ]
+        completed_targets = {
+            (item.kind, item.target_id)
+            for item in receipts
+            if item.status == "completed"
+        }
+        self.repository.set_material_deletion_plan_status(plan.id, status="executing")
+        try:
+            for publication_id in plan.active_publication_ids:
+                if ("publication", publication_id) in completed_targets:
+                    continue
+                assert self._revoke_publication is not None
+                self._revoke_publication(publication_id)
+                receipts.append(
+                    DeletionItemReceipt(
+                        kind="publication",
+                        target_id=publication_id,
+                        status="completed",
+                        action="revoke",
+                    )
+                )
+            if ("material", material_id) not in completed_targets:
+                receipts.extend(
+                    self.repository.apply_material_deletion(
+                        plan_id=plan.id,
+                        expected_material_version=expected_version,
+                        claim_choices=claim_choices,
+                    )
+                )
+            for artifact in plan.impact.get("artifactRefs", []):
+                if not isinstance(artifact, dict):
+                    continue
+                ref = str(artifact.get("ref", ""))
+                if not ref:
+                    continue
+                remaining = self.repository.artifact_reference_count(ref)
+                deleted = self.storage.delete_ref(
+                    ref, remaining_references=remaining
+                )
+                receipts.append(
+                    DeletionItemReceipt(
+                        kind="artifact",
+                        target_id=str(artifact.get("kind", "artifact")),
+                        status="completed",
+                        action=(
+                            "retain_shared"
+                            if remaining
+                            else "delete" if deleted else "already_absent"
+                        ),
+                    )
+                )
+            result = MaterialDeletionResult(
+                plan_id=plan.id, status="completed", items=tuple(receipts)
+            )
+            payload = self._deletion_result_payload(result)
+            self.repository.set_material_deletion_plan_status(
+                plan.id, status="completed", result=payload
+            )
+            self.repository.store_operation_receipt(
+                workspace_id=self.workspace_id,
+                operation=operation,
+                idempotency_key=idempotency_key,
+                request=request,
+                result=payload,
+            )
+            return result
+        except Exception:
+            self.repository.set_material_deletion_plan_status(
+                plan.id,
+                status="failed",
+                result={"items": [asdict(item) for item in receipts]},
+            )
+            raise
+
+    @staticmethod
+    def _deletion_result_payload(result: MaterialDeletionResult) -> dict[str, object]:
+        return {
+            "planId": result.plan_id,
+            "status": result.status,
+            "items": [asdict(item) for item in result.items],
+        }
+
+    @staticmethod
+    def _deletion_result(value: dict[str, object]) -> MaterialDeletionResult:
+        return MaterialDeletionResult(
+            plan_id=str(value["planId"]),
+            status=str(value["status"]),
+            items=tuple(
+                ProfileService._deletion_receipt(item)
+                for item in value.get("items", [])
+                if isinstance(item, dict)
+            ),
+        )
+
+    @staticmethod
+    def _deletion_receipt(item: dict[str, object]) -> DeletionItemReceipt:
+        return DeletionItemReceipt(
+            kind=str(item["kind"]),
+            target_id=str(item["target_id"]),
+            status=str(item["status"]),
+            action=str(item["action"]),
+            error_code=(
+                None if item.get("error_code") is None else str(item["error_code"])
+            ),
+        )
+
+    def _material_action(
+        self,
+        *,
+        material_id: str,
+        operation: str,
+        request: dict[str, object],
+        expected_version: int | None,
+        idempotency_key: str | None,
+        action: Callable[[], ProfileMaterialRecord],
+    ) -> ProfileMaterialRecord:
+        if idempotency_key is not None:
+            existing = self.repository.load_operation_receipt(
+                workspace_id=self.workspace_id,
+                operation=operation,
+                idempotency_key=idempotency_key,
+                request=request,
+            )
+            if existing is not None:
+                return self.get_material(str(existing["materialId"]))
+        material = self.get_material(material_id)
+        if expected_version is not None and material.version != expected_version:
+            raise ProfileMaterialVersionConflict(
+                "profile material version changed before operation"
+            )
+        result = action()
+        if idempotency_key is not None:
+            self.repository.store_operation_receipt(
+                workspace_id=self.workspace_id,
+                operation=operation,
+                idempotency_key=idempotency_key,
+                request=request,
+                result={"materialId": result.id, "version": result.version},
+            )
+        return result
+
+    def _store_upload_receipt(
+        self,
+        *,
+        operation: str,
+        idempotency_key: str | None,
+        request: dict[str, object],
+        result: MaterialUploadResult,
+    ) -> None:
+        if idempotency_key is None:
+            return
+        self.repository.store_operation_receipt(
+            workspace_id=self.workspace_id,
+            operation=operation,
+            idempotency_key=idempotency_key,
+            request=request,
+            result={
+                "materialId": result.material.id,
+                "versionId": result.version.id,
+                "executionId": result.execution_id,
+                "processingStatus": result.accepted_processing_status,
+            },
+        )
+
+    def _upload_result_from_receipt(
+        self, receipt: dict[str, object]
+    ) -> MaterialUploadResult:
+        material = self.get_material(str(receipt["materialId"]))
+        version = self._require_workspace_version(str(receipt["versionId"]))
+        return MaterialUploadResult(
+            material=material,
+            version=version,
+            execution_id=str(receipt["executionId"]),
+            session_id=version.id,
+            accepted_processing_status=str(receipt["processingStatus"]),
+        )
 
     def _require_workspace_version(
         self, version_id: str

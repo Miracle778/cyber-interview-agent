@@ -1,5 +1,32 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-07-23：R3 Task 15 - Profile Agent 工作区实现
+
+- `/profile` 的“Agent 会话”已开放：紧凑会话栏、对话时间线、当前 Material/Version 焦点、运行状态、上下文压缩状态、持久 Composer 和停止控制已接入统一 Runtime/SSE。
+- Assessment 与 Action Plan 使用资源卡片按 ID 读取最新状态；Plan 展示有序 before/after、Evidence 数量、stale 警告、确认/取消/失败项重试与 Receipt 状态，不把未确认方案表达成已修改事实。
+- Tool 生命周期只显示“正在读取已确认画像/已读取证据”等安全阶段，不渲染参数、返回 JSON 或私有正文。运行结束后焦点回到 Composer；移动端变为横向会话条 + 单列对话/状态，无页面级固定宽度。
+- `ui-ux-pro-max` 的高密度、44px target、加载反馈、可见焦点和响应式规则用于实现；其紫粉 AI 配色、手写字体和 Landing 模式与已确认 R3 视觉契约冲突，继续使用现有浅色语义 Token。
+- 定向前端 `5 passed`，`npx tsc --noEmit` 与 `git diff --check` 通过。项目没有 `npm run typecheck` script，因此使用等价 TypeScript 命令；未跑全量前端、build 或浏览器。
+- 产品成熟度：Task 15 代码和自动门禁已完成，桌面/390px 实页、键盘焦点和真实 Provider 流式/停止仍待下一步验收，暂不宣称 Task 15 正式关闭。
+
+## 2026-07-23：R3 Task 14 - Profile Manage 与 Action Plan API
+
+- 新增 Profile 专用会话创建/列表入口，只能创建 `profile.manage`；通用入口拒绝用户伪造 `profile.ingest/profile.assess` system Session。消息执行、取消和 SSE 继续复用统一 Agent Runtime。
+- 新增 Assessment 详情和 Action Plan 详情/确认/取消/重试 API。计划资源返回 base/current profile version、stale/capability、完整 before/after diff、Evidence ID、逐项状态、Receipt 和 error code。
+- Action Plan 在确认前重验当前 Profile snapshot，过期统一返回 409；跨 Workspace 的 Assessment/Plan 返回 404。无效计划返回 422，不暴露数据库或模型原文。
+- 新增应用重启恢复验收：计划创建后关闭应用，重开后通过 API 确认，再次重开仍读取同一 completed item Receipt。
+- 聚焦 API 测试 `5 passed`；合并通用 Agent route、manage Graph、Action Plan 与 migration 回归共 `61 passed`；compileall 与 `git diff --check` 通过，未运行全量回归或浏览器。
+- 产品成熟度：后端已经可供页面完整调用；下一产品任务 Task 15 实现画像 Agent 工作区，完成后用户即可在页面测试连续问答、评估、停止和方案确认。
+
+## 2026-07-23：R3 Task 13 - `profile.manage` 与有界 Chat Tool loop
+
+- 新增显式 `profile.manage` Graph：服务端确定性区分问答、评估、单项修改、多项计划与澄清；Assessment 复用独立子图，Planner 只输出结构化计划且没有写工具。
+- 新增 `profile_agent_context`，只保存 Material/Version/Claim/Proposal 稳定 ID；每轮从领域仓储重新装配 confirmed snapshot，不把旧聊天或 ToolMessage 当作画像事实。连续对话仍由 `<session>:profile_chat` checkpoint 和既有 compaction 管理。
+- Runtime 先授予服务端 Profile Tool 上限，再按本轮问答意图取交集；Chat 仍受 6 次总调用、相同调用 2 次、50 项/2,000 字符结果上限约束。Assessment/Planner 的 Tool allowlist 为空。
+- Action Plan 以 execution ID 幂等：恢复或重放同一 Execution 返回同一 Plan，异输入稳定冲突；外层 session checkpoint 每轮清除旧终态字段，避免上一轮卡片泄漏。取消会向下传播且不留下计划半成品。
+- 产品 Message 只投影完成后的文本、Assessment Card 和 Action Plan Card；Tool 原始参数/结果与模型结构化原文不进入产品消息。定向验证覆盖路由、上下文、线程、工具、预算、取消、多项计划和重放恢复，最终 `82 passed`；compileall 与 `git diff --check` 通过。
+- 产品成熟度：R3.3 后端会话 Graph 已具备，但用户还不能通过页面发起/确认方案；下一产品任务是 Task 14 API，随后 Task 15 才进入 Agent 工作区页面测试。
+
 ## 2026-07-21：GLM-5.2 题目整理正式修复
 
 - RED：新增 GLM 默认 Thinking、显式推理、未知 OpenAI-compatible 兼容、角色输出预算、稳定分块 thread、无换行长文本六类测试；首次运行 `6 failed, 16 passed`，均命中预期缺口。
@@ -40,6 +67,54 @@
 - 上传/重试现在通过 `AgentExecutionService.run_prepared` 真正调度后台 Graph；Runtime 注入同一连接上的 ProfileRepository/Storage，不在节点另开连接。事件仅包含版本/Proposal ID 和计数。
 - 独立 `profile.assess` 锁定 confirmed snapshot，先校验全部 Evidence、版本和目标 Claim，再幂等保存 Assessment/Proposal，最后投影 `assessment_card`；失败不留下 Assessment 半成品。
 - 新鲜定向回归：Profile repository/material service/Agent/Graph/checkpoint/middleware/Agent routes 共 `73 passed`；compileall 与 `git diff --check` 通过。
+
+## 2026-07-22：R3 Task 8 - 材料、版本与 Evidence API
+
+- 新增 9 个 R3.1 API：材料上传/列表、版本追加/列表/详情/重试、归档/恢复/主版本；上传与重试返回 `202 Accepted`，后台继续复用隐藏 `profile.ingest` Execution。
+- 资源使用 camelCase，包含处理阶段、Evidence offset/limit 分页、locator/2,000 字符内 excerpt、Proposal 计数、retry capability 和安全 Execution 摘要；未暴露私有存储引用、完整文本或 system Session ID。
+- 所有非 Workspace 路径重新校验 `workspaceId`；写操作接入 Profile receipt，材料生命周期操作增加 aggregate version 检查，错误统一为中文 `code/message/retryable` envelope。
+- RED 为新 API 文件 `5 failed`（端点均不存在）；GREEN 后 Task 8 `5 passed`。受影响旧 material service 与 restore invariant 合并验证后最终 `16 passed`；Python compileall、OpenAPI 9 端点扫描和 `git diff --check` 通过。未运行全量回归、前端或浏览器。
+- 下一产品任务：Task 9 实现材料版本与 Evidence 页面，完成后用户可以开始 R3.1 第一批页面功能测试。
+
+## 2026-07-22：R3 Task 9 - 材料版本与 Evidence 页面
+
+- 新增 `/profile` 一级入口、资料总览、简历版本、确定性处理阶段、失败重试、归档/恢复/主版本、Evidence 定位和 390px 单列布局；`/review` 继续是默认路由。
+- 新增 multipart `apiUpload` 与 Profile 类型/API 客户端；上传支持 picker/drag-drop、PDF/DOCX/Markdown/TXT 和 10 MB 前端校验，所有写请求携带幂等键。
+- 有效 RED 为 4 个目标文件缺失与 `apiUpload is not a function`；GREEN 后 4 个聚焦文件 `13 passed`，TypeScript、Python compileall、`git diff --check` 通过。只额外重跑受影响的 ResumeVersions 单文件，未跑全量回归或 build。
+- 隔离临时工作区浏览器验收发现并修复“模型未配置时 Execution 失败但 Material 仍处理中”的无限轮询缺口；重试后材料落 retryable terminal status，页面显示保留与恢复说明。
+- 390/768/1024/1440 均 `scrollWidth === clientWidth`，桌面/移动截图已保存到本地 verification assets；console 0 warning/error，`design-qa.md` 最终为 passed。
+- 产品成熟度：R3.1 的上传、版本、Evidence 与失败恢复现在可在页面测试；成功 Claim 数据仍依赖配置 `profile_extraction` 模型，Claim 审核从 Task 10 开始。
+- 下一产品任务：Task 10 Claim Proposal 审核与删除影响分析。
+
+## 2026-07-22：R3 Task 10 - Claim Proposal 审核与删除影响分析
+
+- 新增 Claim 列表/详情/版本、Proposal 接受（含编辑后接受）/拒绝、批量决定 API；响应保留 Evidence 定位与逐项冲突回执，写操作支持 expected version 和幂等回放。
+- 新增 15 分钟持久删除预检与安全永久删除：逐 Claim 选择删除或保留为 unsupported，已进入发布选择的 Claim 禁止直接删除；活动知识要求显式撤销，未接入 Task 16 revoker 时安全失败。
+- 删除事务会重新校验材料、Evidence、ClaimVersion、待决 Proposal、选择和活动发布快照；并发接受使旧计划返回 409，已接受 Claim 不会引用被清空的 Evidence。
+- 删除后保留无敏感正文 tombstone，artifact 按引用计数最后清理；部分失败保存 item receipt，重试不会重复领域写入。
+- 新鲜 Task 10 定向 `11 passed`；受影响 Profile 仓储/材料/API/迁移回归 `59 passed`；Python compileall 与 `git diff --check` 通过。未运行无必要的全量回归。
+- 产品成熟度：Claim 审核与删除安全后端已完成，但尚不能从页面操作；Task 16 接入正式 Knowledge revoke 后才形成活动发布材料的完整删除闭环。
+- 下一产品任务：Task 11 Claim 审核前端。
+
+## 2026-07-22：R3 Task 11 - Claim 审核工作台
+
+- `/profile` 的“画像与经历”已开放：支持状态/分类筛选、Proposal 队列、冲突文字标识、当前值与建议值并列对比、理由和 Evidence 跳转、单项接受/拒绝及逐项选择的批量接受/拒绝。
+- 批量提交前选择持续可见；部分冲突回执只清除成功项，保留冲突项并刷新快照。Evidence 详情按自身 MaterialVersion 加载，不误用当前简历版本。
+- 永久删除对话框先读取后端 deletion plan，展示 Evidence/Claim/unsupported/publication 数量，逐 Claim 选择处理方式；归档与永久删除文案分离，要求输入“永久删除”，活动发布额外要求撤销确认。
+- 自动验证：ClaimReview、DeletionImpactDialog、ProfilePage 三个目标文件 `7 passed`；`tsc --noEmit` 与 `git diff --check` 通过。
+- 浏览器验收：1280px 与 390px `scrollWidth === clientWidth`，console 0 warning/error；Escape 关闭删除框后焦点返回“永久删除材料”。只执行删除预检，没有提交永久删除；本轮服务已停止。
+- 产品成熟度：R3.2 Claim 审核页面闭环已完成；真实 Claim 建议仍依赖成功配置并运行 `profile_extraction` 模型，活动知识关联删除仍等待 Task 16 revoke adapter。
+- 下一产品任务：Task 12 Assessment、受约束 Action Plan 与 Receipt。
+
+## 2026-07-22：R3 Task 12 - Assessment、受约束 Action Plan 与 Receipt
+
+- `ProfileService` 新增 confirmed snapshot Assessment 门禁和 Evidence 引用校验；相同 Execution 的相同结果幂等返回，Assessment 不写 confirmed Claim。
+- Action Plan 创建时限制六个操作并整体校验 immutable ordered item、before/after、expected version、Evidence 和 Workspace；确认、取消、局部失败、重试与最终聚合状态均使用乐观锁。
+- 固定 dispatch 只调用 Claim Proposal、derived material version、publication selection 和 reassessment request 的领域路径；没有 generic tool/method dispatch、任意代码、自由路径或直接 Knowledge publish。
+- 派生简历失败恢复使用稳定 item creator，重试复用已创建版本并只补文本/状态/主版本步骤；completed item 不重复执行，Receipt 不变化。
+- 安全 Event 只投影 ID、operation、ordinal、status/count。目标 Assessment/Action Plan `7 passed`；合并 Profile Repository 回归 `38 passed`；compileall 与 `git diff --check` 通过，未跑全量回归。
+- 产品成熟度：R3.3 的领域计划与执行状态机已具备；模型如何生成计划、连续对话和 HITL API/UI 仍由 Task 13-15 接入。
+- 下一产品任务：Task 13 `profile.manage` 与有界 Chat Tool loop。
 
 ## 2026-07-20：补充 Agent State 与 Context Offload ADR
 
@@ -614,3 +689,44 @@
 - 根因是 `catalog-workbench` 被外层 Grid 拉满剩余视口后，内部 auto rows 默认平分多余高度，导致工具栏和“整理会话/题目库”导航被纵向拉伸。
 - 工作台改为内容起始对齐；二级导航保持 54px 外框、44px 点击区，两项桌面端各 112px，390px 下各 176px 均分整行，并补 focus-visible。
 - 实页计算尺寸与桌面/390px 视觉检查通过；QuestionCatalog 定向语义测试 `1 passed`，`git diff --check` 通过。下一产品任务仍为 R3 Task 8。
+
+## 2026-07-23：R3 历史材料“等待文本提取”卡死修复
+
+- 实际 Execution 已于 2026-07-22 16:48:34 CST 失败，Trace 明确为 `profile ingest identifiers are required`；材料版本仍为 `uploaded`，导致前端轮询永不结束。
+- 根因是 Service 传 camelCase、LangGraph `ProfileIngestState` 仅声明 snake_case，未声明字段在首节点前被过滤。
+- 摄入/重试输入已统一为 snake_case；失败状态按阶段收敛；修复前的历史失败记录由 API 投影为可重试失败态。
+- 用户首次真实重试成功创建 snake_case Execution，但 `profile.ingest.parsing` 被共享 ProductEventStream allowlist 拒绝；补齐 ingest 三事件后，测试改为完整 Graph 经过真实事件流落库。
+- 定向 API + Graph + 既有 Event Stream `15 passed`，`git diff --check` 通过；开发服务已热更新。失败的真实重试已安全收口为 `parse_failed`，下一步由用户在原版本再次点击重试。
+
+## 2026-07-23：R3 画像会话 ToolRuntime 注入修复
+
+- 用户真实问答中材料检索阶段进入 Tool loop，但 `get_profile_claims` 抛出 `missing 1 required positional argument: runtime`，导致并行画像/知识查询失败和 Execution 终止。
+- 8 个画像只读 Tool 的显式 Pydantic args schema 未包含注入型 `ToolRuntime`；业务单元测试绕过 ToolNode，未覆盖生产注入路径。
+- 严格输入基类现声明服务端注入 runtime；模型可见参数仍只有 query/evidence/claim/version 等业务字段。新增真实 ToolNode 测试，一次执行全部 8 个 Tool 并验证上下文注入。
+- 后端画像 Tool/预算/chat/manage `37 passed`；前端 Tool 状态/工作区 `3 passed`，TypeScript 与 `git diff --check` 通过。失败文案改为“无法……，请重试”。
+
+## 2026-07-23：R3 画像会话并发 Tool SQLite 写竞争修复
+
+- 真实 Execution 一次并发发起 5 个只读 Tool；每个 Tool 的审计起止和产品状态事件仍需写同一 Runtime SQLite，产生 writer contention。事件写失败后，Execution 失败收口又撞到未释放的并发写锁，导致运行记录残留为 `running`。
+- 同一 Execution 的画像 Tool 生命周期现按序执行；模型仍可一次提出多个 Tool，但审计、查询和事件写入不会并发争抢 SQLite。产品事件写入遇到短暂 locked/busy 时会先回滚，再进行有限重试。
+- 新增并发 5 Tool 串行化和产品事件瞬时锁恢复测试；目标套件 `10 passed`，`git diff --check` 通过。旧残留 Execution 会在后端完成热重载后的启动恢复中转为 `interrupted`。
+
+## 2026-07-23：R3 画像会话终态与停止按钮收口
+
+- 真实 Execution `53441ea6-006d-48f0-aafc-76c657c98d9c` 已由后端恢复为 `interrupted`，停止接口也持续返回 200；页面仍转圈的根因是旧 SSE `running` 状态覆盖了最新持久化终态。
+- 画像工作区现以持久化的 `interrupted/completed/failed/cancelled` 为最终事实；停止请求期间按钮防重复点击，完成后恢复输入。Tool 状态只展示当前 Execution，并按 `toolCallId` 合并；缺少结束事件的旧 Tool 在 Execution 终止后显示“已停止…”，不再无限旋转。
+- 定向前端 `5 passed`，TypeScript 与 `git diff --check` 通过。
+
+## 2026-07-23：R3 Profile API 假 404 修复
+
+- 确认目标 MaterialVersion 数据存在；404 是共享 SQLite connection 被多个 FastAPI worker thread 并发使用后产生的错误读，不是业务层 Not Found。
+- Workspace Runtime 改为线程本地连接代理：Repository/Service 无需重写，每个 worker thread 独占连接，Runtime 关闭时统一回收。
+- 新增连接所有权回归，定向 Profile API/Tool/时间线共 `49 passed`；Python compileall 与 `git diff --check` 通过。
+- 卡住热重载的旧 SSE worker 已精确重启；新 worker 健康检查 200，目标 MaterialVersion 接口 10 并发、累计 40 次请求均为 200。
+- 当前 R3 产品任务仍为 Task 15 真实页面验收。
+
+## 2026-07-23：Claim 证据原文入口修正
+
+- “点击查看原文位置”原为不可点击提示，真正可点击的证据行缺少动作文案，造成明显的伪入口。
+- 每条证据现提供明确的“查看原文位置”动作和完整可访问名称；Markdown/TXT 定位转为“第 11–13 行”等中文格式，不再直接展示 `lineStart/lineEnd`。
+- 证据详情页同步显示页码、段落或行号定位；ClaimReview、ProfilePage、ResumeVersions 定向 `6 passed`，TypeScript 与 `git diff --check` 通过。

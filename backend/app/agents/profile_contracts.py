@@ -68,6 +68,8 @@ class ProfileActionPlanItemProposal(_StrictContract):
         "request_reassessment",
     ]
     target: dict[str, object]
+    expected_version: int | None = Field(default=None, ge=0)
+    before: dict[str, object] | None = None
     after: dict[str, object]
     evidence_ids: list[str] = Field(default_factory=list, max_length=50)
 

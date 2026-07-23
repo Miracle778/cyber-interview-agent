@@ -29,7 +29,10 @@ from app.hitl.models import (
 )
 from app.hitl.repository import PendingActionNotFoundError, PendingActionRepository
 from app.hitl.service import HitlService
-from app.infrastructure.runtime_database import connect_runtime_database
+from app.infrastructure.runtime_database import (
+    ThreadLocalRuntimeConnection,
+    connect_thread_local_runtime_database,
+)
 from app.infrastructure.observability import NoopObservabilitySink
 from app.knowledge.drafts import (
     DraftNotEditableError,
@@ -161,7 +164,7 @@ def build_curation_command_context(
 class WorkspaceRuntime:
     workspace_id: str
     root: Path
-    connection: sqlite3.Connection
+    connection: ThreadLocalRuntimeConnection
     repository: ProductRepository
     sessions: AgentSessionService
     executions: AgentExecutionService
@@ -187,7 +190,7 @@ class WorkspaceRuntime:
         observability,
         validate_review_model: Callable[[str, str], None],
     ) -> "WorkspaceRuntime":
-        connection = connect_runtime_database(root)
+        connection = connect_thread_local_runtime_database(root)
         initialize_agent_trace_directory(root)
         repository = ProductRepository(connection)
         events = ProductEventStream(repository, workspace_root=root)
@@ -333,6 +336,9 @@ class WorkspaceRuntime:
             run_ingest=lambda execution: executions.run_prepared(
                 execution, graph_input=execution.input
             ),
+            publish_event=lambda session_id, execution_id, event_type, payload: repository.append_event(
+                session_id, execution_id, event_type, payload
+            ),
         )
         return cls(
             workspace_id=workspace_id,
@@ -388,8 +394,28 @@ class AgentApplication:
     async def create_session(
         self, *, workspace_id: str, kind: str, title: str | None = None
     ) -> SessionRecord:
+        if kind in {"profile.ingest", "profile.assess"}:
+            raise ValueError("该画像系统会话不能由用户创建")
         return await self._context(workspace_id).sessions.create(
             workspace_id=workspace_id, kind=kind, title=title
+        )
+
+    async def create_profile_session(
+        self, *, workspace_id: str, title: str | None = None
+    ) -> SessionRecord:
+        return await self._context(workspace_id).sessions.create(
+            workspace_id=workspace_id,
+            kind="profile.manage",
+            title=title or "个人画像对话",
+        )
+
+    def list_profile_sessions(
+        self, workspace_id: str
+    ) -> tuple[SessionRecord, ...]:
+        return tuple(
+            session
+            for session in self._context(workspace_id).sessions.list(workspace_id)
+            if session.kind == "profile.manage"
         )
 
     def list_sessions(self, workspace_id: str) -> tuple[SessionRecord, ...]:
@@ -562,6 +588,9 @@ class AgentApplication:
 
     def review(self, workspace_id: str) -> ReviewApplication:
         return self._context(workspace_id).review
+
+    def profile(self, workspace_id: str) -> ProfileService:
+        return self._context(workspace_id).profile
 
     def locate_review_round(self, round_id: str) -> ReviewApplication:
         for workspace_id in self._workspace_ids():
