@@ -16,6 +16,17 @@ class RoundAnswerEvaluation(_StrictReviewRoundOutput):
     follow_up_required: bool
     follow_up_prompt: str | None
     mastery_suggestion: Literal["weak", "partial", "stable", "strong"]
+    project_dimensions: dict[
+        Literal[
+            "factual_consistency",
+            "specificity",
+            "structural_completeness",
+            "follow_up_resilience",
+        ],
+        Literal["pending", "basic", "stable", "conflict"],
+    ] | None = None
+    fact_conflict: str | None = None
+    project_mastery: Literal["pending", "basic", "stable"] | None = None
 
     @model_validator(mode="after")
     def validate_follow_up(self) -> "RoundAnswerEvaluation":
@@ -29,6 +40,8 @@ class RoundAnswerEvaluation(_StrictReviewRoundOutput):
             raise ValueError(
                 "follow_up_prompt must be null when no follow-up is required"
             )
+        if self.fact_conflict:
+            self.project_mastery = "pending"
         return self
 
 

@@ -155,6 +155,11 @@ class QuestionCatalogRecord:
     publication_id: str
     active: bool
     published_at: str
+    question_type: str = "technical"
+    project_claim_id: str | None = None
+    project_dimension: str | None = None
+    source_job_target_id: str | None = None
+    source_deep_dive_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

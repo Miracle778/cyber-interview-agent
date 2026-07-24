@@ -16,6 +16,16 @@ REVIEW_ROUND_EVALUATION_PROMPT = PromptSpec(
     ),
 )
 
+PROJECT_ANSWER_EVALUATION_PROMPT = PromptSpec(
+    id="project-answer-evaluation",
+    version="1.0",
+    system=(
+        "评价项目经历回答。除通用评分外，必须评价事实一致性、具体程度、"
+        "结构完整性和追问承受力。若回答与已确认项目事实冲突，标记 fact_conflict，"
+        "project_mastery 必须为 pending；不得自行修改个人画像。"
+    ),
+)
+
 REVIEW_ROUND_REPORT_PROMPT = PromptSpec(
     id="review-round-report",
     version="1.0",

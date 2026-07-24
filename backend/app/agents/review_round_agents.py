@@ -13,6 +13,7 @@ from app.agents.agent_invocation import final_ai_text, isolated_thread_config
 from app.agents.agent_protocols import AgentRunnable
 from app.agents.prompts.review_round_prompts import (
     REVIEW_DISCUSSION_PROMPT,
+    PROJECT_ANSWER_EVALUATION_PROMPT,
     REVIEW_ROUND_EVALUATION_PROMPT,
     REVIEW_ROUND_REPORT_PROMPT,
     render_review_discussion_input,
@@ -31,6 +32,7 @@ class ReviewRoundAgents:
     evaluator: AgentRunnable
     reporter: AgentRunnable
     discussion: AgentRunnable
+    project_evaluator: AgentRunnable | None = None
 
     @classmethod
     def create(
@@ -81,6 +83,18 @@ class ReviewRoundAgents:
                 model_override=None,
                 checkpointer=checkpointer,
             ),
+            project_evaluator=factory.create(
+                AgentSpec(
+                    role="answer_evaluation",
+                    execution_name="project_answer_evaluator",
+                    prompt=PROJECT_ANSWER_EVALUATION_PROMPT,
+                    middleware=middleware,
+                    response_format=RoundAnswerEvaluation,
+                ),
+                model_bindings=model_bindings,
+                model_override=answer_model_override,
+                checkpointer=checkpointer,
+            ),
         )
 
     async def evaluate(
@@ -96,7 +110,12 @@ class ReviewRoundAgents:
         prompt = render_round_evaluation_input(
             question=asdict(question), answer=answer, supplement=supplement
         )
-        result = await self.evaluator.ainvoke(
+        evaluator = (
+            self.project_evaluator
+            if question.question_id.startswith("project:") and self.project_evaluator
+            else self.evaluator
+        )
+        result = await evaluator.ainvoke(
             {"messages": [HumanMessage(content=prompt)]},
             isolated_thread_config(config, context, "answer_evaluation"),
             context=(

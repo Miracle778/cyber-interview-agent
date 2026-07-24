@@ -423,6 +423,331 @@ class JobTargetRepository:
         )
         self.connection.commit()
 
+    def create_analysis_run(
+        self,
+        target_id: str,
+        document_version_id: str,
+        *,
+        profile_version: int,
+        input_digest: str,
+    ) -> str:
+        run_id = str(uuid4())
+        self.connection.execute(
+            "INSERT INTO job_analysis_runs "
+            "(id, job_target_id, document_version_id, profile_version, input_digest, "
+            "status, stage, latest_progress_at) "
+            "VALUES (?, ?, ?, ?, ?, 'running', 'extracting_requirements', CURRENT_TIMESTAMP)",
+            (run_id, target_id, document_version_id, profile_version, input_digest),
+        )
+        self.connection.commit()
+        return run_id
+
+    def current_analysis_run(self, target_id: str):
+        return self.connection.execute(
+            "SELECT * FROM job_analysis_runs WHERE job_target_id = ? "
+            "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            (target_id,),
+        ).fetchone()
+
+    def get_analysis_run(self, run_id: str):
+        row = self.connection.execute(
+            "SELECT * FROM job_analysis_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+        if row is None:
+            raise JobTargetNotFound(run_id)
+        return row
+
+    def create_analysis_work_items(
+        self, run_id: str, items: tuple[tuple[str, str], ...]
+    ) -> None:
+        self.connection.executemany(
+            "INSERT OR IGNORE INTO job_analysis_work_items "
+            "(id, analysis_run_id, work_key, input_digest) VALUES (?, ?, ?, ?)",
+            tuple((str(uuid4()), run_id, key, digest) for key, digest in items),
+        )
+        self.connection.commit()
+
+    def list_analysis_work_items(self, run_id: str):
+        return self.connection.execute(
+            "SELECT * FROM job_analysis_work_items WHERE analysis_run_id = ? "
+            "ORDER BY created_at, rowid",
+            (run_id,),
+        ).fetchall()
+
+    def complete_analysis_work_item(
+        self, item_id: str, output: dict[str, object]
+    ) -> None:
+        self.connection.execute(
+            "UPDATE job_analysis_work_items SET status = 'completed', "
+            "attempt_count = attempt_count + 1, output_json = ?, "
+            "last_error_code = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (json.dumps(output, ensure_ascii=False), item_id),
+        )
+        self.connection.commit()
+
+    def retry_analysis_work_item(self, item_id: str) -> None:
+        self.connection.execute(
+            "UPDATE job_analysis_work_items SET status = 'pending', "
+            "last_error_code = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? "
+            "AND status IN ('retryable', 'interrupted')",
+            (item_id,),
+        )
+        self.connection.commit()
+
+    def transition_analysis(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        stage: str | None = None,
+        control_intent: str | None = None,
+    ) -> None:
+        self.connection.execute(
+            "UPDATE job_analysis_runs SET status = ?, stage = COALESCE(?, stage), "
+            "control_intent = ?, latest_progress_at = CURRENT_TIMESTAMP, "
+            "version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (status, stage, control_intent, run_id),
+        )
+        self.connection.commit()
+
+    def create_deep_dive(
+        self, target_id: str, project_claim_id: str, session_id: str
+    ) -> str:
+        dive_id = str(uuid4())
+        self.connection.execute(
+            "INSERT INTO project_deep_dives "
+            "(id, job_target_id, project_claim_id, session_id, waiting_for_input) "
+            "VALUES (?, ?, ?, ?, 1)",
+            (dive_id, target_id, project_claim_id, session_id),
+        )
+        self.connection.commit()
+        return dive_id
+
+    def current_deep_dive(self, target_id: str, project_claim_id: str):
+        return self.connection.execute(
+            "SELECT * FROM project_deep_dives WHERE job_target_id = ? "
+            "AND project_claim_id = ? AND status != 'archived' "
+            "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            (target_id, project_claim_id),
+        ).fetchone()
+
+    def get_deep_dive(self, dive_id: str):
+        row = self.connection.execute(
+            "SELECT * FROM project_deep_dives WHERE id = ?", (dive_id,)
+        ).fetchone()
+        if row is None:
+            from app.job_targets.errors import ProjectDeepDiveNotFound
+            raise ProjectDeepDiveNotFound(dive_id)
+        return row
+
+    def advance_deep_dive(
+        self,
+        dive_id: str,
+        *,
+        current_stage: str,
+        completed_stage_ids: tuple[str, ...],
+        waiting_for_input: bool,
+        status: str = "active",
+    ) -> None:
+        self.connection.execute(
+            "UPDATE project_deep_dives SET current_stage = ?, "
+            "completed_stage_ids_json = ?, waiting_for_input = ?, status = ?, "
+            "version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (
+                current_stage,
+                json.dumps(completed_stage_ids),
+                int(waiting_for_input),
+                status,
+                dive_id,
+            ),
+        )
+        self.connection.commit()
+
+    def transition_deep_dive(self, dive_id: str, status: str) -> None:
+        self.connection.execute(
+            "UPDATE project_deep_dives SET status = ?, version = version + 1, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (status, dive_id),
+        )
+        self.connection.commit()
+
+    def create_artifact(
+        self,
+        dive_id: str,
+        *,
+        artifact_kind: str,
+        payload: dict[str, object],
+        execution_id: str | None = None,
+        message_id: str | None = None,
+    ) -> str:
+        artifact_id = str(uuid4())
+        self.connection.execute(
+            "INSERT INTO project_deep_dive_artifacts "
+            "(id, deep_dive_id, artifact_kind, source_execution_id, "
+            "source_message_id, payload_json) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                artifact_id,
+                dive_id,
+                artifact_kind,
+                execution_id,
+                message_id,
+                json.dumps(payload, ensure_ascii=False),
+            ),
+        )
+        self.connection.commit()
+        return artifact_id
+
+    def list_artifacts(self, dive_id: str):
+        return self.connection.execute(
+            "SELECT * FROM project_deep_dive_artifacts WHERE deep_dive_id = ? "
+            "ORDER BY created_at, rowid",
+            (dive_id,),
+        ).fetchall()
+
+    def get_artifact(self, artifact_id: str):
+        row = self.connection.execute(
+            "SELECT * FROM project_deep_dive_artifacts WHERE id = ?",
+            (artifact_id,),
+        ).fetchone()
+        if row is None:
+            raise JobTargetNotFound(artifact_id)
+        return row
+
+    def confirm_narrative_sections(
+        self,
+        *,
+        workspace_id: str,
+        project_claim_id: str,
+        artifact_id: str,
+        sections: dict[str, str],
+        source_session_id: str,
+        source_message_id: str | None,
+    ) -> None:
+        try:
+            for kind, content in sections.items():
+                self.connection.execute(
+                    "UPDATE project_narrative_sections SET status = 'superseded' "
+                    "WHERE project_claim_id = ? AND section_kind = ? AND status = 'confirmed'",
+                    (project_claim_id, kind),
+                )
+                version = self.connection.execute(
+                    "SELECT COALESCE(MAX(version), 0) + 1 FROM project_narrative_sections "
+                    "WHERE project_claim_id = ? AND section_kind = ?",
+                    (project_claim_id, kind),
+                ).fetchone()[0]
+                self.connection.execute(
+                    "INSERT INTO project_narrative_sections "
+                    "(id, workspace_id, project_claim_id, section_kind, content, "
+                    "source_session_id, source_message_id, version) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        str(uuid4()),
+                        workspace_id,
+                        project_claim_id,
+                        kind,
+                        content,
+                        source_session_id,
+                        source_message_id,
+                        version,
+                    ),
+                )
+            self.connection.execute(
+                "UPDATE project_deep_dive_artifacts SET status = 'partially_confirmed', "
+                "version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (artifact_id,),
+            )
+            self.connection.commit()
+        except sqlite3.Error:
+            self.connection.rollback()
+            raise
+
+    def create_gap(
+        self, dive_id: str, *, kind: str, summary: str, source_artifact_id: str | None
+    ) -> str:
+        gap_id = str(uuid4())
+        self.connection.execute(
+            "INSERT INTO project_gaps "
+            "(id, deep_dive_id, gap_kind, summary, source_artifact_id) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (gap_id, dive_id, kind, summary, source_artifact_id),
+        )
+        self.connection.commit()
+        return gap_id
+
+    def list_gaps(self, dive_id: str):
+        return self.connection.execute(
+            "SELECT * FROM project_gaps WHERE deep_dive_id = ? "
+            "ORDER BY created_at, rowid",
+            (dive_id,),
+        ).fetchall()
+
+    def get_gap(self, gap_id: str):
+        row = self.connection.execute(
+            "SELECT gap.*, dive.project_claim_id, dive.job_target_id "
+            "FROM project_gaps gap JOIN project_deep_dives dive "
+            "ON dive.id = gap.deep_dive_id WHERE gap.id = ?",
+            (gap_id,),
+        ).fetchone()
+        if row is None:
+            raise JobTargetNotFound(gap_id)
+        return row
+
+    def resolve_gap(self, gap_id: str, *, status: str, resolution_ref: str) -> None:
+        self.connection.execute(
+            "UPDATE project_gaps SET status = ?, resolution_ref = ?, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (status, resolution_ref, gap_id),
+        )
+        self.connection.commit()
+
+    def create_project_question_candidate(
+        self,
+        dive_id: str,
+        project_claim_id: str,
+        *,
+        dimension: str,
+        question: dict[str, object],
+    ) -> str:
+        encoded = json.dumps(question, ensure_ascii=False, sort_keys=True)
+        existing = self.connection.execute(
+            "SELECT id FROM project_question_candidates WHERE deep_dive_id = ? "
+            "AND project_claim_id = ? AND dimension = ? AND question_json = ?",
+            (dive_id, project_claim_id, dimension, encoded),
+        ).fetchone()
+        if existing is not None:
+            return existing["id"]
+        candidate_id = str(uuid4())
+        self.connection.execute(
+            "INSERT INTO project_question_candidates "
+            "(id, deep_dive_id, project_claim_id, dimension, question_json) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (candidate_id, dive_id, project_claim_id, dimension, encoded),
+        )
+        self.connection.commit()
+        return candidate_id
+
+    def list_project_question_candidates(self, dive_id: str):
+        return self.connection.execute(
+            "SELECT * FROM project_question_candidates WHERE deep_dive_id = ? "
+            "ORDER BY created_at, rowid",
+            (dive_id,),
+        ).fetchall()
+
+    def decide_project_question_candidate(self, candidate_id: str, status: str) -> None:
+        self.connection.execute(
+            "UPDATE project_question_candidates SET status = ?, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (status, candidate_id),
+        )
+        self.connection.commit()
+
+    def list_project_priorities(self, target_id: str):
+        return self.connection.execute(
+            "SELECT * FROM job_target_project_priorities WHERE job_target_id = ? "
+            "ORDER BY ordinal",
+            (target_id,),
+        ).fetchall()
+
     def _raise_target_conflict(self, target_id: str) -> None:
         row = self.connection.execute(
             "SELECT 1 FROM job_targets WHERE id = ?", (target_id,)

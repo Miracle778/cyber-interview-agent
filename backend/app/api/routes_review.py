@@ -540,6 +540,10 @@ async def list_active_questions(
             "draft_id": item.draft_id,
             "publication_id": item.publication_id,
             "published_at": item.published_at,
+            "question_type": item.question_type,
+            "project_claim_id": item.project_claim_id,
+            "project_dimension": item.project_dimension,
+            "source_job_target_id": item.source_job_target_id,
         }
         for item in records
     ]

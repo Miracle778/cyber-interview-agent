@@ -57,6 +57,7 @@ from app.profile.service import ProfileService
 from app.profile.storage import MaterialStorage
 from app.job_targets.repository import JobTargetRepository
 from app.job_targets.service import JobTargetService
+from app.job_targets.application import JobTargetApplication
 
 
 class SqliteMiddlewareProjection:
@@ -178,6 +179,7 @@ class WorkspaceRuntime:
     review: ReviewApplication
     profile: ProfileService
     job_targets: JobTargetService
+    job_training: JobTargetApplication
     publication_locks: dict[str, asyncio.Lock] = field(
         default_factory=dict, repr=False
     )
@@ -349,6 +351,15 @@ class WorkspaceRuntime:
             profile_repository=profile_repository,
             product_repository=repository,
         )
+        job_training = JobTargetApplication(
+            workspace_id=workspace_id,
+            service=job_targets,
+            repository=job_targets.repository,
+            profile=profile,
+            sessions=sessions,
+            executions=executions,
+            product_repository=repository,
+        )
         return cls(
             workspace_id=workspace_id,
             root=root,
@@ -364,6 +375,7 @@ class WorkspaceRuntime:
             review=review,
             profile=profile,
             job_targets=job_targets,
+            job_training=job_training,
         )
 
     async def close(self) -> None:
@@ -614,6 +626,9 @@ class AgentApplication:
 
     def job_targets(self, workspace_id: str) -> JobTargetService:
         return self._context(workspace_id).job_targets
+
+    def job_training(self, workspace_id: str) -> JobTargetApplication:
+        return self._context(workspace_id).job_training
 
     def locate_review_round(self, round_id: str) -> ReviewApplication:
         for workspace_id in self._workspace_ids():

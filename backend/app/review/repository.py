@@ -3245,7 +3245,7 @@ class ReviewRepository:
             "ORDER BY published_at, rowid",
             (workspace_id,),
         ).fetchall()
-        records = tuple(self._catalog_record(row) for row in rows)
+        records = tuple(self._catalog_record(row) for row in rows) + self._confirmed_project_questions(workspace_id)
         if topic is not None:
             records = tuple(
                 item for item in records if topic in item.snapshot.topics
@@ -3259,6 +3259,19 @@ class ReviewRepository:
         return records
 
     def get_active_question(self, question_id: str) -> QuestionCatalogRecord:
+        if question_id.startswith("project:"):
+            candidate_id = question_id.split(":", 1)[1]
+            row = self._connection.execute(
+                "SELECT candidate.*, dive.job_target_id, target.workspace_id "
+                "FROM project_question_candidates candidate "
+                "JOIN project_deep_dives dive ON dive.id = candidate.deep_dive_id "
+                "JOIN job_targets target ON target.id = dive.job_target_id "
+                "WHERE candidate.id = ? AND candidate.status = 'confirmed'",
+                (candidate_id,),
+            ).fetchone()
+            if row is None:
+                raise LookupError(question_id)
+            return self._project_catalog_record(row)
         record = self._require_catalog(question_id)
         if not record.active:
             raise LookupError(question_id)
@@ -4693,6 +4706,55 @@ class ReviewRepository:
             publication_id=row["publication_id"],
             active=bool(row["active"]),
             published_at=row["published_at"],
+            question_type=row["question_type"],
+            project_claim_id=row["project_claim_id"],
+            project_dimension=row["project_dimension"],
+            source_job_target_id=row["source_job_target_id"],
+            source_deep_dive_id=row["source_deep_dive_id"],
+        )
+
+    def _confirmed_project_questions(
+        self, workspace_id: str
+    ) -> tuple[QuestionCatalogRecord, ...]:
+        rows = self._connection.execute(
+            "SELECT candidate.*, dive.job_target_id, target.workspace_id "
+            "FROM project_question_candidates candidate "
+            "JOIN project_deep_dives dive ON dive.id = candidate.deep_dive_id "
+            "JOIN job_targets target ON target.id = dive.job_target_id "
+            "WHERE target.workspace_id = ? AND candidate.status = 'confirmed' "
+            "ORDER BY candidate.updated_at, candidate.rowid",
+            (workspace_id,),
+        ).fetchall()
+        return tuple(self._project_catalog_record(row) for row in rows)
+
+    def _project_catalog_record(self, row: sqlite3.Row) -> QuestionCatalogRecord:
+        payload = json.loads(row["question_json"])
+        text = str(payload.get("question") or payload.get("title") or "项目经历问题")
+        identifier = f"project:{row['id']}"
+        digest = sha256(text.encode("utf-8")).hexdigest()
+        return QuestionCatalogRecord(
+            snapshot=QuestionSnapshot(
+                question_id=identifier,
+                document_id=f"project:{row['project_claim_id']}",
+                content_hash=digest,
+                title=str(payload.get("title") or text),
+                question_text=text,
+                reference_answer="请基于已确认的项目事实，说明个人行动、技术取舍与结果。",
+                topics=("项目经历", str(row["dimension"])),
+                difficulty="medium",
+                key_points=("事实一致", "个人贡献", "具体行动", "结果与复盘"),
+                follow_ups=(),
+            ),
+            workspace_id=row["workspace_id"],
+            draft_id=f"project-candidate:{row['id']}",
+            publication_id=f"project-confirmation:{row['id']}",
+            active=True,
+            published_at=row["updated_at"],
+            question_type="project_experience",
+            project_claim_id=row["project_claim_id"],
+            project_dimension=row["dimension"],
+            source_job_target_id=row["job_target_id"],
+            source_deep_dive_id=row["deep_dive_id"],
         )
 
     def _round_record(self, row: sqlite3.Row) -> ReviewRoundRecord:

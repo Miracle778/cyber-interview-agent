@@ -24,6 +24,14 @@ from app.schemas.job_targets import (
     SafeRequirementConfirmationCommand,
     TargetDeletionImpactResource,
     UpdateJobTargetCommand,
+    AnalysisControlCommand,
+    JobAnalysisStartCommand,
+    ProjectDeepDiveStartCommand,
+    DeepDiveAnswerCommand,
+    MessageResolutionCommand,
+    QuestionCandidateDecisionCommand,
+    NarrativeDecisionCommand,
+    GapDispatchCommand,
 )
 
 router = APIRouter(tags=["job-targets"])
@@ -121,3 +129,124 @@ def deletion_impact(target_id: str, workspace_id: Annotated[str, Query(alias="wo
 def delete_target(target_id: str, command: JobTargetDeleteCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
     _service(application, command.workspace_id).delete_target(target_id, idempotency_key=idempotency_key)
     return Response(status_code=204)
+
+
+@router.post("/api/job-targets/{target_id}/analysis-runs", status_code=202)
+async def start_analysis(target_id: str, command: JobAnalysisStartCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+    service = _service(application, command.workspace_id)
+    if service.get_target(target_id).version != command.expected_version:
+        raise JobTargetNotFound(target_id)
+    return await application.job_training(command.workspace_id).start_analysis(target_id)
+
+
+@router.get("/api/job-targets/{target_id}/analysis-runs/current")
+def current_analysis(target_id: str, workspace_id: Annotated[str, Query(alias="workspaceId")], application: AgentApplication = Depends(get_agent_application)):
+    return application.job_training(workspace_id).current_analysis(target_id)
+
+
+def _analysis_control(target_id, run_id, command, application, action):
+    _service(application, command.workspace_id).get_target(target_id)
+    return application.job_training(command.workspace_id).control_analysis(run_id, action)
+
+
+@router.post("/api/job-targets/{target_id}/analysis-runs/{run_id}/pause")
+def pause_analysis(target_id: str, run_id: str, command: AnalysisControlCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+    return _analysis_control(target_id, run_id, command, application, "pause")
+
+
+@router.post("/api/job-targets/{target_id}/analysis-runs/{run_id}/resume")
+def resume_analysis(target_id: str, run_id: str, command: AnalysisControlCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+    return _analysis_control(target_id, run_id, command, application, "resume")
+
+
+@router.post("/api/job-targets/{target_id}/analysis-runs/{run_id}/terminate")
+def terminate_analysis(target_id: str, run_id: str, command: AnalysisControlCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+    return _analysis_control(target_id, run_id, command, application, "terminate")
+
+
+@router.post("/api/job-targets/{target_id}/analysis-runs/{run_id}/work-items/{item_id}/retry")
+def retry_work_item(target_id: str, run_id: str, item_id: str, command: AnalysisControlCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+    _service(application, command.workspace_id).get_target(target_id)
+    return application.job_training(command.workspace_id).retry_work_item(run_id, item_id)
+
+
+@router.get("/api/job-targets/{target_id}/readiness")
+def target_readiness(target_id: str, workspace_id: Annotated[str, Query(alias="workspaceId")], application: AgentApplication = Depends(get_agent_application)):
+    return application.job_training(workspace_id).readiness(target_id)
+
+
+@router.post("/api/job-targets/{target_id}/projects/{project_id}/deep-dives", status_code=201)
+async def create_deep_dive(target_id: str, project_id: str, command: ProjectDeepDiveStartCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+    if command.project_claim_id != project_id:
+        raise JobTargetNotFound(project_id)
+    return await application.job_training(command.workspace_id).create_deep_dive(target_id, project_id)
+
+
+@router.get("/api/job-targets/{target_id}/projects/{project_id}/deep-dives/current")
+def current_deep_dive(target_id: str, project_id: str, workspace_id: Annotated[str, Query(alias="workspaceId")], application: AgentApplication = Depends(get_agent_application)):
+    return application.job_training(workspace_id).current_deep_dive(target_id, project_id)
+
+
+@router.post("/api/job-targets/{target_id}/deep-dives/{dive_id}/messages")
+async def answer_deep_dive(target_id: str, dive_id: str, command: DeepDiveAnswerCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+    _service(application, command.workspace_id).get_target(target_id)
+    return await application.job_training(command.workspace_id).answer_deep_dive(dive_id, command.content, message_id=command.message_id)
+
+
+@router.post("/api/job-targets/{target_id}/deep-dives/{dive_id}/executions/{execution_id}/retry")
+async def retry_deep_dive(target_id: str, dive_id: str, execution_id: str, command: AnalysisControlCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+    _service(application, command.workspace_id).get_target(target_id)
+    return await application.job_training(command.workspace_id).retry_deep_dive(dive_id, execution_id)
+
+
+@router.post("/api/job-targets/{target_id}/deep-dives/{dive_id}/messages/{message_id}/resolve")
+def resolve_deep_dive_message(target_id: str, dive_id: str, message_id: str, command: MessageResolutionCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+    _service(application, command.workspace_id).get_target(target_id)
+    return application.job_training(command.workspace_id).resolve_message(dive_id, message_id, resolution=command.resolution, replacement=command.replacement_content)
+
+
+def _deep_dive_control(target_id, dive_id, command, application, action):
+    _service(application, command.workspace_id).get_target(target_id)
+    return application.job_training(command.workspace_id).control_deep_dive(dive_id, action)
+
+
+@router.post("/api/job-targets/{target_id}/deep-dives/{dive_id}/pause")
+def pause_deep_dive(target_id: str, dive_id: str, command: AnalysisControlCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+    return _deep_dive_control(target_id, dive_id, command, application, "pause")
+
+
+@router.post("/api/job-targets/{target_id}/deep-dives/{dive_id}/resume")
+def resume_deep_dive(target_id: str, dive_id: str, command: AnalysisControlCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+    return _deep_dive_control(target_id, dive_id, command, application, "resume")
+
+
+@router.post("/api/job-targets/{target_id}/deep-dives/{dive_id}/terminate")
+def terminate_deep_dive(target_id: str, dive_id: str, command: AnalysisControlCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+    return _deep_dive_control(target_id, dive_id, command, application, "terminate")
+
+
+@router.post("/api/job-targets/{target_id}/question-candidates/{candidate_id}/decision", status_code=204)
+def decide_project_question(target_id: str, candidate_id: str, command: QuestionCandidateDecisionCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+    _service(application, command.workspace_id).get_target(target_id)
+    application.job_training(command.workspace_id).decide_question_candidate(candidate_id, command.decision)
+    return Response(status_code=204)
+
+
+@router.post("/api/job-targets/{target_id}/narrative-artifacts/{artifact_id}/confirm")
+def confirm_narrative(target_id: str, artifact_id: str, command: NarrativeDecisionCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+    _service(application, command.workspace_id).get_target(target_id)
+    return application.job_training(command.workspace_id).confirm_narrative_sections(
+        artifact_id,
+        section_ids=tuple(command.section_ids),
+        edited_values=command.edited_values,
+        expected_project_version=command.expected_project_version,
+        idempotency_key=idempotency_key,
+    )
+
+
+@router.post("/api/job-targets/{target_id}/gaps/{gap_id}/dispatch")
+def dispatch_gap(target_id: str, gap_id: str, command: GapDispatchCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+    _service(application, command.workspace_id).get_target(target_id)
+    return application.job_training(command.workspace_id).dispatch_gap(
+        gap_id, idempotency_key=idempotency_key
+    )

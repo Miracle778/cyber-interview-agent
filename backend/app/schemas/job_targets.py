@@ -167,3 +167,19 @@ class GenericReceiptResource(AgentModel):
     status: str
     version: int = 1
     detail: dict[str, Any] = Field(default_factory=dict)
+
+
+class QuestionCandidateDecisionCommand(AgentModel):
+    workspace_id: str
+    decision: Literal["confirmed", "ignored", "duplicate"]
+
+
+class NarrativeDecisionCommand(AgentModel):
+    workspace_id: str
+    section_ids: list[str] = Field(min_length=1, max_length=7)
+    edited_values: dict[str, str] = Field(default_factory=dict)
+    expected_project_version: int = Field(ge=1)
+
+
+class GapDispatchCommand(AgentModel):
+    workspace_id: str

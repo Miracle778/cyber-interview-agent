@@ -253,6 +253,10 @@ class ActiveQuestionResource(ReviewModel):
     draft_id: str
     publication_id: str
     published_at: str
+    question_type: Literal["technical", "project_experience"] = "technical"
+    project_claim_id: str | None = None
+    project_dimension: str | None = None
+    source_job_target_id: str | None = None
 
 
 class CurrentQuestionResource(ReviewModel):
