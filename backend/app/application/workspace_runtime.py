@@ -55,6 +55,8 @@ from app.diagnostics.agent_trace import AgentTraceWriter, initialize_agent_trace
 from app.profile.repository import ProfileRepository
 from app.profile.service import ProfileService
 from app.profile.storage import MaterialStorage
+from app.job_targets.repository import JobTargetRepository
+from app.job_targets.service import JobTargetService
 
 
 class SqliteMiddlewareProjection:
@@ -175,6 +177,7 @@ class WorkspaceRuntime:
     publications: PublicationService
     review: ReviewApplication
     profile: ProfileService
+    job_targets: JobTargetService
     publication_locks: dict[str, asyncio.Lock] = field(
         default_factory=dict, repr=False
     )
@@ -340,6 +343,12 @@ class WorkspaceRuntime:
                 session_id, execution_id, event_type, payload
             ),
         )
+        job_targets = JobTargetService(
+            workspace_id=workspace_id,
+            repository=JobTargetRepository(connection),
+            profile_repository=profile_repository,
+            product_repository=repository,
+        )
         return cls(
             workspace_id=workspace_id,
             root=root,
@@ -354,6 +363,7 @@ class WorkspaceRuntime:
             publications=publications,
             review=review,
             profile=profile,
+            job_targets=job_targets,
         )
 
     async def close(self) -> None:
@@ -601,6 +611,9 @@ class AgentApplication:
 
     def profile(self, workspace_id: str) -> ProfileService:
         return self._context(workspace_id).profile
+
+    def job_targets(self, workspace_id: str) -> JobTargetService:
+        return self._context(workspace_id).job_targets
 
     def locate_review_round(self, round_id: str) -> ReviewApplication:
         for workspace_id in self._workspace_ids():

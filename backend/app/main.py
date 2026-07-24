@@ -12,6 +12,7 @@ from app.api.routes_drafts import router as drafts_router
 from app.api.routes_hitl import router as hitl_router
 from app.api.routes_knowledge import router as knowledge_router
 from app.api.routes_profile import router as profile_router
+from app.api.routes_job_targets import router as job_targets_router
 from app.api.routes_review import router as review_router
 from app.api.routes_settings import router as settings_router
 from app.agents.agent_factory import AgentFactory
@@ -83,6 +84,12 @@ from app.profile.errors import (
     ProfileUnsupportedFileType,
     ProfileUploadTooLarge,
     ProfileValueInvalid,
+)
+from app.job_targets.errors import (
+    JobTargetDomainError,
+    JobTargetNotFound,
+    JobTargetConflict,
+    JobTargetBusy,
 )
 from app.services.secrets import (
     EnvironmentSecretStore,
@@ -157,6 +164,7 @@ app.include_router(knowledge_router)
 app.include_router(drafts_router)
 app.include_router(review_router)
 app.include_router(profile_router)
+app.include_router(job_targets_router)
 
 
 def _error(status_code: int, code: str, message: str) -> JSONResponse:
@@ -181,7 +189,8 @@ async def invalid_request(
     is_profile_path = path.startswith("/api/profile/") or (
         path.startswith("/api/workspaces/") and "/profile/" in path
     )
-    if not is_profile_path:
+    is_job_target_path = "/job-targets" in path
+    if not is_profile_path and not is_job_target_path:
         return JSONResponse(
             status_code=422,
             content={"detail": jsonable_encoder(error.errors())},
@@ -192,6 +201,17 @@ async def invalid_request(
         "请求参数不完整或格式错误",
         retryable=False,
     )
+
+
+@app.exception_handler(JobTargetDomainError)
+async def job_target_domain_error(
+    _request: Request, error: JobTargetDomainError
+) -> JSONResponse:
+    if isinstance(error, JobTargetNotFound):
+        return _profile_error(404, error.code, "求职目标记录不存在或无权访问", retryable=False)
+    if isinstance(error, (JobTargetConflict, JobTargetBusy)):
+        return _profile_error(409, error.code, str(error), retryable=True)
+    return _profile_error(422, error.code, str(error), retryable=False)
 
 
 @app.exception_handler(ProfileDomainError)

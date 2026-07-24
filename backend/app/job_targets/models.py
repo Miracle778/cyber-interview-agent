@@ -122,3 +122,30 @@ class ProjectDeepDiveRecord:
     version: int
     created_at: str
     updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class RequirementDecisionReceipt:
+    confirmed_ids: tuple[str, ...]
+    rejected_ids: tuple[str, ...]
+    excluded_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectPriorityReceipt:
+    job_target_id: str
+    core_project_id: str
+    supplementary_project_ids: tuple[str, ...]
+    version: int
+
+
+@dataclass(frozen=True, slots=True)
+class TargetDeletionImpact:
+    target_id: str
+    documents: int
+    requirements: int
+    analyses: int
+    deep_dives: int
+    question_candidates: int
+    preserved_profile: bool = True
+    preserved_published_questions: bool = True
