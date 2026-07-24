@@ -8,26 +8,39 @@ const api = vi.hoisted(() => ({ previewMaterialDeletion: vi.fn(), permanentlyDel
 vi.mock("./profileApi", () => api);
 
 const material: ProfileMaterial = { id: "m1", workspaceId: "w1", type: "resume", title: "主简历", primaryRole: "resume", currentVersionId: "v1", lifecycleStatus: "active", version: 3, versionCount: 1, latestProcessingStatus: "ready", createdAt: "", updatedAt: "" };
-const preview: MaterialDeletionPreview = { deletionPlanId: "dp1", materialId: "m1", materialVersion: 3, expiresAt: "2099-07-22T12:00:00+00:00", affectedEvidenceCount: 4, affectedClaims: [{ claimId: "c1", claimType: "项目经历", claimVersion: 2, claimVersionId: "cv1", supportStatus: "supported", affectedEvidenceIds: ["e1"], remainingEvidenceIds: [], selectionIds: [] }], unsupportedClaimIds: ["c1"], publicationSelectionIds: ["s1"], activePublicationIds: ["pub1"] };
+const preview: MaterialDeletionPreview = { deletionPlanId: "dp1", materialId: "m1", materialVersion: 3, expiresAt: "2099-07-22T12:00:00+00:00", affectedEvidenceCount: 4, affectedClaims: [{ claimId: "c1", claimType: "project", claimVersion: 2, claimVersionId: "cv1", supportStatus: "supported", affectedEvidenceIds: ["e1"], remainingEvidenceIds: [], selectionIds: [] }], unsupportedClaimIds: ["c1"], publicationSelectionIds: [], activePublicationIds: [] };
 
 describe("DeletionImpactDialog", () => {
   afterEach(cleanup);
   beforeEach(() => { vi.clearAllMocks(); api.previewMaterialDeletion.mockResolvedValue(preview); api.permanentlyDeleteMaterial.mockResolvedValue({ planId: "dp1", status: "completed", items: [] }); });
 
-  it("shows dependency impact, distinguishes permanent deletion and requires typed confirmation plus publication revoke", async () => {
+  it("shows user-facing impact and requires typed confirmation", async () => {
     const onDeleted = vi.fn();
     render(<DeletionImpactDialog open workspaceId="w1" material={material} onClose={vi.fn()} onDeleted={onDeleted} />);
-    expect(await screen.findByText("受影响证据")).toBeInTheDocument();
+    expect(await screen.findByText("受影响原文")).toBeInTheDocument();
     expect(screen.getByRole("dialog")).toHaveTextContent("归档可恢复；永久删除");
+    expect(screen.getByRole("dialog")).toHaveTextContent("项目经历");
+    expect(screen.getByRole("dialog")).not.toHaveTextContent("project");
     const remove = screen.getByRole("button", { name: "永久删除" });
     expect(remove).toBeDisabled();
     fireEvent.change(screen.getByLabelText("输入“永久删除”确认"), { target: { value: "永久删除" } });
-    expect(remove).toBeDisabled();
-    fireEvent.click(screen.getByRole("checkbox", { name: /同时撤销已发布的个人知识/ }));
     expect(remove).toBeEnabled();
     fireEvent.click(remove);
-    await waitFor(() => expect(api.permanentlyDeleteMaterial).toHaveBeenCalledWith("w1", material, preview, [{ claimId: "c1", action: "retain_unsupported" }], "revoke"));
+    await waitFor(() => expect(api.permanentlyDeleteMaterial).toHaveBeenCalledWith("w1", material, preview, [{ claimId: "c1", action: "retain_unsupported" }], "not_applicable"));
     expect(onDeleted).toHaveBeenCalled();
+  });
+
+  it("blocks deletion when an existing dependency cannot be safely removed", async () => {
+    api.previewMaterialDeletion.mockResolvedValueOnce({
+      ...preview,
+      activePublicationIds: ["legacy-dependency"],
+    });
+    render(<DeletionImpactDialog open workspaceId="w1" material={material} onClose={vi.fn()} onDeleted={vi.fn()} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("这份简历仍被其他功能使用");
+    fireEvent.change(screen.getByLabelText("输入“永久删除”确认"), { target: { value: "永久删除" } });
+    expect(screen.getByRole("button", { name: "永久删除" })).toBeDisabled();
+    expect(screen.getByRole("dialog")).not.toHaveTextContent("活动发布");
+    expect(screen.queryByRole("checkbox")).toBeNull();
   });
 
   it("traps keyboard focus, closes with Escape and returns focus", async () => {

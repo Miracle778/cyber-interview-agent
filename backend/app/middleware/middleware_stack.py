@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Literal
 
 from langchain.agents.middleware import (
     AgentMiddleware,
@@ -28,6 +29,7 @@ class MiddlewareBudgetProfile:
     model_run_limit: int = 12
     tool_thread_limit: int = 80
     tool_run_limit: int = 20
+    tool_limit_exit_behavior: Literal["continue", "error", "end"] = "error"
     no_progress_warning_limit: int = 2
     no_progress_hard_limit: int = 3
     include_progress_scope: bool = False
@@ -43,6 +45,7 @@ REVIEW_ROUND_BUDGET = MiddlewareBudgetProfile(
 )
 PROFILE_CHAT_BUDGET_PROFILE = MiddlewareBudgetProfile(
     tool_run_limit=6,
+    tool_limit_exit_behavior="continue",
 )
 
 
@@ -89,7 +92,7 @@ def build_default_middleware(
         ToolCallLimitMiddleware(
             thread_limit=budget_profile.tool_thread_limit,
             run_limit=budget_profile.tool_run_limit,
-            exit_behavior="error",
+            exit_behavior=budget_profile.tool_limit_exit_behavior,
         ),
         *tool_guards,
         policy,

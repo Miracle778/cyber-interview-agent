@@ -29,6 +29,7 @@ from app.tools.profile_tools import (
     get_profile_publication_status,
     list_personal_materials,
     read_personal_evidence,
+    read_personal_evidence_batch,
     search_personal_materials,
 )
 
@@ -165,6 +166,54 @@ def test_read_personal_evidence_rejects_foreign_workspace(
     assert result["errorCode"] == "profile_evidence_mismatch"
 
 
+def test_batch_read_returns_eight_evidence_items_in_one_tool_call(
+    repository: ProfileRepository, context: AgentContext
+) -> None:
+    _material, version, _evidence = _seed_resume(repository)
+    evidence = repository.replace_version_evidence(
+        version.id,
+        tuple(
+            {
+                "section": "experience",
+                "start_offset": index * 20,
+                "end_offset": index * 20 + 12,
+                "sanitized_text": f"Backend evidence {index}",
+                "content_sha256": f"{index + 1:064x}",
+                "sensitivity": "normal",
+            }
+            for index in range(8)
+        ),
+    )
+
+    result = read_personal_evidence_batch(
+        repository,
+        context,
+        evidence_ids=[item.id for item in evidence],
+    )
+
+    assert result["status"] == "ok"
+    assert [item["id"] for item in result["items"]] == [
+        item.id for item in evidence
+    ]
+    assert result["missingIds"] == []
+
+
+def test_batch_read_keeps_available_evidence_when_one_id_is_missing(
+    repository: ProfileRepository, context: AgentContext
+) -> None:
+    _material, _version, evidence = _seed_resume(repository)
+
+    result = read_personal_evidence_batch(
+        repository,
+        context,
+        evidence_ids=[evidence.id, "missing"],
+    )
+
+    assert result["status"] == "partial"
+    assert [item["id"] for item in result["items"]] == [evidence.id]
+    assert result["missingIds"] == ["missing"]
+
+
 def test_get_profile_claims_returns_confirmed_only(
     repository: ProfileRepository, context: AgentContext
 ) -> None:
@@ -225,7 +274,16 @@ def test_compare_material_versions_returns_summary(
 def test_get_profile_publication_status_default_empty(
     repository: ProfileRepository, context: AgentContext
 ) -> None:
-    result = get_profile_publication_status(repository, context)
+    # The legacy read helper remains compatible with existing stored data, but
+    # it is no longer part of the current Profile Agent's exposed tool set.
+    result = get_profile_publication_status(
+        repository,
+        replace(
+            context,
+            allowed_tools=context.allowed_tools
+            | frozenset({"get_profile_publication_status"}),
+        ),
+    )
     assert result["status"] == "ok"
     assert result["items"] == []
     assert result["state"] == "unpublished"
@@ -241,7 +299,7 @@ def test_absent_records_return_safe_empty(
     )["status"] == "error"
 
 
-def test_tool_factory_exposes_exactly_eight_read_only_tools(
+def test_tool_factory_exposes_only_read_only_tools(
     repository: ProfileRepository, tmp_path: Path
 ) -> None:
     storage = MaterialStorage(tmp_path / "ws")
@@ -249,7 +307,9 @@ def test_tool_factory_exposes_exactly_eight_read_only_tools(
 
     names = tuple(tool.name for tool in tools)
     assert names == PROFILE_TOOL_NAMES
-    assert len(names) == 8
+    assert len(names) == 7
+    assert "search_active_knowledge" not in names
+    assert "get_profile_publication_status" not in names
     forbidden = {"create", "update", "delete", "publish", "accept", "apply", "archive", "restore"}
     for name in names:
         assert not any(verb in name for verb in forbidden), name
@@ -328,6 +388,7 @@ def test_tool_schemas_are_strict_and_business_only(
 
     assert tools["list_personal_materials"].args == {}
     assert set(tools["read_personal_evidence"].args) == {"evidence_id"}
+    assert set(tools["read_personal_evidence_batch"].args) == {"evidence_ids"}
     assert "workspace_id" not in tools["search_personal_materials"].args
     with pytest.raises(Exception):
         tools["read_personal_evidence"].args_schema.model_validate(
@@ -361,6 +422,11 @@ async def test_all_profile_tools_receive_runtime_through_real_tool_node(
             "args": {"evidence_id": evidence.id},
             "id": "call-3",
         },
+        {
+            "name": "read_personal_evidence_batch",
+            "args": {"evidence_ids": [evidence.id]},
+            "id": "call-3-batch",
+        },
         {"name": "get_profile_claims", "args": {}, "id": "call-4"},
         {
             "name": "get_profile_claim_evidence",
@@ -375,12 +441,6 @@ async def test_all_profile_tools_receive_runtime_through_real_tool_node(
             },
             "id": "call-6",
         },
-        {
-            "name": "search_active_knowledge",
-            "args": {"query": "team"},
-            "id": "call-7",
-        },
-        {"name": "get_profile_publication_status", "args": {}, "id": "call-8"},
     ]
 
     result = await graph.compile().ainvoke(

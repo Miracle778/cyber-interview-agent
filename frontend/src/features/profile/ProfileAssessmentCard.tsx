@@ -8,11 +8,11 @@ export function ProfileAssessmentCard({ workspaceId, assessmentId }: { workspace
   if (!query.data) return <article className="profile-agent-card profile-agent-card--error" role="alert">评估结果暂时无法读取。</article>;
   const result = query.data.result;
   return <article className="profile-agent-card">
-    <header><ClipboardCheck size={19} /><div><strong>画像评估</strong><small>{query.data.proposalIds.length} 条待确认建议</small></div></header>
+    <header><ClipboardCheck size={19} /><div><strong>简历分析</strong><small>{query.data.proposalIds.length} 条信息需要确认</small></div></header>
     <p>{result.summary ?? "评估已完成"}</p>
     <div className="profile-assessment-grid">
-      <section><strong>优势</strong><ul>{(result.strengths ?? []).map((item) => <li key={item}>{item}</li>)}</ul></section>
-      <section><strong>待补强</strong><ul>{[...(result.gaps ?? []), ...(result.risks ?? [])].map((item) => <li key={item}>{item}</li>)}</ul></section>
+      <section><strong>资料清楚的部分</strong><ul>{(result.strengths ?? []).map((item) => <li key={item}>{item}</li>)}</ul></section>
+      <section><strong>需要补充或核对</strong><ul>{[...(result.gaps ?? []), ...(result.risks ?? [])].map((item) => <li key={item}>{item}</li>)}</ul></section>
     </div>
   </article>;
 }

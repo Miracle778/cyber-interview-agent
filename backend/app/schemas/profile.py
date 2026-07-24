@@ -165,6 +165,34 @@ class ClaimReviewWorkspaceResource(AgentModel):
     proposals: list[ClaimProposalResource]
 
 
+class ConfirmedProfileContextCommand(AgentModel):
+    purpose: Literal[
+        "job_target_analysis", "project_deep_dive", "interview_training"
+    ]
+    claim_types: list[
+        Literal["skill", "project", "experience", "education", "link"]
+    ] = Field(default_factory=list, max_length=5)
+    claim_ids: list[str] = Field(default_factory=list, max_length=50)
+    sensitive_data_policy: Literal["exclude"] = "exclude"
+    limit: int = Field(default=50, ge=1, le=50)
+
+
+class ConfirmedProfileContextItemResource(AgentModel):
+    claim_id: str
+    claim_version_id: str
+    claim_type: str
+    value: dict[str, Any]
+    support_status: str
+    evidence_ids: list[str]
+
+
+class ConfirmedProfileContextResource(AgentModel):
+    workspace_id: str
+    purpose: str
+    profile_version: str | None
+    items: list[ConfirmedProfileContextItemResource]
+
+
 class ClaimDecisionCommand(AgentModel):
     workspace_id: str
     expected_version: int = Field(ge=0)

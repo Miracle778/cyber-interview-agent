@@ -37,6 +37,9 @@ from app.schemas.profile import (
     ClaimReviewResource,
     ClaimReviewWorkspaceResource,
     ClaimVersionResource,
+    ConfirmedProfileContextCommand,
+    ConfirmedProfileContextItemResource,
+    ConfirmedProfileContextResource,
     DeletionItemReceiptResource,
     EvidencePageResource,
     MaterialActionCommand,
@@ -424,6 +427,40 @@ def list_profile_claims(
     )
 
 
+@router.post(
+    "/api/workspaces/{workspace_id}/profile/confirmed-context",
+    response_model=ConfirmedProfileContextResource,
+)
+def get_confirmed_profile_context(
+    workspace_id: str,
+    command: ConfirmedProfileContextCommand,
+    application: AgentApplication = Depends(get_agent_application),
+) -> ConfirmedProfileContextResource:
+    context = application.profile(workspace_id).confirmed_profile_context(
+        purpose=command.purpose,
+        claim_types=tuple(command.claim_types),
+        claim_ids=tuple(command.claim_ids),
+        sensitive_data_policy=command.sensitive_data_policy,
+        limit=command.limit,
+    )
+    return ConfirmedProfileContextResource(
+        workspace_id=context.workspace_id,
+        purpose=context.purpose,
+        profile_version=context.profile_version,
+        items=[
+            ConfirmedProfileContextItemResource(
+                claim_id=item.claim_id,
+                claim_version_id=item.claim_version_id,
+                claim_type=item.claim_type,
+                value=item.value,
+                support_status=item.support_status,
+                evidence_ids=list(item.evidence_ids),
+            )
+            for item in context.items
+        ],
+    )
+
+
 @router.get(
     "/api/profile/claims/{claim_id}", response_model=ClaimReviewResource
 )
@@ -704,7 +741,7 @@ def _effective_processing_status(
 
 def _processing_stages(status_value: str) -> list[MaterialProcessingStageResource]:
     keys = ("uploaded", "parsing", "parsed", "extracting", "ready")
-    labels = ("已上传", "解析材料", "文本已解析", "提取画像", "处理完成")
+    labels = ("已上传", "提取文本", "隐私处理", "生成画像建议", "等待确认")
     failed_key = {
         "parse_failed": "parsing",
         "extraction_failed": "extracting",

@@ -2,19 +2,19 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Deliver the first R3 acceptance milestone (R3.1-R3.4): securely ingest resume versions, derive evidence-backed profile claims, let the user assess and revise them through a constrained Agent workflow, and publish or revoke only explicitly selected confirmed claims.
+**Goal:** Deliver the first R3 acceptance milestone (R3.1-R3.4): securely ingest resume versions, derive evidence-backed profile claims, let the user assess and revise them through a constrained Agent workflow, and expose only confirmed, purpose-bounded profile context to later job-target workflows.
 
-**Architecture:** Add an isolated `app/profile` domain package and explicit `profile.ingest`, `profile.assess`, and `profile.manage` graphs while reusing the existing workspace Runtime, Session/Execution/Event stream, middleware, HITL, and knowledge draft/publication infrastructure. Domain facts live in normalized Runtime SQLite tables and private content-addressed artifacts; LangGraph checkpoints contain orchestration state only. Every mutation is performed by deterministic application services after validation or user confirmation—LLM Agents receive structured context and, only for `profile_chat`, a bounded read-only Tool allowlist.
+**Architecture:** Add an isolated `app/profile` domain package and explicit `profile.ingest`, `profile.assess`, and `profile.manage` graphs while reusing the existing workspace Runtime, Session/Execution/Event stream, middleware, and HITL infrastructure. Domain facts live in normalized Runtime SQLite tables and private content-addressed artifacts; LangGraph checkpoints contain orchestration state only. Every mutation is performed by deterministic application services after validation or user confirmation—LLM Agents receive structured context and, only for `profile_chat`, a bounded read-only Tool allowlist. R4-R6 consume confirmed profile facts through a direct application-service contract rather than requiring publication into Active Knowledge.
 
 **Tech Stack:** Python 3.12, FastAPI, Pydantic v2, SQLite/aiosqlite, LangGraph/LangChain, pypdf, python-docx, React 19, TypeScript, React Router, Vitest, Testing Library, CSS semantic tokens.
 
 ## Global Constraints
 
 - This plan implements only R3.1-R3.4. R3.5 external identity sources, OCR, general search, and automatic long-term memory remain outside the milestone.
-- Keep `AgentState` as the default Agent state schema. Material, Evidence, Claim, Proposal, Plan, and publication state must not be copied into checkpoints.
+- Keep `AgentState` as the default Agent state schema. Material, Evidence, Claim, Proposal, Plan, and downstream-consumption state must not be copied into checkpoints.
 - Do not implement general Time Travel or user-visible branches. Retry creates a new Execution against the same immutable input version or confirmed snapshot.
 - `profile_extraction` and `profile_assessment` have no Tools. `profile_chat` receives only the read-only Tools selected for the current intent. `profile_action_planner` defaults to no Tools.
-- LLM output is always a proposal. Only repositories and application services can accept claims, apply action-plan items, create knowledge drafts, publish, revoke, archive, restore, or delete.
+- LLM output is always a proposal. Only repositories and application services can accept claims, apply action-plan items, assemble downstream context, archive, restore, or delete.
 - Every domain write uses an `Idempotency-Key`, an expected aggregate/plan version, and an immutable input or selection snapshot. Batch receipts distinguish `completed`, `conflict`, `failed_retryable`, `failed_terminal`, and `not_started`.
 - Uploaded source bytes and extracted text remain under private workspace artifacts and are never written to the active knowledge Vault. Logs, Events, Tool audits, and frontend payloads must not contain raw resume text.
 - Use one hidden `profile.ingest` system Session per material version, with `session_id == material_version_id`; generic session lists and generic session detail routes must not expose it.
@@ -51,11 +51,11 @@
 - Extend `backend/app/main.py` with the profile router and stable error mapping.
 - Extend existing generic Agent APIs only where system-session visibility or new safe Event/Message kinds require it.
 
-### Knowledge publication
+### Confirmed profile consumption
 
-- Extend `backend/app/knowledge/document_types.py`, `backend/app/knowledge/workspace_layout.py`, `backend/app/knowledge/drafts.py`, `backend/app/knowledge/publication.py`, and `backend/app/services/search_index.py`.
-- The new active document type is `profile`; its Vault target is `50_profile/<profile_document_id>.md`.
-- Revocation is a recoverable state transition: verify the published hash, remove the active file, remove its search rows, and retain publication/provenance history in Runtime SQLite.
+- Add a purpose-bounded `ConfirmedProfileContext` query to `backend/app/profile/service.py`, `backend/app/schemas/profile.py`, and `backend/app/api/routes_profile.py`.
+- The query reads current confirmed Claim versions directly from the Profile domain. It never requires `PublicationSelection`, a Knowledge Draft, an active Vault document, or a search-index round trip.
+- The response exposes stable IDs, user-facing values, support state, and bounded Evidence references; it excludes raw source text, pending/rejected proposals, and disallowed sensitive categories.
 
 ### Frontend
 
@@ -68,12 +68,11 @@
 
 | Screen | Primary regions | Shared primitives | Narrow-screen rule |
 |---|---|---|---|
-| Overview | primary resume, completeness, claim health, suggestions, publication coverage, recent sessions | Profile Shell, metric card, status badge, evidence link | one-column priority order; actions stay adjacent to their card |
+| Overview | primary resume, completeness, claim health, suggestions, downstream-use summary, recent sessions | Profile Shell, metric card, status badge, evidence link | one-column priority order; actions stay adjacent to their card |
 | Material versions | upload/stages, version list, primary marker, comparison | stage row, version card/table, diff panel, drawer | table becomes labeled cards; diff stacks before/after |
 | Evidence detail | immutable version context, locator, sanitized excerpt, linked claims | evidence card, locator chip, claim link, drawer | drawer becomes full-screen sheet |
 | Claim review | filters/queue, current-vs-proposed diff, evidence/rationale, decisions | claim card, proposal badge, diff panel, receipt | filters collapse; detail follows selected queue card |
 | Agent workspace | sibling sessions, focus, timeline/cards, composer/stop | session rail, Tool stage, assessment/action-plan card, composer | session rail becomes selector; composer remains sticky |
-| Publication scope | confirmed claim selection, sensitive exclusions, preview, status/revoke | selection row, preview, status timeline, confirm dialog | groups become cards; preview follows selection |
 
 Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_success`, `interrupted`, and `permission_denied` where the state is reachable. Shared primitives are implemented before screen-private layout rules; long text and real data are used in slice review.
 
@@ -506,49 +505,40 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
 - [x] Run the repository's available equivalent `npx tsc --noEmit` (there is no `typecheck` npm script). Zero TypeScript errors.
 - [ ] Reviewer gate: compare desktop/mobile screenshots with `profile-agent-reference.png`; verify keyboard focus after stream completion, cancel, dialog close, and retry.
 
-## Task 16: Complete Selective Knowledge Publication and Revocation
+## Task 16: Add the Confirmed Profile Consumption Contract
 
 **Files:**
 
-- Modify: `backend/app/knowledge/drafts.py`
-- Modify: `backend/app/knowledge/publication.py`
-- Modify: `backend/app/services/search_index.py`
 - Modify: `backend/app/profile/service.py`
 - Modify: `backend/app/schemas/profile.py`
 - Modify: `backend/app/api/routes_profile.py`
-- Test: `backend/tests/test_profile_publication.py`
-- Test: `backend/tests/test_search_index.py`
-- Test: `backend/tests/test_publication_service.py`
+- Create: `backend/tests/test_profile_context.py`
 
-- [ ] Write failing tests for default-unselected Claims, confirmed-only selection, deterministic profile Markdown/frontmatter, publication approval reuse, active-file hash conflict, index failure/repair, revocation, revoke retry, rescan exclusion, and R4-R6 confirmed-context queries.
-- [ ] Build one `profile` knowledge draft from an immutable, versioned PublicationSelection containing explicitly selected, currently confirmed Claim versions and excluded sensitive fields. Include stable Claim IDs/versions and Evidence provenance in frontmatter, but include only the user-approved public summary in the Markdown body.
-- [ ] Reuse the existing HITL `knowledge.publish` approval flow; profile code may create/update a draft and request publication but cannot call file/index mutation from an Agent node or Tool.
-- [ ] Add `delete_document(conn, document_id)` to remove both manifest and FTS rows transactionally. Implement `PublicationService.revoke` with expected published hash, recoverable states, atomic active-file removal, index cleanup, Event projection, and retained Runtime history.
-- [ ] Implement publication selection/status/revoke APIs under the profile router and a confirmed-profile context API for R4-R6. The context response includes only accepted Claims and requested categories; it excludes raw source text, rejected/pending proposals, and unselected publication state.
-- [ ] Ensure material deletion coordinates revocation before evidence destruction and that Vault rescan cannot resurrect a revoked document.
-- [ ] Run `cd backend && uv run pytest -q tests/test_profile_publication.py tests/test_search_index.py tests/test_publication_service.py`. Expected: publish, repair, revoke, and downstream context tests pass.
-- [ ] Reviewer gate: inspect the active Markdown, index rows, Runtime history, and post-revoke filesystem; confirm the private source/evidence content was never copied into the Vault.
+- [x] Write focused tests for confirmed-only reads, current-version selection, category filters, purpose validation, sensitive-field exclusion, unsupported-Claim handling, Workspace isolation, and stable empty results.
+- [x] Define a `ConfirmedProfileContextRequest` containing the consumer purpose, requested categories or Claim IDs, and an explicit sensitive-data policy. Reject unknown purposes and cross-Workspace resources.
+- [x] Assemble context directly from the current confirmed Profile domain facts. Return stable Claim/ClaimVersion IDs, user-facing values, support state, and bounded Evidence references; never return raw resume text or copy the payload into a checkpoint.
+- [x] Exclude pending/rejected proposals, superseded Claim versions, disallowed sensitive categories, and unrelated Workspace data. Do not require `PublicationSelection`, Knowledge Draft, Active Knowledge, or search-index state.
+- [x] Add the narrow profile-context API needed by R4-R6, with stable empty/error semantics and authorization checks. The Profile service does not create a synthetic Agent Session/Event for a direct read; the future Job Target consumer owns its request audit metadata.
+- [x] Run `cd backend && .venv/bin/pytest -q tests/test_profile_context.py tests/test_profile_agents.py tests/test_profile_manage_api.py tests/test_profile_manage_graph.py tests/test_profile_tools.py tests/test_profile_action_plans.py tests/test_agent_middleware_stack.py`. Result: `54 passed`.
+- [x] Reviewer gate: automated coverage queries before/after Claim supersession, after support loss, with a foreign Workspace ID, and with sensitive Evidence; only the current confirmed safe projection is returned and raw Evidence text is absent.
 
-## Task 17: Build Publication Scope UI and Cross-Layer Acceptance
+## Task 17: Complete Cross-Layer Acceptance for the Current R3 Product
 
 **Files:**
 
-- Create: `frontend/src/features/profile/PublicationScope.tsx`
 - Modify: `frontend/src/features/profile/ProfilePage.tsx`
 - Modify: `frontend/src/features/profile/profileApi.ts`
 - Modify: `frontend/src/app/global.css`
-- Test: `frontend/src/features/profile/PublicationScope.test.tsx`
 - Test: `frontend/src/features/profile/ProfileFlow.test.tsx`
 - Create/Update: `docs/verification/r3-personal-profile-agent.md`
 
-- [ ] Write failing frontend tests for confirmed-only selection, preview, approval handoff, published status, external-change conflict, revoke confirmation, retry, empty state, and non-selected Claim exclusion.
-- [ ] Implement the publication scope screen from the committed reference: category grouping, Claim/version/Evidence summary, explicit checkboxes, publication preview, status timeline, and revoke action.
-- [ ] Add a cross-layer frontend flow test covering upload -> ingest status -> Evidence -> proposal acceptance -> assessment/chat -> Action Plan confirmation -> selective publication -> revoke.
-- [ ] Run the complete frontend suite once after cross-layer integration: `cd frontend && npm test -- --run`. Expected: all tests pass.
-- [ ] Run frontend production verification: `cd frontend && npm run typecheck && npm run build`. Expected: zero type errors and successful production build.
-- [ ] Run the complete backend suite once after cross-layer integration: `cd backend && uv run pytest -q`. Expected: all tests pass.
-- [ ] Start the local app and complete one minimal browser happy path before documentation: upload one Markdown resume, accept one Claim, ask one profile question, select/publish one Claim, and revoke it. Record Event IDs, receipts, screenshots, and observed limitations in `docs/verification/r3-personal-profile-agent.md`.
-- [ ] Reviewer gate: compare all six implemented screens at 390/768/1024/1440 against the committed references; verify WCAG contrast, visible focus, semantic headings/landmarks, error announcements, reduced motion, and 44 px touch targets.
+- [x] Add focused frontend coverage for the overview's downstream-use explanation, pending/rejected exclusion copy, empty state, ingestion recovery, stale conflicts, stop/retry, and the four-screen navigation contract.
+- [ ] Add a cross-layer frontend flow test covering upload -> ingest status -> Evidence -> proposal acceptance -> assessment/chat -> Action Plan confirmation -> refreshed confirmed profile state.
+- [x] Run the complete frontend suite once after cross-layer integration: `cd frontend && npm test -- --run`. Result: `198 passed`.
+- [x] Run frontend production verification: `cd frontend && npx tsc --noEmit` and `npm run build`. Result: zero type errors and successful production build.
+- [x] Run the complete backend suite once after cross-layer integration with the existing environment: `cd backend && .venv/bin/pytest -q`. Result: `744 passed`, one existing deprecation warning.
+- [x] Start the local app and complete one minimal browser happy path before documentation: upload one Markdown resume, accept one Claim, ask one profile question, apply one selected Action Plan item, and verify the overview reflects the confirmed result. Record Event IDs, receipts, screenshots, and observed limitations in `docs/verification/r3-personal-profile-agent.md`.
+- [ ] Reviewer gate: compare the four current screens at 390/768/1024/1440 against the committed references; verify WCAG contrast, visible focus, semantic headings/landmarks, error announcements, reduced motion, and 44 px touch targets.
 
 ## Task 18: Final Documentation, Ownership Pack, and Stage Gate
 
@@ -558,22 +548,22 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
 - Update: `findings.md`
 - Update: `progress.md`
 - Update: `docs/verification/r3-personal-profile-agent.md`
-- Create: `docs/learning/r3-personal-profile-agent/README.md`
-- Create: `docs/learning/r3-personal-profile-agent/01-product-map.md`
-- Create: `docs/learning/r3-personal-profile-agent/02-code-reading-guide.md`
-- Create: `docs/learning/r3-personal-profile-agent/03-core-flows.md`
-- Create: `docs/learning/r3-personal-profile-agent/04-risk-boundaries.md`
-- Create: `docs/learning/r3-personal-profile-agent/05-practice.md`
-- Create: `docs/learning/r3-personal-profile-agent/06-acceptance-checklist.md`
+- Create: `docs/learning/r3-personal-profile-agent/overview.md`
+- Create: `docs/learning/r3-personal-profile-agent/architecture.md`
+- Create: `docs/learning/r3-personal-profile-agent/code-walkthrough.md`
+- Create: `docs/learning/r3-personal-profile-agent/failure-journal.md`
+- Create: `docs/learning/r3-personal-profile-agent/interview-questions.md`
+- Create: `docs/learning/r3-personal-profile-agent/presentation-script.md`
+- Create: `docs/learning/r3-personal-profile-agent/exercises.md`
 
-- [ ] Reshape `docs/verification/r3-personal-profile-agent.md` into the final user guide: prerequisites, six screen flows, expected states, retry/recovery, publication/revocation, known R3.5 boundary, and complete browser acceptance checklist.
-- [ ] Generate the seven-file local learning pack with the formal risk profile for a cross-layer Agent/state/security stage; compare depth and structure with the previous same-profile stage.
-- [ ] Run one complete browser acceptance pass from a clean workspace covering all 14 scenarios in the R3 spec: DOCX ingest; new-version compare/primary; accept/edit/reject; conflict preservation; assessment; cross-version chat/Tool stage; selected plan execution; stop/refresh; partial retry; sensitive-excluded HITL publication; revoke/search removal; archive/restore/delete preview; Session deletion decoupling; desktop/390 px layout. Re-run only affected scenarios if fixes are needed.
+- [x] Reshape `docs/verification/r3-personal-profile-agent.md` into the final user guide: prerequisites, four screen flows, expected states, retry/recovery, confirmed-profile downstream use, known R3.5 boundary, and complete browser acceptance checklist.
+- [x] Generate the seven-file local learning pack with the formal risk profile for a cross-layer Agent/state/security stage; compare depth and structure with the previous same-profile stage.
+- [ ] Run one complete browser acceptance pass from a clean workspace covering all 13 scenarios in the R3 spec: DOCX ingest; new-version compare/primary; accept/edit/reject; conflict preservation; assessment; cross-version chat/Tool stage; selected plan execution; stop/refresh; partial retry; confirmed-profile query isolation; archive/restore/delete preview; Session deletion decoupling; desktop/390 px layout. Re-run only affected scenarios if fixes are needed.
 - [ ] Run fresh real-Provider acceptance for structured extraction, assessment, bounded Tool chat, and structured Action Plan; capture provider/model IDs, timestamps, result status, and redacted evidence without storing prompts, resume text, or Provider responses.
-- [ ] Run the final backend regression: `cd backend && uv run pytest -q`. Expected: all tests pass.
-- [ ] Run the final frontend verification: `cd frontend && npm test -- --run && npm run typecheck && npm run build`. Expected: all tests and build pass.
-- [ ] Run `python3 scripts/check_stage_docs.py --verification docs/verification/r3-personal-profile-agent.md --learning docs/learning/r3-personal-profile-agent/ --plan docs/superpowers/plans/2026-07-20-r3-personal-profile-agent.md`. Expected: documentation gate passes with no unchecked browser acceptance or inconsistent evidence.
-- [ ] Update root planning files with product status, maturity boundary, ownership status, next task, and non-blocking exercise. Confirm `docs/my_idea.md` is unchanged and only formal documents under `docs/superpowers/` are candidates for commit.
+- [x] Run the final backend regression with the existing environment: `cd backend && .venv/bin/pytest -q`. Result: `744 passed`, one existing deprecation warning.
+- [x] Run the final frontend verification: `cd frontend && npm test -- --run`, `npx tsc --noEmit`, and `npm run build`. Result: `198 passed`, zero type errors, successful build.
+- [x] Run `python3 scripts/check_stage_docs.py --verification docs/verification/r3-personal-profile-agent.md --learning docs/learning/r3-personal-profile-agent/ --plan docs/superpowers/plans/2026-07-20-r3-personal-profile-agent.md`. Result: documentation gate passed.
+- [x] Update root planning files with product status, maturity boundary, ownership status, next task, and non-blocking exercise. Confirm `docs/my_idea.md` is unchanged and only formal documents under `docs/superpowers/` are candidates for commit.
 - [ ] Reviewer gate: compare every acceptance criterion in `docs/superpowers/specs/2026-07-20-r3-personal-profile-agent-design.md` with code/tests/evidence and record any intentionally deferred item under R3.5 rather than silently omitting it.
 
 ---
@@ -583,11 +573,12 @@ Every screen must implement `loading`, `empty`, `error`, `conflict`, `partial_su
 - **R3.1 complete after Tasks 1-9:** private material/version/Evidence ingestion works, hidden system Sessions are not user-visible, safe Tool Events exist, and material/evidence UI is usable.
 - **R3.2 complete after Tasks 10-11:** evidence-backed Claim proposals can be reviewed, accepted/rejected, traced, batch-decided, and safely invalidated/deleted.
 - **R3.3 complete after Tasks 12-15:** assessment, bounded read-only chat, constrained planning, receipts, cancellation, retry, and profile Agent UI work across restart.
-- **R3.4 complete after Tasks 16-18:** selected confirmed Claims publish through HITL, revoke safely, feed R4-R6 confirmed context, and pass full product/documentation acceptance.
+- **R3.4 complete after Tasks 16-18:** current confirmed Claims feed R4-R6 through a purpose-bounded application contract, and the existing four-screen product passes full cross-layer and documentation acceptance.
 
 ## Explicit Non-Goals for This Plan
 
 - Browser profile import, GitHub/LinkedIn connectors, OCR, image resumes, arbitrary URL ingestion, and general web search.
-- Automatic acceptance of extracted facts, automatic publication, autonomous background task pursuit, arbitrary write Tools, or a free ReAct mutation loop.
+- Knowledge publication/revocation for personal profile data, automatic acceptance of extracted facts, autonomous background task pursuit, arbitrary write Tools, or a free ReAct mutation loop.
+- Job-target creation, JD requirement extraction, requirement-to-evidence mapping, project deep-dive training, and project narrative cards; these begin in R4.
 - General checkpoint browsing, forked sessions, replay-based domain rollback, or user-visible Time Travel.
 - Cross-device sync, multi-user permissions, remote object storage, or organization-wide profile sharing.

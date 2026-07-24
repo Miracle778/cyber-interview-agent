@@ -1,17 +1,19 @@
 # Cyber Interview Agent 当前任务规划
 
-## 当前任务：R3 个人画像 Agent 第一里程碑
+## 当前任务：R3 可信个人资料底座第一里程碑
 
-目标是在现有 R2 Runtime 和知识发布边界上交付 R3.1-R3.4：私有简历版本与 Evidence、经确认的 Claim 画像、受约束评估/对话/Action Plan，以及可选择、可撤销的知识发布闭环。
+目标是在现有 R2 Runtime 上交付 R3.1-R3.4：私有简历版本与 Evidence、经确认的 Claim 资料、受约束评估/对话/Action Plan，以及供后续求职目标按用途受控读取的 `ConfirmedProfileContext`。个人资料不再以发布到 Active Knowledge 作为下游使用前提。
 
 | 阶段 | 状态 | 产出 |
 |---|---|---|
-| R3 产品与架构规格 | 已确认 | `2026-07-20-r3-personal-profile-agent-design.md`、6 张页面参考图、Agent 能力 ADR |
+| 求职目标中心产品路线 | 已确认 | `2026-07-24-job-target-centered-interview-preparation.md`；B（可信资料）→ D（岗位差距）→ C（项目深挖训练）形成因果链 |
+| R3 产品与架构规格 | 路线调整完成 | `2026-07-20-r3-personal-profile-agent-design.md`；R3 收窄为可信资料底座，知识发布页面延期 |
 | R3 实施计划 | 执行中 | `2026-07-20-r3-personal-profile-agent.md`，18 个 TDD Task、R3.1-R3.4 四个检查点 |
 | R3.1 材料与 Evidence | Task 1-9 已完成 | schema/registry、私有存储/解析、隐藏 ingest、只读 Tool、结构化 Graph、材料/版本/Evidence API，以及 `/profile` 上传、处理阶段、版本、Evidence 与恢复 UI 已落 |
 | R3.2 Claim 审核 | Task 10-11 已完成 | Claim/Proposal/冲突/删除影响后端与审核工作台已完成 |
-| R3.3 评估与连续对话 | Task 12-14 已完成；Task 15 实现完成待实页验收 | Assessment、受约束计划、manage/chat Graph、API 和 Agent 工作区代码已落；桌面/移动浏览器与真实模型验收待补 |
-| R3.4 知识发布闭环 | 未开始 | 选择、独立 HITL、发布/撤回、R4-R6 查询、完整验收与文档门禁 |
+| R3.3 评估与连续对话 | Task 12-15 核心闭环已验收 | 真实模型问答、只读 Tool、停止/刷新、结构化 Action Plan 与人工确认已通过；完整 13 场景组合复跑仍属收口门禁 |
+| R3.4 受控下游查询与收口 | Task 16 完成；Task 17 核心路径完成；Task 18 进行中 | confirmed-only 查询与敏感隔离已落；最终用户指南和学习包已生成，剩余完整回归、文档门禁与扩展浏览器场景 |
+| R4 求职目标与项目深挖 | 待设计 | 创建角色/JD 目标、确认岗位要求、资料证据映射、项目深挖、四类缺口、项目讲解卡和岗位准备状态 |
 
 当前权威输入：
 
@@ -20,7 +22,7 @@
 - 工作分支：`feature/review-agent-workspace`
 - 工作树：`/Users/miracle778/Project/cyber-interview-agent-new/.worktrees/r2-complete-review-agent`
 
-下一步：完成 Task 15 桌面/移动实页验收；通过后用户即可在页面测试连续对话、评估、停止和方案确认。
+下一步：运行 R3 唯一一次最终前后端回归和文档门禁；随后集中补齐验证指南中尚未完成的扩展浏览器场景，再关闭 R3 并进入 R4 求职目标工作区。
 
 ### 2026-07-21 R2 题目整理故障增量
 

@@ -2,14 +2,13 @@ import { CheckCircle2, LoaderCircle, TriangleAlert } from "lucide-react";
 import type { AgentEvent } from "../agent/agentTypes";
 
 const labels: Record<string, string> = {
-  list_personal_materials: "读取个人材料",
-  search_personal_materials: "检索个人材料",
-  read_personal_evidence: "读取证据",
-  get_profile_claims: "读取已确认画像",
-  get_profile_claim_evidence: "核对画像证据",
-  compare_material_versions: "比较材料版本",
-  search_active_knowledge: "检索已发布知识",
-  get_profile_publication_status: "检查发布状态",
+  list_personal_materials: "查看简历",
+  search_personal_materials: "查找简历内容",
+  read_personal_evidence: "查看简历原文",
+  read_personal_evidence_batch: "查看简历原文",
+  get_profile_claims: "查看已确认信息",
+  get_profile_claim_evidence: "核对信息来源",
+  compare_material_versions: "比较简历版本",
 };
 
 export function ProfileToolStage({ event, executionActive = true }: { event: AgentEvent; executionActive?: boolean }) {
@@ -18,7 +17,7 @@ export function ProfileToolStage({ event, executionActive = true }: { event: Age
   const interrupted = event.type === "agent.tool.started" && !executionActive;
   const running = event.type === "agent.tool.started" && executionActive;
   const Icon = failed ? TriangleAlert : running ? LoaderCircle : CheckCircle2;
-  const action = labels[payload.toolName ?? ""] ?? "读取画像信息";
+  const action = labels[payload.toolName ?? ""] ?? "查看简历信息";
   return <div className={`profile-tool-stage${failed ? " profile-tool-stage--failed" : ""}`} role={failed ? "alert" : "status"}>
     <Icon size={16} className={running ? "spin" : undefined} aria-hidden="true" />
     <span>{running ? `正在${action}…` : failed ? `无法${action}，请重试` : interrupted ? `已停止${action}` : `已${action}`}</span>

@@ -21,7 +21,11 @@ from app.agents.context_assembly import (
     ContextSummary,
 )
 from app.agents.profile_agents import ProfileAgents
-from app.profile.errors import ProfileClaimNotFound, ProfileProposalNotFound
+from app.profile.errors import (
+    ProfileClaimNotFound,
+    ProfileDomainError,
+    ProfileProposalNotFound,
+)
 from app.profile.models import ActionPlanItemSpec, CreateActionPlanCommand
 from app.profile.repository import ProfileRepository
 from app.profile.service import ProfileService
@@ -52,7 +56,7 @@ ActionPlanCardProjector = Callable[[object], Awaitable[None]]
 
 _ASSESS_RE = re.compile(r"评估|诊断|优势|短板|差距|风险|分析(?:一下)?(?:我的)?画像")
 _MULTI_RE = re.compile(r"同时|并且|以及|然后|一并|全部|批量|规划|计划|优化简历")
-_CHANGE_RE = re.compile(r"新增|添加|修改|更新|删除|去掉|拒绝|改成|设为|调整")
+_CHANGE_RE = re.compile(r"新增|添加|修改|更新|删除|去掉|拒绝|改成|改为|设为|调整")
 
 
 def classify_profile_manage_intent(message: str) -> ProfileManageIntent:
@@ -256,29 +260,37 @@ async def _plan_and_persist(
             "response": "这条请求包含多个可能的修改，请分别说明，或明确让我生成一份多项修改方案。"
         }
     snapshot = state["profile_snapshot"]
-    plan = service.create_action_plan(
-        CreateActionPlanCommand(
-            workspace_id=runtime.context.workspace_id,
-            session_id=runtime.context.session_id,
-            execution_id=runtime.context.run_id,
-            request_summary=proposal.request_summary,
-            base_profile_version=str(snapshot.get("profileVersion") or ""),
-            selection_snapshot=dict(state.get("profile_focus") or {}),
-            items=tuple(
-                ActionPlanItemSpec(
-                    item_id=item.item_id,
-                    ordinal=index,
-                    operation=item.operation,
-                    target=item.target,
-                    expected_version=item.expected_version,
-                    before=item.before,
-                    after=item.after,
-                    evidence_ids=tuple(item.evidence_ids),
-                )
-                for index, item in enumerate(proposal.items, start=1)
-            ),
+    try:
+        plan = service.create_action_plan(
+            CreateActionPlanCommand(
+                workspace_id=runtime.context.workspace_id,
+                session_id=runtime.context.session_id,
+                execution_id=runtime.context.run_id,
+                request_summary=proposal.request_summary,
+                base_profile_version=str(snapshot.get("profileVersion") or ""),
+                selection_snapshot=dict(state.get("profile_focus") or {}),
+                items=tuple(
+                    ActionPlanItemSpec(
+                        item_id=item.item_id,
+                        ordinal=index,
+                        operation=item.operation,
+                        target=item.target,
+                        expected_version=item.expected_version,
+                        before=item.before,
+                        after=item.after,
+                        evidence_ids=tuple(item.evidence_ids),
+                    )
+                    for index, item in enumerate(proposal.items, start=1)
+                ),
+            )
         )
-    )
+    except ProfileDomainError:
+        return {
+            "response": (
+                "这项修改目前缺少足够的简历原文依据，因此没有生成修改方案。"
+                "你可以先补充相关经历，或改为整理现有表述。"
+            )
+        }
     if project_action_plan_card is not None:
         await project_action_plan_card(plan)
     return {
@@ -399,9 +411,13 @@ def _chat_tools_for_message(message: str) -> frozenset[str]:
         "list_personal_materials",
     }
     if re.search(r"原文|材料|简历|证据|经历", message):
-        tools.update({"search_personal_materials", "read_personal_evidence"})
+        tools.update(
+            {
+                "search_personal_materials",
+                "read_personal_evidence",
+                "read_personal_evidence_batch",
+            }
+        )
     if re.search(r"版本|对比|变化|差异", message):
         tools.add("compare_material_versions")
-    if re.search(r"知识|题库|已发布", message):
-        tools.update({"search_active_knowledge", "get_profile_publication_status"})
     return frozenset(tools) & frozenset(PROFILE_TOOL_NAMES)

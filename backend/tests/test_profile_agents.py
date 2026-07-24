@@ -13,6 +13,10 @@ from app.agents.profile_contracts import (
     ProfileClaimCandidate,
     ProfileExtractionOutput,
 )
+from app.agents.prompts.profile_prompts import (
+    PROFILE_ACTION_PLANNER_PROMPT,
+    PROFILE_CHAT_PROMPT,
+)
 from app.application.graph_factory import ProductionGraphFactory
 from app.application.session_service import ProductRepository
 from app.infrastructure.runtime_database import connect_runtime_database
@@ -81,6 +85,29 @@ def test_profile_agents_have_explicit_roles_names_outputs_and_no_write_tools():
     assert planner.tools == ()
     assert chat.tools == ()
     assert all(spec.prompt.id.startswith("profile-") for spec in factory.specs)
+
+
+def test_profile_extraction_prompt_defines_category_boundaries_and_multi_label_evidence():
+    factory = RecordingFactory()
+
+    ProfileAgents.create(factory, model_bindings={})
+
+    prompt = factory.specs[0].prompt.system
+    assert all(label in prompt for label in ("技能", "项目经历", "工作经历", "教育经历", "个人链接"))
+    assert "同一条 Evidence" in prompt
+    assert "多个互补候选" in prompt
+    assert "固定字段" in prompt
+
+
+def test_profile_chat_prompt_hides_internal_schema_terms_from_user_answers():
+    assert "snake_case" in PROFILE_CHAT_PROMPT.system
+    assert "不得暴露" in PROFILE_CHAT_PROMPT.system
+
+
+def test_profile_action_planner_prompt_defines_exact_mutation_contract():
+    assert '{"claimId": 快照中的 id}' in PROFILE_ACTION_PLANNER_PROMPT.system
+    assert "versionNumber" in PROFILE_ACTION_PLANNER_PROMPT.system
+    assert "不要输出分析过程" in PROFILE_ACTION_PLANNER_PROMPT.system
 
 
 @pytest.mark.asyncio

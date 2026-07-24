@@ -18,6 +18,8 @@
 - 已确认规格的 Tool allowlist 是八个只读业务查询；Tool 产品 Event 只有 started/completed/failed，denied 作为 Audit 状态并投影为 failed + `tool_not_allowed`，原始参数和结果不进入 SSE。
 - 实施计划按 18 个顺序 TDD Task 拆成 R3.1-R3.4 四个检查点，状态真相保留在领域表，默认 AgentState/checkpoint 只持有可恢复编排状态。
 
+> 2026-07-24 路线调整：本节关于“R3 必须补齐画像知识发布/撤销”的判断被后文“求职目标中心产品路线”取代；相关 schema 可作为未来扩展保留，但不再属于 R3.4 的产品门禁。
+
 ## 2026-07-20 R3 Task 1-5 实现审查修正
 
 - Profile Repository 的所有外部稳定 ID 都必须重新校验 Workspace 归属；仅验证 Evidence 属于当前材料版本不足以阻止 Proposal 指向另一 Workspace 的 Claim/ClaimVersion，PublicationSelection 也必须只接受当前 Workspace 的当前 confirmed ClaimVersion。
@@ -518,3 +520,28 @@
 - 同期日志出现游标行字段异常、`sqlite3.InterfaceError` 和偶发 404。根因是 FastAPI 同步路由在多个 worker thread 中并发复用同一个 `sqlite3.Connection`；`check_same_thread=False` 只关闭线程检查，不提供并发连接所有权。
 - Runtime 现在保留兼容现有 Repository 接口的连接代理，每个 worker thread 延迟创建并独占真实 SQLite connection；迁移只在初始连接执行，各连接继续启用 WAL、foreign keys 和 busy timeout。
 - 线程隔离 RED/GREEN 测试证明 worker 不再看到创建线程的 TEMP 表；Profile API、画像 Tool 与时间线相关回归 `49 passed`。
+
+## 2026-07-24：求职目标中心产品路线
+
+- B（可信个人资料）、D（目标岗位差距分析）、C（个性化训练）不是三个并列产品：B 是长期资料底座，D 把资料放进具体角色/JD 语境，C 围绕差距进行项目深挖并沉淀可复用的项目讲解卡。
+- 顶层业务聚合根应是“求职目标”，简历只是可复用资料资产。每次分析与训练都属于一个通用角色或具体 JD，岗位要求必须逐条确认并映射证据，首版不提供容易制造虚假精确感的单一匹配分。
+- 训练中发现的新事实只能形成待确认资料补充；通用项目叙事事实归 Profile，岗位特定要求、追问与准备风险归 Job Target，避免同一事实被多份 JD 重复复制。
+- 缺口分为四类并路由到不同动作：资料缺口生成资料补充建议，表达缺口进入项目讲解卡训练，知识缺口进入题目/复习，经历缺口记录为岗位风险且不得编造。
+- R3 的核心下游契约改为直接读取当前已确认 Claim 的 `ConfirmedProfileContext`。pending/rejected、旧版本、无权限敏感项和原始简历正文必须排除；Active Knowledge 发布不再是 R4-R6 的消费门禁。
+- 当前简历助手收窄为资料维护助手；项目深挖迁移到 R4 求职目标工作区。首个 R4 MVP 为：创建目标 → 确认要求 → 映射资料 → 选择项目深挖 → 分类缺口 → 生成项目讲解卡与待确认补充 → 更新准备状态。
+
+## 2026-07-24：R3 路线收口实现
+
+- PublicationSelection/Publication 数据表和旧 Repository 读取能力已经进入不可变 migration，直接删除会制造升级风险；正确做法是保留兼容层，但从当前结构化输出契约、Action Plan allowlist、Tool factory 和消息路由中撤出发布能力。
+- Profile Agent 当前只暴露七个资料类只读 Tool；知识库检索与发布状态函数保留为未注册的兼容实现。Execution scope 必须从已暴露 Tool 名称推导，不能因为兼容 scope 仍在映射表中而继续授予 `knowledge.active`。
+- `ConfirmedProfileContext` 是 Profile application service 的即时只读投影，不是新的领域表或 checkpoint 状态。它按消费目的、分类/Claim ID 和 50 项上限读取当前 confirmed 版本，并排除跨 Workspace、敏感 Evidence、敏感字段和未确认版本。
+- unsupported Claim 仍返回并携带支持状态，让 R4 能区分“用户确认过但当前缺少依据”和“从未确认的事实”；完全依赖敏感 Evidence 的 Claim 不进入默认上下文。
+- 直接 Profile 查询不应伪造 Agent Session/Event；未来 Job Target 是消费请求及其审计元数据的状态所有者。
+
+## 2026-07-24：R3 核心浏览器闭环与结构化输出边界
+
+- 隔离合成工作区真实完成 Markdown 上传、11 个脱敏原文片段、9 条候选、单条确认、简历助手问答、结构化修改方案和人工确认 Receipt；应用已恢复到原工作区。
+- 真实验收发现结构化 Planner 的原始 token chunk 会短暂展示 Claim/Evidence ID 和分析过程；普通问答与结构化计划不能共用同一展示契约。前端现只流式展示普通问答，计划/评估运行时显示安全进度。
+- 模型可能生成格式合法但缺少 `target.claimId` 或 expected version 的计划。Prompt 1.1 明确 target/version/before/after/evidence 复制规则；领域校验失败被转换为通俗的“未生成方案”，不再让会话无回复。
+- Claim 理由、Diff 字段和计划摘要统一做用户化呈现，去除 Evidence、field、institution 和原文记录 ID；内部数据结构保持不变。
+- confirmed-profile 真实查询返回 11 条安全事实；待确认、拒绝、敏感和不符合消费规则的内容没有进入响应。

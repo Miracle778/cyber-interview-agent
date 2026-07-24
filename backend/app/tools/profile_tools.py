@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import OrderedDict
+from collections.abc import Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -23,25 +24,28 @@ from app.security.workspace_paths import PathPolicyError, WorkspacePathPolicy
 
 MAX_PROFILE_TOOL_ITEMS = 50
 MAX_PROFILE_EXCERPT_CHARS = 2000
+MAX_PROFILE_EVIDENCE_BATCH_ITEMS = 12
 
 PROFILE_TOOL_NAMES = (
     "list_personal_materials",
     "search_personal_materials",
     "read_personal_evidence",
+    "read_personal_evidence_batch",
     "get_profile_claims",
     "get_profile_claim_evidence",
     "compare_material_versions",
-    "search_active_knowledge",
-    "get_profile_publication_status",
 )
 
 PROFILE_TOOL_SCOPES = {
     "list_personal_materials": "profile.materials",
     "search_personal_materials": "profile.materials",
     "read_personal_evidence": "profile.materials",
+    "read_personal_evidence_batch": "profile.materials",
     "get_profile_claims": "profile.materials",
     "get_profile_claim_evidence": "profile.materials",
     "compare_material_versions": "profile.materials",
+    # Compatibility scopes for persisted/future integrations. These handlers
+    # are intentionally absent from PROFILE_TOOL_NAMES and create_profile_tools.
     "search_active_knowledge": "knowledge.active",
     "get_profile_publication_status": "profile.materials",
 }
@@ -80,6 +84,13 @@ class EvidenceInput(_StrictInput):
     evidence_id: str = Field(min_length=1, max_length=128)
 
 
+class EvidenceBatchInput(_StrictInput):
+    evidence_ids: list[str] = Field(
+        min_length=1,
+        max_length=MAX_PROFILE_EVIDENCE_BATCH_ITEMS,
+    )
+
+
 class ClaimInput(_StrictInput):
     claim_id: str = Field(min_length=1, max_length=128)
 
@@ -101,6 +112,10 @@ class ToolEnvelope(BaseModel):
     nextCursor: str | None = None
     state: str | None = None
     errorCode: str | None = None
+    missingIds: list[str] | None = Field(
+        default=None,
+        max_length=MAX_PROFILE_EVIDENCE_BATCH_ITEMS,
+    )
 
 
 def _envelope(**values: Any) -> dict[str, Any]:
@@ -259,6 +274,71 @@ def read_personal_evidence(
             }
         ],
         truncated=truncated,
+    )
+
+
+def read_personal_evidence_batch(
+    repository: ProfileRepository,
+    context: AgentContext,
+    *,
+    evidence_ids: Sequence[str],
+) -> dict[str, Any]:
+    if denied := _authorized(context, "read_personal_evidence_batch"):
+        return denied
+    requested_ids = tuple(dict.fromkeys(evidence_ids))
+    limit = min(_limit(context), MAX_PROFILE_EVIDENCE_BATCH_ITEMS)
+    bounded_ids = requested_ids[:limit]
+    if not bounded_ids:
+        return _error("profile_evidence_ids_required")
+
+    placeholders = ",".join("?" for _item in bounded_ids)
+    rows = repository.connection.execute(
+        "SELECT e.*, m.id AS material_id, m.title AS material_title, "
+        "v.version_number "
+        "FROM profile_evidence e "
+        "JOIN profile_material_versions v ON v.id = e.material_version_id "
+        "JOIN profile_materials m ON m.id = v.material_id "
+        f"WHERE e.id IN ({placeholders}) AND e.tombstoned_at IS NULL "
+        "AND m.workspace_id = ? AND m.lifecycle_status = 'active'",
+        (*bounded_ids, context.workspace_id),
+    ).fetchall()
+    by_id = {row["id"]: row for row in rows}
+    items: list[dict[str, Any]] = []
+    missing_ids: list[str] = []
+    excerpt_truncated = False
+    for evidence_id in bounded_ids:
+        row = by_id.get(evidence_id)
+        if row is None:
+            missing_ids.append(evidence_id)
+            continue
+        excerpt, clipped = _excerpt(context, row["sanitized_text"])
+        excerpt_truncated = excerpt_truncated or clipped
+        items.append(
+            {
+                "id": row["id"],
+                "materialId": row["material_id"],
+                "materialTitle": row["material_title"],
+                "materialVersionId": row["material_version_id"],
+                "versionNumber": int(row["version_number"]),
+                "section": row["section"],
+                "startOffset": int(row["start_offset"]),
+                "endOffset": int(row["end_offset"]),
+                "sanitizedText": excerpt,
+                "sensitivity": row["sensitivity"],
+            }
+        )
+    if not items:
+        return _envelope(
+            status="error",
+            errorCode="profile_evidence_mismatch",
+            missingIds=missing_ids,
+            truncated=len(requested_ids) > limit,
+        )
+    return _envelope(
+        status="partial" if missing_ids else "ok",
+        items=items,
+        missingIds=missing_ids,
+        truncated=len(requested_ids) > limit or excerpt_truncated,
     )
 
 
@@ -517,6 +597,17 @@ def create_profile_tools(
             repository, runtime.context, evidence_id=evidence_id
         )
 
+    @tool("read_personal_evidence_batch", args_schema=EvidenceBatchInput)
+    def evidence_batch_tool(
+        evidence_ids: list[str], runtime: ToolRuntime[AgentContext]
+    ) -> dict[str, Any]:
+        """Read 2-12 bounded sanitized Evidence excerpts in one call."""
+        return read_personal_evidence_batch(
+            repository,
+            runtime.context,
+            evidence_ids=evidence_ids,
+        )
+
     @tool("get_profile_claims", args_schema=NoInput)
     def claims_tool(runtime: ToolRuntime[AgentContext]) -> dict[str, Any]:
         """Get confirmed profile claims for the current Workspace."""
@@ -545,28 +636,15 @@ def create_profile_tools(
             version_b_id=version_b_id,
         )
 
-    @tool("search_active_knowledge", args_schema=SearchInput)
-    def knowledge_tool(
-        query: str, runtime: ToolRuntime[AgentContext]
-    ) -> dict[str, Any]:
-        """Search user-confirmed active knowledge with bounded excerpts."""
-        return search_active_knowledge(repository, runtime.context, query=query)
-
-    @tool("get_profile_publication_status", args_schema=NoInput)
-    def publication_tool(runtime: ToolRuntime[AgentContext]) -> dict[str, Any]:
-        """Get the current Profile publication state and safe receipts."""
-        return get_profile_publication_status(repository, runtime.context)
-
     del _storage
     return (
         list_tool,
         search_materials_tool,
         evidence_tool,
+        evidence_batch_tool,
         claims_tool,
         claim_evidence_tool,
         compare_tool,
-        knowledge_tool,
-        publication_tool,
     )
 
 

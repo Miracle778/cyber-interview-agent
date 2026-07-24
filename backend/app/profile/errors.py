@@ -120,6 +120,10 @@ class ProfileActionPlanInvalid(ProfileDomainError):
     code = "profile_action_plan_invalid"
 
 
+class ProfileContextRequestInvalid(ProfileDomainError):
+    code = "profile_context_request_invalid"
+
+
 class ProfilePublicationSelectionNotFound(ProfileDomainError):
     code = "profile_publication_selection_not_found"
 

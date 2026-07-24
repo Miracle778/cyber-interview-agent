@@ -148,6 +148,7 @@ def _graph(agents, product, repository, service, cards=None):
     [
         ("评估一下我的画像优势和风险", "assess"),
         ("添加 FastAPI 技能", "single_change"),
+        ("把 Docker 熟练程度改为熟练", "single_change"),
         ("修改技能并且优化简历", "plan"),
         ("帮我改一下", "clarify"),
         ("我的项目经历有证据吗", "chat"),
@@ -181,6 +182,7 @@ async def test_chat_uses_fresh_snapshot_focus_and_intent_tool_allowlist(
     assert claim_id in assembled
     assert "之前的问题" not in assembled
     assert "read_personal_evidence" in call["context"].allowed_tools
+    assert "read_personal_evidence_batch" in call["context"].allowed_tools
     assert "compare_material_versions" not in call["context"].allowed_tools
 
 
@@ -296,6 +298,37 @@ async def test_invalid_single_change_never_persists_partial_plan(
     )
 
     assert "包含多个" in result["response"]
+    assert repository.connection.execute(
+        "SELECT COUNT(*) FROM profile_action_plans"
+    ).fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_invalid_model_plan_returns_a_user_safe_explanation(
+    profile_runtime,
+) -> None:
+    root, product, repository, service, _evidence = profile_runtime
+    agents = RecordingAgents(
+        ProfileActionPlanProposal(
+            request_summary="修改 Docker 名称",
+            items=[
+                ProfileActionPlanItemProposal(
+                    item_id="invalid-evidence",
+                    operation="propose_claim_create",
+                    target={},
+                    after={"category": "skill", "text": "Docker 容器技术"},
+                    evidence_ids=["missing-evidence"],
+                )
+            ],
+        )
+    )
+
+    result = await _graph(agents, product, repository, service).ainvoke(
+        {"message": "把 Docker 名称改为 Docker 容器技术"},
+        context=_context(root),
+    )
+
+    assert "缺少足够的简历原文依据" in result["response"]
     assert repository.connection.execute(
         "SELECT COUNT(*) FROM profile_action_plans"
     ).fetchone()[0] == 0

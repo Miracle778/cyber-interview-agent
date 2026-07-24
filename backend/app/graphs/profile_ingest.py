@@ -11,7 +11,7 @@ from langgraph.runtime import Runtime
 
 from app.agents.context import AgentContext
 from app.agents.profile_agents import ProfileAgents
-from app.agents.profile_contracts import ProfileExtractionOutput
+from app.agents.profile_contracts import ProfileClaimCandidate, ProfileExtractionOutput
 from app.profile.errors import (
     ProfileDomainError,
     ProfileEvidenceMismatch,
@@ -181,7 +181,9 @@ def create_profile_ingest_graph(
     ) -> dict[str, Any]:
         version = _workspace_version(repository, state, runtime.context)
         try:
-            output = ProfileExtractionOutput.model_validate(state["extraction"])
+            output = _normalize_extraction(
+                ProfileExtractionOutput.model_validate(state["extraction"])
+            )
             valid_ids = {
                 item.id for item in repository.list_evidence_for_version(version.id)
             }
@@ -291,6 +293,85 @@ def _evidence_specs(segments: tuple[ExtractedSegment, ...]) -> tuple[dict[str, A
         )
         offset = end + 2
     return tuple(specs)
+
+
+def _normalize_extraction(output: ProfileExtractionOutput) -> ProfileExtractionOutput:
+    """Canonicalize category fields and merge exact duplicate facts.
+
+    This deliberately avoids semantic fuzzy merging: only candidates with the
+    same category, canonical value and target identity are combined.
+    """
+    merged: dict[str, ProfileClaimCandidate] = {}
+    order: list[str] = []
+    for candidate in output.candidates:
+        value = _canonical_claim_value(candidate.category, candidate.value)
+        normalized = candidate.model_copy(update={"value": value})
+        key = json.dumps(
+            {
+                "category": normalized.category,
+                "value": normalized.value,
+                "proposalType": normalized.proposal_type,
+                "targetClaimId": normalized.target_claim_id,
+                "baseClaimVersionId": normalized.base_claim_version_id,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        existing = merged.get(key)
+        if existing is None:
+            merged[key] = normalized
+            order.append(key)
+            continue
+        evidence_ids = list(
+            dict.fromkeys([*existing.evidence_ids, *normalized.evidence_ids])
+        )[:50]
+        higher_confidence = (
+            normalized if normalized.confidence > existing.confidence else existing
+        )
+        merged[key] = existing.model_copy(
+            update={
+                "evidence_ids": evidence_ids,
+                "confidence": max(existing.confidence, normalized.confidence),
+                "rationale": higher_confidence.rationale,
+            }
+        )
+    return ProfileExtractionOutput(candidates=[merged[key] for key in order])
+
+
+def _canonical_claim_value(
+    category: str, raw_value: dict[str, object]
+) -> dict[str, object]:
+    value = dict(raw_value)
+
+    def alias(target: str, *sources: str) -> None:
+        if target not in value:
+            for source in sources:
+                candidate = value.get(source)
+                if candidate is not None and candidate != "" and candidate != [] and candidate != {}:
+                    value[target] = candidate
+                    break
+        for source in sources:
+            if source != target:
+                value.pop(source, None)
+
+    if category == "skill":
+        alias("name", "name", "text", "skill")
+    elif category == "project":
+        alias("name", "name", "title", "project")
+        alias("tech_stack", "tech_stack", "techStack", "technologies")
+    elif category == "experience":
+        alias("organization", "organization", "company", "employer")
+        alias("role", "role", "title", "position")
+        alias("period", "period", "dates", "duration")
+    elif category == "education":
+        alias("institution", "institution", "school", "university")
+        alias("field", "field", "major")
+        alias("period", "period", "dates", "duration")
+    elif category == "link":
+        alias("label", "label", "name", "title")
+        alias("url", "url", "href", "link")
+    return value
 
 
 def _sanitize(text: str) -> tuple[str, bool]:

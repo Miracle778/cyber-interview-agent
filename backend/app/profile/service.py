@@ -15,6 +15,8 @@ from app.profile.models import (
     BatchClaimDecisionResult,
     ClaimReviewDetail,
     ClaimReviewSnapshot,
+    ConfirmedProfileContext,
+    ConfirmedProfileContextItem,
     CreateActionPlanCommand,
     CreateClaimProposalSpec,
     CreateMaterialCommand,
@@ -37,6 +39,7 @@ from app.profile.errors import (
     ProfileAssessmentNotFound,
     ProfileClaimNotFound,
     ProfileClaimVersionConflict,
+    ProfileContextRequestInvalid,
     ProfileDomainError,
     ProfileDeletionPlanConflict,
     ProfileDeletionPlanExpired,
@@ -56,8 +59,23 @@ _ACTION_PLAN_OPERATIONS = frozenset(
         "propose_claim_update",
         "propose_claim_reject",
         "propose_material_derived_version",
-        "set_publication_selection",
         "request_reassessment",
+    }
+)
+_CONFIRMED_PROFILE_PURPOSES = frozenset(
+    {"job_target_analysis", "project_deep_dive", "interview_training"}
+)
+_CLAIM_TYPES = frozenset({"skill", "project", "experience", "education", "link"})
+_SENSITIVE_VALUE_KEYS = frozenset(
+    {
+        "address",
+        "contact",
+        "contact_info",
+        "email",
+        "mobile",
+        "phone",
+        "qq",
+        "wechat",
     }
 )
 
@@ -429,6 +447,70 @@ class ProfileService:
             evidence=evidence,
         )
 
+    def confirmed_profile_context(
+        self,
+        *,
+        purpose: str,
+        claim_types: tuple[str, ...] = (),
+        claim_ids: tuple[str, ...] = (),
+        sensitive_data_policy: str = "exclude",
+        limit: int = 50,
+    ) -> ConfirmedProfileContext:
+        if purpose not in _CONFIRMED_PROFILE_PURPOSES:
+            raise ProfileContextRequestInvalid("unsupported profile context purpose")
+        requested_types = frozenset(claim_types)
+        if requested_types - _CLAIM_TYPES:
+            raise ProfileContextRequestInvalid("unsupported profile claim type")
+        if sensitive_data_policy != "exclude":
+            raise ProfileContextRequestInvalid(
+                "sensitive profile context is not enabled"
+            )
+        if limit < 1 or limit > 50:
+            raise ProfileContextRequestInvalid("profile context limit is invalid")
+
+        requested_ids = tuple(dict.fromkeys(claim_ids))
+        for claim_id in requested_ids:
+            claim = self.repository.get_claim(claim_id)
+            if claim.workspace_id != self.workspace_id:
+                raise ProfileClaimNotFound(claim_id)
+        requested_id_set = frozenset(requested_ids)
+
+        snapshot = self.repository.profile_snapshot(self.workspace_id)
+        items: list[ConfirmedProfileContextItem] = []
+        for claim in snapshot.claims:
+            if requested_types and claim.claim_type not in requested_types:
+                continue
+            if requested_id_set and claim.claim_id not in requested_id_set:
+                continue
+            visible_evidence_ids = tuple(
+                evidence_id
+                for evidence_id in claim.evidence_ids
+                if self._context_evidence_is_visible(evidence_id)
+            )
+            if claim.evidence_ids and not visible_evidence_ids:
+                continue
+            value = self._without_sensitive_profile_fields(claim.value)
+            if not value:
+                continue
+            items.append(
+                ConfirmedProfileContextItem(
+                    claim_id=claim.claim_id,
+                    claim_version_id=claim.claim_version_id,
+                    claim_type=claim.claim_type,
+                    value=value,
+                    support_status=claim.support_status,
+                    evidence_ids=visible_evidence_ids,
+                )
+            )
+            if len(items) >= limit:
+                break
+        return ConfirmedProfileContext(
+            workspace_id=self.workspace_id,
+            purpose=purpose,
+            profile_version=snapshot.profile_version,
+            items=tuple(items),
+        )
+
     def decide_claim_proposal(
         self,
         proposal_id: str,
@@ -795,6 +877,28 @@ class ProfileService:
         if plan.workspace_id != self.workspace_id:
             raise ProfileActionPlanNotFound(plan_id)
         return plan
+
+    def _context_evidence_is_visible(self, evidence_id: str) -> bool:
+        evidence = self.repository.get_evidence(evidence_id)
+        return evidence.tombstoned_at is None and evidence.sensitivity == "normal"
+
+    @classmethod
+    def _without_sensitive_profile_fields(
+        cls, value: dict[str, object]
+    ) -> dict[str, object]:
+        def sanitize(item: object) -> object:
+            if isinstance(item, dict):
+                return {
+                    str(key): sanitize(child)
+                    for key, child in item.items()
+                    if str(key).strip().lower() not in _SENSITIVE_VALUE_KEYS
+                }
+            if isinstance(item, list):
+                return [sanitize(child) for child in item]
+            return item
+
+        sanitized = sanitize(value)
+        return sanitized if isinstance(sanitized, dict) else {}
 
     def _emit_action_plan_event(
         self,

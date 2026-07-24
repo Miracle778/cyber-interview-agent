@@ -406,7 +406,7 @@ class AgentApplication:
         return await self._context(workspace_id).sessions.create(
             workspace_id=workspace_id,
             kind="profile.manage",
-            title=title or "个人画像对话",
+            title=title or "简历助手对话",
         )
 
     def list_profile_sessions(

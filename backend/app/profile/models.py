@@ -240,6 +240,24 @@ class ConfirmedProfileSnapshot:
     materials: tuple[ProfileMaterialRecord, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class ConfirmedProfileContextItem:
+    claim_id: str
+    claim_version_id: str
+    claim_type: ClaimType
+    value: dict[str, object]
+    support_status: ClaimSupportStatus
+    evidence_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ConfirmedProfileContext:
+    workspace_id: str
+    purpose: str
+    profile_version: str | None
+    items: tuple[ConfirmedProfileContextItem, ...]
+
+
 # --- Commands and specs ---
 
 

@@ -730,3 +730,66 @@
 - “点击查看原文位置”原为不可点击提示，真正可点击的证据行缺少动作文案，造成明显的伪入口。
 - 每条证据现提供明确的“查看原文位置”动作和完整可访问名称；Markdown/TXT 定位转为“第 11–13 行”等中文格式，不再直接展示 `lineStart/lineEnd`。
 - 证据详情页同步显示页码、段落或行号定位；ClaimReview、ProfilePage、ResumeVersions 定向 `6 passed`，TypeScript 与 `git diff --check` 通过。
+
+## 2026-07-23：简历永久删除入口归位
+
+- 永久删除原本只出现在“画像与经历”，用户在“简历版本”只能归档，难以发现整份测试材料的清理入口。
+- “永久删除材料”现移到简历版本的独立危险操作区，与可恢复归档分开；仍先执行 Evidence/Claim/Publication 影响预检和文本确认。
+- 画像审核页不再承担材料生命周期操作。ResumeVersions、ClaimReview、ProfilePage、DeletionImpactDialog 定向 `8 passed`，TypeScript 与 `git diff --check` 通过。
+
+## 2026-07-23：画像 Agent 历史会话清理
+
+- 画像 Agent 会话列表原本只能新建和切换，删除测试简历后仍保留上一份简历的独立对话上下文。
+- 会话行新增明确的永久删除入口，复用通用 Agent Session 删除能力；删除当前会话后清空对应查询缓存并进入下一会话或空状态。
+- 删除范围只包含该会话、Execution、事件和历史消息，不删除简历材料、画像项或已确认数据；运行中的当前会话必须先停止。
+- ProfileAgentWorkspace 定向 `3 passed`，TypeScript 与 `git diff --check` 通过。
+
+## 2026-07-23：画像建议分类与处理过程可解释性
+
+- 用户侧“Claim 提取”改为“生成画像建议”，处理中展示已准备的 Evidence 数量、五类识别范围、证据核对与保存步骤，并明确只生成待确认建议、失败后保留文本和证据。
+- `profile-extraction` Prompt 1.1 明确定义技能、项目、工作、教育、链接五类边界、分类固定字段、多标签 Evidence 和去重规则；提取契约同步提供字段语义。
+- 持久化前增加确定性字段别名归一化和完全重复候选合并，不做模糊语义合并；超过 50 条 Evidence 时页面明确说明当前覆盖边界，分批恢复另行实施。
+- 后端 Profile Agent/Ingest/Material API 定向 `18 passed`；前端 ResumeVersions/ProfilePage/ClaimReview 定向 `7 passed`，TypeScript、compileall 与 `git diff --check` 通过。
+## 2026-07-23：R3 个人资料界面用户化改造
+
+- 用户实页反馈确认，原页面把 Material、Evidence、Claim、画像和 Agent Runtime 等内部领域模型直接作为主界面语言，用户难以理解页面用途。
+- 四个入口调整为“概览、简历与版本、确认简历要点、简历助手”；一级导航同步改为“我的简历”。
+- 概览改为当前简历、下一步、用途和隐私边界；过滤 Markdown frontmatter、联系方式脱敏占位和无意义标题，不再把原始元数据铺在首屏。
+- 简历版本处理过程在完成后默认折叠；文件类型、原文位置、失败恢复和删除影响使用用户语言，去除 MIME、字符 offset 和 Markdown 标记。
+- 新建简历要点使用自然语言卡片，不再展示空白“修改前”列；Schema 字段映射为中文，分类同时读取新建议类型，来源统一表述为“来自简历”。
+- 简历助手以任务提示开始，对话记录替代整理会话；Tool 阶段翻译为用户动作，Runtime 信息收进默认折叠的“运行详情”。
+- 验证：相关 7 个前端测试文件 15 项通过，`tsc --noEmit` 与 `git diff --check` 通过；5174 真实页面完成 1280px 四入口复核，无横向溢出，未触发模型调用或数据写入。
+
+## 2026-07-24：R3 画像对话 Tool 超限修复
+
+- 真实 Execution 一次提出 8 个单条 Evidence 读取，画像预算为 6；官方 ToolCallLimit 的 `error` 策略在 Tool 执行前直接终止了整轮。
+- 新增一次最多 12 条的批量 Evidence 读取 Tool；Prompt 要求多条证据使用批量调用。画像专用超限策略改为阻止额外调用并继续回答，其他 Agent 的硬失败策略不变。
+- 仍保留每轮 6 次调用、重复调用和结果体积边界；批量读取支持部分缺失，不因单条失效丢弃已有证据。
+- 定向回归 `41 passed`，关联 Agent/Policy `12 passed`，compileall 与 `git diff --check` 通过。8000 后端已精确重启并健康检查 200；未自动重放真实模型请求。
+
+## 2026-07-24：R3-R6 产品路线调整
+
+- 通过产品追问确认个人资料功能的最终角色：它是岗位分析与训练的可信数据底座，不是独立的“画像管理”终点，也不应以知识发布作为核心用户任务。
+- 新增 Accepted ADR `2026-07-24-job-target-centered-interview-preparation.md`，固定求职目标聚合根、逐条岗位要求、项目深挖、项目讲解卡、四类缺口、资料补充确认边界和岗位准备事实。
+- 更新总路线：R3 收窄为可信资料与 `ConfirmedProfileContext`；R4 改为求职目标与项目深挖；R5 按四类缺口组织练习；R6 在求职目标上下文中执行模拟面试。
+- 更新 R3 规格与实施计划：取消当前里程碑的知识发布范围页面、选择/发布/撤销任务，Task 16 改为受控下游查询，Task 17 改为现有四页面跨层验收，Task 18 改为 13 个最终场景与文档门禁。
+- 本次只调整产品与架构文档，未修改或验证运行代码；R3 产品状态仍是 Task 15 实现完成待实页验收、Task 16-18 待执行。
+
+## 2026-07-24：R3 产品边界与受控查询落地
+
+- 简历助手已收窄为资料维护：Prompt、空状态、快捷问题和评估卡聚焦资料完整性、一致性、原文定位与表达整理，不再承担岗位差距、项目深挖或模拟面试。
+- 当前 Agent 不再注册知识检索、发布状态 Tool，也不能生成新的 `set_publication_selection` Action Plan；旧 schema、Repository 和历史计划展示保持兼容，未执行破坏性迁移。
+- 概览移除“发布功能即将开放”，改为说明创建求职目标后按岗位与资料范围使用；永久删除不再展示活动发布/发布选择术语，真实旧依赖存在时使用通俗阻断提示。
+- 新增 `POST /api/workspaces/{workspaceId}/profile/confirmed-context`：用途白名单、分类/Claim ID 过滤、Workspace 校验、当前 confirmed 版本、敏感字段/Evidence 排除、50 项上限和稳定空结果均已接通。
+- 定向后端 Profile Context/Agent/API/Tool/Action Plan/Middleware `54 passed`；定向前端 Profile 工作区、版本、方案、Tool、删除和页面 `14 passed`，TypeScript 与 Python compileall 通过。Task 16 完成，Task 15/17 的真实页面和跨层验收仍待执行。
+
+## 2026-07-24：R3 核心跨层验收完成
+
+- 产品状态：四页面核心路径已真实跑通；Action Plan 运行中隐藏结构化模型原始分析，合法方案可确认并产生 Receipt，无效方案安全拒绝。
+- 浏览器证据：合成 MaterialVersion `213e11308564424fa8189ce8d2116722` 完成 11 个原文片段和 9 条候选；问答 Execution `55f7af46-2c8c-4a3d-badc-396f56cba4a6`、计划 Execution `31de9b82-daf0-4189-8bb8-35b854d0debc` 完成；计划单项 Receipt `b8e6e716eeb84db7a2823e36c814ac5b`。
+- 文档状态：验证指南已重塑为最终用户指南，`integration` 风险档案的七文件学习包已生成。
+- 成熟度边界：核心 happy path、真实 Provider 问答/计划、停止恢复、confirmed-profile 隔离和 390 px 已覆盖；DOCX、新版本、冲突、Assessment、局部重试等扩展组合场景尚未完成最终浏览器复跑。
+- 所有权状态：产品自动与核心人工证据已具备；用户练习为 pending practice，不阻塞提交；阶段关闭仍受最终回归与完整浏览器清单约束。
+- 下一产品任务：先完成最终回归和文档门禁，再补齐扩展浏览器清单；之后进入 R4 求职目标与项目深挖。
+- 非阻塞练习：Trace 一次上传到 confirmed-profile，再口述为什么 Planner 没有写 Tool。
+- 最终自动门禁：后端 `744 passed`；前端 `198 passed`；TypeScript 与 production build 通过；`git diff --check` 与阶段文档门禁通过。现仅保留验证指南列明的扩展浏览器组合场景，不再重复完整回归。

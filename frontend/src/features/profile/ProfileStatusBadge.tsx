@@ -4,11 +4,11 @@ import type { MaterialLifecycleStatus, MaterialProcessingStatus } from "./profil
 const processingLabels: Record<string, string> = {
   uploaded: "等待文本提取",
   parsing: "正在提取文本",
-  parsed: "正在脱敏",
-  extracting: "正在提取画像",
-  ready: "等待审核",
+  parsed: "正在处理隐私信息",
+  extracting: "正在整理简历要点",
+  ready: "等待确认简历要点",
   parse_failed: "文本提取失败",
-  extraction_failed: "画像提取失败",
+  extraction_failed: "简历要点整理失败",
 };
 
 export function ProfileStatusBadge({ status, lifecycle }: { status?: MaterialProcessingStatus | string | null; lifecycle?: MaterialLifecycleStatus | string }) {

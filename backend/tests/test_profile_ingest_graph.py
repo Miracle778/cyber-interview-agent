@@ -47,6 +47,29 @@ class EvidenceGroundedExtractionAgent:
         )
 
 
+class DuplicateAliasExtractionAgent:
+    async def extract(self, *, evidence, context, config):
+        evidence_id = evidence[0]["id"]
+        return ProfileExtractionOutput(
+            candidates=[
+                ProfileClaimCandidate(
+                    category="skill",
+                    value={"text": "Python"},
+                    evidence_ids=[evidence_id],
+                    confidence=0.8,
+                    rationale="first",
+                ),
+                ProfileClaimCandidate(
+                    category="skill",
+                    value={"name": "Python"},
+                    evidence_ids=[evidence_id],
+                    confidence=0.9,
+                    rationale="more explicit",
+                ),
+            ]
+        )
+
+
 class AssessmentAgent:
     def __init__(self, version_id: str, evidence_id: str, *, invalid: bool = False):
         self.version_id = version_id
@@ -192,6 +215,31 @@ async def test_ingest_rejects_unknown_evidence_without_partial_proposals(profile
     assert getattr(raised.value, "code", None) == "profile_evidence_mismatch"
     assert repository.get_material_version(version.id).processing_status == "extraction_failed"
     assert repository.list_proposals("w1") == ()
+
+
+@pytest.mark.asyncio
+async def test_ingest_normalizes_category_fields_and_merges_exact_duplicates(profile_runtime):
+    root, connection, repository, storage = profile_runtime
+    version = _seed(repository, storage, b"Python")
+    _seed_execution(connection, version.id)
+    graph = create_profile_ingest_graph(
+        DuplicateAliasExtractionAgent(),
+        repository=repository,
+        storage=storage,
+        publish_event=None,
+    )
+
+    await graph.ainvoke(
+        {"material_id": version.material_id, "version_id": version.id},
+        config={"configurable": {"thread_id": version.id}},
+        context=_context(root, version.id),
+    )
+
+    proposals = repository.list_proposals("w1")
+    assert len(proposals) == 1
+    assert proposals[0].proposed_value["name"] == "Python"
+    assert "text" not in proposals[0].proposed_value
+    assert proposals[0].reason == "more explicit"
 
 
 @pytest.mark.asyncio

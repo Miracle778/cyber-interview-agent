@@ -14,10 +14,26 @@ class _StrictContract(BaseModel):
 
 
 class ProfileClaimCandidate(_StrictContract):
-    category: ClaimCategory
-    value: dict[str, object]
+    category: ClaimCategory = Field(
+        description=(
+            "固定分类：skill 技能、project 项目经历、experience 工作经历、"
+            "education 教育经历、link 个人链接"
+        )
+    )
+    value: dict[str, object] = Field(
+        description=(
+            "分类字段：skill 使用 name/description；project 使用 "
+            "name/description/tech_stack；experience 使用 "
+            "organization/role/period/description；education 使用 "
+            "institution/degree/field/period；link 使用 label/url"
+        )
+    )
     evidence_ids: list[str] = Field(min_length=1, max_length=50)
-    confidence: float = Field(ge=0.0, le=1.0)
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="仅表示从所引 Evidence 中提取此候选的把握，不表示用户已确认",
+    )
     rationale: str = Field(min_length=1, max_length=1000)
     proposal_type: ProposalType = "create"
     target_claim_id: str | None = Field(default=None, max_length=128)
@@ -64,7 +80,6 @@ class ProfileActionPlanItemProposal(_StrictContract):
         "propose_claim_update",
         "propose_claim_reject",
         "propose_material_derived_version",
-        "set_publication_selection",
         "request_reassessment",
     ]
     target: dict[str, object]

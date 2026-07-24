@@ -23,10 +23,11 @@ describe("ResumeVersions", () => {
     const onArchive = vi.fn();
     const onRestore = vi.fn();
     const onSetPrimary = vi.fn();
-    const view = render(<ResumeVersions materials={[material]} versions={versions} selectedMaterialId="m1" selectedVersionId="v2" detail={detail} busy={false} onSelectMaterial={vi.fn()} onSelectVersion={onSelectVersion} onRetry={onRetry} onArchive={onArchive} onRestore={onRestore} onSetPrimary={onSetPrimary} onOpenEvidence={vi.fn()} onAddVersion={vi.fn()} />);
+    const onPermanentDelete = vi.fn();
+    const view = render(<ResumeVersions materials={[material]} versions={versions} selectedMaterialId="m1" selectedVersionId="v2" detail={detail} busy={false} onSelectMaterial={vi.fn()} onSelectVersion={onSelectVersion} onRetry={onRetry} onArchive={onArchive} onRestore={onRestore} onSetPrimary={onSetPrimary} onPermanentDelete={onPermanentDelete} onOpenEvidence={vi.fn()} onAddVersion={vi.fn()} />);
 
-    expect(screen.getByLabelText("材料处理进度")).toHaveTextContent("上传");
-    expect(screen.getByLabelText("材料处理进度")).toHaveTextContent("等待审核");
+    expect(screen.getByLabelText("简历处理进度")).toHaveTextContent("上传");
+    expect(screen.getByLabelText("简历处理进度")).toHaveTextContent("等待确认");
     expect(screen.getByRole("alert")).toHaveTextContent("文本提取失败");
     fireEvent.click(screen.getByRole("button", { name: "重试文本提取" }));
     expect(onRetry).toHaveBeenCalledWith("v2");
@@ -34,11 +35,36 @@ describe("ResumeVersions", () => {
     expect(onSelectVersion).toHaveBeenCalledWith("v1");
     fireEvent.click(screen.getByRole("button", { name: "设为当前版本" }));
     expect(onSetPrimary).toHaveBeenCalledWith(material, "v2");
-    fireEvent.click(screen.getByRole("button", { name: "归档材料" }));
+    fireEvent.click(screen.getByRole("button", { name: "归档简历" }));
     expect(onArchive).toHaveBeenCalledWith(material);
+    fireEvent.click(screen.getByRole("button", { name: "永久删除简历" }));
+    expect(onPermanentDelete).toHaveBeenCalledWith(material);
     const archived = { ...material, lifecycleStatus: "archived" } satisfies ProfileMaterial;
-    view.rerender(<ResumeVersions materials={[archived]} versions={versions} selectedMaterialId="m1" selectedVersionId="v2" detail={detail} busy={false} onSelectMaterial={vi.fn()} onSelectVersion={onSelectVersion} onRetry={onRetry} onArchive={onArchive} onRestore={onRestore} onSetPrimary={onSetPrimary} onOpenEvidence={vi.fn()} onAddVersion={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: "恢复材料" }));
+    view.rerender(<ResumeVersions materials={[archived]} versions={versions} selectedMaterialId="m1" selectedVersionId="v2" detail={detail} busy={false} onSelectMaterial={vi.fn()} onSelectVersion={onSelectVersion} onRetry={onRetry} onArchive={onArchive} onRestore={onRestore} onSetPrimary={onSetPrimary} onPermanentDelete={onPermanentDelete} onOpenEvidence={vi.fn()} onAddVersion={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "恢复简历" }));
     expect(onRestore).toHaveBeenCalledWith(archived);
+  });
+
+  it("explains what happens while profile suggestions are generated", () => {
+    const extracting = {
+      ...detail,
+      processingStatus: "extracting",
+      stages: [
+        { key: "uploaded", label: "已上传", status: "completed" },
+        { key: "parsing", label: "提取文本", status: "completed" },
+        { key: "parsed", label: "隐私处理", status: "completed" },
+        { key: "extracting", label: "生成画像建议", status: "active" },
+        { key: "ready", label: "等待确认", status: "pending" },
+      ],
+      evidencePage: { ...detail.evidencePage, total: 12 },
+      execution: { ...detail.execution, status: "running", errorCode: null },
+    } satisfies ProfileMaterialVersionDetail;
+
+    render(<ResumeVersions materials={[material]} versions={versions} selectedMaterialId="m1" selectedVersionId="v2" detail={extracting} busy={false} onSelectMaterial={vi.fn()} onSelectVersion={vi.fn()} onRetry={vi.fn()} onArchive={vi.fn()} onRestore={vi.fn()} onSetPrimary={vi.fn()} onPermanentDelete={vi.fn()} onOpenEvidence={vi.fn()} onAddVersion={vi.fn()} />);
+
+    expect(screen.getByRole("status", { name: "简历要点整理进度" })).toHaveTextContent("正在整理简历要点");
+    expect(screen.getByRole("status", { name: "简历要点整理进度" })).toHaveTextContent("已找到 12 个原文片段");
+    expect(screen.getByRole("status", { name: "简历要点整理进度" })).toHaveTextContent("技能、项目、工作经历、教育经历和个人链接");
+    expect(screen.getByRole("status", { name: "简历要点整理进度" })).toHaveTextContent("确认后才会被简历助手使用");
   });
 });

@@ -126,7 +126,7 @@ export function ProfilePage({ workspace }: { workspace: WorkspaceConfig | null }
     inputRef.current?.click();
   }
 
-  if (!workspace) return <div className="profile-workspace-missing"><FolderLock size={28} /><h1 tabIndex={-1}>个人资料</h1><p>请先初始化工作区，再导入简历和管理个人画像。</p><Link className="text-link" to="/settings">前往设置</Link></div>;
+  if (!workspace) return <div className="profile-workspace-missing"><FolderLock size={28} /><h1 tabIndex={-1}>我的简历</h1><p>请先初始化工作区，再导入简历并使用简历助手。</p><Link className="text-link" to="/settings">前往设置</Link></div>;
 
   const queryError = materialsQuery.error ?? versionsQuery.error ?? detailQuery.error;
   const mutationError = upload.error ?? retry.error ?? archive.error ?? restore.error ?? primary.error;
@@ -136,31 +136,31 @@ export function ProfilePage({ workspace }: { workspace: WorkspaceConfig | null }
 
   return <section className="profile-shell">
     <header className="profile-header">
-      <div><h1 ref={headingRef} tabIndex={-1}>个人资料</h1><p>管理简历版本、可追溯证据和待确认的个人画像。</p></div>
-      <div className="profile-header__summary"><UserRound size={16} /><span>{materials.filter((item) => item.lifecycleStatus === "active").length} 份有效材料</span></div>
+      <div><h1 ref={headingRef} tabIndex={-1}>我的简历</h1><p>确认简历中的重要信息，为后续岗位分析和面试训练提供真实依据。</p></div>
+      <div className="profile-header__summary"><UserRound size={16} /><span>{materials.filter((item) => item.lifecycleStatus === "active").length} 份正在使用</span></div>
     </header>
-    <nav className="profile-tabs" aria-label="个人资料页面">
-      <button type="button" aria-current={tab === "overview" && !selectedEvidence ? "page" : undefined} onClick={() => { setSelectedEvidence(null); setTab("overview"); }}>资料总览</button>
-      <button type="button" aria-current={tab === "versions" && !selectedEvidence ? "page" : undefined} onClick={() => { setSelectedEvidence(null); setTab("versions"); }}>简历版本</button>
-      <button type="button" aria-current={tab === "claims" && !selectedEvidence ? "page" : undefined} onClick={() => { setSelectedEvidence(null); setTab("claims"); }}>画像与经历</button>
-      <button type="button" aria-current={tab === "agent" ? "page" : undefined} onClick={() => { setSelectedEvidence(null); setTab("agent"); }}>Agent 会话</button>
+    <nav className="profile-tabs" aria-label="我的简历页面">
+      <button type="button" aria-current={tab === "overview" && !selectedEvidence ? "page" : undefined} onClick={() => { setSelectedEvidence(null); setTab("overview"); }}>概览</button>
+      <button type="button" aria-current={tab === "versions" && !selectedEvidence ? "page" : undefined} onClick={() => { setSelectedEvidence(null); setTab("versions"); }}>简历与版本</button>
+      <button type="button" aria-current={tab === "claims" && !selectedEvidence ? "page" : undefined} onClick={() => { setSelectedEvidence(null); setTab("claims"); }}>确认简历要点</button>
+      <button type="button" aria-current={tab === "agent" ? "page" : undefined} onClick={() => { setSelectedEvidence(null); setTab("agent"); }}>简历助手</button>
     </nav>
 
     <input ref={inputRef} className="profile-file-input" aria-label="选择简历文件" type="file" accept=".pdf,.docx,.md,.markdown,.txt" onChange={(event) => { void acceptFile(event.target.files?.[0]); event.currentTarget.value = ""; }} />
 
-    {queryError && materialsQuery.isError ? <div className="profile-page-error" role="alert"><AlertCircle size={21} /><div><strong>个人材料读取失败</strong><p>{errorMessage(queryError)}</p></div><Button variant="secondary" onClick={() => materialsQuery.refetch()}>重新读取</Button></div> : null}
+    {queryError && materialsQuery.isError ? <div className="profile-page-error" role="alert"><AlertCircle size={21} /><div><strong>简历读取失败</strong><p>{errorMessage(queryError)}</p></div><Button variant="secondary" onClick={() => materialsQuery.refetch()}>重新读取</Button></div> : null}
     {mutationError || fileError ? <div className="profile-page-error" role="alert"><AlertCircle size={21} /><div><strong>{fileError ? "无法上传这个文件" : "操作没有完成"}</strong><p>{fileError ?? errorMessage(mutationError)}</p></div></div> : null}
 
-    {materialsQuery.isLoading ? <div className="profile-loading" role="status"><span className="profile-loading__bar" /><span className="profile-loading__bar" /><p>正在读取个人材料…</p></div> : null}
+    {materialsQuery.isLoading ? <div className="profile-loading" role="status"><span className="profile-loading__bar" /><span className="profile-loading__bar" /><p>正在读取简历…</p></div> : null}
 
     {!materialsQuery.isLoading && !materialsQuery.isError && !activeMaterial && tab !== "agent" ? <section className="profile-empty" data-testid="profile-dropzone" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void acceptFile(event.dataTransfer.files[0]); }}>
-      <span><FileUp size={28} /></span><h2>还没有个人材料</h2><p>拖入简历，或从电脑选择 PDF、DOCX、Markdown、TXT 文件。上传后会依次完成文本提取、脱敏和 Claim 提取。</p><Button loading={upload.isPending} onClick={chooseFile}><Upload size={16} />选择简历文件</Button><small>单个文件不超过 10 MB；原文件默认仅自己可见。</small>
+      <span><FileUp size={28} /></span><h2>还没有简历</h2><p>拖入简历，或从电脑选择 PDF、DOCX、Markdown、TXT 文件。上传后会依次完成文本提取、隐私处理和简历要点整理。</p><Button loading={upload.isPending} onClick={chooseFile}><Upload size={16} />选择简历文件</Button><small>单个文件不超过 10 MB；原文件默认仅自己可见。</small>
     </section> : null}
 
     {activeMaterial && selectedEvidenceValue && detail ? <EvidenceDetail materialTitle={detail.material.title} versionNumber={detail.versionNumber} evidence={selectedEvidenceValue} onBack={() => setSelectedEvidence(null)} /> : null}
-    {activeMaterial && !selectedEvidenceValue && tab === "overview" ? <ProfileOverview material={activeMaterial} detail={detail} onImport={chooseFile} onOpenVersions={() => setTab("versions")} onOpenEvidence={(evidenceId) => { const evidence = detail?.evidencePage.items.find((item) => item.id === evidenceId); if (evidence) setSelectedEvidence(evidence); }} /> : null}
-    {activeMaterial && !selectedEvidenceValue && tab === "versions" ? <ResumeVersions materials={materials} versions={versions} selectedMaterialId={activeMaterial.id} selectedVersionId={selectedVersionId} detail={detail} busy={busy} onSelectMaterial={(id) => { setSelectedMaterialId(id); setSelectedVersionId(null); }} onSelectVersion={setSelectedVersionId} onRetry={(id) => retry.mutate(id)} onArchive={(item) => archive.mutate(item)} onRestore={(item) => restore.mutate(item)} onSetPrimary={(item, versionId) => primary.mutate({ material: item, versionId })} onOpenEvidence={setSelectedEvidence} onAddVersion={chooseFile} /> : null}
-    {activeMaterial && !selectedEvidenceValue && tab === "claims" ? <ClaimReview workspaceId={workspaceId} snapshot={claimsQuery.data ?? null} loading={claimsQuery.isLoading} onRefresh={() => claimsQuery.refetch()} onOpenEvidence={setSelectedEvidence} onOpenDeletion={() => setDeletionOpen(true)} /> : null}
+    {activeMaterial && !selectedEvidenceValue && tab === "overview" ? <ProfileOverview material={activeMaterial} detail={detail} onImport={chooseFile} onOpenVersions={() => setTab("versions")} onOpenClaims={() => setTab("claims")} onOpenEvidence={(evidenceId) => { const evidence = detail?.evidencePage.items.find((item) => item.id === evidenceId); if (evidence) setSelectedEvidence(evidence); }} /> : null}
+    {activeMaterial && !selectedEvidenceValue && tab === "versions" ? <ResumeVersions materials={materials} versions={versions} selectedMaterialId={activeMaterial.id} selectedVersionId={selectedVersionId} detail={detail} busy={busy} onSelectMaterial={(id) => { setSelectedMaterialId(id); setSelectedVersionId(null); }} onSelectVersion={setSelectedVersionId} onRetry={(id) => retry.mutate(id)} onArchive={(item) => archive.mutate(item)} onRestore={(item) => restore.mutate(item)} onSetPrimary={(item, versionId) => primary.mutate({ material: item, versionId })} onPermanentDelete={() => setDeletionOpen(true)} onOpenEvidence={setSelectedEvidence} onAddVersion={chooseFile} /> : null}
+    {activeMaterial && !selectedEvidenceValue && tab === "claims" ? <ClaimReview workspaceId={workspaceId} snapshot={claimsQuery.data ?? null} loading={claimsQuery.isLoading} onRefresh={() => claimsQuery.refetch()} onOpenEvidence={setSelectedEvidence} /> : null}
     {activeMaterial ? <DeletionImpactDialog open={deletionOpen} workspaceId={workspaceId} material={activeMaterial} onClose={() => setDeletionOpen(false)} onDeleted={() => { setDeletionOpen(false); setTab("overview"); void refreshProfile(activeMaterial.id, selectedVersionId); void claimsQuery.refetch(); }} /> : null}
     {!selectedEvidenceValue && tab === "agent" ? <ProfileAgentWorkspace workspaceId={workspaceId} focus={{ ...(activeMaterial ? { materialId: activeMaterial.id } : {}), ...(selectedVersionId ? { materialVersionId: selectedVersionId } : {}) }} /> : null}
   </section>;

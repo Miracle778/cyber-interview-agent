@@ -753,7 +753,7 @@ class AgentExecutionService:
                 else frozenset()
             ),
             allowed_scopes=(
-                frozenset(PROFILE_TOOL_SCOPES.values())
+                frozenset(PROFILE_TOOL_SCOPES[name] for name in PROFILE_TOOL_NAMES)
                 if session.kind == "profile.manage"
                 else frozenset()
             ),
