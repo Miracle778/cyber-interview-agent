@@ -17,6 +17,8 @@ const ROLE_LABELS: Record<ModelRole, string> = {
   agent_chat: "Agent 对话模型",
   profile_extraction: "简历结构化提取模型",
   profile_assessment: "画像评估模型",
+  job_analysis: "岗位分析模型",
+  project_deep_dive: "项目深挖模型",
 };
 
 const EMPTY_BINDINGS: Record<ModelRole, string> = {
@@ -26,6 +28,8 @@ const EMPTY_BINDINGS: Record<ModelRole, string> = {
   agent_chat: "",
   profile_extraction: "",
   profile_assessment: "",
+  job_analysis: "",
+  project_deep_dive: "",
 };
 
 interface ModelBindingsProps {
@@ -83,7 +87,7 @@ export function ModelBindings({ workspaceId, refreshKey = 0, onBindingsChanged }
 
   async function handleSave() {
     if (!complete) {
-      setError(toActionableError(new Error("请为六种用途选择可用模型"), "保存模型绑定失败"));
+      setError(toActionableError(new Error("请为八种用途选择可用模型"), "保存模型绑定失败"));
       return;
     }
     setSaving(true);

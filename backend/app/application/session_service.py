@@ -19,6 +19,9 @@ ExecutionStatus = Literal[
     "cancelled",
 ]
 ReasoningEffort = Literal["none", "low", "medium", "high"]
+MessageResolutionStatus = Literal[
+    "active", "unresolved", "replaced", "abandoned"
+]
 MessageKind = Literal[
     "text",
     "stage",
@@ -110,6 +113,8 @@ class ExecutionRecord:
     created_at: str
     started_at: str | None
     finished_at: str | None
+    input_message_id: str | None = None
+    retry_of_execution_id: str | None = None
 
     @property
     def cancellation_requested(self) -> bool:
@@ -125,6 +130,8 @@ class MessageRecord:
     message_kind: MessageKind
     payload: dict[str, Any]
     created_at: str
+    replaces_message_id: str | None = None
+    resolution_status: MessageResolutionStatus = "active"
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,20 +295,36 @@ class ProductRepository:
         model_bindings: dict[str, str],
         configuration: dict[str, Any] | None = None,
         execution_id: str | None = None,
+        input_message_id: str | None = None,
+        retry_of_execution_id: str | None = None,
     ) -> ExecutionRecord:
         execution_id = execution_id or str(uuid4())
+        if input_message_id is not None:
+            row = self.connection.execute(
+                "SELECT session_id FROM agent_messages WHERE id = ?",
+                (input_message_id,),
+            ).fetchone()
+            if row is None or row["session_id"] != session_id:
+                raise ValueError("input message must belong to the execution session")
+        if retry_of_execution_id is not None:
+            retry_parent = self.get_execution(retry_of_execution_id)
+            if retry_parent.session_id != session_id:
+                raise ValueError("retry execution must belong to the same session")
         try:
             self.connection.execute(
                 "INSERT INTO agent_runs "
                 "(id, session_id, status, input_json, model_bindings_json, "
-                "configuration_json, started_at) "
-                "VALUES (?, ?, 'running', ?, ?, ?, CURRENT_TIMESTAMP)",
+                "configuration_json, started_at, input_message_id, "
+                "retry_of_execution_id) "
+                "VALUES (?, ?, 'running', ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)",
                 (
                     execution_id,
                     session_id,
                     _json(input),
                     _json(model_bindings),
                     _json(configuration or {}),
+                    input_message_id,
+                    retry_of_execution_id,
                 ),
             )
         except sqlite3.IntegrityError as error:
@@ -468,6 +491,90 @@ class ProductRepository:
             "SELECT * FROM agent_messages WHERE id = ?", (message_id,)
         ).fetchone()
         return _message(row)
+
+    def append_user_message(
+        self,
+        session_id: str,
+        *,
+        content: str,
+        replaces_message_id: str | None = None,
+    ) -> MessageRecord:
+        clean = content.strip()
+        if not clean:
+            raise ValueError("user message must not be empty")
+        if replaces_message_id is not None:
+            row = self.connection.execute(
+                "SELECT session_id, resolution_status FROM agent_messages "
+                "WHERE id = ? AND role = 'user'",
+                (replaces_message_id,),
+            ).fetchone()
+            if row is None or row["session_id"] != session_id:
+                raise ValueError("replaced message must belong to the same session")
+            if row["resolution_status"] not in {"active", "unresolved"}:
+                raise ValueError("message can no longer be replaced")
+        message_id = str(uuid4())
+        try:
+            self.connection.execute(
+                "INSERT INTO agent_messages "
+                "(id, session_id, role, content, message_kind, payload_json, "
+                "replaces_message_id, resolution_status) "
+                "VALUES (?, ?, 'user', ?, 'text', '{}', ?, 'active')",
+                (message_id, session_id, clean, replaces_message_id),
+            )
+            if replaces_message_id is not None:
+                self.connection.execute(
+                    "UPDATE agent_messages SET resolution_status = 'replaced' "
+                    "WHERE id = ?",
+                    (replaces_message_id,),
+                )
+            self.connection.execute(
+                "UPDATE agent_sessions SET updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ?",
+                (session_id,),
+            )
+            self.connection.commit()
+        except sqlite3.Error:
+            self.connection.rollback()
+            raise
+        row = self.connection.execute(
+            "SELECT * FROM agent_messages WHERE id = ?", (message_id,)
+        ).fetchone()
+        return _message(row)
+
+    def resolve_message(
+        self,
+        message_id: str,
+        *,
+        expected: tuple[MessageResolutionStatus, ...],
+        target: MessageResolutionStatus,
+    ) -> MessageRecord:
+        row = self.connection.execute(
+            "SELECT resolution_status FROM agent_messages WHERE id = ?",
+            (message_id,),
+        ).fetchone()
+        if row is None:
+            raise ProductRecordNotFoundError("Agent Message 不存在")
+        if row["resolution_status"] not in expected:
+            raise InvalidExecutionTransitionError(
+                f"message {message_id} cannot move from "
+                f"{row['resolution_status']} to {target}"
+            )
+        placeholders = ", ".join("?" for _ in expected)
+        cursor = self.connection.execute(
+            "UPDATE agent_messages SET resolution_status = ? WHERE id = ? "
+            f"AND resolution_status IN ({placeholders})",
+            (target, message_id, *expected),
+        )
+        if cursor.rowcount != 1:
+            self.connection.rollback()
+            raise InvalidExecutionTransitionError(
+                f"message {message_id} resolution state changed"
+            )
+        self.connection.commit()
+        updated = self.connection.execute(
+            "SELECT * FROM agent_messages WHERE id = ?", (message_id,)
+        ).fetchone()
+        return _message(updated)
 
     def list_messages(self, session_id: str) -> tuple[MessageRecord, ...]:
         rows = self.connection.execute(
@@ -784,6 +891,8 @@ def _execution(row) -> ExecutionRecord:
         created_at=row["created_at"],
         started_at=row["started_at"],
         finished_at=row["finished_at"],
+        input_message_id=row["input_message_id"],
+        retry_of_execution_id=row["retry_of_execution_id"],
     )
 
 
@@ -810,6 +919,8 @@ def _message(row) -> MessageRecord:
         message_kind=row["message_kind"],
         payload=payload,
         created_at=row["created_at"],
+        replaces_message_id=row["replaces_message_id"],
+        resolution_status=row["resolution_status"],
     )
 
 

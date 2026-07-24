@@ -214,6 +214,8 @@ class AgentExecutionService:
         project_input_message: bool = True,
         configuration: dict[str, Any] | None = None,
         execution_id: str | None = None,
+        input_message_id: str | None = None,
+        retry_of_execution_id: str | None = None,
     ) -> ExecutionRecord:
         bindings = dict(self._model_bindings())
         execution = self._repository.create_execution(
@@ -222,6 +224,8 @@ class AgentExecutionService:
             model_bindings=bindings,
             configuration=configuration,
             execution_id=execution_id,
+            input_message_id=input_message_id,
+            retry_of_execution_id=retry_of_execution_id,
         )
         if project_input_message:
             self._repository.append_message(
@@ -237,6 +241,24 @@ class AgentExecutionService:
             {"executionId": execution.id},
         )
         return execution
+
+    async def prepare_for_message(
+        self,
+        session: SessionRecord,
+        *,
+        input_message_id: str,
+        input: dict[str, Any],
+        retry_of_execution_id: str | None = None,
+        configuration: dict[str, Any] | None = None,
+    ) -> ExecutionRecord:
+        return await self.prepare(
+            session,
+            input=input,
+            project_input_message=False,
+            configuration=configuration,
+            input_message_id=input_message_id,
+            retry_of_execution_id=retry_of_execution_id,
+        )
 
     async def rearm_prepared(self, execution_id: str) -> ExecutionRecord:
         execution = self._repository.rearm_unscheduled_execution(execution_id)

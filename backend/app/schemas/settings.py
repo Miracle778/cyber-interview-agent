@@ -159,6 +159,8 @@ ModelRole = Literal[
     "agent_chat",
     "profile_extraction",
     "profile_assessment",
+    "job_analysis",
+    "project_deep_dive",
 ]
 MODEL_ROLES = {
     "question_generation",
@@ -167,6 +169,8 @@ MODEL_ROLES = {
     "agent_chat",
     "profile_extraction",
     "profile_assessment",
+    "job_analysis",
+    "project_deep_dive",
 }
 
 
@@ -197,7 +201,7 @@ class UpdateWorkspaceModelBindingsCommand(CamelModel):
     @model_validator(mode="after")
     def _require_all_roles(self):
         if set(self.bindings) != MODEL_ROLES:
-            raise ValueError("bindings must contain all six model roles")
+            raise ValueError("bindings must contain all eight model roles")
         return self
 
 

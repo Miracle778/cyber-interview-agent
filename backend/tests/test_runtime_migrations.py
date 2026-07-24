@@ -64,6 +64,21 @@ R3_TABLES = {
     "profile_agent_context",
 }
 
+JOB_TARGET_TABLES = {
+    "job_targets",
+    "job_document_versions",
+    "job_requirements",
+    "job_requirement_evidence_links",
+    "job_analysis_runs",
+    "job_analysis_work_items",
+    "job_target_project_priorities",
+    "project_deep_dives",
+    "project_narrative_sections",
+    "project_deep_dive_artifacts",
+    "project_gaps",
+    "project_question_candidates",
+}
+
 
 def _tables(connection) -> set[str]:
     return {
@@ -164,19 +179,62 @@ def _seed_version_24_committed_revision(connection) -> None:
 def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
     connection = connect_runtime_database(tmp_path)
 
-    assert R2_TABLES | R2_SESSION_EXPERIENCE_TABLES | R2_PROGRESSIVE_CURATION_TABLES <= _tables(connection)
+    assert (
+        R2_TABLES
+        | R2_SESSION_EXPERIENCE_TABLES
+        | R2_PROGRESSIVE_CURATION_TABLES
+        | JOB_TARGET_TABLES
+        <= _tables(connection)
+    )
     assert [
         row[0]
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
+        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
     assert "agent_context_usage" in _tables(connection)
     assert "profile_deletion_plans" in _tables(connection)
     assert "deleted_at" in {
         row[1] for row in connection.execute("PRAGMA table_info(profile_materials)")
     }
     connection.close()
+
+
+def test_job_target_migration_adds_attempt_and_project_question_fields(
+    tmp_path: Path,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+    run_columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(agent_runs)")
+    }
+    message_columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(agent_messages)")
+    }
+    catalog_columns = {
+        row["name"]
+        for row in connection.execute(
+            "PRAGMA table_info(review_question_catalog)"
+        )
+    }
+    candidate_columns = {
+        row["name"]
+        for row in connection.execute(
+            "PRAGMA table_info(review_question_candidates)"
+        )
+    }
+
+    assert {"input_message_id", "retry_of_execution_id"} <= run_columns
+    assert {"replaces_message_id", "resolution_status"} <= message_columns
+    project_fields = {
+        "question_type",
+        "project_claim_id",
+        "project_dimension",
+        "source_job_target_id",
+        "source_deep_dive_id",
+    }
+    assert project_fields <= catalog_columns
+    assert project_fields <= candidate_columns
 
 
 def test_migration_019_adds_durable_batch_control_and_recovery_state(
