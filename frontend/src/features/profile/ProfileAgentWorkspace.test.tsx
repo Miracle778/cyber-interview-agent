@@ -111,6 +111,48 @@ describe("ProfileAgentWorkspace", () => {
     expect(screen.getByRole("button", { name: "返回会话记录" })).toBeEnabled();
   });
 
+  it("shows real token and context usage in the collapsed technical details", async () => {
+    mocks.activeSessions = [session()];
+    mocks.getSession.mockResolvedValue(detail({
+      usage: { inputTokens: 2200, outputTokens: 900, totalTokens: 3100, callCount: 2, estimatedCount: 0 },
+      contextUsage: { currentTokens: 32000, thresholdTokens: 89600, estimated: true },
+      contextCompacted: true,
+      latestExecutionId: "r1",
+      latestExecution: {
+        id: "r1", sessionId: "s1", status: "completed", resumeCount: 0,
+        configuration: { providerModelId: "model-1", reasoningEffort: "medium" },
+        errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: "now",
+      },
+    }));
+
+    renderWorkspace();
+    fireEvent.click(await screen.findByRole("button", { name: /画像助手对话/ }));
+
+    expect(await screen.findByText("2 次调用")).toBeInTheDocument();
+    expect(screen.getByText("3.1k")).toBeInTheDocument();
+    expect(screen.getByText("当前上下文 / 自动整理阈值（估算）")).toBeInTheDocument();
+    expect(screen.getByText("32k / 90k")).toBeInTheDocument();
+    expect(screen.getByLabelText("上下文已使用 36%")).toBeInTheDocument();
+    expect(screen.getByText("历史消息已自动整理")).toBeInTheDocument();
+  });
+
+  it("shows the persisted execution duration", async () => {
+    mocks.activeSessions = [session()];
+    mocks.getSession.mockResolvedValue(detail({
+      latestExecutionId: "r1",
+      latestExecution: {
+        id: "r1", sessionId: "s1", status: "completed", resumeCount: 0,
+        errorCode: null, errorMessage: null, createdAt: "2026-07-25 08:00:00",
+        startedAt: "2026-07-25 08:00:00", finishedAt: "2026-07-25 08:01:05",
+      },
+    }));
+
+    renderWorkspace();
+    fireEvent.click(await screen.findByRole("button", { name: /画像助手对话/ }));
+
+    expect(await screen.findByText("1 分 5 秒")).toBeInTheDocument();
+  });
+
   it("archives from the record page instead of permanently deleting immediately", async () => {
     mocks.activeSessions = [session("s-old", "旧简历讨论")];
     renderWorkspace();

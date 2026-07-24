@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Archive, MessageSquarePlus, MessagesSquare, Search, Trash2 } from "lucide-react";
 import { Button } from "../../shared/ui/Button";
+import { parseApiTimestamp } from "../../shared/time";
 import type { AgentSession } from "../agent/agentTypes";
 
 function readableTitle(title: string) {
@@ -20,7 +21,7 @@ function readablePreview(content?: string | null) {
 }
 
 function formatUpdatedAt(value: string) {
-  const date = new Date(value);
+  const date = parseApiTimestamp(value);
   if (Number.isNaN(date.getTime())) return "";
   return new Intl.DateTimeFormat("zh-CN", {
     timeZone: "Asia/Shanghai",

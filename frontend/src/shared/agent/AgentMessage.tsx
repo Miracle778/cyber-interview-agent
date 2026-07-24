@@ -1,17 +1,7 @@
 import type { ReactNode } from "react";
 import { Bot, Copy, UserRound } from "lucide-react";
 import { MarkdownView } from "../../features/knowledge/MarkdownView";
-
-function beijingTime(value?: string) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat("zh-CN", {
-    timeZone: "Asia/Shanghai",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-}
+import { formatBeijingTime } from "../time";
 
 interface AgentMessageProps {
   role: "user" | "assistant";
@@ -23,6 +13,7 @@ interface AgentMessageProps {
 
 export function AgentMessage({ role, content, createdAt, pending = false, children }: AgentMessageProps) {
   const user = role === "user";
+  const displayTime = createdAt ? formatBeijingTime(createdAt, false) : null;
   return (
     <article className={`agent-conversation-message agent-conversation-message--${role}`}>
       <span className="agent-conversation-message__avatar" aria-hidden="true">
@@ -32,7 +23,7 @@ export function AgentMessage({ role, content, createdAt, pending = false, childr
         <header>
           <strong>{user ? "你" : "画像助手"}</strong>
           {pending ? <span>发送中</span> : null}
-          {beijingTime(createdAt) ? <time dateTime={createdAt}>{beijingTime(createdAt)}</time> : null}
+          {displayTime ? <time dateTime={createdAt}>{displayTime}</time> : null}
           <button
             type="button"
             aria-label="复制消息"

@@ -43,6 +43,9 @@ export function AgentComposer({
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const wasBusy = useRef(busy);
+  const composing = useRef(false);
+  const compositionJustEnded = useRef(false);
+  const compositionResetTimer = useRef<number | null>(null);
   useEffect(() => {
     if (promptToFill) {
       setText(promptToFill);
@@ -54,6 +57,11 @@ export function AgentComposer({
     if (wasBusy.current && !busy) textareaRef.current?.focus();
     wasBusy.current = busy;
   }, [busy]);
+  useEffect(() => () => {
+    if (compositionResetTimer.current !== null) {
+      window.clearTimeout(compositionResetTimer.current);
+    }
+  }, []);
   function submit(event: FormEvent) {
     event.preventDefault();
     const value = text.trim();
@@ -73,11 +81,32 @@ export function AgentComposer({
         disabled={busy}
         placeholder={placeholder}
         onChange={(event) => setText(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-            event.preventDefault();
-            event.currentTarget.form?.requestSubmit();
+        onCompositionStart={() => {
+          composing.current = true;
+          compositionJustEnded.current = false;
+          if (compositionResetTimer.current !== null) {
+            window.clearTimeout(compositionResetTimer.current);
+            compositionResetTimer.current = null;
           }
+        }}
+        onCompositionEnd={() => {
+          composing.current = false;
+          compositionJustEnded.current = true;
+          compositionResetTimer.current = window.setTimeout(() => {
+            compositionJustEnded.current = false;
+            compositionResetTimer.current = null;
+          }, 0);
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" || event.shiftKey) return;
+          if (
+            composing.current
+            || compositionJustEnded.current
+            || event.nativeEvent.isComposing
+            || event.nativeEvent.keyCode === 229
+          ) return;
+          event.preventDefault();
+          event.currentTarget.form?.requestSubmit();
         }}
       />
       <div className="agent-composer__toolbar">

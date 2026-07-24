@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { type CSSProperties, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, ClipboardCheck, Pencil, RefreshCw, ShieldCheck, X } from "lucide-react";
 import { AgentWorkspaceShell } from "../../shared/agent/AgentWorkspaceShell";
 import type { AgentReasoningEffort } from "../../shared/agent/AgentComposer";
+import { elapsedSeconds, formatElapsedSeconds } from "../../shared/time";
 import { Button } from "../../shared/ui/Button";
 import {
   cancelAgentExecution,
@@ -22,9 +23,21 @@ import { shouldStreamProfileAnswer } from "./profilePresentation";
 import type { ProfileCardCategory } from "./profileTypes";
 
 const terminalExecutionStatuses = new Set(["interrupted", "completed", "failed", "cancelled"]);
+const reasoningLabels: Record<AgentReasoningEffort, string> = {
+  none: "默认",
+  low: "较少",
+  medium: "适中",
+  high: "深入",
+};
 
 function readableTitle(title: string) {
   return ["个人画像对话", "画像会话", "简历助手对话"].includes(title) ? "画像助手对话" : title;
+}
+
+function formatTokens(value: number) {
+  if (value >= 10_000) return `${Math.round(value / 1000)}k`;
+  if (value >= 1000) return `${(value / 1000).toFixed(1)}k`;
+  return String(value);
 }
 
 function executionLabel(status?: string) {
@@ -34,6 +47,17 @@ function executionLabel(status?: string) {
   if (status === "interrupted") return "处理已中断";
   if (status === "cancelled") return "已停止";
   return "可继续对话";
+}
+
+function executionDurationLabel(
+  startedAt: string | null | undefined,
+  finishedAt: string | null | undefined,
+  now: number,
+) {
+  if (!startedAt) return "尚未运行";
+  const end = finishedAt ?? new Date(now).toISOString();
+  const seconds = elapsedSeconds(startedAt, end);
+  return seconds === null ? "—" : formatElapsedSeconds(seconds);
 }
 
 export function ProfileAgentWorkspace({
@@ -55,6 +79,7 @@ export function ProfileAgentWorkspace({
   const [renaming, setRenaming] = useState(false);
   const [draftTitle, setDraftTitle] = useState("");
   const [mutatingId, setMutatingId] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
 
   const sessions = useQuery({
     queryKey: ["profile-sessions", workspaceId, "active"],
@@ -88,6 +113,17 @@ export function ProfileAgentWorkspace({
   );
   const streamAnswer = latestUserMessage ? shouldStreamProfileAnswer(latestUserMessage.content) : true;
   const latestEventId = live.events[live.events.length - 1]?.id;
+  const usage = detail.data?.usage;
+  const contextUsage = detail.data?.contextUsage;
+  const currentContextTokens = contextUsage?.currentTokens ?? 0;
+  const contextThresholdTokens = contextUsage?.thresholdTokens ?? 0;
+  const contextPercentage = contextThresholdTokens > 0
+    ? Math.min(100, Math.round((currentContextTokens / contextThresholdTokens) * 100))
+    : 0;
+  const activeModelId = latest?.configuration?.providerModelId ?? modelId;
+  const activeModelLabel = models.find((model) => model.id === activeModelId)?.label
+    ?? (activeModelId || "按默认配置");
+  const activeReasoningEffort = latest?.configuration?.reasoningEffort ?? reasoningEffort;
 
   useEffect(() => {
     if (latestEventId !== undefined) void client.invalidateQueries({ queryKey: ["agent-session", sessionId] });
@@ -98,6 +134,12 @@ export function ProfileAgentWorkspace({
     setModelId(configuration.providerModelId ?? "");
     setReasoningEffort(configuration.reasoningEffort);
   }, [detail.data?.latestExecution?.id]);
+  useEffect(() => {
+    if (!running) return;
+    setNow(Date.now());
+    const interval = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [running]);
 
   async function refreshLists() {
     await Promise.all([
@@ -234,8 +276,32 @@ export function ProfileAgentWorkspace({
         ? <button type="button" className="profile-agent-context__pending" onClick={onOpenPending} disabled={!onOpenPending}><ClipboardCheck size={18} /><span>{profile.data?.pendingCount} 条画像建议</span></button>
         : <div className="profile-agent-context__empty"><Check size={18} /><span>暂无待确认建议</span></div>}
       </section>
-      <section><h3>运行状态</h3><dl><div><dt>连接</dt><dd>{live.status === "connected" ? "正常" : "连接中"}</dd></div><div><dt>本次状态</dt><dd>{executionLabel(executionStatus)}</dd></div><div><dt>模型调用</dt><dd>{detail.data?.usage.callCount ?? 0} 次</dd></div></dl></section>
-      <details><summary>技术详情</summary><p>历史消息：{detail.data?.contextCompacted ? "已自动整理" : "完整保留"}</p><p>会话 ID：{sessionId}</p></details>
+      <section><h3>运行状态</h3><dl><div><dt>连接</dt><dd>{live.status === "connected" ? "正常" : "连接中"}</dd></div><div><dt>本次状态</dt><dd>{executionLabel(executionStatus)}</dd></div><div><dt>本次耗时</dt><dd>{executionDurationLabel(latest?.startedAt, running ? null : latest?.finishedAt, now)}</dd></div></dl></section>
+      <details className="profile-agent-context__technical">
+        <summary><span>技术详情</span><small>{usage?.callCount ?? 0} 次调用</small></summary>
+        <div className="profile-agent-context__technical-body">
+          <dl>
+            <div><dt>当前模型</dt><dd title={activeModelLabel}>{activeModelLabel}</dd></div>
+            <div><dt>思考强度</dt><dd>{reasoningLabels[activeReasoningEffort]}</dd></div>
+            <div><dt>累计 Token</dt><dd>{formatTokens(usage?.totalTokens ?? 0)}{usage?.estimatedCount ? "（部分估算）" : ""}</dd></div>
+          </dl>
+          <div className="curation-context-compact">
+            <div
+              className="curation-context-ring"
+              style={{ "--context-progress": `${contextPercentage * 3.6}deg` } as CSSProperties}
+              aria-label={`上下文已使用 ${contextPercentage}%`}
+            >
+              <span>{contextPercentage}%</span>
+            </div>
+            <div>
+              <small>当前上下文 / 自动整理阈值{contextUsage?.estimated ? "（估算）" : ""}</small>
+              <strong>{formatTokens(currentContextTokens)} / {contextThresholdTokens > 0 ? formatTokens(contextThresholdTokens) : "—"}</strong>
+              <em>{detail.data?.contextCompacted ? "历史消息已自动整理" : "尚未触发自动整理"}</em>
+            </div>
+          </div>
+          <p>会话 ID：{sessionId}</p>
+        </div>
+      </details>
       {live.executionError ? <div className="profile-agent-context__error" role="alert">{live.executionError.message}</div> : null}
       {detail.isError ? <Button size="sm" variant="secondary" onClick={() => detail.refetch()}><RefreshCw size={14} />重新读取</Button> : null}
     </div>}
