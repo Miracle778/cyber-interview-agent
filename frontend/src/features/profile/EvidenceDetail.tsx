@@ -1,10 +1,10 @@
 import { ArrowLeft, FileSearch, LockKeyhole } from "lucide-react";
 import { Button } from "../../shared/ui/Button";
 import type { ProfileEvidence } from "./profileTypes";
-import { formatEvidenceLocator } from "./evidenceLocator";
+import { formatEvidenceLocator, formatEvidenceTitle } from "./evidenceLocator";
 
 export function EvidenceDetail({ materialTitle, versionNumber, evidence, onBack }: { materialTitle: string; versionNumber: number; evidence: ProfileEvidence; onBack: () => void }) {
-  const block = String(evidence.locator.block ?? evidence.locator.title ?? evidence.locator.section ?? "简历原文");
+  const block = formatEvidenceTitle(evidence.locator);
   return <section className="profile-evidence-detail" aria-labelledby="evidence-title">
     <header className="profile-evidence-detail__header">
       <Button variant="ghost" onClick={onBack} aria-label="返回版本详情"><ArrowLeft size={16} />返回版本</Button>

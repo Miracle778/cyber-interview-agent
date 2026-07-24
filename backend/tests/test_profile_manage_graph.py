@@ -10,6 +10,8 @@ from app.agents.context import AgentContext
 from app.agents.profile_contracts import (
     ProfileActionPlanItemProposal,
     ProfileActionPlanProposal,
+    ProfileConversationProposal,
+    ProfileConversationProposalOutput,
 )
 from app.application.session_service import ProductRepository
 from app.graphs.profile_manage import (
@@ -31,10 +33,16 @@ class FakeAssessmentGraph:
 
 
 class RecordingAgents:
-    def __init__(self, plan: ProfileActionPlanProposal | None = None) -> None:
+    def __init__(
+        self,
+        plan: ProfileActionPlanProposal | None = None,
+        conversation: ProfileConversationProposalOutput | None = None,
+    ) -> None:
         self.plan_output = plan
+        self.conversation_output = conversation
         self.answer_calls = []
         self.plan_calls = []
+        self.conversation_calls = []
 
     async def answer(self, **values):
         self.answer_calls.append(values)
@@ -44,6 +52,11 @@ class RecordingAgents:
         self.plan_calls.append(values)
         assert self.plan_output is not None
         return self.plan_output
+
+    async def propose_from_conversation(self, **values):
+        self.conversation_calls.append(values)
+        assert self.conversation_output is not None
+        return self.conversation_output
 
 
 class BlockingAgents(RecordingAgents):
@@ -150,12 +163,49 @@ def _graph(agents, product, repository, service, cards=None):
         ("添加 FastAPI 技能", "single_change"),
         ("把 Docker 熟练程度改为熟练", "single_change"),
         ("修改技能并且优化简历", "plan"),
+        ("把刚才的内容整理成画像更新建议", "propose"),
         ("帮我改一下", "clarify"),
         ("我的项目经历有证据吗", "chat"),
     ],
 )
 def test_intent_classification_is_deterministic(message: str, intent: str) -> None:
     assert classify_profile_manage_intent(message) == intent
+
+
+@pytest.mark.asyncio
+async def test_explicit_conversation_update_creates_pending_proposal_with_message_source(
+    profile_runtime,
+) -> None:
+    root, product, repository, service, _evidence = profile_runtime
+    user_message = product.append_message(
+        "s1",
+        execution_id="run-1",
+        role="user",
+        content="我负责了接口设计，请整理成画像更新建议",
+    )
+    agents = RecordingAgents(
+        conversation=ProfileConversationProposalOutput(
+            summary="整理项目职责",
+            proposals=[
+                ProfileConversationProposal(
+                    category="project",
+                    value={"name": "面试训练平台", "role": "后端开发"},
+                    rationale="用户明确说明了项目和职责",
+                )
+            ],
+        )
+    )
+
+    result = await _graph(agents, product, repository, service).ainvoke(
+        {"message": user_message.content},
+        context=_context(root),
+    )
+
+    proposal = repository.get_proposal(result["proposal_ids"][0])
+    assert proposal.status == "pending"
+    assert proposal.source_kind == "conversation"
+    assert proposal.source_ref == {"messageId": user_message.id, "sessionId": "s1"}
+    assert repository.profile_snapshot("w1").claims[0].value == {"category": "skill", "text": "Python"}
 
 
 @pytest.mark.asyncio

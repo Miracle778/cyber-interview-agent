@@ -1,6 +1,30 @@
 # Cyber Interview Agent 当前任务规划
 
-## 当前任务：R3 可信个人资料底座第一里程碑
+## 当前任务：R3 统一个人画像产品纠偏
+
+2026-07-24 经产品追问确认，当前 R3 虽已具备可信简历底座，但用户主界面仍以简历片段、Evidence 和待确认 Claim 为中心，无法直接呈现“我是谁、擅长什么、做过什么、取得过什么结果”。R3 在进入 R4 前先完成统一个人画像纠偏。
+
+权威新增输入：
+
+- 补充规格：`docs/superpowers/specs/2026-07-24-r3-unified-personal-profile-correction.md`
+- 架构决策：`docs/superpowers/architecture-decisions/2026-07-24-unified-profile-and-source-model.md`
+- 实施计划：`docs/superpowers/plans/2026-07-24-r3-unified-personal-profile.md`
+
+纠偏目标：
+
+```text
+简历/本人补充/对话补充/系统归纳
+→ 待确认或用户直接确认
+→ Workspace 级统一个人画像
+→ 我的画像 / 待确认 / 简历与来源 / 画像助手
+→ confirmed-only 下游消费
+```
+
+当前阶段：Task 1–9 已完成。已交付多来源 schema、版本化画像卡片、类型化关系、统一画像投影、手动维护、简历增量建议、四入口前端、confirmed-only 画像助手和对话待确认建议。当前 Workspace 的旧 Profile 测试数据已按 dry-run 精确范围清除，题库整理数据、Workspace 设置和模型绑定保持不变。R3 产品基线已切换为统一个人画像；下一产品任务进入 R4“求职目标与项目深挖”。
+
+---
+
+## 前一任务：R3 可信个人资料底座第一里程碑
 
 目标是在现有 R2 Runtime 上交付 R3.1-R3.4：私有简历版本与 Evidence、经确认的 Claim 资料、受约束评估/对话/Action Plan，以及供后续求职目标按用途受控读取的 `ConfirmedProfileContext`。个人资料不再以发布到 Active Knowledge 作为下游使用前提。
 

@@ -26,21 +26,25 @@ from app.profile.errors import (
     ProfileDomainError,
     ProfileProposalNotFound,
 )
-from app.profile.models import ActionPlanItemSpec, CreateActionPlanCommand
+from app.profile.models import (
+    ActionPlanItemSpec,
+    CreateActionPlanCommand,
+    CreateClaimProposalSpec,
+)
 from app.profile.repository import ProfileRepository
 from app.profile.service import ProfileService
 from app.tools.profile_tools import PROFILE_TOOL_NAMES, PROFILE_TOOL_SCOPES
 
 
 ProfileManageIntent = Literal[
-    "chat", "assess", "single_change", "plan", "clarify"
+    "chat", "assess", "propose", "single_change", "plan", "clarify"
 ]
 
 
 class ProfileManageState(TypedDict, total=False):
     message: str
     text: str
-    focus: dict[str, str | None]
+    focus: dict[str, object]
     intent: ProfileManageIntent
     profile_context: dict[str, object]
     profile_snapshot: dict[str, object]
@@ -49,6 +53,9 @@ class ProfileManageState(TypedDict, total=False):
     assessment_id: str
     proposal_ids: list[str]
     action_plan_id: str
+    user_message_id: str
+    scope_claim_ids: list[str]
+    scope_categories: list[str]
 
 
 ActionPlanCardProjector = Callable[[object], Awaitable[None]]
@@ -57,6 +64,7 @@ ActionPlanCardProjector = Callable[[object], Awaitable[None]]
 _ASSESS_RE = re.compile(r"评估|诊断|优势|短板|差距|风险|分析(?:一下)?(?:我的)?画像")
 _MULTI_RE = re.compile(r"同时|并且|以及|然后|一并|全部|批量|规划|计划|优化简历")
 _CHANGE_RE = re.compile(r"新增|添加|修改|更新|删除|去掉|拒绝|改成|改为|设为|调整")
+_PROPOSE_RE = re.compile(r"整理成(?:个人)?画像(?:更新)?建议|生成画像更新建议|加入待确认")
 
 
 def classify_profile_manage_intent(message: str) -> ProfileManageIntent:
@@ -65,6 +73,8 @@ def classify_profile_manage_intent(message: str) -> ProfileManageIntent:
         return "clarify"
     if _ASSESS_RE.search(normalized):
         return "assess"
+    if _PROPOSE_RE.search(normalized):
+        return "propose"
     if _CHANGE_RE.search(normalized):
         return "plan" if _MULTI_RE.search(normalized) else "single_change"
     return "chat"
@@ -93,8 +103,23 @@ def create_profile_manage_graph(
         focus = repository.get_agent_focus(
             runtime.context.session_id, workspace_id=runtime.context.workspace_id
         )
+        requested_ids, requested_categories = _requested_scope(state.get("focus") or {})
         snapshot = _snapshot_payload(
-            repository, runtime.context.workspace_id
+            repository,
+            runtime.context.workspace_id,
+            claim_ids=requested_ids,
+            claim_types=requested_categories,
+        )
+        user_message_id = next(
+            (
+                item.id
+                for item in reversed(
+                    service.product_repository.list_messages(runtime.context.session_id)
+                )
+                if item.role == "user"
+                and item.execution_id == runtime.context.run_id
+            ),
+            runtime.context.run_id,
         )
         assembled_context = _assemble_profile_context(
             focus={} if focus is None else asdict(focus),
@@ -111,6 +136,9 @@ def create_profile_manage_graph(
             "assessment_id": "",
             "proposal_ids": [],
             "action_plan_id": "",
+            "user_message_id": user_message_id,
+            "scope_claim_ids": list(requested_ids),
+            "scope_categories": list(requested_categories),
         }
 
     async def classify(state: ProfileManageState) -> dict[str, Any]:
@@ -134,6 +162,8 @@ def create_profile_manage_graph(
                 if PROFILE_TOOL_SCOPES[name] in runtime.context.allowed_scopes
             ),
             agent_role="profile_chat",
+            profile_claim_ids=tuple(state.get("scope_claim_ids") or ()),
+            profile_claim_types=tuple(state.get("scope_categories") or ()),
         )
         response = await agents.answer(
             profile_context=state["profile_context"],
@@ -142,6 +172,47 @@ def create_profile_manage_graph(
             config=dict(config),
         )
         return {"response": response}
+
+    async def propose(
+        state: ProfileManageState,
+        config: RunnableConfig,
+        runtime: Runtime[AgentContext],
+    ) -> dict[str, Any]:
+        output = await agents.propose_from_conversation(
+            profile_context=state["profile_context"],
+            message=state["message"],
+            context=runtime.context,
+            config=dict(config),
+        )
+        specs = tuple(
+            CreateClaimProposalSpec(
+                proposal_type=item.proposal_type,
+                target_claim_id=item.target_claim_id,
+                proposed_value={"category": item.category, **item.value},
+                reason=item.rationale,
+                source="conversation",
+                source_kind="conversation",
+                source_ref={
+                    "messageId": state["user_message_id"],
+                    "sessionId": runtime.context.session_id,
+                },
+            )
+            for item in output.proposals
+        )
+        if not specs:
+            return {
+                "response": "这段对话里还没有足够明确的新信息。请补充具体经历、做法或结果后再整理。"
+            }
+        proposals = service.create_conversation_proposals(
+            specs,
+            execution_id=runtime.context.run_id,
+            user_message_id=state["user_message_id"],
+            session_id=runtime.context.session_id,
+        )
+        return {
+            "proposal_ids": [item.id for item in proposals],
+            "response": f"已整理出 {len(proposals)} 条更新建议，请到“待确认”中核对后再加入个人画像。",
+        }
 
     async def assess(
         state: ProfileManageState,
@@ -208,6 +279,7 @@ def create_profile_manage_graph(
     graph.add_node("assemble_context", assemble)
     graph.add_node("classify_intent", classify)
     graph.add_node("chat", chat)
+    graph.add_node("propose", propose)
     graph.add_node("assess", assess)
     graph.add_node("single_change", single_change)
     graph.add_node("plan", plan)
@@ -219,13 +291,14 @@ def create_profile_manage_graph(
         route,
         {
             "chat": "chat",
+            "propose": "propose",
             "assess": "assess",
             "single_change": "single_change",
             "plan": "plan",
             "clarify": "clarify",
         },
     )
-    for node in ("chat", "assess", "single_change", "plan", "clarify"):
+    for node in ("chat", "assess", "propose", "single_change", "plan", "clarify"):
         graph.add_edge(node, END)
     return graph.compile(checkpointer=checkpointer)
 
@@ -300,9 +373,15 @@ async def _plan_and_persist(
 
 
 def _snapshot_payload(
-    repository: ProfileRepository, workspace_id: str
+    repository: ProfileRepository,
+    workspace_id: str,
+    *,
+    claim_ids: tuple[str, ...] = (),
+    claim_types: tuple[str, ...] = (),
 ) -> dict[str, object]:
     snapshot = repository.profile_snapshot(workspace_id)
+    selected_ids = set(claim_ids)
+    selected_types = set(claim_types)
     return {
         "profileVersion": snapshot.profile_version,
         "claims": [
@@ -315,8 +394,10 @@ def _snapshot_payload(
                 "supportStatus": claim.support_status,
                 "evidenceIds": list(claim.evidence_ids),
             }
-            for claim in snapshot.claims[:50]
-        ],
+            for claim in snapshot.claims
+            if (not selected_ids or claim.claim_id in selected_ids)
+            and (not selected_types or claim.claim_type in selected_types)
+        ][:50],
         "materials": [
             {
                 "id": material.id,
@@ -334,7 +415,7 @@ def _persist_focus(
     *,
     session_id: str,
     workspace_id: str,
-    values: dict[str, str | None],
+    values: dict[str, object],
 ) -> None:
     material_id = values.get("materialId") or values.get("material_id")
     material_version_id = values.get("materialVersionId") or values.get(
@@ -342,6 +423,12 @@ def _persist_focus(
     )
     claim_id = values.get("claimId") or values.get("claim_id")
     proposal_id = values.get("proposalId") or values.get("proposal_id")
+    material_id = material_id if isinstance(material_id, str) else None
+    material_version_id = (
+        material_version_id if isinstance(material_version_id, str) else None
+    )
+    claim_id = claim_id if isinstance(claim_id, str) else None
+    proposal_id = proposal_id if isinstance(proposal_id, str) else None
     if material_id is not None:
         repository.get_material(material_id, workspace_id=workspace_id)
     if material_version_id is not None:
@@ -363,6 +450,36 @@ def _persist_focus(
         claim_id=claim_id,
         proposal_id=proposal_id,
     )
+
+
+def _requested_scope(values: dict[str, object]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    allowed_categories = {
+        "summary",
+        "direction",
+        "highlight",
+        "experience",
+        "project",
+        "skill",
+        "education",
+        "certification",
+        "achievement",
+        "link",
+    }
+    raw_ids = values.get("claimIds") or values.get("claim_ids") or ()
+    raw_categories = values.get("categories") or ()
+    claim_ids = tuple(
+        dict.fromkeys(
+            item for item in raw_ids if isinstance(item, str) and item.strip()
+        )
+    ) if isinstance(raw_ids, (list, tuple)) else ()
+    categories = tuple(
+        dict.fromkeys(
+            item
+            for item in raw_categories
+            if isinstance(item, str) and item in allowed_categories
+        )
+    ) if isinstance(raw_categories, (list, tuple)) else ()
+    return claim_ids[:50], categories
 
 
 def _assemble_profile_context(

@@ -15,6 +15,11 @@ const api = vi.hoisted(() => ({
   setPrimaryVersion: vi.fn(),
   listProfileClaims: vi.fn(),
   listProfileSessions: vi.fn(),
+  getUnifiedProfile: vi.fn(),
+  createProfileCard: vi.fn(),
+  updateProfileCard: vi.fn(),
+  deleteProfileCard: vi.fn(),
+  updateProfilePresentation: vi.fn(),
 }));
 
 vi.mock("./profileApi", () => api);
@@ -25,6 +30,13 @@ function renderPage() {
 }
 
 describe("ProfilePage", () => {
+  const emptyProfile = {
+    workspaceId: "w1", profileVersion: null, summary: null, directions: [],
+    primaryDirectionClaimId: null, presentationVersion: 0, highlights: [],
+    experiences: [], projects: [], skills: [], education: [], certifications: [],
+    achievements: [], links: [], actionableGaps: [], pendingCount: 0, isUsable: false,
+  };
+
   afterEach(cleanup);
   beforeEach(() => {
     vi.clearAllMocks();
@@ -32,14 +44,19 @@ describe("ProfilePage", () => {
     api.listMaterialVersions.mockResolvedValue([]);
     api.listProfileClaims.mockResolvedValue({ workspaceId: "w1", profileVersion: null, claims: [], proposals: [] });
     api.listProfileSessions.mockResolvedValue([]);
+    api.getUnifiedProfile.mockResolvedValue(emptyProfile);
+    api.createProfileCard.mockResolvedValue({ claimId: "p1", claimVersionId: "pv1", category: "project", version: 1, status: "confirmed" });
   });
 
-  it("shows loading then the upload empty state and validates picker/drop files", async () => {
-    let resolveMaterials!: (value: []) => void;
-    api.listProfileMaterials.mockReturnValueOnce(new Promise((resolve) => { resolveMaterials = resolve; }));
+  it("supports starting without a resume and validates files in the source screen", async () => {
+    let resolveProfile!: (value: typeof emptyProfile) => void;
+    api.getUnifiedProfile.mockReturnValueOnce(new Promise((resolve) => { resolveProfile = resolve; }));
     renderPage();
-    expect(screen.getByRole("status")).toHaveTextContent("正在读取简历");
-    resolveMaterials([]);
+    expect(screen.getByRole("status")).toHaveTextContent("正在读取个人画像");
+    resolveProfile(emptyProfile);
+    expect(await screen.findByText("从这里建立你的个人画像")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /从空白开始/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "简历与来源" }));
     expect(await screen.findByText("还没有简历")).toBeInTheDocument();
 
     const picker = screen.getByLabelText("选择简历文件");
@@ -52,12 +69,28 @@ describe("ProfilePage", () => {
     expect(api.uploadProfileMaterial).not.toHaveBeenCalled();
   });
 
+  it("creates the first profile card without requiring a resume", async () => {
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: /从空白开始/ }));
+    fireEvent.change(screen.getByLabelText(/项目名称/), { target: { value: "面试训练平台" } });
+    fireEvent.change(screen.getByLabelText(/你的角色/), { target: { value: "后端开发" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(api.createProfileCard).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: "w1",
+      category: "project",
+      expectedVersion: 0,
+      value: expect.objectContaining({ name: "面试训练平台", role: "后端开发" }),
+    })));
+  });
+
   it("uploads a valid resume and gives an actionable retry when loading fails", async () => {
     api.listProfileMaterials.mockRejectedValueOnce(new Error("offline"));
     renderPage();
-    expect(await screen.findByRole("alert")).toHaveTextContent("简历读取失败");
+    expect(await screen.findByRole("alert")).toHaveTextContent("个人资料读取失败");
     api.listProfileMaterials.mockResolvedValueOnce([]);
     fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
+    await waitFor(() => expect(api.listProfileMaterials).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole("button", { name: "简历与来源" }));
     expect(await screen.findByText("还没有简历")).toBeInTheDocument();
 
     api.uploadProfileMaterial.mockResolvedValue({ materialId: "m1", versionId: "v1", executionId: "e1", processingStatus: "uploaded" });
@@ -65,7 +98,7 @@ describe("ProfilePage", () => {
     await waitFor(() => expect(api.uploadProfileMaterial).toHaveBeenCalledWith("w1", expect.any(File), expect.objectContaining({ title: "resume" }), expect.any(String)));
   });
 
-  it("keeps the four-screen contract and explains confirmed-only downstream use", async () => {
+  it("uses the unified four-screen contract", async () => {
     const material = {
       id: "m1", workspaceId: "w1", type: "resume", title: "后端工程师简历",
       primaryRole: "resume", currentVersionId: "v1", lifecycleStatus: "active",
@@ -86,21 +119,30 @@ describe("ProfilePage", () => {
       proposalCounts: { total: 0, pending: 0, accepted: 0, rejected: 0, superseded: 0 },
       execution: null,
     });
+    api.getUnifiedProfile.mockResolvedValue({
+      ...emptyProfile,
+      profileVersion: "pv1",
+      isUsable: true,
+      pendingCount: 1,
+      directions: [{ claimId: "d1", claimVersionId: "dv1", category: "direction", version: 1, title: "后端工程师", subtitle: null, value: { name: "后端工程师" }, sources: [{ sourceKind: "user_input", label: "本人补充", status: "active" }], linkedTo: [], usedIn: [] }],
+      primaryDirectionClaimId: "d1",
+      skills: [{ claimId: "s1", claimVersionId: "sv1", category: "skill", version: 1, title: "FastAPI", subtitle: null, value: { name: "FastAPI" }, sources: [{ sourceKind: "resume_extraction", label: "简历提取", status: "active" }], linkedTo: [], usedIn: [] }],
+    });
 
     renderPage();
 
-    expect(await screen.findByText("只有确认过的信息才会用于后续准备")).toBeInTheDocument();
-    expect(screen.getByText(/待确认、已拒绝和敏感信息不会自动使用/)).toBeInTheDocument();
-    const navigation = screen.getByRole("navigation", { name: "我的简历页面" });
-    for (const name of ["概览", "简历与版本", "确认简历要点", "简历助手"]) {
+    expect(await screen.findByRole("heading", { name: "后端工程师" })).toBeInTheDocument();
+    expect(screen.getByText("FastAPI")).toBeInTheDocument();
+    const navigation = screen.getByRole("navigation", { name: "个人画像页面" });
+    for (const name of ["我的画像", "待确认", "简历与来源", "画像助手"]) {
       expect(navigation).toHaveTextContent(name);
     }
 
-    fireEvent.click(screen.getByRole("button", { name: "简历与版本" }));
+    fireEvent.click(screen.getByRole("button", { name: "简历与来源" }));
     expect(await screen.findByRole("region", { name: "简历与版本" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "确认简历要点" }));
-    expect(await screen.findByRole("heading", { name: "确认简历要点" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "简历助手" }));
-    expect(await screen.findByRole("heading", { name: "开始使用简历助手" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^待确认/ }));
+    expect(await screen.findByRole("heading", { name: "待确认" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "画像助手" }));
+    expect(await screen.findByRole("heading", { name: "开始使用画像助手" })).toBeInTheDocument();
   });
 });

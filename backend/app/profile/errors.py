@@ -64,6 +64,10 @@ class ProfileClaimVersionConflict(ProfileDomainError):
     code = "profile_claim_version_conflict"
 
 
+class ProfileValueInvalid(ProfileDomainError):
+    code = "profile_value_invalid"
+
+
 class ProfileClaimSelectedForPublication(ProfileClaimVersionConflict):
     code = "profile_claim_selected_for_publication"
 

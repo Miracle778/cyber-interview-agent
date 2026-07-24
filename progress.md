@@ -1,5 +1,24 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-07-24：统一个人画像 Task 1–3 后端检查点
+
+- migration 029 扩展 Claim 类型，新增来源、关系、展示配置和逻辑删除；旧 Claim 数据保持可读。
+- Repository 已支持本人直接确认、幂等重放、乐观锁、卡片关系和来源追踪；手动修改与恢复都追加新版本，不改写历史。
+- 新增精确 Workspace 安全重置脚本：强制绝对路径、dry-run、确认短语和活动任务检查；共享文件、其他 Workspace、题库和普通 Agent Session 保持不变。
+- `unified_profile()` 已把底层 Claim 投影为职业归纳、方向、亮点、经历、项目、技能、教育、认证和成果卡片，并生成可行动缺失项，不计算画像分数。
+- 手动新增、编辑、版本恢复和逻辑删除服务已完成；无简历也可形成可用画像，manual confirmed Claim 无 Evidence 仍可进入 confirmed-only 上下文。
+- 定向验证：migration/runtime/repository 62 passed；repository/reset 38 passed；projection/service/context 11 passed。未运行全量回归或浏览器。
+- 下一产品任务：Task 4 增量简历摄入，只生成新增/修改/可能删除建议，不覆盖本人补充和当前已确认画像。
+
+## 2026-07-24：统一个人画像纠偏设计完成
+
+- 使用 `grill-me` 连续确认 29 个产品决策，覆盖画像定义、正式/草稿边界、手动补充、固定栏目、归纳确认、助手职责、来源可见性、跨简历增量、无简历入口、项目深度、能力推断、来源删除、页面导航、卡片编辑、技能关系、版本历史、模型上下文范围和完整验收标准。
+- 新增补充规格 `2026-07-24-r3-unified-personal-profile-correction.md`。
+- 新增 ADR `2026-07-24-unified-profile-and-source-model.md`，决定继续复用 Claim/ClaimVersion，增加多来源、类型化关系、统一投影和直接用户写入，不给 Agent 直接写 Tool。
+- 新增实施计划 `2026-07-24-r3-unified-personal-profile.md`，拆为 schema、repository/reset、projection/service、增量 ingest、API、画像首页、待确认/来源、画像助手和最终验收 9 个任务。
+- Task 1–3 已按上方后端检查点完成；当前 Workspace Profile 数据尚未执行清理，新页面尚未实现。
+- 下一产品任务：执行 Task 4 增量摄入，再接 Task 5 API。
+
 ## 2026-07-23：R3 Task 15 - Profile Agent 工作区实现
 
 - `/profile` 的“Agent 会话”已开放：紧凑会话栏、对话时间线、当前 Material/Version 焦点、运行状态、上下文压缩状态、持久 Composer 和停止控制已接入统一 Runtime/SSE。
@@ -793,3 +812,11 @@
 - 下一产品任务：先完成最终回归和文档门禁，再补齐扩展浏览器清单；之后进入 R4 求职目标与项目深挖。
 - 非阻塞练习：Trace 一次上传到 confirmed-profile，再口述为什么 Planner 没有写 Tool。
 - 最终自动门禁：后端 `744 passed`；前端 `198 passed`；TypeScript 与 production build 通过；`git diff --check` 与阶段文档门禁通过。现仅保留验证指南列明的扩展浏览器组合场景，不再重复完整回归。
+## 2026-07-24：R3 统一个人画像纠偏完成
+
+- 完成 Task 1–9：多来源/关系/展示 schema、统一画像投影、手动卡片、简历增量合并、画像 API、四入口页面、confirmed-only 助手和对话待确认建议。
+- 完整回归：后端 766 passed；前端 43 个文件、202 passed；TypeScript 与 production build 通过。
+- 浏览器复核：桌面、390、768、1024 无页面级横向溢出；空状态、手动新增、立即展示、具体缺口、删除恢复为空均通过。
+- 数据清理：目标 Workspace `c896b511-670d-4d44-9ed0-78d5cffccdeb` 的旧 Profile 测试数据已清除；题库整理数据、Workspace 设置和模型绑定保留。
+- 文档：统一画像规格、ADR、实施计划、验证指南和七份 R3 学习资料已同步。
+- 产品状态：R3 统一个人画像基线完成；下一任务为 R4 求职目标、岗位要求确认与画像映射。

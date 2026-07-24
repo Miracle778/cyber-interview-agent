@@ -1,6 +1,6 @@
-import { apiGet, apiPost, apiUpload } from "../../shared/api/client";
+import { apiGet, apiPost, apiRequest, apiUpload } from "../../shared/api/client";
 import type { AgentSession } from "../agent/agentTypes";
-import type { AcceptedMaterialRetry, AcceptedMaterialUpload, BatchClaimDecisionResult, ClaimDecision, ClaimDecisionResult, MaterialDeletionPreview, PermanentMaterialDeletionResult, ProfileActionPlan, ProfileAssessment, ProfileClaimWorkspace, ProfileMaterial, ProfileMaterialVersion, ProfileMaterialVersionDetail } from "./profileTypes";
+import type { AcceptedMaterialRetry, AcceptedMaterialUpload, BatchClaimDecisionResult, ClaimDecision, ClaimDecisionResult, MaterialDeletionPreview, PermanentMaterialDeletionResult, ProfileActionPlan, ProfileAssessment, ProfileCardCommand, ProfileCardWriteResult, ProfileClaimWorkspace, ProfileMaterial, ProfileMaterialVersion, ProfileMaterialVersionDetail, ProfilePresentation, UnifiedProfile } from "./profileTypes";
 
 function commandKey(prefix: string) {
   return `${prefix}-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
@@ -34,7 +34,7 @@ export function listMaterialVersions(workspaceId: string, materialId: string, si
 }
 
 export function getMaterialVersion(workspaceId: string, versionId: string, signal?: AbortSignal) {
-  return apiGet<ProfileMaterialVersionDetail>(`/api/profile/material-versions/${versionId}?workspaceId=${encodeURIComponent(workspaceId)}&evidenceLimit=50`, { signal });
+  return apiGet<ProfileMaterialVersionDetail>(`/api/profile/material-versions/${versionId}?workspaceId=${encodeURIComponent(workspaceId)}&evidenceLimit=100`, { signal });
 }
 
 export function retryMaterialVersion(workspaceId: string, versionId: string, idempotencyKey = commandKey("profile-retry")) {
@@ -99,4 +99,44 @@ export function cancelProfileActionPlan(workspaceId: string, plan: ProfileAction
 
 export function retryProfileActionPlan(workspaceId: string, planId: string) {
   return apiPost(`/api/profile/action-plans/${planId}/retry`, { workspaceId }) as Promise<ProfileActionPlan>;
+}
+
+export function getUnifiedProfile(workspaceId: string, signal?: AbortSignal) {
+  return apiGet<UnifiedProfile>(`/api/workspaces/${workspaceId}/profile`, { signal });
+}
+
+export function createProfileCard(command: ProfileCardCommand, idempotencyKey = commandKey("profile-card-create")) {
+  return apiPost<ProfileCardCommand, ProfileCardWriteResult>(
+    `/api/workspaces/${command.workspaceId}/profile/cards`,
+    command,
+    commandOptions(idempotencyKey),
+  );
+}
+
+export function updateProfileCard(claimId: string, command: ProfileCardCommand, idempotencyKey = commandKey("profile-card-update")) {
+  return apiRequest<ProfileCardWriteResult>(`/api/profile/cards/${claimId}`, {
+    method: "PATCH",
+    body: JSON.stringify(command),
+    ...commandOptions(idempotencyKey),
+  });
+}
+
+export function deleteProfileCard(workspaceId: string, claimId: string, expectedVersion: number, idempotencyKey = commandKey("profile-card-delete")) {
+  return apiRequest<{ claimId: string; status: "deleted" }>(`/api/profile/cards/${claimId}`, {
+    method: "DELETE",
+    body: JSON.stringify({ workspaceId, expectedVersion }),
+    ...commandOptions(idempotencyKey),
+  });
+}
+
+export function updateProfilePresentation(
+  workspaceId: string,
+  command: Omit<ProfilePresentation, "workspaceId" | "updatedAt">,
+  idempotencyKey = commandKey("profile-presentation"),
+) {
+  return apiRequest<ProfilePresentation>(`/api/workspaces/${workspaceId}/profile/presentation`, {
+    method: "PATCH",
+    body: JSON.stringify({ workspaceId, ...command }),
+    ...commandOptions(idempotencyKey),
+  });
 }

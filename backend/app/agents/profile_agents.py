@@ -14,15 +14,18 @@ from app.agents.context import AgentContext
 from app.agents.profile_contracts import (
     ProfileActionPlanProposal,
     ProfileAssessmentOutput,
+    ProfileConversationProposalOutput,
     ProfileExtractionOutput,
 )
 from app.agents.prompts.profile_prompts import (
     PROFILE_ACTION_PLANNER_PROMPT,
     PROFILE_ASSESSMENT_PROMPT,
     PROFILE_CHAT_PROMPT,
+    PROFILE_CONVERSATION_PROPOSAL_PROMPT,
     PROFILE_EXTRACTION_PROMPT,
     render_profile_assessment_input,
     render_profile_chat_input,
+    render_profile_conversation_proposal_input,
     render_profile_extraction_input,
     render_profile_plan_input,
 )
@@ -34,6 +37,7 @@ class ProfileAgents:
     assessment: AgentRunnable
     chat: AgentRunnable
     action_planner: AgentRunnable
+    conversation_proposal: AgentRunnable | None = None
 
     @classmethod
     def create(
@@ -92,19 +96,35 @@ class ProfileAgents:
                 model_bindings=model_bindings,
                 checkpointer=checkpointer,
             ),
+            conversation_proposal=factory.create(
+                AgentSpec(
+                    role="profile_assessment",
+                    execution_name="profile_conversation_proposal",
+                    prompt=PROFILE_CONVERSATION_PROPOSAL_PROMPT,
+                    middleware=middleware,
+                    response_format=ProfileConversationProposalOutput,
+                ),
+                model_bindings=model_bindings,
+                checkpointer=checkpointer,
+            ),
         )
 
     async def extract(
         self,
         *,
         evidence: Sequence[dict[str, object]],
+        confirmed_profile: Sequence[dict[str, object]] = (),
         context: AgentContext,
         config: dict[str, Any],
     ) -> ProfileExtractionOutput:
         result = await self.extraction.ainvoke(
             {
                 "messages": [
-                    HumanMessage(content=render_profile_extraction_input(evidence))
+                    HumanMessage(
+                        content=render_profile_extraction_input(
+                            evidence, confirmed_profile
+                        )
+                    )
                 ]
             },
             isolated_thread_config(config, context, "profile_extraction"),
@@ -183,3 +203,41 @@ class ProfileAgents:
         if "structured_response" not in result:
             raise ValueError("模型未生成结构化画像计划")
         return ProfileActionPlanProposal.model_validate(result["structured_response"])
+
+    async def propose_from_conversation(
+        self,
+        *,
+        profile_context: dict[str, object],
+        message: str,
+        context: AgentContext,
+        config: dict[str, Any],
+    ) -> ProfileConversationProposalOutput:
+        if self.conversation_proposal is None:
+            raise ValueError("画像对话建议 Agent 未配置")
+        result = await self.conversation_proposal.ainvoke(
+            {
+                "messages": [
+                    HumanMessage(
+                        content=render_profile_conversation_proposal_input(
+                            profile_context, message
+                        )
+                    )
+                ]
+            },
+            isolated_thread_config(
+                config,
+                replace(context, session_id=context.run_id),
+                "profile_conversation_proposal",
+            ),
+            context=replace(
+                context,
+                allowed_tools=frozenset(),
+                allowed_scopes=frozenset(),
+                agent_role="profile_assessment",
+            ),
+        )
+        if "structured_response" not in result:
+            raise ValueError("模型未生成结构化画像更新建议")
+        return ProfileConversationProposalOutput.model_validate(
+            result["structured_response"]
+        )

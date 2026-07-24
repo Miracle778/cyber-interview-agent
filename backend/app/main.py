@@ -81,6 +81,7 @@ from app.profile.errors import (
     ProfileSnapshotChanged,
     ProfileUnsupportedFileType,
     ProfileUploadTooLarge,
+    ProfileValueInvalid,
 )
 from app.services.secrets import (
     EnvironmentSecretStore,
@@ -283,6 +284,10 @@ async def profile_domain_error(
     if isinstance(error, ProfileActionPlanInvalid):
         return _profile_error(
             422, error.code, "画像修改方案无效，请重新生成", retryable=False
+        )
+    if isinstance(error, ProfileValueInvalid):
+        return _profile_error(
+            422, error.code, "画像内容不完整或格式错误", retryable=False
         )
     if isinstance(error, ProfilePublicationRevocationUnavailable):
         return _profile_error(

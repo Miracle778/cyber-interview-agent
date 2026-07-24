@@ -76,13 +76,15 @@ def test_profile_agents_have_explicit_roles_names_outputs_and_no_write_tools():
         ("profile_assessment", "profile_assessment"),
         ("agent_chat", "profile_chat"),
         ("profile_assessment", "profile_action_planner"),
+        ("profile_assessment", "profile_conversation_proposal"),
     ]
-    extraction, assessment, chat, planner = factory.specs
+    extraction, assessment, chat, planner, conversation_proposal = factory.specs
     assert extraction.response_format is ProfileExtractionOutput
     assert assessment.response_format is ProfileAssessmentOutput
     assert extraction.tools == ()
     assert assessment.tools == ()
     assert planner.tools == ()
+    assert conversation_proposal.tools == ()
     assert chat.tools == ()
     assert all(spec.prompt.id.startswith("profile-") for spec in factory.specs)
 
@@ -93,10 +95,21 @@ def test_profile_extraction_prompt_defines_category_boundaries_and_multi_label_e
     ProfileAgents.create(factory, model_bindings={})
 
     prompt = factory.specs[0].prompt.system
-    assert all(label in prompt for label in ("技能", "项目经历", "工作经历", "教育经历", "个人链接"))
+    assert all(
+        label in prompt
+        for label in (
+            "技能",
+            "项目经历",
+            "工作经历",
+            "教育经历",
+            "认证",
+            "成果",
+            "个人链接",
+        )
+    )
     assert "同一条 Evidence" in prompt
     assert "多个互补候选" in prompt
-    assert "固定字段" in prompt
+    assert "新版简历没有出现旧事实时不要输出 reject" in prompt
 
 
 def test_profile_chat_prompt_hides_internal_schema_terms_from_user_answers():
@@ -209,6 +222,7 @@ def test_production_graph_factory_explicitly_wires_profile_graphs(tmp_path: Path
         "classify_intent",
         "chat",
         "assess",
+        "propose",
         "single_change",
         "plan",
         "clarify",

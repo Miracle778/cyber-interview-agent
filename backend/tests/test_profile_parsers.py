@@ -79,7 +79,16 @@ def _make_docx(paragraphs: list[str]) -> bytes:
     return buffer.getvalue()
 
 
-def test_parse_pdf_returns_page_locators() -> None:
+def _make_semantic_docx() -> bytes:
+    document = Document()
+    document.add_heading("项目经历", level=1)
+    document.add_paragraph("Cyber Interview Agent")
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def test_parse_pdf_returns_page_and_page_line_locators() -> None:
     content = _make_pdf(["Page one content", "Page two content"])
 
     segments = parse_document(
@@ -88,8 +97,12 @@ def test_parse_pdf_returns_page_locators() -> None:
 
     assert len(segments) == 2
     assert segments[0].text == "Page one content"
-    assert segments[0].locator == {"page": 1}
-    assert segments[1].locator == {"page": 2}
+    assert segments[0].locator == {
+        "page": 1,
+        "pageLineStart": 1,
+        "pageLineEnd": 1,
+    }
+    assert segments[1].locator["page"] == 2
 
 
 def test_parse_docx_returns_paragraph_locators() -> None:
@@ -116,6 +129,45 @@ def test_parse_markdown_returns_line_locators() -> None:
     assert len(segments) >= 1
     assert all({"lineStart", "lineEnd"} <= set(s.locator) for s in segments)
     assert "Body line one" in "\n".join(s.text for s in segments)
+    assert segments[0].locator["section"] == "Title"
+    assert segments[0].locator["block"] == "Title"
+
+
+def test_parse_markdown_keeps_section_context_for_multiple_blocks() -> None:
+    content = (
+        "# 项目经历\n\n"
+        "## Cyber Interview Agent\n"
+        "负责 Agent Runtime 与恢复机制。\n\n"
+        "补充了 SSE 状态推送。\n"
+    ).encode()
+
+    segments = parse_document(
+        file_name="resume.md", mime_type="text/markdown", content=content
+    )
+
+    assert [segment.locator.get("section") for segment in segments] == [
+        "项目经历",
+        "项目经历",
+    ]
+    assert segments[0].locator["block"] == "Cyber Interview Agent"
+    assert segments[1].locator["block"] == "Cyber Interview Agent"
+
+
+def test_parse_docx_combines_heading_with_first_section_paragraph() -> None:
+    segments = parse_document(
+        file_name="resume.docx",
+        mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        content=_make_semantic_docx(),
+    )
+
+    assert len(segments) == 1
+    assert segments[0].text == "项目经历\nCyber Interview Agent"
+    assert segments[0].locator == {
+        "paragraphStart": 1,
+        "paragraphEnd": 2,
+        "section": "项目经历",
+        "block": "Cyber Interview Agent",
+    }
 
 
 def test_parse_text_normalizes_line_endings() -> None:

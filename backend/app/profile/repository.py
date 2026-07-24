@@ -29,6 +29,7 @@ from app.profile.errors import (
 from app.profile.models import (
     ActionPlanItemRecord,
     ActionPlanItemSpec,
+    AppendConfirmedClaimCommand,
     BatchClaimDecisionResult,
     ClaimConflictRecord,
     ClaimDecisionResult,
@@ -46,12 +47,17 @@ from app.profile.models import (
     ProfileAgentFocus,
     ProfileAssessmentRecord,
     ProfileClaimRecord,
+    ProfileClaimRelationRecord,
+    ProfileClaimSourceRecord,
     ProfileClaimVersionRecord,
     ProfileMaterialRecord,
     ProfileMaterialVersionRecord,
+    ProfilePresentationRecord,
+    ProfileRelationSpec,
     MaterialDeletionPlanRecord,
     PublicationSelectionRecord,
     SaveAssessmentCommand,
+    UpdateProfilePresentationCommand,
 )
 
 _TERMINAL_PROPOSAL_STATUSES = frozenset({"accepted", "rejected", "superseded"})
@@ -559,6 +565,8 @@ class ProfileRepository:
                     "reason": item.reason,
                     "evidenceIds": list(item.evidence_ids),
                     "source": item.source,
+                    "sourceKind": item.source_kind,
+                    "sourceRef": item.source_ref,
                 }
                 for item in proposals
             ],
@@ -613,8 +621,9 @@ class ProfileRepository:
                     "INSERT INTO profile_claim_proposals "
                     "(id, workspace_id, proposal_type, target_claim_id, "
                     "base_claim_version_id, proposed_value_json, reason, "
-                    "evidence_ids_json, status, created_by_execution_id) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+                    "evidence_ids_json, status, created_by_execution_id, "
+                    "source_kind, source_ref_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
                     (
                         proposal_id,
                         workspace_id,
@@ -625,6 +634,8 @@ class ProfileRepository:
                         spec.reason,
                         _canonical_json(list(spec.evidence_ids)),
                         created_by_execution_id,
+                        spec.source_kind,
+                        _canonical_json(spec.source_ref),
                     ),
                 )
                 if spec.target_claim_id is not None:
@@ -680,6 +691,98 @@ class ProfileRepository:
                 raise ProfileClaimVersionConflict(
                     "proposal base version does not belong to its target claim"
                 )
+
+    def create_workspace_claim_proposals(
+        self,
+        workspace_id: str,
+        proposals: Sequence[CreateClaimProposalSpec],
+        *,
+        idempotency_key: str,
+        created_by_execution_id: str | None = None,
+    ) -> tuple[ClaimProposalRecord, ...]:
+        """Create non-material proposals such as explicit conversation updates."""
+        request = {
+            "workspaceId": workspace_id,
+            "proposals": [
+                {
+                    "proposalType": item.proposal_type,
+                    "targetClaimId": item.target_claim_id,
+                    "baseClaimVersionId": item.base_claim_version_id,
+                    "proposedValue": item.proposed_value,
+                    "reason": item.reason,
+                    "sourceKind": item.source_kind,
+                    "sourceRef": item.source_ref,
+                }
+                for item in proposals
+            ],
+        }
+        request_hash = self._request_hash(request)
+        operation = "claim_proposals.workspace.create"
+        with self._transaction():
+            existing = self._load_idempotency_receipt(
+                workspace_id, operation, idempotency_key, request_hash
+            )
+            if existing is not None:
+                return tuple(
+                    self._proposal_record(
+                        self._connection.execute(
+                            "SELECT * FROM profile_claim_proposals WHERE id = ?",
+                            (proposal_id,),
+                        ).fetchone()
+                    )
+                    for proposal_id in existing["proposalIds"]
+                )
+            created: list[ClaimProposalRecord] = []
+            for spec in proposals:
+                if spec.evidence_ids:
+                    raise ProfileEvidenceMismatch(
+                        "workspace proposal cannot reference material evidence"
+                    )
+                self._validate_proposal_target(
+                    workspace_id=workspace_id,
+                    proposal_type=spec.proposal_type,
+                    target_claim_id=spec.target_claim_id,
+                    base_claim_version_id=spec.base_claim_version_id,
+                )
+                proposal_id = _new_id()
+                self._connection.execute(
+                    "INSERT INTO profile_claim_proposals "
+                    "(id, workspace_id, proposal_type, target_claim_id, "
+                    "base_claim_version_id, proposed_value_json, reason, "
+                    "evidence_ids_json, status, created_by_execution_id, "
+                    "source_kind, source_ref_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, '[]', 'pending', ?, ?, ?)",
+                    (
+                        proposal_id,
+                        workspace_id,
+                        spec.proposal_type,
+                        spec.target_claim_id,
+                        spec.base_claim_version_id,
+                        _canonical_json(spec.proposed_value),
+                        spec.reason,
+                        created_by_execution_id,
+                        spec.source_kind,
+                        _canonical_json(spec.source_ref),
+                    ),
+                )
+                if spec.target_claim_id is not None:
+                    self._link_pending_conflict(proposal_id, spec.target_claim_id)
+                created.append(
+                    self._proposal_record(
+                        self._connection.execute(
+                            "SELECT * FROM profile_claim_proposals WHERE id = ?",
+                            (proposal_id,),
+                        ).fetchone()
+                    )
+                )
+            self._store_idempotency_receipt(
+                workspace_id,
+                operation,
+                idempotency_key,
+                request_hash,
+                {"proposalIds": [item.id for item in created]},
+            )
+        return tuple(created)
 
     def _link_pending_conflict(self, proposal_id: str, claim_id: str) -> None:
         row = self._connection.execute(
@@ -894,6 +997,18 @@ class ProfileRepository:
                 "decided_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (proposal_id,),
             )
+            self._connection.execute(
+                "INSERT OR IGNORE INTO profile_claim_sources "
+                "(id, workspace_id, claim_version_id, source_kind, source_ref_json) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    _new_id(),
+                    row["workspace_id"],
+                    version_id,
+                    row["source_kind"],
+                    row["source_ref_json"],
+                ),
+            )
             result = ClaimDecisionResult(
                 proposal_id=proposal_id,
                 status="accepted",
@@ -926,11 +1041,408 @@ class ProfileRepository:
             failed=tuple(failed),
         )
 
+    # --- Direct confirmed profile cards ---
+
+    def append_confirmed_claim(
+        self, command: AppendConfirmedClaimCommand
+    ) -> ProfileClaimVersionRecord:
+        request = {
+            "workspaceId": command.workspace_id,
+            "claimId": command.claim_id,
+            "claimType": command.claim_type,
+            "value": command.value,
+            "sourceKind": command.source_kind,
+            "sourceRef": command.source_ref,
+            "expectedClaimVersion": command.expected_claim_version,
+        }
+        request_hash = self._request_hash(request)
+        operation = f"profile_card.append:{command.claim_id or 'new'}"
+        with self._transaction():
+            existing = self._load_idempotency_receipt(
+                command.workspace_id,
+                operation,
+                command.idempotency_key,
+                request_hash,
+            )
+            if existing is not None:
+                return self.get_claim_version(existing["claimVersionId"])
+
+            if command.claim_id is None:
+                if command.expected_claim_version != 0:
+                    raise ProfileClaimVersionConflict(
+                        "new profile card expects version zero"
+                    )
+                claim_id = _new_id()
+                self._connection.execute(
+                    "INSERT INTO profile_claims "
+                    "(id, workspace_id, claim_type, version) "
+                    "VALUES (?, ?, ?, 1)",
+                    (claim_id, command.workspace_id, command.claim_type),
+                )
+                next_version = 1
+                previous_version_id = None
+            else:
+                claim = self._connection.execute(
+                    "SELECT * FROM profile_claims "
+                    "WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL",
+                    (command.claim_id, command.workspace_id),
+                ).fetchone()
+                if claim is None:
+                    raise ProfileClaimNotFound(command.claim_id)
+                if claim["claim_type"] != command.claim_type:
+                    raise ProfileClaimVersionConflict(
+                        "profile card category cannot change"
+                    )
+                if int(claim["version"]) != command.expected_claim_version:
+                    raise ProfileClaimVersionConflict(
+                        "profile card version changed"
+                    )
+                claim_id = command.claim_id
+                next_version = int(claim["version"]) + 1
+                previous_version_id = claim["current_confirmed_version_id"]
+                if previous_version_id is not None:
+                    self._connection.execute(
+                        "UPDATE profile_claim_versions SET status = 'superseded' "
+                        "WHERE id = ?",
+                        (previous_version_id,),
+                    )
+
+            version_id = _new_id()
+            self._connection.execute(
+                "INSERT INTO profile_claim_versions "
+                "(id, claim_id, version, value_json, status, support_status, "
+                "evidence_ids_json, source, expected_previous_version, confirmed_at) "
+                "VALUES (?, ?, ?, ?, 'confirmed', 'unsupported', '[]', ?, ?, "
+                "CURRENT_TIMESTAMP)",
+                (
+                    version_id,
+                    claim_id,
+                    next_version,
+                    _canonical_json(command.value),
+                    command.source_kind,
+                    None
+                    if previous_version_id is None
+                    else command.expected_claim_version,
+                ),
+            )
+            self._connection.execute(
+                "INSERT INTO profile_claim_sources "
+                "(id, workspace_id, claim_version_id, source_kind, source_ref_json) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    _new_id(),
+                    command.workspace_id,
+                    version_id,
+                    command.source_kind,
+                    _canonical_json(command.source_ref),
+                ),
+            )
+            self._connection.execute(
+                "UPDATE profile_claims SET current_confirmed_version_id = ?, "
+                "version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (version_id, next_version, claim_id),
+            )
+            self._store_idempotency_receipt(
+                command.workspace_id,
+                operation,
+                command.idempotency_key,
+                request_hash,
+                {"claimId": claim_id, "claimVersionId": version_id},
+            )
+        return self.get_claim_version(version_id)
+
+    def list_claim_sources(
+        self, claim_version_id: str
+    ) -> tuple[ProfileClaimSourceRecord, ...]:
+        rows = self._connection.execute(
+            "SELECT * FROM profile_claim_sources "
+            "WHERE claim_version_id = ? AND status <> 'superseded' "
+            "ORDER BY created_at, id",
+            (claim_version_id,),
+        ).fetchall()
+        return tuple(self._claim_source_record(row) for row in rows)
+
+    def attach_claim_source(
+        self,
+        *,
+        workspace_id: str,
+        claim_version_id: str,
+        source_kind: str,
+        source_ref: dict[str, object],
+    ) -> tuple[ProfileClaimSourceRecord, bool]:
+        with self._transaction():
+            version = self._connection.execute(
+                "SELECT v.id FROM profile_claim_versions v "
+                "JOIN profile_claims c ON c.id = v.claim_id "
+                "WHERE v.id = ? AND c.workspace_id = ? AND c.deleted_at IS NULL",
+                (claim_version_id, workspace_id),
+            ).fetchone()
+            if version is None:
+                raise ProfileClaimNotFound(claim_version_id)
+            canonical_ref = _canonical_json(source_ref)
+            existing = self._connection.execute(
+                "SELECT * FROM profile_claim_sources "
+                "WHERE claim_version_id = ? AND source_kind = ? "
+                "AND source_ref_json = ?",
+                (claim_version_id, source_kind, canonical_ref),
+            ).fetchone()
+            if existing is not None:
+                return self._claim_source_record(existing), False
+            source_id = _new_id()
+            self._connection.execute(
+                "INSERT INTO profile_claim_sources "
+                "(id, workspace_id, claim_version_id, source_kind, source_ref_json) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    source_id,
+                    workspace_id,
+                    claim_version_id,
+                    source_kind,
+                    canonical_ref,
+                ),
+            )
+            created = self._connection.execute(
+                "SELECT * FROM profile_claim_sources WHERE id = ?", (source_id,)
+            ).fetchone()
+            return self._claim_source_record(created), True
+
+    def delete_confirmed_claim(
+        self,
+        *,
+        workspace_id: str,
+        claim_id: str,
+        expected_claim_version: int,
+        idempotency_key: str,
+    ) -> None:
+        request = {
+            "workspaceId": workspace_id,
+            "claimId": claim_id,
+            "expectedClaimVersion": expected_claim_version,
+        }
+        request_hash = self._request_hash(request)
+        operation = f"profile_card.delete:{claim_id}"
+        with self._transaction():
+            receipt = self._load_idempotency_receipt(
+                workspace_id, operation, idempotency_key, request_hash
+            )
+            if receipt is not None:
+                return
+            claim = self._connection.execute(
+                "SELECT version FROM profile_claims "
+                "WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL",
+                (claim_id, workspace_id),
+            ).fetchone()
+            if claim is None:
+                raise ProfileClaimNotFound(claim_id)
+            if int(claim["version"]) != expected_claim_version:
+                raise ProfileClaimVersionConflict("profile card version changed")
+            self._connection.execute(
+                "UPDATE profile_claims SET deleted_at = CURRENT_TIMESTAMP, "
+                "version = version + 1, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ?",
+                (claim_id,),
+            )
+            self._connection.execute(
+                "DELETE FROM profile_claim_relations "
+                "WHERE workspace_id = ? "
+                "AND (from_claim_id = ? OR to_claim_id = ?)",
+                (workspace_id, claim_id, claim_id),
+            )
+            self._store_idempotency_receipt(
+                workspace_id,
+                operation,
+                idempotency_key,
+                request_hash,
+                {"claimId": claim_id, "status": "deleted"},
+            )
+
+    def replace_claim_relations(
+        self,
+        workspace_id: str,
+        claim_id: str,
+        relations: Sequence[ProfileRelationSpec],
+    ) -> tuple[ProfileClaimRelationRecord, ...]:
+        with self._transaction():
+            source = self._connection.execute(
+                "SELECT id FROM profile_claims "
+                "WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL",
+                (claim_id, workspace_id),
+            ).fetchone()
+            if source is None:
+                raise ProfileClaimNotFound(claim_id)
+            target_ids = {item.target_claim_id for item in relations}
+            if claim_id in target_ids:
+                raise ProfileClaimVersionConflict(
+                    "profile card cannot relate to itself"
+                )
+            if target_ids:
+                placeholders = ",".join("?" for _ in target_ids)
+                rows = self._connection.execute(
+                    "SELECT id FROM profile_claims "
+                    f"WHERE id IN ({placeholders}) AND workspace_id = ? "
+                    "AND deleted_at IS NULL",
+                    (*target_ids, workspace_id),
+                ).fetchall()
+                if {row["id"] for row in rows} != target_ids:
+                    raise ProfileClaimVersionConflict(
+                        "profile relation target is outside the workspace"
+                    )
+            self._connection.execute(
+                "DELETE FROM profile_claim_relations "
+                "WHERE workspace_id = ? AND from_claim_id = ?",
+                (workspace_id, claim_id),
+            )
+            for item in relations:
+                self._connection.execute(
+                    "INSERT INTO profile_claim_relations "
+                    "(id, workspace_id, from_claim_id, to_claim_id, relation_type) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (
+                        _new_id(),
+                        workspace_id,
+                        claim_id,
+                        item.target_claim_id,
+                        item.relation_type,
+                    ),
+                )
+        return self.list_claim_relations(workspace_id, from_claim_id=claim_id)
+
+    def list_claim_relations(
+        self,
+        workspace_id: str,
+        *,
+        from_claim_id: str | None = None,
+        to_claim_id: str | None = None,
+    ) -> tuple[ProfileClaimRelationRecord, ...]:
+        filters = ["workspace_id = ?"]
+        values: list[object] = [workspace_id]
+        if from_claim_id is not None:
+            filters.append("from_claim_id = ?")
+            values.append(from_claim_id)
+        if to_claim_id is not None:
+            filters.append("to_claim_id = ?")
+            values.append(to_claim_id)
+        rows = self._connection.execute(
+            "SELECT * FROM profile_claim_relations WHERE "
+            + " AND ".join(filters)
+            + " ORDER BY created_at, id",
+            tuple(values),
+        ).fetchall()
+        return tuple(self._claim_relation_record(row) for row in rows)
+
+    def get_profile_presentation(
+        self, workspace_id: str
+    ) -> ProfilePresentationRecord:
+        row = self._connection.execute(
+            "SELECT * FROM profile_presentations WHERE workspace_id = ?",
+            (workspace_id,),
+        ).fetchone()
+        if row is None:
+            return ProfilePresentationRecord(
+                workspace_id=workspace_id,
+                summary_claim_id=None,
+                primary_direction_claim_id=None,
+                featured_claim_ids=(),
+                version=0,
+                updated_at="",
+            )
+        return self._profile_presentation_record(row)
+
+    def update_profile_presentation(
+        self, command: UpdateProfilePresentationCommand
+    ) -> ProfilePresentationRecord:
+        request = {
+            "workspaceId": command.workspace_id,
+            "summaryClaimId": command.summary_claim_id,
+            "primaryDirectionClaimId": command.primary_direction_claim_id,
+            "featuredClaimIds": list(command.featured_claim_ids),
+            "expectedVersion": command.expected_version,
+        }
+        request_hash = self._request_hash(request)
+        operation = "profile_presentation.update"
+        with self._transaction():
+            receipt = self._load_idempotency_receipt(
+                command.workspace_id,
+                operation,
+                command.idempotency_key,
+                request_hash,
+            )
+            if receipt is not None:
+                return self.get_profile_presentation(command.workspace_id)
+            current = self._connection.execute(
+                "SELECT version FROM profile_presentations WHERE workspace_id = ?",
+                (command.workspace_id,),
+            ).fetchone()
+            current_version = 0 if current is None else int(current["version"])
+            if current_version != command.expected_version:
+                raise ProfileClaimVersionConflict(
+                    "profile presentation version changed"
+                )
+            self._validate_presentation_claim(
+                command.workspace_id, command.summary_claim_id, "summary"
+            )
+            self._validate_presentation_claim(
+                command.workspace_id,
+                command.primary_direction_claim_id,
+                "direction",
+            )
+            for claim_id in command.featured_claim_ids:
+                self._validate_presentation_claim(
+                    command.workspace_id, claim_id, "highlight"
+                )
+            next_version = current_version + 1
+            self._connection.execute(
+                "INSERT INTO profile_presentations "
+                "(workspace_id, summary_claim_id, primary_direction_claim_id, "
+                "featured_claim_ids_json, version) VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(workspace_id) DO UPDATE SET "
+                "summary_claim_id = excluded.summary_claim_id, "
+                "primary_direction_claim_id = excluded.primary_direction_claim_id, "
+                "featured_claim_ids_json = excluded.featured_claim_ids_json, "
+                "version = excluded.version, updated_at = CURRENT_TIMESTAMP",
+                (
+                    command.workspace_id,
+                    command.summary_claim_id,
+                    command.primary_direction_claim_id,
+                    _canonical_json(list(command.featured_claim_ids)),
+                    next_version,
+                ),
+            )
+            self._store_idempotency_receipt(
+                command.workspace_id,
+                operation,
+                command.idempotency_key,
+                request_hash,
+                {"version": next_version},
+            )
+        return self.get_profile_presentation(command.workspace_id)
+
+    def _validate_presentation_claim(
+        self, workspace_id: str, claim_id: str | None, expected_type: str
+    ) -> None:
+        if claim_id is None:
+            return
+        row = self._connection.execute(
+            "SELECT claim_type, current_confirmed_version_id "
+            "FROM profile_claims WHERE id = ? AND workspace_id = ? "
+            "AND deleted_at IS NULL",
+            (claim_id, workspace_id),
+        ).fetchone()
+        if (
+            row is None
+            or row["claim_type"] != expected_type
+            or row["current_confirmed_version_id"] is None
+        ):
+            raise ProfileClaimVersionConflict(
+                f"profile presentation requires confirmed {expected_type}"
+            )
+
     # --- Claim read ---
 
     def list_claims(self, workspace_id: str) -> tuple[ProfileClaimRecord, ...]:
         rows = self._connection.execute(
             "SELECT * FROM profile_claims WHERE workspace_id = ? "
+            "AND deleted_at IS NULL "
             "ORDER BY claim_type, updated_at DESC, id",
             (workspace_id,),
         ).fetchall()
@@ -938,7 +1450,8 @@ class ProfileRepository:
 
     def get_claim(self, claim_id: str) -> ProfileClaimRecord:
         row = self._connection.execute(
-            "SELECT * FROM profile_claims WHERE id = ?", (claim_id,)
+            "SELECT * FROM profile_claims WHERE id = ? AND deleted_at IS NULL",
+            (claim_id,),
         ).fetchone()
         if row is None:
             raise ProfileClaimNotFound(claim_id)
@@ -1001,7 +1514,7 @@ class ProfileRepository:
             "v.value_json, v.support_status, v.evidence_ids_json "
             "FROM profile_claims c "
             "JOIN profile_claim_versions v ON v.id = c.current_confirmed_version_id "
-            "WHERE c.workspace_id = ? "
+            "WHERE c.workspace_id = ? AND c.deleted_at IS NULL "
             "ORDER BY c.claim_type, c.id",
             (workspace_id,),
         ).fetchall()
@@ -1014,6 +1527,7 @@ class ProfileRepository:
                 value=json.loads(row["value_json"]),
                 support_status=row["support_status"],
                 evidence_ids=tuple(json.loads(row["evidence_ids_json"])),
+                sources=self.list_claim_sources(row["version_id"]),
             )
             for row in rows
         )
@@ -1929,6 +2443,7 @@ class ProfileRepository:
             claim_type=row["claim_type"],
             current_confirmed_version_id=row["current_confirmed_version_id"],
             version=int(row["version"]),
+            deleted_at=row["deleted_at"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -1950,6 +2465,42 @@ class ProfileRepository:
         )
 
     @staticmethod
+    def _claim_source_record(row: sqlite3.Row) -> ProfileClaimSourceRecord:
+        return ProfileClaimSourceRecord(
+            id=row["id"],
+            workspace_id=row["workspace_id"],
+            claim_version_id=row["claim_version_id"],
+            source_kind=row["source_kind"],
+            source_ref=json.loads(row["source_ref_json"]),
+            status=row["status"],
+            created_at=row["created_at"],
+        )
+
+    @staticmethod
+    def _claim_relation_record(row: sqlite3.Row) -> ProfileClaimRelationRecord:
+        return ProfileClaimRelationRecord(
+            id=row["id"],
+            workspace_id=row["workspace_id"],
+            from_claim_id=row["from_claim_id"],
+            to_claim_id=row["to_claim_id"],
+            relation_type=row["relation_type"],
+            created_at=row["created_at"],
+        )
+
+    @staticmethod
+    def _profile_presentation_record(
+        row: sqlite3.Row,
+    ) -> ProfilePresentationRecord:
+        return ProfilePresentationRecord(
+            workspace_id=row["workspace_id"],
+            summary_claim_id=row["summary_claim_id"],
+            primary_direction_claim_id=row["primary_direction_claim_id"],
+            featured_claim_ids=tuple(json.loads(row["featured_claim_ids_json"])),
+            version=int(row["version"]),
+            updated_at=row["updated_at"],
+        )
+
+    @staticmethod
     def _proposal_record(row: sqlite3.Row) -> ClaimProposalRecord:
         return ClaimProposalRecord(
             id=row["id"],
@@ -1964,6 +2515,8 @@ class ProfileRepository:
             created_by_execution_id=row["created_by_execution_id"],
             decided_at=row["decided_at"],
             created_at=row["created_at"],
+            source_kind=row["source_kind"],
+            source_ref=json.loads(row["source_ref_json"]),
         )
 
     @staticmethod

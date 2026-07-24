@@ -5,19 +5,24 @@ import { Button } from "../../shared/ui/Button";
 import { cancelAgentExecution, deleteAgentSession, getAgentSession, startAgentExecution } from "../agent/agentApi";
 import { useAgentEvents } from "../agent/useAgentEvents";
 import { createProfileSession, listProfileSessions } from "./profileApi";
+import { getUnifiedProfile } from "./profileApi";
+import { ProfileContextScope } from "./ProfileContextScope";
 import { ProfileConversation } from "./ProfileConversation";
 import { shouldStreamProfileAnswer } from "./profilePresentation";
+import type { ProfileCardCategory } from "./profileTypes";
 
 const terminalExecutionStatuses = new Set(["interrupted", "completed", "failed", "cancelled"]);
 
 function sessionTitle(title: string) {
-  return title === "个人画像对话" || title === "画像会话" ? "简历助手对话" : title;
+  return title === "个人画像对话" || title === "画像会话" || title === "简历助手对话" ? "画像助手对话" : title;
 }
 
-export function ProfileAgentWorkspace({ workspaceId, focus = {} }: { workspaceId: string; focus?: { materialId?: string; materialVersionId?: string; claimId?: string; proposalId?: string } }) {
+export function ProfileAgentWorkspace({ workspaceId, focus = {}, onOpenPending }: { workspaceId: string; focus?: { materialId?: string; materialVersionId?: string; claimId?: string; proposalId?: string }; onOpenPending?: () => void }) {
   const client = useQueryClient();
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [scopeCategories, setScopeCategories] = useState<ProfileCardCategory[]>(["experience", "project", "skill"]);
   const sessions = useQuery({ queryKey: ["profile-sessions", workspaceId], queryFn: ({ signal }) => listProfileSessions(workspaceId, signal) });
+  const profile = useQuery({ queryKey: ["unified-profile", workspaceId], queryFn: ({ signal }) => getUnifiedProfile(workspaceId, signal) });
   useEffect(() => { if (!sessionId && sessions.data?.[0]) setSessionId(sessions.data[0].id); }, [sessionId, sessions.data]);
   const detail = useQuery({ queryKey: ["agent-session", sessionId], queryFn: () => getAgentSession(sessionId!), enabled: Boolean(sessionId) });
   const live = useAgentEvents(sessionId);
@@ -53,7 +58,7 @@ export function ProfileAgentWorkspace({ workspaceId, focus = {} }: { workspaceId
       setSessionId((current) => current === deletedId ? remaining[0]?.id ?? null : current);
     },
   });
-  const send = useMutation({ mutationFn: (message: string) => startAgentExecution(sessionId!, { message, focus }), onSuccess: () => client.invalidateQueries({ queryKey: ["agent-session", sessionId] }) });
+  const send = useMutation({ mutationFn: (message: string) => startAgentExecution(sessionId!, { message, focus: { ...focus, categories: scopeCategories } }), onSuccess: () => client.invalidateQueries({ queryKey: ["agent-session", sessionId] }) });
   const stop = useMutation({ mutationFn: () => cancelAgentExecution(latest!.id), onSuccess: () => client.invalidateQueries({ queryKey: ["agent-session", sessionId] }) });
   const toolEvents = useMemo(
     () => live.events.filter(
@@ -83,7 +88,10 @@ export function ProfileAgentWorkspace({ workspaceId, focus = {} }: { workspaceId
       </div>)}</div>
       {remove.isError ? <p className="profile-agent-session-error" role="alert">删除失败。若任务仍在运行，请先停止任务后重试。</p> : null}
     </aside>
-    {sessionId ? <ProfileConversation workspaceId={workspaceId} messages={detail.data?.messages ?? []} events={toolEvents} streaming={streaming} executionStatus={executionStatus} streamAnswer={streamAnswer} busy={Boolean(busy || send.isPending || stop.isPending)} stopping={stop.isPending} onSend={(message) => send.mutate(message)} onStop={() => stop.mutate()} onChanged={() => client.invalidateQueries({ queryKey: ["agent-session", sessionId] })} /> : <div className="profile-agent-no-session"><MessagesSquare size={30} /><h2>开始使用简历助手</h2><p>它会根据你确认过的资料，检查信息是否完整、定位原文、发现冲突并整理简历表达。</p><Button loading={create.isPending} onClick={() => create.mutate()}>开始新对话</Button></div>}
+    <div className="profile-agent-main">
+      <ProfileContextScope profile={profile.data ?? null} selected={scopeCategories} onChange={setScopeCategories} />
+      {sessionId ? <ProfileConversation workspaceId={workspaceId} messages={detail.data?.messages ?? []} events={toolEvents} streaming={streaming} executionStatus={executionStatus} streamAnswer={streamAnswer} busy={Boolean(busy || send.isPending || stop.isPending)} stopping={stop.isPending} onSend={(message) => send.mutate(message)} onStop={() => stop.mutate()} onChanged={() => client.invalidateQueries({ queryKey: ["agent-session", sessionId] })} onOpenPending={onOpenPending} /> : <div className="profile-agent-no-session"><MessagesSquare size={30} /><h2>开始使用画像助手</h2><p>它会根据你确认过的资料，帮你梳理优势、检查缺失信息、定位原文，并为简历和面试准备提供建议。</p><Button loading={create.isPending} onClick={() => create.mutate()}>开始新对话</Button></div>}
+    </div>
     <details className="profile-agent-runtime">
       <summary>运行详情</summary>
       <dl><div><dt>参考范围</dt><dd>{focus.claimId ? "当前简历要点" : focus.materialVersionId ? "当前简历版本" : focus.materialId ? "当前简历" : "已确认信息"}</dd></div><div><dt>连接</dt><dd>{live.status === "connected" ? "正常" : "连接中"}</dd></div><div><dt>历史消息</dt><dd>{detail.data?.contextCompacted ? "已自动整理" : "完整"}</dd></div><div><dt>本次对话请求</dt><dd>{detail.data?.usage.callCount ?? 0} 次</dd></div></dl>

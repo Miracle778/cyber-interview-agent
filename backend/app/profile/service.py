@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -12,6 +12,7 @@ from app.application.session_service import (
     SessionBusyError,
 )
 from app.profile.models import (
+    AppendConfirmedClaimCommand,
     BatchClaimDecisionResult,
     ClaimReviewDetail,
     ClaimReviewSnapshot,
@@ -29,7 +30,15 @@ from app.profile.models import (
     ProfileMaterialVersionRecord,
     ProfileActionPlanRecord,
     ProfileAssessmentRecord,
+    ProfileClaimVersionRecord,
+    ProfileRelationSpec,
     SaveAssessmentCommand,
+    UpdateProfilePresentationCommand,
+)
+from app.profile.projection import (
+    UnifiedProfile,
+    project_unified_profile,
+    validate_profile_value,
 )
 from app.profile.repository import ProfileRepository
 from app.profile.storage import MaterialStorage
@@ -48,6 +57,7 @@ from app.profile.errors import (
     ProfileProposalNotFound,
     ProfilePublicationRevocationRequired,
     ProfilePublicationRevocationUnavailable,
+    ProfileValueInvalid,
 )
 
 _ACTIVE_EXECUTION_STATUSES = frozenset(
@@ -65,7 +75,17 @@ _ACTION_PLAN_OPERATIONS = frozenset(
 _CONFIRMED_PROFILE_PURPOSES = frozenset(
     {"job_target_analysis", "project_deep_dive", "interview_training"}
 )
-_CLAIM_TYPES = frozenset({"skill", "project", "experience", "education", "link"})
+_CLAIM_TYPES = frozenset(
+    {
+        "skill",
+        "project",
+        "experience",
+        "education",
+        "certification",
+        "achievement",
+        "link",
+    }
+)
 _SENSITIVE_VALUE_KEYS = frozenset(
     {
         "address",
@@ -404,6 +424,285 @@ class ProfileService:
     def latest_execution(self, version_id: str):
         self._require_workspace_version(version_id)
         return self.product_repository.latest_execution(version_id)
+
+    # --- Unified profile ---
+
+    def unified_profile(self) -> UnifiedProfile:
+        snapshot = self.repository.profile_snapshot(self.workspace_id)
+        return project_unified_profile(
+            workspace_id=self.workspace_id,
+            profile_version=snapshot.profile_version,
+            claims=snapshot.claims,
+            relations=self.repository.list_claim_relations(self.workspace_id),
+            presentation=self.repository.get_profile_presentation(self.workspace_id),
+            pending_count=len(
+                self.repository.list_proposals(self.workspace_id, status="pending")
+            ),
+        )
+
+    def update_profile_presentation(
+        self,
+        *,
+        summary_claim_id: str | None,
+        primary_direction_claim_id: str | None,
+        featured_claim_ids: tuple[str, ...],
+        expected_version: int,
+        command_id: str,
+    ):
+        self._require_profile_command_id(command_id)
+        if len(featured_claim_ids) != len(set(featured_claim_ids)):
+            raise ProfileValueInvalid("featured profile cards must be unique")
+        return self.repository.update_profile_presentation(
+            UpdateProfilePresentationCommand(
+                workspace_id=self.workspace_id,
+                summary_claim_id=summary_claim_id,
+                primary_direction_claim_id=primary_direction_claim_id,
+                featured_claim_ids=featured_claim_ids,
+                expected_version=expected_version,
+                idempotency_key=command_id,
+            )
+        )
+
+    def create_conversation_proposals(
+        self,
+        proposals: Sequence[CreateClaimProposalSpec],
+        *,
+        execution_id: str,
+        user_message_id: str,
+        session_id: str,
+    ):
+        validated_specs: list[CreateClaimProposalSpec] = []
+        for spec in proposals:
+            category = spec.proposed_value.get("category")
+            if not isinstance(category, str):
+                raise ProfileValueInvalid("conversation proposal category is required")
+            value = {
+                key: item
+                for key, item in spec.proposed_value.items()
+                if key != "category"
+            }
+            validated = validate_profile_value(category, value)  # type: ignore[arg-type]
+            target_claim_id = spec.target_claim_id
+            base_version_id = None
+            if spec.proposal_type == "update":
+                if target_claim_id is None:
+                    raise ProfileValueInvalid(
+                        "conversation update requires a target profile card"
+                    )
+                claim = self.repository.get_claim(target_claim_id)
+                if (
+                    claim.workspace_id != self.workspace_id
+                    or claim.claim_type != category
+                    or claim.current_confirmed_version_id is None
+                ):
+                    raise ProfileClaimVersionConflict(
+                        "conversation update target is not current"
+                    )
+                base_version_id = claim.current_confirmed_version_id
+            elif spec.proposal_type != "create":
+                raise ProfileValueInvalid(
+                    "conversation proposal only supports create or update"
+                )
+            validated_specs.append(
+                CreateClaimProposalSpec(
+                    proposal_type=spec.proposal_type,
+                    target_claim_id=target_claim_id,
+                    base_claim_version_id=base_version_id,
+                    proposed_value={"category": category, **validated},
+                    reason=spec.reason,
+                    source="conversation",
+                    source_kind="conversation",
+                    source_ref={
+                        "messageId": user_message_id,
+                        "sessionId": session_id,
+                    },
+                )
+            )
+        return self.repository.create_workspace_claim_proposals(
+            self.workspace_id,
+            validated_specs,
+            idempotency_key=f"conversation:{execution_id}",
+            created_by_execution_id=execution_id,
+        )
+
+    def create_profile_card(
+        self,
+        *,
+        claim_type: str,
+        value: dict[str, object],
+        command_id: str,
+        relations: tuple[ProfileRelationSpec, ...] = (),
+        session_id: str | None = None,
+    ) -> ProfileClaimVersionRecord:
+        self._require_profile_command_id(command_id)
+        validated = validate_profile_value(claim_type, value)  # type: ignore[arg-type]
+        self._validate_profile_relation_targets(relations)
+        version = self.repository.append_confirmed_claim(
+            AppendConfirmedClaimCommand(
+                workspace_id=self.workspace_id,
+                claim_type=claim_type,  # type: ignore[arg-type]
+                value=validated,
+                source_kind="user_input",
+                source_ref={"commandId": command_id},
+                expected_claim_version=0,
+                idempotency_key=command_id,
+            )
+        )
+        if relations:
+            self.repository.replace_claim_relations(
+                self.workspace_id, version.claim_id, relations
+            )
+        self._emit_profile_card_event(
+            session_id, "profile.card.created", version, claim_type
+        )
+        return version
+
+    def update_profile_card(
+        self,
+        claim_id: str,
+        *,
+        value: dict[str, object],
+        expected_version: int,
+        command_id: str,
+        relations: tuple[ProfileRelationSpec, ...] | None = None,
+        session_id: str | None = None,
+    ) -> ProfileClaimVersionRecord:
+        self._require_profile_command_id(command_id)
+        claim = self.repository.get_claim(claim_id)
+        if claim.workspace_id != self.workspace_id:
+            raise ProfileClaimNotFound(claim_id)
+        validated = validate_profile_value(claim.claim_type, value)
+        if relations is not None:
+            self._validate_profile_relation_targets(relations, claim_id=claim.id)
+        version = self.repository.append_confirmed_claim(
+            AppendConfirmedClaimCommand(
+                workspace_id=self.workspace_id,
+                claim_id=claim.id,
+                claim_type=claim.claim_type,
+                value=validated,
+                source_kind="user_input",
+                source_ref={"commandId": command_id},
+                expected_claim_version=expected_version,
+                idempotency_key=command_id,
+            )
+        )
+        if relations is not None:
+            self.repository.replace_claim_relations(
+                self.workspace_id, claim.id, relations
+            )
+        self._emit_profile_card_event(
+            session_id, "profile.card.updated", version, claim.claim_type
+        )
+        return version
+
+    def restore_profile_card_version(
+        self,
+        claim_id: str,
+        source_version_id: str,
+        *,
+        expected_version: int,
+        command_id: str,
+        session_id: str | None = None,
+    ) -> ProfileClaimVersionRecord:
+        self._require_profile_command_id(command_id)
+        claim = self.repository.get_claim(claim_id)
+        if claim.workspace_id != self.workspace_id:
+            raise ProfileClaimNotFound(claim_id)
+        source = self.repository.get_claim_version(source_version_id)
+        if source.claim_id != claim.id:
+            raise ProfileClaimNotFound(source_version_id)
+        validated = validate_profile_value(claim.claim_type, source.value)
+        version = self.repository.append_confirmed_claim(
+            AppendConfirmedClaimCommand(
+                workspace_id=self.workspace_id,
+                claim_id=claim.id,
+                claim_type=claim.claim_type,
+                value=validated,
+                source_kind="user_input",
+                source_ref={
+                    "commandId": command_id,
+                    "restoredFromVersionId": source.id,
+                },
+                expected_claim_version=expected_version,
+                idempotency_key=command_id,
+            )
+        )
+        self._emit_profile_card_event(
+            session_id, "profile.card.restored", version, claim.claim_type
+        )
+        return version
+
+    def delete_profile_card(
+        self,
+        claim_id: str,
+        *,
+        expected_version: int,
+        command_id: str,
+        session_id: str | None = None,
+    ) -> None:
+        self._require_profile_command_id(command_id)
+        claim = self.repository.get_claim(claim_id)
+        if claim.workspace_id != self.workspace_id:
+            raise ProfileClaimNotFound(claim_id)
+        self.repository.delete_confirmed_claim(
+            workspace_id=self.workspace_id,
+            claim_id=claim.id,
+            expected_claim_version=expected_version,
+            idempotency_key=command_id,
+        )
+        if self._publish_event is not None and session_id is not None:
+            self._publish_event(
+                session_id,
+                None,
+                "profile.card.deleted",
+                {
+                    "claimId": claim.id,
+                    "claimType": claim.claim_type,
+                    "status": "deleted",
+                },
+            )
+
+    def _validate_profile_relation_targets(
+        self,
+        relations: tuple[ProfileRelationSpec, ...],
+        *,
+        claim_id: str | None = None,
+    ) -> None:
+        for relation in relations:
+            if relation.target_claim_id == claim_id:
+                raise ProfileClaimVersionConflict(
+                    "profile card cannot relate to itself"
+                )
+            target = self.repository.get_claim(relation.target_claim_id)
+            if target.workspace_id != self.workspace_id:
+                raise ProfileClaimVersionConflict(
+                    "profile relation target is outside the workspace"
+                )
+
+    @staticmethod
+    def _require_profile_command_id(command_id: str) -> None:
+        if not command_id.strip():
+            raise ProfileValueInvalid("profile command id is required")
+
+    def _emit_profile_card_event(
+        self,
+        session_id: str | None,
+        event_type: str,
+        version: ProfileClaimVersionRecord,
+        claim_type: str,
+    ) -> None:
+        if self._publish_event is not None and session_id is not None:
+            self._publish_event(
+                session_id,
+                None,
+                event_type,
+                {
+                    "claimId": version.claim_id,
+                    "claimVersionId": version.id,
+                    "claimType": claim_type,
+                    "status": version.status,
+                },
+            )
 
     # --- Claim review ---
 

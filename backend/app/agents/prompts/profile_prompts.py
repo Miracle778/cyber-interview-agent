@@ -8,7 +8,7 @@ from app.agents.prompts.prompt_spec import PromptSpec
 
 PROFILE_EXTRACTION_PROMPT = PromptSpec(
     id="profile-extraction",
-    version="1.1",
+    version="1.2",
     system=(
         "你是个人画像证据提取 Agent。只能根据输入的 Evidence 产生结构化 Claim "
         "候选；每个候选必须引用输入中的精确 Evidence ID。不得推测缺失事实、不得修改"
@@ -16,19 +16,28 @@ PROFILE_EXTRACTION_PROMPT = PromptSpec(
         "严格使用以下分类边界：\n"
         "1. 技能（skill）：技术、工具、方法或可复用能力；固定字段优先使用 "
         "name、description。\n"
-        "2. 项目经历（project）：有明确名称的产品、系统、研究或交付成果；固定字段"
-        "优先使用 name、description、tech_stack。\n"
+        "2. 项目经历（project）：有明确名称的产品、系统、研究或交付成果；优先提取"
+        " name、period、background、role、responsibilities、key_actions、"
+        "tech_stack、results。\n"
         "3. 工作经历（experience）：受雇组织、岗位、任职时间和职责；固定字段优先"
-        "使用 organization、role、period、description。\n"
+        "使用 organization、title、period、location、responsibilities、"
+        "achievements。\n"
         "4. 教育经历（education）：学校、学历、专业和就读时间；固定字段优先使用 "
-        "institution、degree、field、period。\n"
-        "5. 个人链接（link）：个人主页、GitHub、博客等可验证链接；固定字段优先使用 "
+        "school、degree、major、period、highlights。\n"
+        "5. 认证（certification）：证书、认证机构和取得时间。\n"
+        "6. 成果（achievement）：奖项、专利、公开成果或可独立表达的业绩。\n"
+        "7. 个人链接（link）：个人主页、GitHub、博客等可验证链接；固定字段优先使用 "
         "label、url。\n"
         "同一条 Evidence 可以支持多个互补候选，例如项目经历及其中明确出现的技能；"
         "不要因为只能选择一个分类而遗漏事实。相同分类、相同事实只保留一个候选，"
-        "不要重复生成。无法从 Evidence 确定的字段应省略，不得猜测。材料摄入阶段"
-        "只创建待确认候选，因此 proposal_type 必须为 create，target_claim_id 和 "
-        "base_claim_version_id 必须为空。"
+        "不要重复生成。无法从 Evidence 确定的字段应省略，不得猜测。\n\n"
+        "输入还包含当前已确认画像的有界快照。若候选明显对应已有事实，可填写快照中的"
+        " target_claim_id 和 base_claim_version_id，并把 proposal_type 标为 update；"
+        "新事实使用 create。服务端会再次做确定性匹配，模型不能决定覆盖或删除。新版"
+        "简历没有出现旧事实时不要输出 reject，也不要推断旧事实已失效。\n\n"
+        "Evidence 直接写明的事实使用 source_kind=resume_extraction。只有从多条已确认"
+        "事实归纳出的能力候选才使用 source_kind=agent_inference；归纳候选仍然只是待确认"
+        "建议，不能写成已确认事实。"
     ),
 )
 
@@ -63,6 +72,23 @@ PROFILE_CHAT_PROMPT = PromptSpec(
     ),
 )
 
+PROFILE_CONVERSATION_PROPOSAL_PROMPT = PromptSpec(
+    id="profile-conversation-proposal",
+    version="1.0",
+    system=(
+        "你负责把用户本轮明确陈述的个人经历整理成待确认的个人画像更新建议。"
+        "只能使用本轮用户消息和输入中的已确认画像；不得调用工具、不得直接修改画像、"
+        "不得把推测写成事实。使用固定分类和字段：summary(text)、direction(name/"
+        "description)、highlight(text)、skill(name/self_assessment/notes)、project"
+        "(name/period/background/role/responsibilities/key_actions/tech_stack/results)、"
+        "experience(organization/title/period/location/responsibilities/achievements)、"
+        "education(school/degree/major/period/highlights)、certification(name/issuer/"
+        "issued_at/credential_id/url)、achievement(title/description/date)、link(label/url)。"
+        "若更新已有信息，必须引用输入中的 target_claim_id；否则使用 create。"
+        "用户没有给出的字段应省略。输出只是待确认建议，不能声称已保存。"
+    ),
+)
+
 PROFILE_ACTION_PLANNER_PROMPT = PromptSpec(
     id="profile-action-planner",
     version="1.1",
@@ -78,8 +104,16 @@ PROFILE_ACTION_PLANNER_PROMPT = PromptSpec(
 )
 
 
-def render_profile_extraction_input(evidence: Sequence[dict[str, object]]) -> str:
-    return "Evidence（只能引用其中 ID）：\n" + _json(evidence)
+def render_profile_extraction_input(
+    evidence: Sequence[dict[str, object]],
+    confirmed_profile: Sequence[dict[str, object]] = (),
+) -> str:
+    return (
+        "当前已确认画像（只用于识别新增或变化，不得覆盖或删除）：\n"
+        + _json(confirmed_profile)
+        + "\n\nEvidence（只能引用其中 ID）：\n"
+        + _json(evidence)
+    )
 
 
 def render_profile_assessment_input(snapshot: dict[str, object]) -> str:
@@ -92,6 +126,15 @@ def render_profile_chat_input(context: dict[str, object], message: str) -> str:
 
 def render_profile_plan_input(context: dict[str, object], request: str) -> str:
     return f"当前画像快照：\n{_render_context(context)}\n\n修改请求：\n{request.strip()}"
+
+
+def render_profile_conversation_proposal_input(
+    context: dict[str, object], message: str
+) -> str:
+    return (
+        f"当前已确认画像：\n{_render_context(context)}\n\n"
+        f"本轮用户消息：\n{message.strip()}"
+    )
 
 
 def _render_context(context: dict[str, object]) -> str:

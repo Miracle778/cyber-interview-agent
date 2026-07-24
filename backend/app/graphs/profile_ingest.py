@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, Awaitable, Callable, TypedDict
 
@@ -17,7 +18,7 @@ from app.profile.errors import (
     ProfileEvidenceMismatch,
     ProfileExtractionFailed,
 )
-from app.profile.models import CreateClaimProposalSpec
+from app.profile.models import ClaimProposalRecord, CreateClaimProposalSpec
 from app.profile.parsers import ExtractedSegment, parse_document
 from app.profile.repository import ProfileRepository
 from app.profile.storage import MaterialStorage
@@ -35,6 +36,15 @@ class ProfileIngestState(TypedDict, total=False):
     evidence_count: int
     extraction: dict[str, Any]
     proposal_ids: list[str]
+    new_source_links: int
+    missing_source_gaps: int
+
+
+@dataclass(frozen=True, slots=True)
+class IncrementalIngestResult:
+    proposals: tuple[ClaimProposalRecord, ...]
+    new_source_links: int
+    missing_source_gaps: int
 
 
 _EMAIL = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])")
@@ -158,9 +168,28 @@ def create_profile_ingest_graph(
             }
             for item in evidence[:50]
         )
+        snapshot = repository.profile_snapshot(runtime.context.workspace_id)
+        confirmed_profile = tuple(
+            {
+                "claimId": item.claim_id,
+                "claimVersionId": item.claim_version_id,
+                "category": item.claim_type,
+                "version": item.version_number,
+                "value": item.value,
+                "sourceSummary": [
+                    {
+                        "kind": source.source_kind,
+                        "status": source.status,
+                    }
+                    for source in item.sources
+                ],
+            }
+            for item in snapshot.claims[:50]
+        )
         try:
             output = await agent.extract(
                 evidence=model_evidence,
+                confirmed_profile=confirmed_profile,
                 context=runtime.context,
                 config=dict(config),
             )
@@ -196,25 +225,11 @@ def create_profile_ingest_graph(
                 raise ProfileEvidenceMismatch(
                     "profile extraction references unknown Evidence"
                 )
-            proposals = repository.create_claim_proposals(
-                version.id,
-                tuple(
-                    CreateClaimProposalSpec(
-                        proposal_type=candidate.proposal_type,
-                        target_claim_id=candidate.target_claim_id,
-                        base_claim_version_id=candidate.base_claim_version_id,
-                        proposed_value={
-                            "category": candidate.category,
-                            **candidate.value,
-                            "confidence": candidate.confidence,
-                        },
-                        reason=candidate.rationale,
-                        evidence_ids=tuple(candidate.evidence_ids),
-                        source="extraction",
-                    )
-                    for candidate in output.candidates
-                ),
-                idempotency_key=f"profile.ingest:{version.id}",
+            merge = _merge_incremental_extraction(
+                repository=repository,
+                workspace_id=runtime.context.workspace_id,
+                material_version_id=version.id,
+                output=output,
                 created_by_execution_id=runtime.context.run_id,
             )
             repository.set_version_processing_status(version.id, "ready")
@@ -227,7 +242,7 @@ def create_profile_ingest_graph(
             raise ProfileExtractionFailed(
                 "profile claim proposal validation failed"
             ) from error
-        proposal_ids = [item.id for item in proposals]
+        proposal_ids = [item.id for item in merge.proposals]
         await _publish(
             publish_event,
             runtime.context,
@@ -236,9 +251,15 @@ def create_profile_ingest_graph(
                 "versionId": version.id,
                 "proposalIds": proposal_ids,
                 "count": len(proposal_ids),
+                "newSourceLinks": merge.new_source_links,
+                "missingSourceGaps": merge.missing_source_gaps,
             },
         )
-        return {"proposal_ids": proposal_ids}
+        return {
+            "proposal_ids": proposal_ids,
+            "new_source_links": merge.new_source_links,
+            "missing_source_gaps": merge.missing_source_gaps,
+        }
 
     graph = StateGraph(ProfileIngestState, context_schema=AgentContext)
     graph.add_node("parse", parse)
@@ -339,6 +360,184 @@ def _normalize_extraction(output: ProfileExtractionOutput) -> ProfileExtractionO
     return ProfileExtractionOutput(candidates=[merged[key] for key in order])
 
 
+def _merge_incremental_extraction(
+    *,
+    repository: ProfileRepository,
+    workspace_id: str,
+    material_version_id: str,
+    output: ProfileExtractionOutput,
+    created_by_execution_id: str | None,
+) -> IncrementalIngestResult:
+    snapshot = repository.profile_snapshot(workspace_id)
+    existing_by_identity = {
+        identity: claim
+        for claim in snapshot.claims
+        if (identity := _claim_identity(claim.claim_type, claim.value)) is not None
+    }
+    seen_identities: set[str] = set()
+    source_links = 0
+    proposal_specs: list[CreateClaimProposalSpec] = []
+
+    for candidate in output.candidates:
+        identity = _claim_identity(candidate.category, candidate.value)
+        if identity is not None:
+            seen_identities.add(identity)
+        existing = existing_by_identity.get(identity) if identity is not None else None
+        candidate_facts = _comparable_value(candidate.category, candidate.value)
+        source_ref = {
+            "materialVersionId": material_version_id,
+            "evidenceIds": list(candidate.evidence_ids),
+        }
+        if candidate.source_kind == "agent_inference":
+            source_ref["baseProfileVersion"] = snapshot.profile_version
+
+        if existing is not None:
+            current_facts = _comparable_value(existing.claim_type, existing.value)
+            changed = {
+                key: value
+                for key, value in candidate_facts.items()
+                if current_facts.get(key) != value
+            }
+            if not changed:
+                _source, created = repository.attach_claim_source(
+                    workspace_id=workspace_id,
+                    claim_version_id=existing.claim_version_id,
+                    source_kind=candidate.source_kind,
+                    source_ref=source_ref,
+                )
+                source_links += int(created)
+                continue
+            proposed_value = {
+                "category": existing.claim_type,
+                **current_facts,
+                **candidate_facts,
+                "confidence": candidate.confidence,
+            }
+            proposal_specs.append(
+                CreateClaimProposalSpec(
+                    proposal_type="update",
+                    target_claim_id=existing.claim_id,
+                    base_claim_version_id=existing.claim_version_id,
+                    proposed_value=proposed_value,
+                    reason=candidate.rationale,
+                    evidence_ids=tuple(candidate.evidence_ids),
+                    source="extraction",
+                    source_kind=candidate.source_kind,
+                    source_ref=source_ref,
+                )
+            )
+            continue
+
+        proposal_specs.append(
+            CreateClaimProposalSpec(
+                proposal_type="create",
+                proposed_value={
+                    "category": candidate.category,
+                    **candidate_facts,
+                    "confidence": candidate.confidence,
+                },
+                reason=candidate.rationale,
+                evidence_ids=tuple(candidate.evidence_ids),
+                source="extraction",
+                source_kind=candidate.source_kind,
+                source_ref=source_ref,
+            )
+        )
+
+    proposals = repository.create_claim_proposals(
+        material_version_id,
+        tuple(proposal_specs),
+        idempotency_key=f"profile.ingest:{material_version_id}",
+        created_by_execution_id=created_by_execution_id,
+    )
+    missing_source_gaps = _missing_source_gap_count(
+        repository=repository,
+        material_version_id=material_version_id,
+        snapshot_claims=snapshot.claims,
+        seen_identities=seen_identities,
+    )
+    return IncrementalIngestResult(
+        proposals=proposals,
+        new_source_links=source_links,
+        missing_source_gaps=missing_source_gaps,
+    )
+
+
+def _missing_source_gap_count(
+    *,
+    repository: ProfileRepository,
+    material_version_id: str,
+    snapshot_claims,
+    seen_identities: set[str],
+) -> int:
+    current_version = repository.get_material_version(material_version_id)
+    count = 0
+    for claim in snapshot_claims:
+        identity = _claim_identity(claim.claim_type, claim.value)
+        if identity is None or identity in seen_identities:
+            continue
+        supported_by_same_material = False
+        for source in claim.sources:
+            if source.source_kind != "resume_extraction":
+                continue
+            source_version_id = source.source_ref.get("materialVersionId")
+            if not isinstance(source_version_id, str):
+                continue
+            try:
+                source_version = repository.get_material_version(source_version_id)
+            except ProfileDomainError:
+                continue
+            if source_version.material_id == current_version.material_id:
+                supported_by_same_material = True
+                break
+        if supported_by_same_material:
+            count += 1
+    return count
+
+
+def _claim_identity(category: str, value: dict[str, object]) -> str | None:
+    normalized = _comparable_value(category, value)
+
+    def text(key: str) -> str:
+        candidate = normalized.get(key)
+        return str(candidate).strip().casefold() if candidate else ""
+
+    if category == "skill":
+        parts = (text("name"),)
+    elif category == "project":
+        parts = (text("name"),)
+    elif category == "experience":
+        parts = (text("organization"), text("title"), text("period"))
+    elif category == "education":
+        parts = (text("school"), text("degree"), text("major"), text("period"))
+    elif category == "certification":
+        parts = (text("name"), text("issuer"))
+    elif category == "achievement":
+        parts = (text("title"), text("date"))
+    elif category == "link":
+        parts = (text("url"),)
+    else:
+        return None
+    if not parts[0]:
+        return None
+    return json.dumps(
+        [category, *parts],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def _comparable_value(
+    category: str, raw_value: dict[str, object]
+) -> dict[str, object]:
+    value = _canonical_claim_value(category, raw_value)
+    return {
+        key: item
+        for key, item in value.items()
+        if key not in {"category", "confidence"} and item not in (None, "", [], {})
+    }
+
+
 def _canonical_claim_value(
     category: str, raw_value: dict[str, object]
 ) -> dict[str, object]:
@@ -359,15 +558,25 @@ def _canonical_claim_value(
         alias("name", "name", "text", "skill")
     elif category == "project":
         alias("name", "name", "title", "project")
+        alias("background", "background", "description")
+        alias("role", "role", "position")
         alias("tech_stack", "tech_stack", "techStack", "technologies")
+        alias("results", "results", "result", "outcomes")
     elif category == "experience":
         alias("organization", "organization", "company", "employer")
-        alias("role", "role", "title", "position")
+        alias("title", "title", "role", "position")
         alias("period", "period", "dates", "duration")
     elif category == "education":
-        alias("institution", "institution", "school", "university")
-        alias("field", "field", "major")
+        alias("school", "school", "institution", "university")
+        alias("major", "major", "field")
         alias("period", "period", "dates", "duration")
+    elif category == "certification":
+        alias("name", "name", "title", "certificate")
+        alias("issuer", "issuer", "organization")
+        alias("issued_at", "issued_at", "issuedAt", "date")
+    elif category == "achievement":
+        alias("title", "title", "name")
+        alias("date", "date", "period")
     elif category == "link":
         alias("label", "label", "name", "title")
         alias("url", "url", "href", "link")

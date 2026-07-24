@@ -18,11 +18,28 @@ ProcessingStatus: TypeAlias = Literal[
     "extraction_failed",
 ]
 EvidenceSensitivity: TypeAlias = Literal["normal", "sensitive"]
-ClaimType: TypeAlias = Literal["skill", "project", "experience", "education", "link"]
+ClaimType: TypeAlias = Literal[
+    "skill",
+    "project",
+    "experience",
+    "education",
+    "certification",
+    "achievement",
+    "link",
+    "summary",
+    "direction",
+    "highlight",
+]
 ClaimVersionStatus: TypeAlias = Literal[
     "proposed", "confirmed", "rejected", "superseded"
 ]
 ClaimSupportStatus: TypeAlias = Literal["supported", "conflicted", "unsupported"]
+ProfileSourceKind: TypeAlias = Literal[
+    "resume_extraction", "user_input", "conversation", "agent_inference"
+]
+ProfileRelationType: TypeAlias = Literal[
+    "belongs_to", "used_in", "supported_by"
+]
 ProposalType: TypeAlias = Literal["create", "update", "reject"]
 ProposalStatus: TypeAlias = Literal["pending", "accepted", "rejected", "superseded"]
 ProposalDecision: TypeAlias = Literal["accepted", "rejected"]
@@ -105,6 +122,7 @@ class ProfileClaimRecord:
     claim_type: ClaimType
     current_confirmed_version_id: str | None
     version: int
+    deleted_at: str | None
     created_at: str
     updated_at: str
 
@@ -138,6 +156,8 @@ class ClaimProposalRecord:
     created_by_execution_id: str | None
     decided_at: str | None
     created_at: str
+    source_kind: ProfileSourceKind = "resume_extraction"
+    source_ref: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,6 +168,37 @@ class ClaimConflictRecord:
     proposal_id: str
     conflicting_claim_version_id: str
     created_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileClaimSourceRecord:
+    id: str
+    workspace_id: str
+    claim_version_id: str
+    source_kind: ProfileSourceKind
+    source_ref: dict[str, object]
+    status: str
+    created_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileClaimRelationRecord:
+    id: str
+    workspace_id: str
+    from_claim_id: str
+    to_claim_id: str
+    relation_type: ProfileRelationType
+    created_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProfilePresentationRecord:
+    workspace_id: str
+    summary_claim_id: str | None
+    primary_direction_claim_id: str | None
+    featured_claim_ids: tuple[str, ...]
+    version: int
+    updated_at: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,6 +281,7 @@ class ConfirmedClaimEntry:
     value: dict[str, object]
     support_status: ClaimSupportStatus
     evidence_ids: tuple[str, ...]
+    sources: tuple[ProfileClaimSourceRecord, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,6 +330,36 @@ class CreateClaimProposalSpec:
     target_claim_id: str | None = None
     base_claim_version_id: str | None = None
     source: str = "extraction"
+    source_kind: ProfileSourceKind = "resume_extraction"
+    source_ref: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class AppendConfirmedClaimCommand:
+    workspace_id: str
+    claim_type: ClaimType
+    value: dict[str, object]
+    source_kind: ProfileSourceKind
+    source_ref: dict[str, object]
+    expected_claim_version: int
+    idempotency_key: str
+    claim_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileRelationSpec:
+    relation_type: ProfileRelationType
+    target_claim_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateProfilePresentationCommand:
+    workspace_id: str
+    summary_claim_id: str | None
+    primary_direction_claim_id: str | None
+    featured_claim_ids: tuple[str, ...]
+    expected_version: int
+    idempotency_key: str
 
 
 @dataclass(frozen=True, slots=True)

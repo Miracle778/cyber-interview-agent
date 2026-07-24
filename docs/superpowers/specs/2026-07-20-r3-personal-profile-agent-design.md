@@ -5,6 +5,12 @@
 状态：Accepted；2026-07-24 按求职目标中心路线调整第一里程碑
 产品阶段：R3 个人材料、结构化画像与受控下游查询
 
+> 2026-07-24 产品纠偏：本规格建立的 Claim/Evidence、确认边界、受控
+> Agent 和 confirmed-profile 仍然有效；用户主对象、画像来源、关系模型和
+> 页面信息架构由
+> `2026-07-24-r3-unified-personal-profile-correction.md` 补充。个人画像是一份
+> 跨简历版本持续存在的统一能力档案，简历只是来源之一；如有冲突，以补充规格为准。
+
 ## 1. 背景
 
 R0-R2 已建立 Workspace、Provider、统一 Agent Runtime、Session、Execution、LangGraph checkpoint、可重放产品事件、HITL、知识草稿与发布，以及题库和复习闭环。R3 在这些能力上建设个人画像，不另建一套 Agent Runtime。

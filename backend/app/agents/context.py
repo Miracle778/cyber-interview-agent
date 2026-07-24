@@ -15,6 +15,8 @@ class AgentContext:
     allowed_scopes: frozenset[str]
     progress_scope: tuple[str, ...] = ()
     agent_role: str | None = None
+    profile_claim_ids: tuple[str, ...] = ()
+    profile_claim_types: tuple[str, ...] = ()
     tool_result_item_limit: int = 50
     tool_excerpt_char_limit: int = 2000
     trace_warning: Callable[[str], None] | None = field(

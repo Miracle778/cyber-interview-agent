@@ -133,6 +133,8 @@ class ClaimProposalResource(AgentModel):
     proposed_value: dict[str, Any]
     reason: str
     status: str
+    source_kind: str
+    source_ref: dict[str, Any]
     evidence: list[ProfileEvidenceResource]
     decided_at: str | None
     created_at: str
@@ -170,8 +172,16 @@ class ConfirmedProfileContextCommand(AgentModel):
         "job_target_analysis", "project_deep_dive", "interview_training"
     ]
     claim_types: list[
-        Literal["skill", "project", "experience", "education", "link"]
-    ] = Field(default_factory=list, max_length=5)
+        Literal[
+            "skill",
+            "project",
+            "experience",
+            "education",
+            "certification",
+            "achievement",
+            "link",
+        ]
+    ] = Field(default_factory=list, max_length=7)
     claim_ids: list[str] = Field(default_factory=list, max_length=50)
     sensitive_data_policy: Literal["exclude"] = "exclude"
     limit: int = Field(default=50, ge=1, le=50)
@@ -191,6 +201,133 @@ class ConfirmedProfileContextResource(AgentModel):
     purpose: str
     profile_version: str | None
     items: list[ConfirmedProfileContextItemResource]
+
+
+ProfileCardCategory = Literal[
+    "skill",
+    "project",
+    "experience",
+    "education",
+    "certification",
+    "achievement",
+    "link",
+    "summary",
+    "direction",
+    "highlight",
+]
+
+
+class ProfileRelationCommand(AgentModel):
+    relation_type: Literal["belongs_to", "used_in", "supported_by"]
+    target_claim_id: str
+
+
+class ProfileCardCommand(AgentModel):
+    workspace_id: str
+    category: ProfileCardCategory
+    value: dict[str, Any]
+    expected_version: int = Field(ge=0)
+    relations: list[ProfileRelationCommand] = Field(
+        default_factory=list, max_length=100
+    )
+
+
+class ProfileCardDeleteCommand(AgentModel):
+    workspace_id: str
+    expected_version: int = Field(ge=1)
+
+
+class ProfileCardRestoreCommand(ProfileCardDeleteCommand):
+    source_version_id: str
+
+
+class ProfilePresentationCommand(AgentModel):
+    workspace_id: str
+    summary_claim_id: str | None = None
+    primary_direction_claim_id: str | None = None
+    featured_claim_ids: list[str] = Field(default_factory=list, max_length=5)
+    expected_version: int = Field(ge=0)
+
+
+class ProfileSourceSummaryResource(AgentModel):
+    source_kind: str
+    label: str
+    status: str
+
+
+class ProfileSourceResource(ProfileSourceSummaryResource):
+    id: str
+    claim_version_id: str
+    source_ref: dict[str, Any]
+    created_at: str
+
+
+class ProfileCardReferenceResource(AgentModel):
+    claim_id: str
+    claim_type: str
+    title: str
+
+
+class UnifiedProfileCardResource(AgentModel):
+    claim_id: str
+    claim_version_id: str
+    category: str
+    version: int
+    title: str
+    subtitle: str | None
+    value: dict[str, Any]
+    sources: list[ProfileSourceSummaryResource]
+    linked_to: list[ProfileCardReferenceResource]
+    used_in: list[ProfileCardReferenceResource]
+
+
+class ActionableProfileGapResource(AgentModel):
+    claim_id: str
+    category: str
+    field: str
+    message: str
+
+
+class UnifiedProfileResource(AgentModel):
+    workspace_id: str
+    profile_version: str | None
+    summary: UnifiedProfileCardResource | None
+    directions: list[UnifiedProfileCardResource]
+    primary_direction_claim_id: str | None
+    presentation_version: int
+    highlights: list[UnifiedProfileCardResource]
+    experiences: list[UnifiedProfileCardResource]
+    projects: list[UnifiedProfileCardResource]
+    skills: list[UnifiedProfileCardResource]
+    education: list[UnifiedProfileCardResource]
+    certifications: list[UnifiedProfileCardResource]
+    achievements: list[UnifiedProfileCardResource]
+    links: list[UnifiedProfileCardResource]
+    actionable_gaps: list[ActionableProfileGapResource]
+    pending_count: int
+    is_usable: bool
+
+
+class ProfileCardWriteResource(AgentModel):
+    claim_id: str
+    claim_version_id: str
+    category: str
+    version: int
+    status: str
+
+
+class ProfileCardDeleteResource(AgentModel):
+    claim_id: str
+    status: Literal["deleted"]
+
+
+class ProfilePresentationResource(AgentModel):
+    workspace_id: str
+    summary_claim_id: str | None
+    primary_direction_claim_id: str | None
+    featured_claim_ids: list[str]
+    version: int
+    updated_at: str
 
 
 class ClaimDecisionCommand(AgentModel):

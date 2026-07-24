@@ -99,6 +99,8 @@ export interface ProfileClaimProposal {
   proposedValue: Record<string, unknown>;
   reason: string;
   status: string;
+  sourceKind?: string;
+  sourceRef?: Record<string, unknown>;
   evidence: ProfileEvidence[];
   decidedAt: string | null;
   createdAt: string;
@@ -198,4 +200,93 @@ export interface ProfileActionPlan {
   canCancel: boolean;
   retryable: boolean;
   createdAt: string;
+}
+
+export type ProfileCardCategory =
+  | "summary"
+  | "direction"
+  | "highlight"
+  | "experience"
+  | "project"
+  | "skill"
+  | "education"
+  | "certification"
+  | "achievement"
+  | "link";
+
+export interface ProfileSourceSummary {
+  sourceKind: string;
+  label: string;
+  status: string;
+}
+
+export interface ProfileCardReference {
+  claimId: string;
+  claimType: string;
+  title: string;
+}
+
+export interface UnifiedProfileCard {
+  claimId: string;
+  claimVersionId: string;
+  category: ProfileCardCategory;
+  version: number;
+  title: string;
+  subtitle: string | null;
+  value: Record<string, unknown>;
+  sources: ProfileSourceSummary[];
+  linkedTo: ProfileCardReference[];
+  usedIn: ProfileCardReference[];
+}
+
+export interface ActionableProfileGap {
+  claimId: string;
+  category: ProfileCardCategory;
+  field: string;
+  message: string;
+}
+
+export interface UnifiedProfile {
+  workspaceId: string;
+  profileVersion: string | null;
+  summary: UnifiedProfileCard | null;
+  directions: UnifiedProfileCard[];
+  primaryDirectionClaimId: string | null;
+  presentationVersion: number;
+  highlights: UnifiedProfileCard[];
+  experiences: UnifiedProfileCard[];
+  projects: UnifiedProfileCard[];
+  skills: UnifiedProfileCard[];
+  education: UnifiedProfileCard[];
+  certifications: UnifiedProfileCard[];
+  achievements: UnifiedProfileCard[];
+  links: UnifiedProfileCard[];
+  actionableGaps: ActionableProfileGap[];
+  pendingCount: number;
+  isUsable: boolean;
+}
+
+export interface ProfileCardCommand {
+  workspaceId: string;
+  category: ProfileCardCategory;
+  value: Record<string, unknown>;
+  expectedVersion: number;
+  relations: { relationType: "belongs_to" | "used_in" | "supported_by"; targetClaimId: string }[];
+}
+
+export interface ProfileCardWriteResult {
+  claimId: string;
+  claimVersionId: string;
+  category: ProfileCardCategory;
+  version: number;
+  status: string;
+}
+
+export interface ProfilePresentation {
+  workspaceId: string;
+  summaryClaimId: string | null;
+  primaryDirectionClaimId: string | null;
+  featuredClaimIds: string[];
+  version: number;
+  updatedAt: string;
 }

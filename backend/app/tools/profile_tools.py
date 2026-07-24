@@ -349,6 +349,14 @@ def get_profile_claims(
         return denied
     snapshot = repository.profile_snapshot(context.workspace_id)
     limit = _limit(context)
+    selected_ids = set(context.profile_claim_ids)
+    selected_types = set(context.profile_claim_types)
+    scoped_claims = [
+        claim
+        for claim in snapshot.claims
+        if (not selected_ids or claim.claim_id in selected_ids)
+        and (not selected_types or claim.claim_type in selected_types)
+    ]
     items = [
         {
             "id": claim.claim_id,
@@ -359,10 +367,10 @@ def get_profile_claims(
             "supportStatus": claim.support_status,
             "evidenceIds": list(claim.evidence_ids[:limit]),
         }
-        for claim in snapshot.claims[:limit]
+        for claim in scoped_claims[:limit]
     ]
     return _envelope(
-        status="ok", items=items, truncated=len(snapshot.claims) > limit
+        status="ok", items=items, truncated=len(scoped_claims) > limit
     )
 
 
@@ -371,14 +379,21 @@ def get_profile_claim_evidence(
 ) -> dict[str, Any]:
     if denied := _authorized(context, "get_profile_claim_evidence"):
         return denied
+    if context.profile_claim_ids and claim_id not in context.profile_claim_ids:
+        return _error("profile_claim_outside_scope")
     row = repository.connection.execute(
-        "SELECT v.evidence_ids_json FROM profile_claims c "
+        "SELECT c.claim_type, v.evidence_ids_json FROM profile_claims c "
         "JOIN profile_claim_versions v ON v.id = c.current_confirmed_version_id "
         "WHERE c.id = ? AND c.workspace_id = ? AND v.status = 'confirmed'",
         (claim_id, context.workspace_id),
     ).fetchone()
     if row is None:
         return _error("profile_claim_not_found")
+    if (
+        context.profile_claim_types
+        and row["claim_type"] not in context.profile_claim_types
+    ):
+        return _error("profile_claim_outside_scope")
     evidence_ids = tuple(json.loads(row["evidence_ids_json"]))
     limit = _limit(context)
     refs: list[dict[str, Any]] = []

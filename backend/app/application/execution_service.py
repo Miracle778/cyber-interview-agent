@@ -1730,6 +1730,26 @@ class AgentExecutionService:
                 )
 
             response = _assistant_content(final_state)
+            if (
+                session.kind == "profile.manage"
+                and final_state.get("proposal_ids")
+                and not final_state.get("assessment_id")
+            ):
+                proposal_ids = [
+                    str(item) for item in final_state["proposal_ids"]
+                ]
+                self._repository.append_message(
+                    session.id,
+                    execution_id=execution.id,
+                    role="assistant",
+                    message_kind="proposal_card",
+                    content="画像更新建议已生成，等待你的确认。",
+                    payload={
+                        "proposalIds": proposal_ids,
+                        "count": len(proposal_ids),
+                        "source": "conversation",
+                    },
+                )
             if response:
                 self._repository.append_message(
                     session.id,

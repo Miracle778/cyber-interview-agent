@@ -1,7 +1,7 @@
 import { AlertTriangle, Archive, ArrowRight, Check, FilePlus2, FileText, LoaderCircle, RotateCcw, Trash2, Upload } from "lucide-react";
 import { Button } from "../../shared/ui/Button";
 import { ProfileStatusBadge } from "./ProfileStatusBadge";
-import { formatEvidenceLocator } from "./evidenceLocator";
+import { formatEvidencePosition, formatEvidenceTitle } from "./evidenceLocator";
 import { isUsefulResumeExcerpt, plainResumeExcerpt } from "./profilePresentation";
 import type { ProfileEvidence, ProfileMaterial, ProfileMaterialVersion, ProfileMaterialVersionDetail } from "./profileTypes";
 
@@ -54,7 +54,7 @@ export function ResumeVersions({ materials, versions, selectedMaterialId, select
   const material = materials.find((item) => item.id === selectedMaterialId) ?? materials[0] ?? null;
   const selectedIndex = versions.findIndex((item) => item.id === selectedVersionId);
   const failed = detail && (detail.processingStatus === "parse_failed" || detail.processingStatus === "extraction_failed") ? failureCopy(detail) : null;
-  const previewItems = detail?.evidencePage.items.filter((item) => isUsefulResumeExcerpt(item.excerpt)).slice(0, 5) ?? [];
+  const previewItems = detail?.evidencePage.items.filter((item) => isUsefulResumeExcerpt(item.excerpt)) ?? [];
 
   const versionActions = <>
     <dl><div><dt>当前版本</dt><dd>{detail ? `v${detail.versionNumber}` : "—"}</dd></div><div><dt>待确认要点</dt><dd>{detail?.proposalCounts.pending ?? 0}</dd></div><div><dt>原文片段</dt><dd>{detail?.evidencePage.total ?? 0}</dd></div></dl>
@@ -111,7 +111,7 @@ export function ResumeVersions({ materials, versions, selectedMaterialId, select
             </div>
           </section> : null}
           {failed ? <div className="profile-stage-error" role="alert"><AlertTriangle size={20} /><div><strong>{failed.title}</strong><p>{failed.reason}</p>{detail.execution?.errorCode ? <small>错误编号：{detail.execution.errorCode}</small> : null}</div><Button variant="secondary" loading={busy} onClick={() => onRetry(detail.id)}><RotateCcw size={16} />{failed.action}</Button></div> : null}
-          <section className="profile-document-preview" aria-label="简历内容预览"><header><strong>简历原文（敏感信息已隐藏）</strong><span>{detail.evidencePage.total} 个片段</span></header>{previewItems.length ? previewItems.map((item) => <button key={item.id} type="button" onClick={() => onOpenEvidence(item)}><span><strong>{String(item.locator.block ?? item.locator.section ?? "简历片段")}</strong><small>{formatEvidenceLocator(item.locator)}</small></span><p>{plainResumeExcerpt(item.excerpt)}</p><ArrowRight size={16} /></button>) : <div><FilePlus2 size={24} /><p>{detail.processingStatus === "ready" ? "这份简历暂时没有可展示的文本片段。" : "处理完成后将在这里显示简历原文片段。"}</p></div>}</section>
+          <section className="profile-document-preview" aria-label="简历内容预览"><header><strong>简历内容预览（点击查看完整内容）</strong><span>显示 {previewItems.length} / {detail.evidencePage.total} 个内容区块</span></header>{previewItems.length ? previewItems.map((item) => <button key={item.id} type="button" onClick={() => onOpenEvidence(item)}><span><strong>{formatEvidenceTitle(item.locator)}</strong><small>{formatEvidencePosition(item.locator) || "简历中的位置"}</small></span><p>{plainResumeExcerpt(item.excerpt)}</p><ArrowRight size={16} /></button>) : <div><FilePlus2 size={24} /><p>{detail.processingStatus === "ready" ? "这份简历暂时没有可展示的内容。" : "处理完成后将在这里显示简历内容预览。"}</p></div>}</section>
         </> : <div className="profile-detail-loading" role="status">正在读取版本详情…</div>}
       </main>
 

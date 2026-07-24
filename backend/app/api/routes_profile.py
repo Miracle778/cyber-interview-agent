@@ -9,7 +9,13 @@ from app.api.dependencies import get_agent_application
 from app.application.session_service import SessionBusyError
 from app.application.workspace_runtime import AgentApplication
 from app.schemas.agent import SessionResource
-from app.profile.errors import ProfileDeletionPlanConflict, ProfileIngestBusy
+from app.profile.errors import (
+    ProfileClaimNotFound,
+    ProfileClaimVersionConflict,
+    ProfileDeletionPlanConflict,
+    ProfileIngestBusy,
+    ProfileValueInvalid,
+)
 from app.profile.models import (
     ClaimDecisionResult,
     ClaimProposalRecord,
@@ -20,6 +26,7 @@ from app.profile.models import (
     ProfileActionPlanRecord,
     ProfileMaterialRecord,
     ProfileMaterialVersionRecord,
+    ProfileRelationSpec,
 )
 from app.profile.service import MaterialUploadResult, ProfileService
 from app.profile.storage import MAX_MATERIAL_BYTES
@@ -40,6 +47,7 @@ from app.schemas.profile import (
     ConfirmedProfileContextCommand,
     ConfirmedProfileContextItemResource,
     ConfirmedProfileContextResource,
+    ActionableProfileGapResource,
     DeletionItemReceiptResource,
     EvidencePageResource,
     MaterialActionCommand,
@@ -59,6 +67,18 @@ from app.schemas.profile import (
     ProfileActionPlanResource,
     ProfileActionPlanRetryCommand,
     ProfileAssessmentResource,
+    ProfileCardCommand,
+    ProfileCardDeleteCommand,
+    ProfileCardDeleteResource,
+    ProfileCardReferenceResource,
+    ProfileCardRestoreCommand,
+    ProfileCardWriteResource,
+    ProfilePresentationCommand,
+    ProfilePresentationResource,
+    ProfileSourceResource,
+    ProfileSourceSummaryResource,
+    UnifiedProfileCardResource,
+    UnifiedProfileResource,
     ProposalCountsResource,
     RetryMaterialVersionCommand,
     SetPrimaryMaterialCommand,
@@ -93,6 +113,197 @@ def list_profile_sessions(
     application: AgentApplication = Depends(get_agent_application),
 ):
     return application.list_profile_sessions(workspace_id)
+
+
+@router.get(
+    "/api/workspaces/{workspace_id}/profile",
+    response_model=UnifiedProfileResource,
+)
+def get_unified_profile(
+    workspace_id: str,
+    application: AgentApplication = Depends(get_agent_application),
+) -> UnifiedProfileResource:
+    return _unified_profile_resource(application.profile(workspace_id).unified_profile())
+
+
+@router.post(
+    "/api/workspaces/{workspace_id}/profile/cards",
+    response_model=ProfileCardWriteResource,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_profile_card(
+    workspace_id: str,
+    command: ProfileCardCommand,
+    idempotency_key: Annotated[
+        str, Header(alias="Idempotency-Key", min_length=8, max_length=200)
+    ],
+    application: AgentApplication = Depends(get_agent_application),
+) -> ProfileCardWriteResource:
+    if command.workspace_id != workspace_id:
+        raise ProfileClaimNotFound("workspace")
+    if command.expected_version != 0:
+        raise ProfileClaimVersionConflict("new profile card expects version zero")
+    version = application.profile(workspace_id).create_profile_card(
+        claim_type=command.category,
+        value=command.value,
+        command_id=idempotency_key,
+        relations=_relation_specs(command),
+    )
+    return _card_write_resource(version, command.category)
+
+
+@router.patch(
+    "/api/profile/cards/{claim_id}",
+    response_model=ProfileCardWriteResource,
+)
+def update_profile_card(
+    claim_id: str,
+    command: ProfileCardCommand,
+    idempotency_key: Annotated[
+        str, Header(alias="Idempotency-Key", min_length=8, max_length=200)
+    ],
+    application: AgentApplication = Depends(get_agent_application),
+) -> ProfileCardWriteResource:
+    service = application.profile(command.workspace_id)
+    claim = service.repository.get_claim(claim_id)
+    if claim.workspace_id != command.workspace_id:
+        raise ProfileClaimNotFound(claim_id)
+    if claim.claim_type != command.category:
+        raise ProfileValueInvalid("profile card category cannot change")
+    version = service.update_profile_card(
+        claim_id,
+        value=command.value,
+        expected_version=command.expected_version,
+        command_id=idempotency_key,
+        relations=_relation_specs(command),
+    )
+    return _card_write_resource(version, claim.claim_type)
+
+
+@router.delete(
+    "/api/profile/cards/{claim_id}",
+    response_model=ProfileCardDeleteResource,
+)
+def delete_profile_card(
+    claim_id: str,
+    command: ProfileCardDeleteCommand,
+    idempotency_key: Annotated[
+        str, Header(alias="Idempotency-Key", min_length=8, max_length=200)
+    ],
+    application: AgentApplication = Depends(get_agent_application),
+) -> ProfileCardDeleteResource:
+    application.profile(command.workspace_id).delete_profile_card(
+        claim_id,
+        expected_version=command.expected_version,
+        command_id=idempotency_key,
+    )
+    return ProfileCardDeleteResource(claim_id=claim_id, status="deleted")
+
+
+@router.get(
+    "/api/profile/cards/{claim_id}/versions",
+    response_model=list[ClaimVersionResource],
+)
+def list_profile_card_versions(
+    claim_id: str,
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    application: AgentApplication = Depends(get_agent_application),
+) -> list[ClaimVersionResource]:
+    service = application.profile(workspace_id)
+    claim = service.repository.get_claim(claim_id)
+    if claim.workspace_id != workspace_id:
+        raise ProfileClaimNotFound(claim_id)
+    return [
+        _claim_version_resource(item)
+        for item in service.repository.list_claim_versions(claim_id)
+    ]
+
+
+@router.post(
+    "/api/profile/cards/{claim_id}/restore",
+    response_model=ProfileCardWriteResource,
+)
+def restore_profile_card_version(
+    claim_id: str,
+    command: ProfileCardRestoreCommand,
+    idempotency_key: Annotated[
+        str, Header(alias="Idempotency-Key", min_length=8, max_length=200)
+    ],
+    application: AgentApplication = Depends(get_agent_application),
+) -> ProfileCardWriteResource:
+    service = application.profile(command.workspace_id)
+    claim = service.repository.get_claim(claim_id)
+    if claim.workspace_id != command.workspace_id:
+        raise ProfileClaimNotFound(claim_id)
+    version = service.restore_profile_card_version(
+        claim_id,
+        command.source_version_id,
+        expected_version=command.expected_version,
+        command_id=idempotency_key,
+    )
+    return _card_write_resource(version, claim.claim_type)
+
+
+@router.get(
+    "/api/profile/cards/{claim_id}/sources",
+    response_model=list[ProfileSourceResource],
+)
+def list_profile_card_sources(
+    claim_id: str,
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    application: AgentApplication = Depends(get_agent_application),
+) -> list[ProfileSourceResource]:
+    service = application.profile(workspace_id)
+    claim = service.repository.get_claim(claim_id)
+    if claim.workspace_id != workspace_id:
+        raise ProfileClaimNotFound(claim_id)
+    if claim.current_confirmed_version_id is None:
+        return []
+    return [
+        ProfileSourceResource(
+            id=item.id,
+            claim_version_id=item.claim_version_id,
+            source_kind=item.source_kind,
+            label=_source_label(item.source_kind, item.status),
+            source_ref=item.source_ref,
+            status=item.status,
+            created_at=item.created_at,
+        )
+        for item in service.repository.list_claim_sources(
+            claim.current_confirmed_version_id
+        )
+    ]
+
+
+@router.patch(
+    "/api/workspaces/{workspace_id}/profile/presentation",
+    response_model=ProfilePresentationResource,
+)
+def update_profile_presentation(
+    workspace_id: str,
+    command: ProfilePresentationCommand,
+    idempotency_key: Annotated[
+        str, Header(alias="Idempotency-Key", min_length=8, max_length=200)
+    ],
+    application: AgentApplication = Depends(get_agent_application),
+) -> ProfilePresentationResource:
+    if command.workspace_id != workspace_id:
+        raise ProfileClaimNotFound("workspace")
+    presentation = application.profile(workspace_id).update_profile_presentation(
+        summary_claim_id=command.summary_claim_id,
+        primary_direction_claim_id=command.primary_direction_claim_id,
+        featured_claim_ids=tuple(command.featured_claim_ids),
+        expected_version=command.expected_version,
+        command_id=idempotency_key,
+    )
+    return ProfilePresentationResource(
+        workspace_id=presentation.workspace_id,
+        summary_claim_id=presentation.summary_claim_id,
+        primary_direction_claim_id=presentation.primary_direction_claim_id,
+        featured_claim_ids=list(presentation.featured_claim_ids),
+        version=presentation.version,
+        updated_at=presentation.updated_at,
+    )
 
 
 @router.get(
@@ -667,6 +878,111 @@ def _accepted_upload(result: MaterialUploadResult) -> AcceptedMaterialUploadReso
     )
 
 
+def _relation_specs(
+    command: ProfileCardCommand,
+) -> tuple[ProfileRelationSpec, ...]:
+    return tuple(
+        ProfileRelationSpec(
+            relation_type=item.relation_type,
+            target_claim_id=item.target_claim_id,
+        )
+        for item in command.relations
+    )
+
+
+def _card_write_resource(
+    version: ProfileClaimVersionRecord, category: str
+) -> ProfileCardWriteResource:
+    return ProfileCardWriteResource(
+        claim_id=version.claim_id,
+        claim_version_id=version.id,
+        category=category,
+        version=version.version,
+        status=version.status,
+    )
+
+
+def _unified_profile_resource(profile) -> UnifiedProfileResource:
+    return UnifiedProfileResource(
+        workspace_id=profile.workspace_id,
+        profile_version=profile.profile_version,
+        summary=(
+            None if profile.summary is None else _unified_card_resource(profile.summary)
+        ),
+        directions=[_unified_card_resource(item) for item in profile.directions],
+        primary_direction_claim_id=profile.primary_direction_claim_id,
+        presentation_version=profile.presentation_version,
+        highlights=[_unified_card_resource(item) for item in profile.highlights],
+        experiences=[_unified_card_resource(item) for item in profile.experiences],
+        projects=[_unified_card_resource(item) for item in profile.projects],
+        skills=[_unified_card_resource(item) for item in profile.skills],
+        education=[_unified_card_resource(item) for item in profile.education],
+        certifications=[
+            _unified_card_resource(item) for item in profile.certifications
+        ],
+        achievements=[_unified_card_resource(item) for item in profile.achievements],
+        links=[_unified_card_resource(item) for item in profile.links],
+        actionable_gaps=[
+            ActionableProfileGapResource(
+                claim_id=item.claim_id,
+                category=item.claim_type,
+                field=item.field,
+                message=item.message,
+            )
+            for item in profile.actionable_gaps
+        ],
+        pending_count=profile.pending_count,
+        is_usable=profile.is_usable,
+    )
+
+
+def _unified_card_resource(card) -> UnifiedProfileCardResource:
+    return UnifiedProfileCardResource(
+        claim_id=card.claim_id,
+        claim_version_id=card.claim_version_id,
+        category=card.claim_type,
+        version=card.version,
+        title=card.title,
+        subtitle=card.subtitle,
+        value=card.value,
+        sources=[
+            ProfileSourceSummaryResource(
+                source_kind=item.source_kind,
+                label=item.label,
+                status=item.status,
+            )
+            for item in card.sources
+        ],
+        linked_to=[
+            ProfileCardReferenceResource(
+                claim_id=item.claim_id,
+                claim_type=item.claim_type,
+                title=item.title,
+            )
+            for item in card.linked_to
+        ],
+        used_in=[
+            ProfileCardReferenceResource(
+                claim_id=item.claim_id,
+                claim_type=item.claim_type,
+                title=item.title,
+            )
+            for item in card.used_in
+        ],
+    )
+
+
+def _source_label(source_kind: str, source_status: str) -> str:
+    if source_status == "source_deleted":
+        return "原来源已删除，本人保留"
+    return {
+        "resume_extraction": "简历提取",
+        "user_input": "本人补充",
+        "conversation": "画像助手对话",
+        "agent_inference": "系统归纳",
+    }.get(source_kind, "其他来源")
+
+
 def _material_resource(
     service: ProfileService, material: ProfileMaterialRecord
 ) -> ProfileMaterialResource:
@@ -807,6 +1123,8 @@ def _proposal_resource(
         proposed_value=proposal.proposed_value,
         reason=proposal.reason,
         status=proposal.status,
+        source_kind=proposal.source_kind,
+        source_ref=proposal.source_ref,
         evidence=[
             _evidence_resource(service.repository.get_evidence(evidence_id))
             for evidence_id in proposal.evidence_ids

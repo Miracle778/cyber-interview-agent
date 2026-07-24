@@ -6,6 +6,7 @@ import { ProfileAgentWorkspace } from "./ProfileAgentWorkspace";
 const mocks = vi.hoisted(() => ({
   listSessions: vi.fn(),
   getSession: vi.fn(),
+  getUnifiedProfile: vi.fn(),
   deleteSession: vi.fn(),
   live: {
     status: "disconnected",
@@ -16,7 +17,7 @@ const mocks = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("./profileApi", () => ({ listProfileSessions: mocks.listSessions, createProfileSession: vi.fn() }));
+vi.mock("./profileApi", () => ({ listProfileSessions: mocks.listSessions, createProfileSession: vi.fn(), getUnifiedProfile: mocks.getUnifiedProfile }));
 vi.mock("../agent/agentApi", () => ({
   getAgentSession: mocks.getSession,
   startAgentExecution: vi.fn(),
@@ -35,8 +36,15 @@ describe("ProfileAgentWorkspace", () => {
     mocks.listSessions.mockReset();
     mocks.getSession.mockReset();
     mocks.deleteSession.mockReset();
+    mocks.getUnifiedProfile.mockReset();
     mocks.listSessions.mockResolvedValue([]);
     mocks.deleteSession.mockResolvedValue(undefined);
+    mocks.getUnifiedProfile.mockResolvedValue({
+      workspaceId: "w1", profileVersion: null, summary: null, directions: [],
+      primaryDirectionClaimId: null, presentationVersion: 0, highlights: [],
+      experiences: [], projects: [], skills: [], education: [], certifications: [],
+      achievements: [], links: [], actionableGaps: [], pendingCount: 0, isUsable: false,
+    });
     mocks.live.status = "disconnected";
     mocks.live.events = [];
     mocks.live.streamingByExecution = {};
@@ -46,7 +54,7 @@ describe("ProfileAgentWorkspace", () => {
   it("offers a clear empty state and one primary start action", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><ProfileAgentWorkspace workspaceId="w1" /></QueryClientProvider>);
-    expect(await screen.findByRole("heading", { name: "开始使用简历助手" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "开始使用画像助手" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "开始新对话" })).toBeEnabled();
   });
 
@@ -76,7 +84,7 @@ describe("ProfileAgentWorkspace", () => {
     render(<QueryClientProvider client={client}><ProfileAgentWorkspace workspaceId="w1" /></QueryClientProvider>);
 
     const composer = await screen.findByPlaceholderText("例如：检查我的项目经历是否缺少职责、方案或结果");
-    expect(screen.getByRole("button", { name: "简历助手对话" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "画像助手对话" })).toBeInTheDocument();
     expect(screen.queryByText("个人画像对话")).toBeNull();
     expect(screen.queryByRole("button", { name: "停止" })).not.toBeInTheDocument();
     expect(composer).toBeEnabled();
@@ -105,7 +113,7 @@ describe("ProfileAgentWorkspace", () => {
     fireEvent.click(await screen.findByRole("button", { name: "永久删除会话 旧简历讨论" }));
 
     await waitFor(() => expect(mocks.deleteSession).toHaveBeenCalledWith("s-old", true));
-    expect(await screen.findByRole("heading", { name: "开始使用简历助手" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "开始使用画像助手" })).toBeInTheDocument();
   });
 
   it("does not render completed streaming text beside the persisted assistant message", async () => {

@@ -31,8 +31,8 @@ class EvidenceGroundedExtractionAgent:
         self.invalid = invalid
         self.calls = []
 
-    async def extract(self, *, evidence, context, config):
-        self.calls.append((evidence, context, config))
+    async def extract(self, *, evidence, confirmed_profile, context, config):
+        self.calls.append((evidence, confirmed_profile, context, config))
         evidence_id = "unknown-evidence" if self.invalid else evidence[0]["id"]
         return ProfileExtractionOutput(
             candidates=[
@@ -48,7 +48,7 @@ class EvidenceGroundedExtractionAgent:
 
 
 class DuplicateAliasExtractionAgent:
-    async def extract(self, *, evidence, context, config):
+    async def extract(self, *, evidence, confirmed_profile, context, config):
         evidence_id = evidence[0]["id"]
         return ProfileExtractionOutput(
             candidates=[

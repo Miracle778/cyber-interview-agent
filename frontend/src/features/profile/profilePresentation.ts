@@ -51,3 +51,11 @@ export function userFacingPlanSummary(value: string) {
     .replace(/\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/gi, "一处简历原文")
     .replace(/\s+([，。])/g, "$1");
 }
+
+export function userFacingProfileAnswer(value: string) {
+  return userFacingClaimReason(value)
+    .replace(/`?end_date`?\s*:\s*`?null`?/gi, "结束时间未填写")
+    .replace(/\bend_date\b/gi, "结束时间")
+    .replace(/`?null`?/gi, "未填写")
+    .replace(/`([^`]+)`/g, "$1");
+}

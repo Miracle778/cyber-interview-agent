@@ -5,8 +5,29 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
-ClaimCategory = Literal["skill", "project", "experience", "education", "link"]
+ClaimCategory = Literal[
+    "skill",
+    "project",
+    "experience",
+    "education",
+    "certification",
+    "achievement",
+    "link",
+]
 ProposalType = Literal["create", "update", "reject"]
+ExtractionSourceKind = Literal["resume_extraction", "agent_inference"]
+ProfileCardCategory = Literal[
+    "skill",
+    "project",
+    "experience",
+    "education",
+    "certification",
+    "achievement",
+    "link",
+    "summary",
+    "direction",
+    "highlight",
+]
 
 
 class _StrictContract(BaseModel):
@@ -17,15 +38,18 @@ class ProfileClaimCandidate(_StrictContract):
     category: ClaimCategory = Field(
         description=(
             "固定分类：skill 技能、project 项目经历、experience 工作经历、"
-            "education 教育经历、link 个人链接"
+            "education 教育经历、certification 认证、achievement 成果、"
+            "link 个人链接"
         )
     )
     value: dict[str, object] = Field(
         description=(
-            "分类字段：skill 使用 name/description；project 使用 "
-            "name/description/tech_stack；experience 使用 "
-            "organization/role/period/description；education 使用 "
-            "institution/degree/field/period；link 使用 label/url"
+            "分类字段：skill 使用 name/notes；project 使用 name/period/"
+            "background/role/responsibilities/key_actions/tech_stack/results；"
+            "experience 使用 organization/title/period/location/"
+            "responsibilities/achievements；education 使用 school/degree/major/"
+            "period/highlights；certification 使用 name/issuer/issued_at；"
+            "achievement 使用 title/description/date；link 使用 label/url"
         )
     )
     evidence_ids: list[str] = Field(min_length=1, max_length=50)
@@ -35,6 +59,7 @@ class ProfileClaimCandidate(_StrictContract):
         description="仅表示从所引 Evidence 中提取此候选的把握，不表示用户已确认",
     )
     rationale: str = Field(min_length=1, max_length=1000)
+    source_kind: ExtractionSourceKind = "resume_extraction"
     proposal_type: ProposalType = "create"
     target_claim_id: str | None = Field(default=None, max_length=128)
     base_claim_version_id: str | None = Field(default=None, max_length=128)
@@ -42,6 +67,21 @@ class ProfileClaimCandidate(_StrictContract):
 
 class ProfileExtractionOutput(_StrictContract):
     candidates: list[ProfileClaimCandidate] = Field(default_factory=list, max_length=50)
+
+
+class ProfileConversationProposal(_StrictContract):
+    category: ProfileCardCategory
+    value: dict[str, object]
+    proposal_type: Literal["create", "update"] = "create"
+    target_claim_id: str | None = Field(default=None, max_length=128)
+    rationale: str = Field(min_length=1, max_length=1000)
+
+
+class ProfileConversationProposalOutput(_StrictContract):
+    summary: str = Field(min_length=1, max_length=1000)
+    proposals: list[ProfileConversationProposal] = Field(
+        default_factory=list, max_length=20
+    )
 
 
 class ProfileAssessmentRecommendation(_StrictContract):

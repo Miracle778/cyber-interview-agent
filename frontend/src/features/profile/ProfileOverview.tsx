@@ -1,5 +1,6 @@
 import { ArrowRight, BriefcaseBusiness, Check, FileText, LockKeyhole, Upload } from "lucide-react";
 import { Button } from "../../shared/ui/Button";
+import { formatEvidencePosition, formatEvidenceTitle } from "./evidenceLocator";
 import { ProfileStatusBadge } from "./ProfileStatusBadge";
 import { isUsefulResumeExcerpt, plainResumeExcerpt } from "./profilePresentation";
 import type { ProfileMaterial, ProfileMaterialVersionDetail } from "./profileTypes";
@@ -28,8 +29,8 @@ export function ProfileOverview({ material, detail, onImport, onOpenVersions, on
         </section>
 
         <section className="profile-confirmed-card" aria-labelledby="confirmed-profile-title">
-          <header><div><span>系统已整理</span><h2 id="confirmed-profile-title">简历中的重要信息</h2></div><span>{detail?.evidencePage.total ?? 0} 个原文片段</span></header>
-          {usefulEvidence.length ? <div className="profile-evidence-preview-list">{usefulEvidence.slice(0, 4).map((item) => <button type="button" key={item.id} onClick={() => onOpenEvidence(item.id)}><div><strong>{String(item.locator.block ?? item.locator.section ?? "简历片段")}</strong><p>{plainResumeExcerpt(item.excerpt)}</p></div><span>{item.locator.page ? `第 ${String(item.locator.page)} 页` : "查看原文"}<ArrowRight size={15} /></span></button>)}</div> : <div className="profile-inline-empty"><FileText size={22} /><div><strong>{processingFailed ? "简历处理未完成" : detail?.processingStatus === "ready" ? "暂时没有可展示的信息" : "正在整理简历"}</strong><p>{processingFailed ? "原文件和已完成步骤都已保留，请到简历与版本查看原因并重试。" : detail?.processingStatus === "ready" ? "导入内容更完整的简历后，系统会继续整理。" : "处理完成后，你可以确认哪些信息准确。"}</p>{processingFailed ? <button className="profile-inline-link" type="button" onClick={onOpenVersions}>查看处理详情</button> : null}</div></div>}
+          <header><div><span>内容预览</span><h2 id="confirmed-profile-title">简历中的主要内容</h2></div><span>显示 {Math.min(usefulEvidence.length, 4)} / {detail?.evidencePage.total ?? 0} 个内容区块</span></header>
+          {usefulEvidence.length ? <div className="profile-evidence-preview-list">{usefulEvidence.slice(0, 4).map((item) => <button type="button" key={item.id} onClick={() => onOpenEvidence(item.id)}><div><strong>{formatEvidenceTitle(item.locator)}</strong><p>{plainResumeExcerpt(item.excerpt)}</p></div><span>{formatEvidencePosition(item.locator) || "查看完整内容"}<ArrowRight size={15} /></span></button>)}</div> : <div className="profile-inline-empty"><FileText size={22} /><div><strong>{processingFailed ? "简历处理未完成" : detail?.processingStatus === "ready" ? "暂时没有可展示的信息" : "正在整理简历"}</strong><p>{processingFailed ? "原文件和已完成步骤都已保留，请到简历与版本查看原因并重试。" : detail?.processingStatus === "ready" ? "导入内容更完整的简历后，系统会继续整理。" : "处理完成后，你可以确认哪些信息准确。"}</p>{processingFailed ? <button className="profile-inline-link" type="button" onClick={onOpenVersions}>查看处理详情</button> : null}</div></div>}
         </section>
 
         <section className="profile-privacy-card"><span><LockKeyhole size={19} /></span><div><strong>只有确认过的信息才会用于后续准备</strong><p>创建求职目标后，系统会按你选择的岗位和资料范围进行分析；待确认、已拒绝和敏感信息不会自动使用。</p></div></section>
