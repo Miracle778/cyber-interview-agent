@@ -116,23 +116,25 @@ export function ProfileCardEditor({
   }
 
   return <div className="profile-editor-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
-    <section className="profile-card-editor" role="dialog" aria-modal="true" aria-labelledby="profile-card-editor-title">
+    <section className="profile-card-editor" data-category={category} role="dialog" aria-modal="true" aria-labelledby="profile-card-editor-title">
       <header>
         <div><span>{card ? "编辑资料" : "补充资料"}</span><h2 id="profile-card-editor-title">{card ? `编辑${categoryLabels[category]}` : "添加到个人画像"}</h2></div>
         <button type="button" aria-label="关闭编辑" onClick={onCancel}><X size={20} /></button>
       </header>
       <form onSubmit={(event) => void submit(event)}>
-        {!card ? <label className="profile-card-editor__category">添加什么
-          <select value={category} onChange={(event) => changeCategory(event.target.value as ProfileCardCategory)}>
-            {(["project", "experience", "skill", "education", "certification", "achievement", "direction", "highlight", "summary", "link"] as ProfileCardCategory[]).map((item) => <option key={item} value={item}>{categoryLabels[item]}</option>)}
-          </select>
-        </label> : null}
-        <div className="profile-card-editor__fields">{specs.map((field) => <label key={field.key}>
-          <span>{field.label}{field.required ? <em>必填</em> : null}</span>
-          {field.multiline ? <textarea rows={field.list ? 4 : 3} value={draft[field.key] ?? ""} placeholder={field.placeholder} onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))} />
-            : <input type={field.type ?? "text"} value={draft[field.key] ?? ""} placeholder={field.placeholder} onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))} />}
-        </label>)}</div>
-        {validation || error ? <div className="profile-card-editor__error" role="alert"><AlertCircle size={16} />{validation ?? error}</div> : null}
+        <div className="profile-card-editor__body">
+          {!card ? <label className="profile-card-editor__category">添加什么
+            <select value={category} onChange={(event) => changeCategory(event.target.value as ProfileCardCategory)}>
+              {(["project", "experience", "skill", "education", "certification", "achievement", "direction", "highlight", "summary", "link"] as ProfileCardCategory[]).map((item) => <option key={item} value={item}>{categoryLabels[item]}</option>)}
+            </select>
+          </label> : null}
+          <div className="profile-card-editor__fields">{specs.map((field) => <label key={field.key} data-field={field.key} data-multiline={field.multiline || undefined}>
+            <span>{field.label}{field.required ? <em>必填</em> : null}</span>
+            {field.multiline ? <textarea rows={field.list ? 4 : 3} value={draft[field.key] ?? ""} placeholder={field.placeholder} onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))} />
+              : <input type={field.type ?? "text"} value={draft[field.key] ?? ""} placeholder={field.placeholder} onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))} />}
+          </label>)}</div>
+          {validation || error ? <div className="profile-card-editor__error" role="alert"><AlertCircle size={16} />{validation ?? error}</div> : null}
+        </div>
         <footer>
           {card && onDelete ? <Button type="button" variant="ghost" className="profile-card-editor__delete" disabled={busy} onClick={() => void onDelete()}><Trash2 size={16} />删除这条资料</Button> : null}
           <Button type="button" variant="secondary" disabled={busy} onClick={onCancel}>取消</Button>

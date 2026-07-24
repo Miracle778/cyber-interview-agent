@@ -24,6 +24,7 @@ from app.profile.models import (
     CreatePublicationSelectionCommand,
     DecideProposalCommand,
     DeletionItemReceipt,
+    EvidenceRecord,
     MaterialDeletionPlanRecord,
     MaterialDeletionResult,
     ProfileMaterialRecord,
@@ -41,6 +42,7 @@ from app.profile.projection import (
     validate_profile_value,
 )
 from app.profile.repository import ProfileRepository
+from app.profile.privacy import redact_profile_text
 from app.profile.storage import MaterialStorage
 from app.profile.errors import (
     ProfileActionPlanInvalid,
@@ -52,6 +54,7 @@ from app.profile.errors import (
     ProfileDomainError,
     ProfileDeletionPlanConflict,
     ProfileDeletionPlanExpired,
+    ProfileDocumentNotReady,
     ProfileMaterialNotFound,
     ProfileMaterialVersionConflict,
     ProfileProposalNotFound,
@@ -107,6 +110,14 @@ class MaterialUploadResult:
     execution_id: str
     session_id: str
     accepted_processing_status: str
+
+
+@dataclass(frozen=True, slots=True)
+class MaterialDocumentResult:
+    version: ProfileMaterialVersionRecord
+    original_text: str
+    redacted_text: str
+    evidence: tuple[EvidenceRecord, ...]
 
 
 class ProfileService:
@@ -420,6 +431,19 @@ class ProfileService:
         self, version_id: str
     ) -> ProfileMaterialVersionRecord:
         return self._require_workspace_version(version_id)
+
+    def read_material_document(self, version_id: str) -> MaterialDocumentResult:
+        version = self._require_workspace_version(version_id)
+        if not version.text_ref:
+            raise ProfileDocumentNotReady(version_id)
+        original_text = self.storage.read_text(version.text_ref)
+        redacted_text, _ = redact_profile_text(original_text)
+        return MaterialDocumentResult(
+            version=version,
+            original_text=original_text,
+            redacted_text=redacted_text,
+            evidence=self.repository.list_evidence_for_version(version.id),
+        )
 
     def latest_execution(self, version_id: str):
         self._require_workspace_version(version_id)

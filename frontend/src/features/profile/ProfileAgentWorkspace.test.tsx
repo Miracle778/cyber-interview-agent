@@ -4,10 +4,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProfileAgentWorkspace } from "./ProfileAgentWorkspace";
 
 const mocks = vi.hoisted(() => ({
+  activeSessions: [] as Array<Record<string, unknown>>,
+  archivedSessions: [] as Array<Record<string, unknown>>,
   listSessions: vi.fn(),
+  createSession: vi.fn(),
   getSession: vi.fn(),
   getUnifiedProfile: vi.fn(),
   deleteSession: vi.fn(),
+  renameSession: vi.fn(),
+  restoreSession: vi.fn(),
+  startExecution: vi.fn(),
   live: {
     status: "disconnected",
     events: [] as Array<Record<string, unknown>>,
@@ -17,180 +23,111 @@ const mocks = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("./profileApi", () => ({ listProfileSessions: mocks.listSessions, createProfileSession: vi.fn(), getUnifiedProfile: mocks.getUnifiedProfile }));
+vi.mock("./profileApi", () => ({
+  listProfileSessions: mocks.listSessions,
+  createProfileSession: mocks.createSession,
+  getUnifiedProfile: mocks.getUnifiedProfile,
+}));
 vi.mock("../agent/agentApi", () => ({
   getAgentSession: mocks.getSession,
-  startAgentExecution: vi.fn(),
+  startAgentExecution: mocks.startExecution,
   cancelAgentExecution: vi.fn(),
   deleteAgentSession: mocks.deleteSession,
+  renameAgentSession: mocks.renameSession,
+  restoreAgentSession: mocks.restoreSession,
 }));
 vi.mock("../agent/useAgentEvents", () => ({ useAgentEvents: () => mocks.live }));
+vi.mock("../settings/settingsApi", () => ({ listProviders: vi.fn().mockResolvedValue([]) }));
+
+function renderWorkspace() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={client}><ProfileAgentWorkspace workspaceId="w1" /></QueryClientProvider>);
+}
+
+function session(id = "s1", title = "个人画像对话") {
+  return { id, workspaceId: "w1", kind: "profile.manage", title, status: "active", createdAt: "2026-07-24T10:00:00Z", updatedAt: "2026-07-24T10:00:00Z", latestExecutionId: null };
+}
+
+function detail(overrides: Record<string, unknown> = {}) {
+  return {
+    ...session(),
+    messages: [],
+    executions: [],
+    currentAction: null,
+    latestWarning: null,
+    usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, callCount: 0, estimatedCount: 0 },
+    contextUsage: { currentTokens: 0, thresholdTokens: 1000, estimated: false },
+    latestExecution: null,
+    ...overrides,
+  };
+}
 
 describe("ProfileAgentWorkspace", () => {
-  afterEach(() => {
-    cleanup();
-    vi.restoreAllMocks();
-  });
+  afterEach(cleanup);
 
   beforeEach(() => {
-    mocks.listSessions.mockReset();
-    mocks.getSession.mockReset();
-    mocks.deleteSession.mockReset();
-    mocks.getUnifiedProfile.mockReset();
-    mocks.listSessions.mockResolvedValue([]);
-    mocks.deleteSession.mockResolvedValue(undefined);
+    vi.clearAllMocks();
+    mocks.activeSessions = [];
+    mocks.archivedSessions = [];
+    mocks.listSessions.mockImplementation((_workspaceId, _signal, deletedOnly = false) => Promise.resolve(deletedOnly ? mocks.archivedSessions : mocks.activeSessions));
     mocks.getUnifiedProfile.mockResolvedValue({
       workspaceId: "w1", profileVersion: null, summary: null, directions: [],
       primaryDirectionClaimId: null, presentationVersion: 0, highlights: [],
       experiences: [], projects: [], skills: [], education: [], certifications: [],
       achievements: [], links: [], actionableGaps: [], pendingCount: 0, isUsable: false,
     });
+    mocks.deleteSession.mockResolvedValue(undefined);
+    mocks.restoreSession.mockResolvedValue(session());
     mocks.live.status = "disconnected";
     mocks.live.events = [];
     mocks.live.streamingByExecution = {};
     mocks.live.executionStateById = {};
   });
 
-  it("offers a clear empty state and one primary start action", async () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<QueryClientProvider client={client}><ProfileAgentWorkspace workspaceId="w1" /></QueryClientProvider>);
-    expect(await screen.findByRole("heading", { name: "开始使用画像助手" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "开始新对话" })).toBeEnabled();
+  it("starts on a searchable conversation-record page", async () => {
+    renderWorkspace();
+    expect(await screen.findByRole("heading", { name: "会话记录" })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("搜索标题或最近消息")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "新建会话" })).toBeEnabled();
   });
 
-  it("lets durable interrupted state end stale SSE running UI", async () => {
-    mocks.listSessions.mockResolvedValue([{
-      id: "s1", workspaceId: "w1", kind: "profile.chat", title: "个人画像对话",
-      status: "active", createdAt: "now", updatedAt: "now", latestExecutionId: "r1",
-    }]);
-    mocks.getSession.mockResolvedValue({
-      id: "s1", workspaceId: "w1", kind: "profile.chat", title: "个人画像对话",
-      status: "interrupted", createdAt: "now", updatedAt: "now", latestExecutionId: "r1",
-      messages: [], executions: [], currentAction: null, latestWarning: null,
-      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, callCount: 1, estimatedCount: 0 },
-      contextUsage: { currentTokens: 0, thresholdTokens: 1000, estimated: false },
+  it("opens a selected conversation and lets durable terminal state beat stale SSE", async () => {
+    mocks.activeSessions = [session()];
+    mocks.getSession.mockResolvedValue(detail({
+      latestExecutionId: "r1",
       latestExecution: {
         id: "r1", sessionId: "s1", status: "interrupted", resumeCount: 0,
         errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: "now",
       },
-    });
+    }));
     mocks.live.executionStateById = { r1: "running" };
-    mocks.live.events = [{
-      id: 1, type: "agent.tool.started", sessionId: "s1", executionId: "r1",
-      timestamp: "now", payload: { toolCallId: "c1", toolName: "search_personal_materials" },
-    }];
 
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<QueryClientProvider client={client}><ProfileAgentWorkspace workspaceId="w1" /></QueryClientProvider>);
+    renderWorkspace();
+    fireEvent.click(await screen.findByRole("button", { name: /画像助手对话/ }));
 
-    const composer = await screen.findByPlaceholderText("例如：检查我的项目经历是否缺少职责、方案或结果");
-    expect(screen.getByRole("button", { name: "画像助手对话" })).toBeInTheDocument();
-    expect(screen.queryByText("个人画像对话")).toBeNull();
+    expect(await screen.findByPlaceholderText("例如：检查我的项目经历是否缺少职责、方案或结果")).toBeEnabled();
+    expect(await screen.findAllByText("处理已中断")).toHaveLength(2);
     expect(screen.queryByRole("button", { name: "停止" })).not.toBeInTheDocument();
-    expect(composer).toBeEnabled();
-    fireEvent.change(composer, { target: { value: "继续" } });
-    expect(screen.getByRole("button", { name: "发送" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "返回会话记录" })).toBeEnabled();
   });
 
-  it("permanently deletes an old conversation without touching profile data", async () => {
-    mocks.listSessions.mockResolvedValue([{
-      id: "s-old", workspaceId: "w1", kind: "profile.chat", title: "旧简历讨论",
-      status: "active", createdAt: "now", updatedAt: "now", latestExecutionId: null,
-    }]);
-    mocks.getSession.mockResolvedValue({
-      id: "s-old", workspaceId: "w1", kind: "profile.chat", title: "旧简历讨论",
-      status: "active", createdAt: "now", updatedAt: "now", latestExecutionId: null,
-      messages: [], executions: [], currentAction: null, latestWarning: null,
-      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, callCount: 0, estimatedCount: 0 },
-      contextUsage: { currentTokens: 0, thresholdTokens: 1000, estimated: false },
-      latestExecution: null,
-    });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("archives from the record page instead of permanently deleting immediately", async () => {
+    mocks.activeSessions = [session("s-old", "旧简历讨论")];
+    renderWorkspace();
 
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<QueryClientProvider client={client}><ProfileAgentWorkspace workspaceId="w1" /></QueryClientProvider>);
+    fireEvent.click(await screen.findByRole("button", { name: "归档" }));
 
-    fireEvent.click(await screen.findByRole("button", { name: "永久删除会话 旧简历讨论" }));
-
-    await waitFor(() => expect(mocks.deleteSession).toHaveBeenCalledWith("s-old", true));
-    expect(await screen.findByRole("heading", { name: "开始使用画像助手" })).toBeInTheDocument();
+    await waitFor(() => expect(mocks.deleteSession).toHaveBeenCalledWith("s-old", false));
   });
 
-  it("does not render completed streaming text beside the persisted assistant message", async () => {
-    mocks.listSessions.mockResolvedValue([{
-      id: "s1", workspaceId: "w1", kind: "profile.chat", title: "简历助手对话",
-      status: "active", createdAt: "now", updatedAt: "now", latestExecutionId: "r1",
-    }]);
-    mocks.getSession.mockResolvedValue({
-      id: "s1", workspaceId: "w1", kind: "profile.chat", title: "简历助手对话",
-      status: "active", createdAt: "now", updatedAt: "now", latestExecutionId: "r1",
-      messages: [{ id: "m1", executionId: "r1", role: "assistant", content: "资料检查完成", createdAt: "now" }],
-      executions: [], currentAction: null, latestWarning: null,
-      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, callCount: 1, estimatedCount: 0 },
-      contextUsage: { currentTokens: 0, thresholdTokens: 1000, estimated: false },
-      latestExecution: {
-        id: "r1", sessionId: "s1", status: "completed", resumeCount: 0,
-        errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: "now",
-      },
-    });
-    mocks.live.streamingByExecution = { r1: { text: "资料检查完成", status: "completed" } };
+  it("fills a starter prompt without invoking the model", async () => {
+    mocks.activeSessions = [session()];
+    mocks.getSession.mockResolvedValue(detail());
+    renderWorkspace();
+    fireEvent.click(await screen.findByRole("button", { name: /画像助手对话/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "整理我的后端开发经历" }));
 
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<QueryClientProvider client={client}><ProfileAgentWorkspace workspaceId="w1" /></QueryClientProvider>);
-
-    expect(await screen.findAllByText("资料检查完成")).toHaveLength(1);
-  });
-
-  it("hides raw model chunks while a structured profile change is being planned", async () => {
-    mocks.listSessions.mockResolvedValue([{
-      id: "s1", workspaceId: "w1", kind: "profile.chat", title: "简历助手对话",
-      status: "active", createdAt: "now", updatedAt: "now", latestExecutionId: "r1",
-    }]);
-    mocks.getSession.mockResolvedValue({
-      id: "s1", workspaceId: "w1", kind: "profile.chat", title: "简历助手对话",
-      status: "active", createdAt: "now", updatedAt: "now", latestExecutionId: "r1",
-      messages: [{ id: "m1", executionId: "r1", role: "user", content: "把 Docker 熟练程度改为熟练", createdAt: "now" }],
-      executions: [], currentAction: null, latestWarning: null,
-      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, callCount: 1, estimatedCount: 0 },
-      contextUsage: { currentTokens: 0, thresholdTokens: 1000, estimated: false },
-      latestExecution: {
-        id: "r1", sessionId: "s1", status: "running", resumeCount: 0,
-        errorCode: null, errorMessage: null, createdAt: "now", startedAt: "now", finishedAt: null,
-      },
-    });
-    mocks.live.executionStateById = { r1: "running" };
-    mocks.live.streamingByExecution = { r1: { text: "内部 Claim ID 和 Evidence 分析", status: "running" } };
-
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<QueryClientProvider client={client}><ProfileAgentWorkspace workspaceId="w1" /></QueryClientProvider>);
-
-    expect(await screen.findByRole("status")).toHaveTextContent("正在整理可确认的结果");
-    expect(screen.queryByText(/内部 Claim ID/)).toBeNull();
-  });
-
-  it("refreshes session detail when a capped event list advances", async () => {
-    mocks.listSessions.mockResolvedValue([{
-      id: "s1", workspaceId: "w1", kind: "profile.chat", title: "简历助手对话",
-      status: "active", createdAt: "now", updatedAt: "now", latestExecutionId: "r1",
-    }]);
-    mocks.getSession.mockResolvedValue({
-      id: "s1", workspaceId: "w1", kind: "profile.chat", title: "简历助手对话",
-      status: "active", createdAt: "now", updatedAt: "now", latestExecutionId: "r1",
-      messages: [], executions: [], currentAction: null, latestWarning: null,
-      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, callCount: 0, estimatedCount: 0 },
-      contextUsage: { currentTokens: 0, thresholdTokens: 1000, estimated: false },
-      latestExecution: null,
-    });
-    mocks.live.events = [{ id: 100, type: "assistant.delta", sessionId: "s1", executionId: "r1", timestamp: "now", payload: { text: "处理中" } }];
-
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const view = render(<QueryClientProvider client={client}><ProfileAgentWorkspace workspaceId="w1" /></QueryClientProvider>);
-    await waitFor(() => expect(mocks.getSession).toHaveBeenCalled());
-    const callsBeforeAdvance = mocks.getSession.mock.calls.length;
-
-    mocks.live.events = [{ id: 101, type: "execution.completed", sessionId: "s1", executionId: "r1", timestamp: "now", payload: {} }];
-    view.rerender(<QueryClientProvider client={client}><ProfileAgentWorkspace workspaceId="w1" /></QueryClientProvider>);
-
-    await waitFor(() => expect(mocks.getSession.mock.calls.length).toBeGreaterThan(callsBeforeAdvance));
+    expect(screen.getByDisplayValue("整理我的后端开发经历")).toBeInTheDocument();
+    expect(mocks.startExecution).not.toHaveBeenCalled();
   });
 });

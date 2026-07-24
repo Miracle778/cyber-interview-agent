@@ -157,6 +157,64 @@ async def test_upload_list_and_paginated_version_detail_are_safe_and_idempotent(
 
 
 @pytest.mark.asyncio
+async def test_private_document_reader_returns_original_redacted_outline_and_download(
+    client: AsyncClient, application: AgentApplication
+) -> None:
+    async with client:
+        accepted = (await _upload(client, key="upload-document-reader")).json()
+        profile = application.profile("w1")
+        not_ready = await client.get(
+            f"/api/profile/material-versions/{accepted['versionId']}/document",
+            params={"workspaceId": "w1"},
+        )
+        original = "# Experience\n\nPhone 13800138000\n\nLed a team"
+        text_ref = profile.storage.write_text(
+            version_id=accepted["versionId"], text=original
+        )
+        profile.connection.execute(
+            "UPDATE profile_material_versions SET text_ref = ? WHERE id = ?",
+            (text_ref, accepted["versionId"]),
+        )
+        profile.connection.commit()
+        profile.repository.replace_version_evidence(
+            accepted["versionId"],
+            (
+                {
+                    "section": '{"heading":"Experience","lineEnd":5,"lineStart":1}',
+                    "start_offset": 0,
+                    "end_offset": len(original),
+                    "sanitized_text": "# Experience\n\nPhone [phone redacted]\n\nLed a team",
+                    "content_sha256": "a" * 64,
+                    "sensitivity": "sensitive",
+                },
+            ),
+        )
+        document = await client.get(
+            f"/api/profile/material-versions/{accepted['versionId']}/document",
+            params={"workspaceId": "w1"},
+        )
+        downloaded = await client.get(
+            f"/api/profile/material-versions/{accepted['versionId']}/file",
+            params={"workspaceId": "w1"},
+        )
+        forbidden = await client.get(
+            f"/api/profile/material-versions/{accepted['versionId']}/document",
+            params={"workspaceId": "w2"},
+        )
+
+    assert not_ready.status_code == 409
+    assert not_ready.json()["code"] == "profile_document_not_ready"
+    assert document.status_code == 200, document.text
+    body = document.json()
+    assert body["originalText"] == original
+    assert "13800138000" not in body["redactedText"]
+    assert body["outline"][0]["title"] == "Experience"
+    assert downloaded.content == b"# Experience\n\nLed a team"
+    assert "attachment" in downloaded.headers["content-disposition"]
+    assert forbidden.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_version_primary_archive_and_restore_use_optimistic_idempotent_writes(
     client: AsyncClient,
 ) -> None:

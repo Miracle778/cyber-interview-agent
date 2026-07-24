@@ -18,13 +18,14 @@ describe("ClaimReview", () => {
   afterEach(cleanup);
   beforeEach(() => { vi.clearAllMocks(); api.decideClaimProposal.mockResolvedValue({ proposalId: "p1", status: "accepted" }); });
 
-  it("filters the queue and exposes conflict, side-by-side diff and evidence navigation without color-only cues", async () => {
+  it("filters the queue and exposes conflict, user-facing preview and evidence navigation without color-only cues", async () => {
     const onOpenEvidence = vi.fn();
     render(<ClaimReview workspaceId="w1" snapshot={snapshot} onRefresh={vi.fn()} onOpenEvidence={onOpenEvidence} />);
     expect(screen.queryByRole("button", { name: "永久删除材料" })).toBeNull();
-    expect(screen.getAllByText("内容有变化").length).toBeGreaterThan(0);
-    expect(screen.getByRole("region", { name: "当前内容与建议内容对比" })).toHaveTextContent("后端开发");
-    expect(screen.getByRole("region", { name: "当前内容与建议内容对比" })).toHaveTextContent("核心后端开发");
+    expect(screen.getAllByText("需要核对").length).toBeGreaterThan(0);
+    expect(screen.getByText(/与之前记录不同/)).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "确认后个人画像会显示的内容" })).toHaveTextContent("原来：后端开发");
+    expect(screen.getByRole("region", { name: "确认后个人画像会显示的内容" })).toHaveTextContent("核心后端开发");
     expect(screen.queryByText(/lineStart|lineEnd/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /查看第 11–13 行原文位置/ }));
     expect(onOpenEvidence).toHaveBeenCalledWith(evidence);
@@ -36,16 +37,15 @@ describe("ClaimReview", () => {
 
   it("keeps batch choices visible until success and preserves the conflicting item", async () => {
     const refresh = vi.fn();
-    api.batchDecideClaimProposals.mockResolvedValue({ items: [{ proposalId: "p1", status: "completed", result: {}, errorCode: null, retryable: false }, { proposalId: "p2", status: "conflict", result: null, errorCode: "profile_claim_version_conflict", retryable: true }] });
+    api.batchDecideClaimProposals.mockResolvedValue({ items: [{ proposalId: "p2", status: "conflict", result: null, errorCode: "profile_claim_version_conflict", retryable: true }] });
     render(<ClaimReview workspaceId="w1" snapshot={snapshot} onRefresh={refresh} onOpenEvidence={vi.fn()} />);
-    fireEvent.click(screen.getByRole("checkbox", { name: "稍后一起处理" }));
     fireEvent.click(screen.getByRole("button", { name: /简历原文.*显示项目中多次使用/ }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "稍后一起处理" }));
-    expect(screen.getByText(/已选择/)).toHaveTextContent("2");
-    fireEvent.click(screen.getByRole("button", { name: "提交所选结果" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 LangGraph" }));
+    expect(screen.getByText(/已选择/)).toHaveTextContent("1");
+    fireEvent.click(screen.getByRole("button", { name: "批量确认" }));
     await waitFor(() => expect(api.batchDecideClaimProposals).toHaveBeenCalled());
     expect(screen.getByText(/已选择/)).toHaveTextContent("1");
-    expect(screen.getByRole("status")).toHaveTextContent("相关内容已刷新并保留选择");
+    expect(screen.getByRole("status")).toHaveTextContent("发生变化或保存失败");
     expect(refresh).toHaveBeenCalled();
   });
 
@@ -69,5 +69,14 @@ describe("ClaimReview", () => {
     expect(screen.getByText("条待确认").closest("span")).toHaveTextContent("2 条待确认");
     fireEvent.change(screen.getByLabelText("按状态筛选"), { target: { value: "accepted" } });
     expect(screen.getByText("条已确认").closest("span")).toHaveTextContent("1 条已确认");
+  });
+
+  it("summarizes safe and excluded items before one-click confirmation", () => {
+    render(<ClaimReview workspaceId="w1" snapshot={snapshot} onRefresh={vi.fn()} onOpenEvidence={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "一键确认当前可靠信息" }));
+    const dialog = screen.getByRole("dialog", { name: "确认当前筛选中的可靠信息" });
+    expect(dialog).toHaveTextContent("1条可以直接确认");
+    expect(dialog).toHaveTextContent("1条需要逐项核对");
+    expect(dialog).toHaveTextContent("不会被自动确认");
   });
 });

@@ -29,7 +29,7 @@ describe("ResumeVersions", () => {
     expect(screen.getByLabelText("简历处理进度")).toHaveTextContent("上传");
     expect(screen.getByLabelText("简历处理进度")).toHaveTextContent("等待确认");
     expect(screen.getByRole("alert")).toHaveTextContent("文本提取失败");
-    fireEvent.click(screen.getByRole("button", { name: "重试文本提取" }));
+    fireEvent.click(screen.getByRole("button", { name: "继续提取文本" }));
     expect(onRetry).toHaveBeenCalledWith("v2");
     fireEvent.keyDown(screen.getByRole("button", { name: /v2 resume-v2.pdf/ }), { key: "ArrowDown" });
     expect(onSelectVersion).toHaveBeenCalledWith("v1");
@@ -62,9 +62,8 @@ describe("ResumeVersions", () => {
 
     render(<ResumeVersions materials={[material]} versions={versions} selectedMaterialId="m1" selectedVersionId="v2" detail={extracting} busy={false} onSelectMaterial={vi.fn()} onSelectVersion={vi.fn()} onRetry={vi.fn()} onArchive={vi.fn()} onRestore={vi.fn()} onSetPrimary={vi.fn()} onPermanentDelete={vi.fn()} onOpenEvidence={vi.fn()} onAddVersion={vi.fn()} />);
 
-    expect(screen.getByRole("status", { name: "简历要点整理进度" })).toHaveTextContent("正在整理简历要点");
-    expect(screen.getByRole("status", { name: "简历要点整理进度" })).toHaveTextContent("已找到 12 个原文片段");
-    expect(screen.getByRole("status", { name: "简历要点整理进度" })).toHaveTextContent("技能、项目、工作经历、教育经历和个人链接");
-    expect(screen.getByRole("status", { name: "简历要点整理进度" })).toHaveTextContent("确认后才会被简历助手使用");
+    expect(screen.getByRole("status")).toHaveTextContent("正在根据 12 个内容区块整理画像建议");
+    expect(screen.getByRole("status")).toHaveTextContent("技能、项目、工作经历、教育经历和成果");
+    expect(screen.getByRole("status")).toHaveTextContent("停止后会保留文件、文本和已完成步骤");
   });
 });

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 from typing import Annotated
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, Header, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Header, Query, Response, UploadFile, status
 
 from app.api.dependencies import get_agent_application
 from app.application.session_service import SessionBusyError
@@ -59,6 +60,8 @@ from app.schemas.profile import (
     ProfileEvidenceResource,
     ProfileExecutionSummaryResource,
     ProfileMaterialResource,
+    ProfileMaterialDocumentResource,
+    ProfileDocumentOutlineItemResource,
     ProfileMaterialVersionDetailResource,
     ProfileMaterialVersionResource,
     CreateProfileSessionCommand,
@@ -110,9 +113,10 @@ async def create_profile_session(
 )
 def list_profile_sessions(
     workspace_id: str,
+    deleted_only: Annotated[bool, Query(alias="deletedOnly")] = False,
     application: AgentApplication = Depends(get_agent_application),
 ):
-    return application.list_profile_sessions(workspace_id)
+    return application.list_profile_sessions(workspace_id, deleted_only=deleted_only)
 
 
 @router.get(
@@ -525,6 +529,85 @@ def get_profile_material_version(
                 retryable=execution.status in {"failed", "interrupted", "cancelled"},
             )
         ),
+    )
+
+
+@router.get(
+    "/api/profile/material-versions/{version_id}/document",
+    response_model=ProfileMaterialDocumentResource,
+)
+def get_profile_material_document(
+    version_id: str,
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    application: AgentApplication = Depends(get_agent_application),
+) -> ProfileMaterialDocumentResource:
+    document = application.profile(workspace_id).read_material_document(version_id)
+    outline = []
+    used_titles: dict[str, int] = {}
+    for index, evidence in enumerate(document.evidence):
+        resource = _evidence_resource(evidence)
+        locator = resource.locator
+        title = next(
+            (
+                str(locator[key]).strip()
+                for key in ("heading", "title", "section")
+                if locator.get(key)
+            ),
+            "",
+        )
+        if not title:
+            line = locator.get("lineStart") or locator.get("line_start")
+            title = "文档信息" if line == 1 else (
+                f"第 {line} 行附近" if line else f"内容区块 {index + 1}"
+            )
+        if title in used_titles:
+            excerpt_title = next(
+                (
+                    line.strip().lstrip("#-* ").strip()
+                    for line in evidence.sanitized_text.splitlines()
+                    if line.strip().lstrip("#-* ").strip()
+                ),
+                "",
+            )
+            if excerpt_title and excerpt_title not in used_titles:
+                title = excerpt_title[:36]
+        used_titles[title] = used_titles.get(title, 0) + 1
+        if used_titles[title] > 1:
+            title = f"{title}（{used_titles[title]}）"
+        outline.append(
+            ProfileDocumentOutlineItemResource(
+                evidence_id=evidence.id,
+                title=title,
+                locator=locator,
+                start_offset=evidence.start_offset,
+                end_offset=evidence.end_offset,
+            )
+        )
+    return ProfileMaterialDocumentResource(
+        version_id=document.version.id,
+        file_name=document.version.file_name,
+        mime_type=document.version.mime_type,
+        version_number=document.version.version_number,
+        original_text=document.original_text,
+        redacted_text=document.redacted_text,
+        outline=outline,
+    )
+
+
+@router.get("/api/profile/material-versions/{version_id}/file")
+def download_profile_material_file(
+    version_id: str,
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    application: AgentApplication = Depends(get_agent_application),
+) -> Response:
+    service = application.profile(workspace_id)
+    version = service.get_material_version(version_id)
+    content = service.storage.read_blob(version.storage_ref)
+    file_name = quote(version.file_name, safe="")
+    return Response(
+        content=content,
+        media_type=version.mime_type,
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{file_name}"},
     )
 
 

@@ -32,6 +32,10 @@ class ProfileMaterialVersionConflict(ProfileDomainError):
     code = "profile_material_version_conflict"
 
 
+class ProfileDocumentNotReady(ProfileDomainError):
+    code = "profile_document_not_ready"
+
+
 class ProfileIngestBusy(ProfileDomainError):
     code = "profile_ingest_busy"
 

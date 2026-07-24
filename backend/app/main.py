@@ -64,6 +64,7 @@ from app.profile.errors import (
     ProfileClaimVersionConflict,
     ProfileDeletionPlanConflict,
     ProfileDeletionPlanNotFound,
+    ProfileDocumentNotReady,
     ProfileProposalNotFound,
     ProfilePublicationRevocationUnavailable,
     ProfileDomainError,
@@ -250,6 +251,7 @@ async def profile_domain_error(
         (
             ProfileMaterialRoleConflict,
             ProfileMaterialVersionConflict,
+            ProfileDocumentNotReady,
             ProfileClaimVersionConflict,
             ProfileDeletionPlanConflict,
             ProfileIdempotencyConflict,
@@ -262,6 +264,7 @@ async def profile_domain_error(
                 "同一用途已有活动材料，请先归档或更新现有材料"
             ),
             "profile_material_version_conflict": "材料版本已变化，请刷新后重试",
+            "profile_document_not_ready": "简历文本尚未提取完成，请稍后再试",
             "profile_claim_version_conflict": "画像状态已变化，请刷新后重试",
             "profile_claim_selected_for_publication": "该画像仍在发布选择中，请先调整发布范围",
             "profile_deletion_plan_conflict": "删除影响已变化，请重新预检",

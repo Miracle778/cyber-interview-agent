@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPost } from "../../shared/api/client";
+import { apiDelete, apiGet, apiPatch, apiPost } from "../../shared/api/client";
 import type { AgentExecution, AgentSession, AgentSessionDetail } from "./agentTypes";
 
 export interface CreateAgentSessionCommand {
@@ -23,6 +23,24 @@ export function getAgentSession(sessionId: string): Promise<AgentSessionDetail> 
 
 export function deleteAgentSession(sessionId: string, hard = false): Promise<void> {
   return apiDelete(`/api/agent/sessions/${sessionId}?hard=${hard}`);
+}
+
+export function renameAgentSession(
+  sessionId: string,
+  workspaceId: string,
+  title: string,
+): Promise<AgentSession> {
+  return apiPatch<{ workspaceId: string; title: string }, AgentSession>(
+    `/api/agent/sessions/${sessionId}`,
+    { workspaceId, title },
+  );
+}
+
+export function restoreAgentSession(sessionId: string): Promise<AgentSession> {
+  return apiPost<undefined, AgentSession>(
+    `/api/agent/sessions/${sessionId}/restore`,
+    undefined,
+  );
 }
 
 export function startAgentExecution(

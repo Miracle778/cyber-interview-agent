@@ -406,15 +406,17 @@ class AgentApplication:
         return await self._context(workspace_id).sessions.create(
             workspace_id=workspace_id,
             kind="profile.manage",
-            title=title or "简历助手对话",
+            title=title,
         )
 
     def list_profile_sessions(
-        self, workspace_id: str
+        self, workspace_id: str, *, deleted_only: bool = False
     ) -> tuple[SessionRecord, ...]:
         return tuple(
             session
-            for session in self._context(workspace_id).sessions.list(workspace_id)
+            for session in self._context(workspace_id).sessions.list(
+                workspace_id, deleted_only=deleted_only
+            )
             if session.kind == "profile.manage"
         )
 
@@ -428,6 +430,14 @@ class AgentApplication:
     def restore_session(self, session_id: str) -> SessionRecord:
         context, session = self._locate_session_including_deleted(session_id)
         return context.sessions.restore(session.id)
+
+    async def rename_session(
+        self, session_id: str, *, workspace_id: str, title: str
+    ) -> SessionRecord:
+        context, session = self._locate_session(session_id)
+        if session.workspace_id != workspace_id:
+            raise ProductRecordNotFoundError("Agent Session 不存在")
+        return await context.sessions.rename(session.id, title)
 
     async def session_detail(self, session_id: str) -> dict[str, Any]:
         context, session = self._locate_session(session_id)

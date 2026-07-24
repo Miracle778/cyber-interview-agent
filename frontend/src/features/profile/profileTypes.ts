@@ -64,6 +64,24 @@ export interface ProfileMaterialVersionDetail extends ProfileMaterialVersion {
   execution: ProfileExecutionSummary | null;
 }
 
+export interface ProfileDocumentOutlineItem {
+  evidenceId: string;
+  title: string;
+  locator: Record<string, unknown>;
+  startOffset: number;
+  endOffset: number;
+}
+
+export interface ProfileMaterialDocument {
+  versionId: string;
+  fileName: string;
+  mimeType: string;
+  versionNumber: number;
+  originalText: string;
+  redactedText: string;
+  outline: ProfileDocumentOutlineItem[];
+}
+
 export interface AcceptedMaterialUpload {
   materialId: string;
   versionId: string;

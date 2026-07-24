@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ArrowRight, BriefcaseBusiness, CheckCircle2, FileUp, Pencil, Plus, Sparkles, Target, UserRound } from "lucide-react";
 import { Button } from "../../shared/ui/Button";
 import { ProfileActionableGaps } from "./ProfileActionableGaps";
@@ -11,6 +12,8 @@ const sectionLabels: Partial<Record<ProfileCardCategory, string>> = {
   certification: "证书",
   achievement: "成果",
 };
+
+type ProfileView = "overview" | "experience" | "project" | "education" | "achievement";
 
 function textList(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())) : [];
@@ -50,11 +53,26 @@ function ProfileCard({ card, onEdit }: { card: UnifiedProfileCard; onEdit: (card
   </article>;
 }
 
-function ProfileSection({ category, cards, onCreate, onEdit }: { category: ProfileCardCategory; cards: UnifiedProfileCard[]; onCreate: (category: ProfileCardCategory) => void; onEdit: (card: UnifiedProfileCard) => void }) {
+function ProfileSection({
+  category,
+  cards,
+  onCreate,
+  onEdit,
+  onShowAll,
+}: {
+  category: ProfileCardCategory;
+  cards: UnifiedProfileCard[];
+  onCreate: (category: ProfileCardCategory) => void;
+  onEdit: (card: UnifiedProfileCard) => void;
+  onShowAll?: () => void;
+}) {
   return <section className="unified-profile-section" aria-labelledby={`profile-${category}-title`}>
     <header>
       <div><h2 id={`profile-${category}-title`}>{sectionLabels[category] ?? category}</h2><span>{cards.length} 条</span></div>
-      <button type="button" onClick={() => onCreate(category)}><Plus size={16} />添加</button>
+      <div className="unified-profile-section__actions">
+        {onShowAll ? <button type="button" onClick={onShowAll}>查看全部<ArrowRight size={14} /></button> : null}
+        <button type="button" onClick={() => onCreate(category)}><Plus size={16} />添加</button>
+      </div>
     </header>
     {cards.length ? <div className="unified-profile-section__cards">{cards.map((card) => <ProfileCard key={card.claimId} card={card} onEdit={onEdit} />)}</div>
       : <button className="unified-profile-section__empty" type="button" onClick={() => onCreate(category)}><Plus size={17} />添加{sectionLabels[category]}</button>}
@@ -78,11 +96,21 @@ export function UnifiedProfileOverview({
   onOpenPending: () => void;
   onSetPrimaryDirection: (claimId: string) => void;
 }) {
+  const [activeView, setActiveView] = useState<ProfileView>("overview");
+  const [skillsExpanded, setSkillsExpanded] = useState(false);
+
   if (loading) return <div className="profile-loading" role="status"><span className="profile-loading__bar" /><span className="profile-loading__bar" /><p>正在读取个人画像…</p></div>;
   if (!profile) return null;
 
   const cardCount = profile.experiences.length + profile.projects.length + profile.skills.length + profile.education.length + profile.certifications.length + profile.achievements.length;
   const primaryDirection = profile.directions.find((item) => item.claimId === profile.primaryDirectionClaimId) ?? profile.directions[0] ?? null;
+  const views: Array<{ key: ProfileView; label: string; count: number }> = [
+    { key: "overview", label: "概览", count: cardCount },
+    { key: "experience", label: "工作经历", count: profile.experiences.length },
+    { key: "project", label: "项目经历", count: profile.projects.length },
+    { key: "education", label: "教育经历", count: profile.education.length },
+    { key: "achievement", label: "证书与成果", count: profile.certifications.length + profile.achievements.length },
+  ];
 
   if (!profile.isUsable && !profile.summary && !profile.directions.length && !profile.highlights.length) {
     return <section className="unified-profile-empty">
@@ -97,56 +125,76 @@ export function UnifiedProfileOverview({
   return <main className="unified-profile">
     <section className="unified-profile-hero">
       <div className="unified-profile-hero__content">
-        <span>我的职业名片</span>
-        <h2>{profile.summary?.title ?? primaryDirection?.title ?? "补充一句话介绍，让别人更快了解你"}</h2>
-        {profile.summary?.title && primaryDirection ? <p>{primaryDirection.title}{primaryDirection.value.description ? ` · ${String(primaryDirection.value.description)}` : ""}</p> : null}
+        <span>职业名片</span>
+        <h2>{primaryDirection?.title ?? profile.summary?.title ?? "尚未设置职业定位"}</h2>
+        {primaryDirection && typeof primaryDirection.value.description === "string" ? <p>{primaryDirection.value.description}</p> : null}
         <div className="unified-profile-hero__meta">
           <span><CheckCircle2 size={15} />{cardCount} 条已确认资料</span>
           {profile.pendingCount ? <button type="button" onClick={onOpenPending}>{profile.pendingCount} 条内容等你确认<ArrowRight size={14} /></button> : <span>当前没有待确认内容</span>}
         </div>
       </div>
       <div className="unified-profile-hero__actions">
-        <Button variant="secondary" onClick={() => onCreate(profile.summary ? "highlight" : "summary")}><Plus size={16} />补充资料</Button>
-        {profile.summary ? <button type="button" onClick={() => onEdit(profile.summary!)}><Pencil size={15} />编辑个人简介</button> : null}
+        <Button variant="secondary" onClick={() => primaryDirection ? onEdit(primaryDirection) : onCreate("direction")}><Target size={16} />{primaryDirection ? "编辑定位" : "设置职业定位"}</Button>
+        <button type="button" onClick={() => onCreate(profile.summary ? "highlight" : "summary")}><Plus size={15} />补充其他资料</button>
       </div>
     </section>
 
-    <div className="unified-profile-layout">
-      <div className="unified-profile-main">
-        {profile.highlights.length ? <section className="unified-profile-highlights" aria-labelledby="profile-highlights-title">
-          <header><div><Sparkles size={18} /><h2 id="profile-highlights-title">我的亮点</h2></div><button type="button" onClick={() => onCreate("highlight")}><Plus size={15} />添加</button></header>
-          <div>{profile.highlights.map((card) => <button key={card.claimId} type="button" onClick={() => onEdit(card)}><span>{card.title}</span><Pencil size={14} /></button>)}</div>
-        </section> : null}
+    <nav className="unified-profile-view-nav" aria-label="画像内容分类">
+      {views.map((view) => <button
+        key={view.key}
+        type="button"
+        aria-current={activeView === view.key ? "page" : undefined}
+        onClick={() => setActiveView(view.key)}
+      >
+        <span>{view.label}</span>
+        <small>{view.count}</small>
+      </button>)}
+    </nav>
 
-        <ProfileSection category="experience" cards={profile.experiences} onCreate={onCreate} onEdit={onEdit} />
-        <ProfileSection category="project" cards={profile.projects} onCreate={onCreate} onEdit={onEdit} />
-        <ProfileSection category="education" cards={profile.education} onCreate={onCreate} onEdit={onEdit} />
-        {(profile.certifications.length || profile.achievements.length) ? <div className="unified-profile-pair">
+    <div className="unified-profile-main">
+        {activeView === "overview" ? <>
+          <div className="unified-profile-overview-grid">
+            <section className="unified-profile-directions">
+              <header><div><Target size={18} /><h2>求职方向</h2></div><button type="button" onClick={() => onCreate("direction")}><Plus size={15} />添加</button></header>
+              {profile.directions.length ? profile.directions.map((card) => <article key={card.claimId} data-primary={card.claimId === profile.primaryDirectionClaimId || undefined}>
+                <button type="button" className="unified-profile-directions__body" onClick={() => onEdit(card)}><strong>{card.title}</strong>{typeof card.value.description === "string" ? <span>{card.value.description}</span> : null}</button>
+                {card.claimId === profile.primaryDirectionClaimId ? <small>当前方向</small> : <button type="button" onClick={() => onSetPrimaryDirection(card.claimId)}>设为当前方向</button>}
+              </article>) : <button className="unified-profile-directions__empty" type="button" onClick={() => onCreate("direction")}><Plus size={16} />设置职业定位</button>}
+            </section>
+
+            <section className="unified-profile-skills">
+              <header><div><BriefcaseBusiness size={18} /><h2>核心技能</h2></div><button type="button" onClick={() => onCreate("skill")}><Plus size={15} />添加</button></header>
+              {profile.skills.length ? skillsExpanded ? <div className="unified-profile-skills__tags">
+                {profile.skills.map((card) => <button key={card.claimId} type="button" onClick={() => onEdit(card)}>{card.title}</button>)}
+                <button className="unified-profile-skills__more" type="button" onClick={() => setSkillsExpanded(false)}>收起</button>
+              </div> : <div className="unified-profile-skills__summary">
+                <p>{profile.skills.slice(0, 4).map((card) => card.title).join("、")}</p>
+                <button type="button" onClick={() => setSkillsExpanded(true)}>查看全部 {profile.skills.length} 项</button>
+              </div> : <button className="unified-profile-skills__empty" type="button" onClick={() => onCreate("skill")}>添加掌握的技能</button>}
+            </section>
+
+            <ProfileActionableGaps gaps={profile.actionableGaps} onEdit={(claimId) => {
+              const cards = [...profile.projects, ...profile.experiences];
+              const card = cards.find((item) => item.claimId === claimId);
+              if (card) onEdit(card);
+            }} />
+          </div>
+
+          {profile.highlights.length ? <section className="unified-profile-highlights" aria-labelledby="profile-highlights-title">
+            <header><div><Sparkles size={18} /><h2 id="profile-highlights-title">我的亮点</h2></div><button type="button" onClick={() => onCreate("highlight")}><Plus size={15} />添加</button></header>
+            <div>{profile.highlights.map((card) => <button key={card.claimId} type="button" onClick={() => onEdit(card)}><span>{card.title}</span><Pencil size={14} /></button>)}</div>
+          </section> : null}
+          {profile.experiences.length ? <ProfileSection category="experience" cards={profile.experiences.slice(0, 1)} onCreate={onCreate} onEdit={onEdit} onShowAll={profile.experiences.length > 1 ? () => setActiveView("experience") : undefined} /> : null}
+          {profile.projects.length ? <ProfileSection category="project" cards={profile.projects.slice(0, 1)} onCreate={onCreate} onEdit={onEdit} onShowAll={profile.projects.length > 1 ? () => setActiveView("project") : undefined} /> : null}
+        </> : null}
+
+        {activeView === "experience" ? <ProfileSection category="experience" cards={profile.experiences} onCreate={onCreate} onEdit={onEdit} /> : null}
+        {activeView === "project" ? <ProfileSection category="project" cards={profile.projects} onCreate={onCreate} onEdit={onEdit} /> : null}
+        {activeView === "education" ? <ProfileSection category="education" cards={profile.education} onCreate={onCreate} onEdit={onEdit} /> : null}
+        {activeView === "achievement" ? <div className="unified-profile-pair">
           <ProfileSection category="certification" cards={profile.certifications} onCreate={onCreate} onEdit={onEdit} />
           <ProfileSection category="achievement" cards={profile.achievements} onCreate={onCreate} onEdit={onEdit} />
         </div> : null}
-      </div>
-
-      <aside className="unified-profile-aside">
-        <section className="unified-profile-directions">
-          <header><div><Target size={18} /><h2>求职方向</h2></div><button type="button" onClick={() => onCreate("direction")}><Plus size={15} />添加</button></header>
-          {profile.directions.length ? profile.directions.map((card) => <article key={card.claimId} data-primary={card.claimId === profile.primaryDirectionClaimId || undefined}>
-            <button type="button" className="unified-profile-directions__body" onClick={() => onEdit(card)}><strong>{card.title}</strong>{typeof card.value.description === "string" ? <span>{card.value.description}</span> : null}</button>
-            {card.claimId === profile.primaryDirectionClaimId ? <small>当前方向</small> : <button type="button" onClick={() => onSetPrimaryDirection(card.claimId)}>设为当前方向</button>}
-          </article>) : <button className="unified-profile-directions__empty" type="button" onClick={() => onCreate("direction")}><Plus size={16} />添加求职方向</button>}
-        </section>
-
-        <section className="unified-profile-skills">
-          <header><div><BriefcaseBusiness size={18} /><h2>技能</h2></div><button type="button" onClick={() => onCreate("skill")}><Plus size={15} />添加</button></header>
-          {profile.skills.length ? <div>{profile.skills.map((card) => <button key={card.claimId} type="button" onClick={() => onEdit(card)}>{card.title}</button>)}</div> : <button className="unified-profile-skills__empty" type="button" onClick={() => onCreate("skill")}>添加掌握的技能</button>}
-        </section>
-
-        <ProfileActionableGaps gaps={profile.actionableGaps} onEdit={(claimId) => {
-          const cards = [...profile.projects, ...profile.experiences];
-          const card = cards.find((item) => item.claimId === claimId);
-          if (card) onEdit(card);
-        }} />
-      </aside>
     </div>
   </main>;
 }

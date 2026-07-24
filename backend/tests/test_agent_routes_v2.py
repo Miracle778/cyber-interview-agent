@@ -310,6 +310,40 @@ async def test_session_soft_delete_hides_history_and_stops_event_stream(api):
 
 
 @pytest.mark.asyncio
+async def test_session_title_can_be_renamed_only_inside_its_workspace(api, application):
+    async with AsyncClient(transport=ASGITransport(app=api), base_url="http://test") as client:
+        session = (
+            await client.post(
+                "/api/agent/sessions",
+                json={"workspaceId": "w1", "kind": "diagnostic.echo"},
+            )
+        ).json()
+
+        blank = await client.patch(
+            f"/api/agent/sessions/{session['id']}",
+            json={"workspaceId": "w1", "title": "   "},
+        )
+        wrong_workspace = await client.patch(
+            f"/api/agent/sessions/{session['id']}",
+            json={"workspaceId": "w2", "title": "不应生效"},
+        )
+        renamed = await client.patch(
+            f"/api/agent/sessions/{session['id']}",
+            json={"workspaceId": "w1", "title": "  后端项目复盘  "},
+        )
+
+    assert blank.status_code == 422
+    assert wrong_workspace.status_code == 404
+    assert renamed.status_code == 200
+    assert renamed.json()["title"] == "后端项目复盘"
+    stored = application._context("w1").repository.connection.execute(
+        "SELECT title_source FROM agent_sessions WHERE id = ?", (session["id"],)
+    ).fetchone()
+    assert stored["title_source"] == "user"
+    assert application.replay_events(session["id"], after_id=0)[-1].type == "session.renamed"
+
+
+@pytest.mark.asyncio
 async def test_review_draft_is_pending_as_soon_as_execution_requests_approval(application):
     session = await application.create_session(
         workspace_id="w1", kind="diagnostic.draft", title="Draft"

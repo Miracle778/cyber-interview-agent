@@ -139,10 +139,11 @@ describe("ProfilePage", () => {
     }
 
     fireEvent.click(screen.getByRole("button", { name: "简历与来源" }));
-    expect(await screen.findByRole("region", { name: "简历与版本" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "简历与来源" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "简历与来源" }).closest(".profile-shell")).toHaveClass("profile-shell--workbench");
     fireEvent.click(screen.getByRole("button", { name: /^待确认/ }));
     expect(await screen.findByRole("heading", { name: "待确认" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "画像助手" }));
-    expect(await screen.findByRole("heading", { name: "开始使用画像助手" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "开始第一次画像对话" })).toBeInTheDocument();
   });
 });

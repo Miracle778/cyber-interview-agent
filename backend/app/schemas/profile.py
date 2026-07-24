@@ -105,6 +105,24 @@ class ProfileMaterialVersionDetailResource(ProfileMaterialVersionResource):
     execution: ProfileExecutionSummaryResource | None
 
 
+class ProfileDocumentOutlineItemResource(AgentModel):
+    evidence_id: str
+    title: str
+    locator: dict[str, Any]
+    start_offset: int
+    end_offset: int
+
+
+class ProfileMaterialDocumentResource(AgentModel):
+    version_id: str
+    file_name: str
+    mime_type: str
+    version_number: int
+    original_text: str
+    redacted_text: str
+    outline: list[ProfileDocumentOutlineItemResource]
+
+
 class AcceptedMaterialRetryResource(AgentModel):
     version_id: str
     execution_id: str

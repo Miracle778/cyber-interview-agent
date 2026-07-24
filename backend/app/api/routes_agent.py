@@ -17,6 +17,7 @@ from app.schemas.agent import (
     SessionDetailResource,
     SessionResource,
     StartExecutionCommand,
+    UpdateSessionTitleCommand,
 )
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
@@ -47,6 +48,22 @@ async def list_sessions(
     application: AgentApplication = Depends(get_agent_application),
 ) -> tuple[SessionRecord, ...]:
     return application.list_sessions(workspace_id)
+
+
+@router.patch("/sessions/{session_id}", response_model=SessionResource)
+async def rename_session(
+    session_id: str,
+    command: UpdateSessionTitleCommand,
+    application: AgentApplication = Depends(get_agent_application),
+) -> SessionRecord:
+    try:
+        return await application.rename_session(
+            session_id,
+            workspace_id=command.workspace_id,
+            title=command.title,
+        )
+    except ProductRecordNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)

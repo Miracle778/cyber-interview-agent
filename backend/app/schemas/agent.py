@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 def _to_camel(value: str) -> str:
@@ -18,6 +18,19 @@ class CreateSessionCommand(AgentModel):
     workspace_id: str
     kind: str
     title: str | None = None
+
+
+class UpdateSessionTitleCommand(AgentModel):
+    workspace_id: str
+    title: str = Field(min_length=1, max_length=80)
+
+    @field_validator("title")
+    @classmethod
+    def title_must_not_be_blank(cls, value: str) -> str:
+        clean = value.strip()
+        if not clean:
+            raise ValueError("会话标题不能为空")
+        return clean
 
 
 class ExecutionConfigurationResource(AgentModel):
@@ -40,6 +53,7 @@ class SessionResource(AgentModel):
     updated_at: str
     latest_execution_id: str | None
     deleted_at: str | None = None
+    last_message_preview: str | None = None
 
 
 class ExecutionResource(AgentModel):

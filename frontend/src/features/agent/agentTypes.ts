@@ -17,6 +17,8 @@ export interface AgentSession {
   createdAt: string;
   updatedAt: string;
   latestExecutionId: string | null;
+  deletedAt?: string | null;
+  lastMessagePreview?: string | null;
 }
 
 export interface AgentExecution {

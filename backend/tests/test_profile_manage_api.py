@@ -79,6 +79,41 @@ async def test_profile_sessions_reuse_generic_execution_and_replay(
 
 
 @pytest.mark.asyncio
+async def test_profile_session_archive_is_listed_separately_and_can_be_restored(
+    profile_application,
+) -> None:
+    application, _started = profile_application
+    context = application._context("w1")
+    context.repository.create_session(
+        workspace_id="w1",
+        kind="diagnostic.echo",
+        title="其他 Agent 会话",
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        created = await client.post(
+            "/api/workspaces/w1/profile/sessions", json={}
+        )
+        session_id = created.json()["id"]
+        assert created.json()["title"] == "新会话"
+
+        archived = await client.delete(f"/api/agent/sessions/{session_id}")
+        active = await client.get("/api/workspaces/w1/profile/sessions")
+        recycle_bin = await client.get(
+            "/api/workspaces/w1/profile/sessions", params={"deletedOnly": "true"}
+        )
+        restored = await client.post(f"/api/agent/sessions/{session_id}/restore")
+
+    assert archived.status_code == 204
+    assert active.json() == []
+    assert [item["id"] for item in recycle_bin.json()] == [session_id]
+    assert recycle_bin.json()[0]["deletedAt"] is not None
+    assert restored.status_code == 200
+    assert restored.json()["deletedAt"] is None
+
+
+@pytest.mark.asyncio
 async def test_profile_execution_can_cancel_and_hidden_session_creation_is_rejected(
     profile_application,
 ) -> None:

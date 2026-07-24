@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, Awaitable, Callable, TypedDict
@@ -20,6 +19,7 @@ from app.profile.errors import (
 )
 from app.profile.models import ClaimProposalRecord, CreateClaimProposalSpec
 from app.profile.parsers import ExtractedSegment, parse_document
+from app.profile.privacy import redact_profile_text
 from app.profile.repository import ProfileRepository
 from app.profile.storage import MaterialStorage
 
@@ -45,10 +45,6 @@ class IncrementalIngestResult:
     proposals: tuple[ClaimProposalRecord, ...]
     new_source_links: int
     missing_source_gaps: int
-
-
-_EMAIL = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])")
-_PHONE = re.compile(r"(?<!\d)(?:\+?86[- ]?)?1[3-9]\d{9}(?!\d)")
 
 
 def create_profile_ingest_graph(
@@ -300,7 +296,7 @@ def _evidence_specs(segments: tuple[ExtractedSegment, ...]) -> tuple[dict[str, A
     specs: list[dict[str, Any]] = []
     offset = 0
     for segment in segments:
-        sanitized, sensitive = _sanitize(segment.text)
+        sanitized, sensitive = redact_profile_text(segment.text)
         end = offset + len(sanitized)
         specs.append(
             {
@@ -581,12 +577,6 @@ def _canonical_claim_value(
         alias("label", "label", "name", "title")
         alias("url", "url", "href", "link")
     return value
-
-
-def _sanitize(text: str) -> tuple[str, bool]:
-    redacted = _EMAIL.sub("[email redacted]", text)
-    redacted = _PHONE.sub("[phone redacted]", redacted)
-    return redacted, redacted != text
 
 
 def _section(segment: ExtractedSegment) -> str:

@@ -3,15 +3,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, FileUp, FolderLock, Upload, UserRound } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "../../shared/ui/Button";
+import { cancelAgentExecution } from "../agent/agentApi";
 import type { WorkspaceConfig } from "../settings/settingsApi";
-import { EvidenceDetail } from "./EvidenceDetail";
 import { DeletionImpactDialog } from "./DeletionImpactDialog";
 import { ProfileAgentWorkspace } from "./ProfileAgentWorkspace";
+import { ProfileBackgroundTask } from "./ProfileBackgroundTask";
 import { ProfileCardEditor } from "./ProfileCardEditor";
+import { ProfileDocumentReader } from "./ProfileDocumentReader";
 import { ProfilePendingReview } from "./ProfilePendingReview";
 import { ResumeVersions } from "./ResumeVersions";
 import { UnifiedProfileOverview } from "./UnifiedProfileOverview";
-import { addMaterialVersion, archiveMaterial, createProfileCard, deleteProfileCard, getMaterialVersion, getUnifiedProfile, listMaterialVersions, listProfileClaims, listProfileMaterials, restoreMaterial, retryMaterialVersion, setPrimaryVersion, updateProfileCard, updateProfilePresentation, uploadProfileMaterial } from "./profileApi";
+import { addMaterialVersion, archiveMaterial, createProfileCard, deleteProfileCard, getMaterialDocument, getMaterialVersion, getUnifiedProfile, listMaterialVersions, listProfileClaims, listProfileMaterials, materialFileDownloadUrl, restoreMaterial, retryMaterialVersion, setPrimaryVersion, updateProfileCard, updateProfilePresentation, uploadProfileMaterial } from "./profileApi";
 import type { ProfileCardCategory, ProfileCardCommand, ProfileEvidence, ProfileMaterial, UnifiedProfileCard } from "./profileTypes";
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
@@ -50,6 +52,7 @@ export function ProfilePage({ workspace }: { workspace: WorkspaceConfig | null }
   const [selectedMaterialId, setSelectedMaterialId] = useState<string | null>(null);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [selectedEvidence, setSelectedEvidence] = useState<ProfileEvidence | null>(null);
+  const [documentView, setDocumentView] = useState<{ versionId: string; evidenceId?: string } | null>(null);
   const [deletionOpen, setDeletionOpen] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const [editingCard, setEditingCard] = useState<UnifiedProfileCard | null>(null);
@@ -106,6 +109,11 @@ export function ProfilePage({ workspace }: { workspace: WorkspaceConfig | null }
     queryFn: ({ signal }) => listProfileClaims(workspaceId, signal),
     enabled: Boolean(workspace && tab === "pending"),
   });
+  const documentQuery = useQuery({
+    queryKey: ["profile-material-document", workspaceId, documentView?.versionId],
+    queryFn: ({ signal }) => getMaterialDocument(workspaceId, documentView!.versionId, signal),
+    enabled: Boolean(workspace && documentView),
+  });
 
   async function refreshProfile(materialId = activeMaterial?.id, versionId = selectedVersionId) {
     await client.invalidateQueries({ queryKey: ["unified-profile", workspaceId] });
@@ -120,6 +128,13 @@ export function ProfilePage({ workspace }: { workspace: WorkspaceConfig | null }
     onSuccess: async (result) => { setSelectedMaterialId(result.materialId); setSelectedVersionId(result.versionId); setTab("sources"); await refreshProfile(result.materialId, result.versionId); },
   });
   const retry = useMutation({ mutationFn: (versionId: string) => retryMaterialVersion(workspaceId, versionId), onSuccess: async (result) => refreshProfile(activeMaterial?.id, result.versionId) });
+  const stopProcessing = useMutation({
+    mutationFn: (executionId: string) => cancelAgentExecution(executionId),
+    onSuccess: async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+      await refreshProfile(activeMaterial?.id, selectedVersionId);
+    },
+  });
   const archive = useMutation({ mutationFn: (material: ProfileMaterial) => archiveMaterial(workspaceId, material), onSuccess: () => refreshProfile() });
   const restore = useMutation({ mutationFn: (material: ProfileMaterial) => restoreMaterial(workspaceId, material), onSuccess: () => refreshProfile() });
   const primary = useMutation({ mutationFn: ({ material, versionId }: { material: ProfileMaterial; versionId: string }) => setPrimaryVersion(workspaceId, material, versionId), onSuccess: () => refreshProfile() });
@@ -175,37 +190,59 @@ export function ProfilePage({ workspace }: { workspace: WorkspaceConfig | null }
 
   const queryError = unifiedQuery.error ?? materialsQuery.error ?? versionsQuery.error ?? detailQuery.error;
   const mutationError = upload.error ?? retry.error ?? archive.error ?? restore.error ?? primary.error ?? presentation.error;
-  const busy = upload.isPending || retry.isPending || archive.isPending || restore.isPending || primary.isPending;
+  const busy = upload.isPending || retry.isPending || archive.isPending || restore.isPending || primary.isPending || stopProcessing.isPending;
   const detail = detailQuery.data ?? null;
-  const selectedEvidenceValue = selectedEvidence && detail?.evidencePage.items.find((item) => item.id === selectedEvidence.id) || selectedEvidence;
+  const workbenchMode = Boolean(documentView) || tab === "sources" || tab === "pending" || tab === "agent";
+  const confirmedProfileCount = unifiedQuery.data ? (
+    unifiedQuery.data.experiences.length
+    + unifiedQuery.data.projects.length
+    + unifiedQuery.data.skills.length
+    + unifiedQuery.data.education.length
+    + unifiedQuery.data.certifications.length
+    + unifiedQuery.data.achievements.length
+  ) : null;
 
-  return <section className="profile-shell">
+  return <section className={`profile-shell ${workbenchMode ? "profile-shell--workbench" : "profile-shell--reading"} ${tab === "agent" && !documentView ? "profile-shell--agent" : ""}`}>
     <header className="profile-header">
       <div><h1 ref={headingRef} tabIndex={-1}>个人画像</h1><p>集中管理你的经历、项目和技能，供岗位分析、简历优化与面试训练使用。</p></div>
-      <div className="profile-header__summary"><UserRound size={16} /><span>{unifiedQuery.data ? `${unifiedQuery.data.experiences.length + unifiedQuery.data.projects.length + unifiedQuery.data.skills.length} 条核心资料` : "正在读取"}</span></div>
+      <div className="profile-header__summary"><UserRound size={16} /><span>{confirmedProfileCount === null ? "正在读取" : `${confirmedProfileCount} 条已确认资料`}</span></div>
     </header>
     <nav className="profile-tabs" aria-label="个人画像页面">
-      <button type="button" aria-current={tab === "profile" && !selectedEvidence ? "page" : undefined} onClick={() => { setSelectedEvidence(null); setTab("profile"); }}>我的画像</button>
-      <button type="button" aria-current={tab === "pending" && !selectedEvidence ? "page" : undefined} onClick={() => { setSelectedEvidence(null); setTab("pending"); }}>待确认{unifiedQuery.data?.pendingCount ? ` ${unifiedQuery.data.pendingCount}` : ""}</button>
-      <button type="button" aria-current={tab === "sources" && !selectedEvidence ? "page" : undefined} onClick={() => { setSelectedEvidence(null); setTab("sources"); }}>简历与来源</button>
-      <button type="button" aria-current={tab === "agent" ? "page" : undefined} onClick={() => { setSelectedEvidence(null); setTab("agent"); }}>画像助手</button>
+      <button type="button" aria-current={tab === "profile" && !documentView ? "page" : undefined} onClick={() => { setSelectedEvidence(null); setDocumentView(null); setTab("profile"); }}>我的画像</button>
+      <button type="button" aria-current={tab === "pending" && !documentView ? "page" : undefined} onClick={() => { setSelectedEvidence(null); setDocumentView(null); setTab("pending"); }}>待确认{unifiedQuery.data?.pendingCount ? ` ${unifiedQuery.data.pendingCount}` : ""}</button>
+      <button type="button" aria-current={tab === "sources" && !documentView ? "page" : undefined} onClick={() => { setSelectedEvidence(null); setDocumentView(null); setTab("sources"); }}>简历与来源</button>
+      <button type="button" aria-current={tab === "agent" && !documentView ? "page" : undefined} onClick={() => { setSelectedEvidence(null); setDocumentView(null); setTab("agent"); }}>画像助手</button>
     </nav>
 
     <input ref={inputRef} className="profile-file-input" aria-label="选择简历文件" type="file" accept=".pdf,.docx,.md,.markdown,.txt" onChange={(event) => { void acceptFile(event.target.files?.[0]); event.currentTarget.value = ""; }} />
 
-    {queryError && (unifiedQuery.isError || materialsQuery.isError) ? <div className="profile-page-error" role="alert"><AlertCircle size={21} /><div><strong>个人资料读取失败</strong><p>{errorMessage(queryError)}</p></div><Button variant="secondary" onClick={() => { void unifiedQuery.refetch(); void materialsQuery.refetch(); }}>重新读取</Button></div> : null}
-    {mutationError || fileError ? <div className="profile-page-error" role="alert"><AlertCircle size={21} /><div><strong>{fileError ? "无法上传这个文件" : "操作没有完成"}</strong><p>{fileError ?? errorMessage(mutationError)}</p></div></div> : null}
+    <ProfileBackgroundTask
+      detail={detail}
+      stopping={stopProcessing.isPending}
+      continuing={retry.isPending}
+      onOpen={() => { setSelectedEvidence(null); setDocumentView(null); setTab("sources"); }}
+      onStop={() => { if (detail?.execution?.id) stopProcessing.mutate(detail.execution.id); }}
+      onContinue={() => { if (detail) retry.mutate(detail.id); }}
+      onOpenPending={() => { setSelectedEvidence(null); setDocumentView(null); setTab("pending"); }}
+    />
+
+    <div className="profile-page-content">
+      {queryError && (unifiedQuery.isError || materialsQuery.isError) ? <div className="profile-page-error" role="alert"><AlertCircle size={21} /><div><strong>个人资料读取失败</strong><p>{errorMessage(queryError)}</p></div><Button variant="secondary" onClick={() => { void unifiedQuery.refetch(); void materialsQuery.refetch(); }}>重新读取</Button></div> : null}
+      {mutationError || fileError ? <div className="profile-page-error" role="alert"><AlertCircle size={21} /><div><strong>{fileError ? "无法上传这个文件" : "操作没有完成"}</strong><p>{fileError ?? errorMessage(mutationError)}</p></div></div> : null}
 
     {!materialsQuery.isLoading && !materialsQuery.isError && !activeMaterial && tab === "sources" ? <section className="profile-empty" data-testid="profile-dropzone" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void acceptFile(event.dataTransfer.files[0]); }}>
       <span><FileUp size={28} /></span><h2>还没有简历</h2><p>拖入简历，或从电脑选择 PDF、DOCX、Markdown、TXT 文件。上传后会依次完成文本提取、隐私处理和简历要点整理。</p><Button loading={upload.isPending} onClick={chooseFile}><Upload size={16} />选择简历文件</Button><small>单个文件不超过 10 MB；原文件默认仅自己可见。</small>
     </section> : null}
 
-    {activeMaterial && selectedEvidenceValue && detail ? <EvidenceDetail materialTitle={detail.material.title} versionNumber={detail.versionNumber} evidence={selectedEvidenceValue} onBack={() => setSelectedEvidence(null)} /> : null}
-    {!selectedEvidenceValue && tab === "profile" ? <UnifiedProfileOverview profile={unifiedQuery.data ?? null} loading={unifiedQuery.isLoading} onUpload={chooseFile} onCreate={(category = "project") => { setEditorError(null); setCreatingCategory(category); setEditingCard(null); }} onEdit={(card) => { setEditorError(null); setEditingCard(card); setCreatingCategory(null); }} onOpenPending={() => setTab("pending")} onSetPrimaryDirection={(claimId) => presentation.mutate(claimId)} /> : null}
-    {activeMaterial && !selectedEvidenceValue && tab === "sources" ? <ResumeVersions materials={materials} versions={versions} selectedMaterialId={activeMaterial.id} selectedVersionId={selectedVersionId} detail={detail} busy={busy} onSelectMaterial={(id) => { setSelectedMaterialId(id); setSelectedVersionId(null); }} onSelectVersion={setSelectedVersionId} onRetry={(id) => retry.mutate(id)} onArchive={(item) => archive.mutate(item)} onRestore={(item) => restore.mutate(item)} onSetPrimary={(item, versionId) => primary.mutate({ material: item, versionId })} onPermanentDelete={() => setDeletionOpen(true)} onOpenEvidence={setSelectedEvidence} onAddVersion={chooseFile} /> : null}
-    {!selectedEvidenceValue && tab === "pending" ? <ProfilePendingReview workspaceId={workspaceId} snapshot={claimsQuery.data ?? null} loading={claimsQuery.isLoading} onRefresh={async () => { await claimsQuery.refetch(); await unifiedQuery.refetch(); }} onOpenEvidence={setSelectedEvidence} /> : null}
+    {documentView && documentQuery.isLoading ? <div className="profile-loading" role="status"><p>正在打开完整简历…</p></div> : null}
+    {documentView && documentQuery.isError ? <div className="profile-page-error" role="alert"><AlertCircle size={21} /><div><strong>完整简历暂时无法打开</strong><p>{errorMessage(documentQuery.error)}</p></div><Button variant="secondary" onClick={() => void documentQuery.refetch()}>重新读取</Button></div> : null}
+    {documentView && documentQuery.data ? <ProfileDocumentReader document={documentQuery.data} focusEvidenceId={documentView.evidenceId} downloadUrl={materialFileDownloadUrl(workspaceId, documentView.versionId)} onBack={() => { setDocumentView(null); setSelectedEvidence(null); }} /> : null}
+    {!documentView && tab === "profile" ? <UnifiedProfileOverview profile={unifiedQuery.data ?? null} loading={unifiedQuery.isLoading} onUpload={chooseFile} onCreate={(category = "project") => { setEditorError(null); setCreatingCategory(category); setEditingCard(null); }} onEdit={(card) => { setEditorError(null); setEditingCard(card); setCreatingCategory(null); }} onOpenPending={() => setTab("pending")} onSetPrimaryDirection={(claimId) => presentation.mutate(claimId)} /> : null}
+    {activeMaterial && !documentView && tab === "sources" ? <ResumeVersions materials={materials} versions={versions} selectedMaterialId={activeMaterial.id} selectedVersionId={selectedVersionId} detail={detail} busy={busy} onSelectMaterial={(id) => { setSelectedMaterialId(id); setSelectedVersionId(null); }} onSelectVersion={setSelectedVersionId} onRetry={(id) => retry.mutate(id)} onArchive={(item) => archive.mutate(item)} onRestore={(item) => restore.mutate(item)} onSetPrimary={(item, versionId) => primary.mutate({ material: item, versionId })} onPermanentDelete={() => setDeletionOpen(true)} onOpenDocument={(evidenceId) => { if (selectedVersionId) setDocumentView({ versionId: selectedVersionId, ...(evidenceId ? { evidenceId } : {}) }); }} onAddVersion={chooseFile} /> : null}
+    {!documentView && tab === "pending" ? <ProfilePendingReview workspaceId={workspaceId} snapshot={claimsQuery.data ?? null} loading={claimsQuery.isLoading} onRefresh={async () => { await claimsQuery.refetch(); await unifiedQuery.refetch(); }} onOpenEvidence={(evidence) => { setSelectedEvidence(evidence); setDocumentView({ versionId: evidence.materialVersionId, evidenceId: evidence.id }); }} /> : null}
     {activeMaterial ? <DeletionImpactDialog open={deletionOpen} workspaceId={workspaceId} material={activeMaterial} onClose={() => setDeletionOpen(false)} onDeleted={() => { setDeletionOpen(false); setTab("profile"); void refreshProfile(activeMaterial.id, selectedVersionId); void claimsQuery.refetch(); }} /> : null}
-    {!selectedEvidenceValue && tab === "agent" ? <ProfileAgentWorkspace workspaceId={workspaceId} focus={{ ...(activeMaterial ? { materialId: activeMaterial.id } : {}), ...(selectedVersionId ? { materialVersionId: selectedVersionId } : {}) }} onOpenPending={() => setTab("pending")} /> : null}
-    {editingCard || creatingCategory ? <ProfileCardEditor card={editingCard} initialCategory={creatingCategory ?? editingCard?.category ?? "project"} busy={cardWrite.isPending || cardDelete.isPending} error={editorError} onSave={async (command) => { await cardWrite.mutateAsync({ card: editingCard, command }).catch(() => undefined); }} onDelete={editingCard ? async () => { await cardDelete.mutateAsync(editingCard).catch(() => undefined); } : undefined} onCancel={() => { if (!cardWrite.isPending && !cardDelete.isPending) { setEditingCard(null); setCreatingCategory(null); setEditorError(null); } }} /> : null}
+    {!documentView && tab === "agent" ? <ProfileAgentWorkspace workspaceId={workspaceId} focus={{ ...(activeMaterial ? { materialId: activeMaterial.id } : {}), ...(selectedVersionId ? { materialVersionId: selectedVersionId } : {}) }} onOpenPending={() => setTab("pending")} /> : null}
+      {editingCard || creatingCategory ? <ProfileCardEditor card={editingCard} initialCategory={creatingCategory ?? editingCard?.category ?? "project"} busy={cardWrite.isPending || cardDelete.isPending} error={editorError} onSave={async (command) => { await cardWrite.mutateAsync({ card: editingCard, command }).catch(() => undefined); }} onDelete={editingCard ? async () => { await cardDelete.mutateAsync(editingCard).catch(() => undefined); } : undefined} onCancel={() => { if (!cardWrite.isPending && !cardDelete.isPending) { setEditingCard(null); setCreatingCategory(null); setEditorError(null); } }} /> : null}
+    </div>
   </section>;
 }

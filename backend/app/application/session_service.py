@@ -87,6 +87,7 @@ class SessionRecord:
     deleted_at: str | None
     parent_session_id: str | None = None
     visibility: str = "user"
+    last_message_preview: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,23 +181,49 @@ class ProductRepository:
         return _session(row)
 
     def list_sessions(
-        self, workspace_id: str, *, include_system: bool = False
+        self,
+        workspace_id: str,
+        *,
+        include_system: bool = False,
+        deleted_only: bool = False,
     ) -> tuple[SessionRecord, ...]:
+        deletion_filter = (
+            "agent_sessions.deleted_at IS NOT NULL"
+            if deleted_only
+            else "agent_sessions.deleted_at IS NULL"
+        )
+        select = (
+            "SELECT agent_sessions.*, "
+            "(SELECT content FROM agent_messages "
+            "WHERE agent_messages.session_id = agent_sessions.id "
+            "ORDER BY agent_messages.rowid DESC LIMIT 1) AS last_message_preview "
+            "FROM agent_sessions WHERE agent_sessions.workspace_id = ? "
+        )
         if include_system:
             rows = self.connection.execute(
-                "SELECT * FROM agent_sessions WHERE workspace_id = ? "
-                "AND deleted_at IS NULL "
-                "ORDER BY updated_at DESC, rowid DESC",
+                select
+                + f"AND {deletion_filter} "
+                "ORDER BY agent_sessions.updated_at DESC, agent_sessions.rowid DESC",
                 (workspace_id,),
             ).fetchall()
         else:
             rows = self.connection.execute(
-                "SELECT * FROM agent_sessions WHERE workspace_id = ? "
-                "AND deleted_at IS NULL AND visibility = 'user' "
-                "ORDER BY updated_at DESC, rowid DESC",
+                select
+                + f"AND {deletion_filter} AND agent_sessions.visibility = 'user' "
+                "ORDER BY agent_sessions.updated_at DESC, agent_sessions.rowid DESC",
                 (workspace_id,),
             ).fetchall()
         return tuple(_session(row) for row in rows)
+
+    def update_session_title(self, session_id: str, title: str) -> SessionRecord:
+        self.get_session(session_id)
+        self.connection.execute(
+            "UPDATE agent_sessions SET title = ?, title_source = 'user', "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (title, session_id),
+        )
+        self.connection.commit()
+        return self.get_session(session_id)
 
     def delete_session(self, session_id: str, *, hard: bool = False) -> None:
         self.get_session(session_id, include_deleted=True)
@@ -536,6 +563,7 @@ class ProductEventStream:
     _allowed = frozenset(
         {
             "session.created",
+            "session.renamed",
             "session.message.created",
             "curation.stage.changed",
             "curation.progress.changed",
@@ -666,8 +694,10 @@ class AgentSessionService:
         )
         return session
 
-    def list(self, workspace_id: str) -> tuple[SessionRecord, ...]:
-        return self.repository.list_sessions(workspace_id)
+    def list(
+        self, workspace_id: str, *, deleted_only: bool = False
+    ) -> tuple[SessionRecord, ...]:
+        return self.repository.list_sessions(workspace_id, deleted_only=deleted_only)
 
     def get(self, session_id: str) -> SessionRecord:
         return self.repository.get_session(session_id)
@@ -677,6 +707,13 @@ class AgentSessionService:
 
     def restore(self, session_id: str) -> SessionRecord:
         return self.repository.restore_session(session_id)
+
+    async def rename(self, session_id: str, title: str) -> SessionRecord:
+        session = self.repository.update_session_title(session_id, title)
+        await self.events.publish(
+            session.id, None, "session.renamed", {"title": session.title}
+        )
+        return session
 
     def complete_idle(self, session_id: str) -> SessionRecord:
         return self.repository.complete_idle_session(session_id)
@@ -702,6 +739,7 @@ def _json(value: Any) -> str:
 
 
 def _session(row) -> SessionRecord:
+    row_keys = set(row.keys())
     return SessionRecord(
         id=row["id"],
         workspace_id=row["workspace_id"],
@@ -714,6 +752,9 @@ def _session(row) -> SessionRecord:
         deleted_at=row["deleted_at"],
         parent_session_id=row["parent_session_id"],
         visibility=row["visibility"],
+        last_message_preview=(
+            row["last_message_preview"] if "last_message_preview" in row_keys else None
+        ),
     )
 
 

@@ -1,6 +1,6 @@
 import { apiGet, apiPost, apiRequest, apiUpload } from "../../shared/api/client";
 import type { AgentSession } from "../agent/agentTypes";
-import type { AcceptedMaterialRetry, AcceptedMaterialUpload, BatchClaimDecisionResult, ClaimDecision, ClaimDecisionResult, MaterialDeletionPreview, PermanentMaterialDeletionResult, ProfileActionPlan, ProfileAssessment, ProfileCardCommand, ProfileCardWriteResult, ProfileClaimWorkspace, ProfileMaterial, ProfileMaterialVersion, ProfileMaterialVersionDetail, ProfilePresentation, UnifiedProfile } from "./profileTypes";
+import type { AcceptedMaterialRetry, AcceptedMaterialUpload, BatchClaimDecisionResult, ClaimDecision, ClaimDecisionResult, MaterialDeletionPreview, PermanentMaterialDeletionResult, ProfileActionPlan, ProfileAssessment, ProfileCardCommand, ProfileCardWriteResult, ProfileClaimWorkspace, ProfileMaterial, ProfileMaterialDocument, ProfileMaterialVersion, ProfileMaterialVersionDetail, ProfilePresentation, UnifiedProfile } from "./profileTypes";
 
 function commandKey(prefix: string) {
   return `${prefix}-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
@@ -35,6 +35,14 @@ export function listMaterialVersions(workspaceId: string, materialId: string, si
 
 export function getMaterialVersion(workspaceId: string, versionId: string, signal?: AbortSignal) {
   return apiGet<ProfileMaterialVersionDetail>(`/api/profile/material-versions/${versionId}?workspaceId=${encodeURIComponent(workspaceId)}&evidenceLimit=100`, { signal });
+}
+
+export function getMaterialDocument(workspaceId: string, versionId: string, signal?: AbortSignal) {
+  return apiGet<ProfileMaterialDocument>(`/api/profile/material-versions/${versionId}/document?workspaceId=${encodeURIComponent(workspaceId)}`, { signal });
+}
+
+export function materialFileDownloadUrl(workspaceId: string, versionId: string) {
+  return `/api/profile/material-versions/${versionId}/file?workspaceId=${encodeURIComponent(workspaceId)}`;
 }
 
 export function retryMaterialVersion(workspaceId: string, versionId: string, idempotencyKey = commandKey("profile-retry")) {
@@ -77,8 +85,9 @@ export function createProfileSession(workspaceId: string, title?: string) {
   return apiPost(`/api/workspaces/${workspaceId}/profile/sessions`, { ...(title ? { title } : {}) }) as Promise<AgentSession>;
 }
 
-export function listProfileSessions(workspaceId: string, signal?: AbortSignal) {
-  return apiGet<AgentSession[]>(`/api/workspaces/${workspaceId}/profile/sessions`, { signal });
+export function listProfileSessions(workspaceId: string, signal?: AbortSignal, deletedOnly = false) {
+  const query = deletedOnly ? "?deletedOnly=true" : "";
+  return apiGet<AgentSession[]>(`/api/workspaces/${workspaceId}/profile/sessions${query}`, { signal });
 }
 
 export function getProfileAssessment(workspaceId: string, assessmentId: string, signal?: AbortSignal) {
