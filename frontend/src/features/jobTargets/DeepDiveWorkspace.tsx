@@ -16,11 +16,11 @@ export function DeepDiveWorkspace({ resource, busy = false, onSend, onControl, o
     asideOpen={asideOpen}
     onAsideOpenChange={setAsideOpen}
     asideLabel="本次依据"
-    header={<div className="deep-dive-header"><div><h2>项目深挖</h2><p>围绕一个项目逐步梳理事实、表达和岗位追问。</p></div><div>{resource.status === "active" ? <Button variant="secondary" onClick={() => onControl("pause")}>暂停</Button> : resource.status === "paused" ? <Button variant="secondary" onClick={() => onControl("resume")}>继续</Button> : null}<Button variant="danger" onClick={() => onControl("terminate")}>结束</Button></div></div>}
+    header={<div className="deep-dive-header"><div><h2>项目深挖</h2><p>围绕一个项目逐步梳理事实、表达和岗位追问。</p></div><div>{resource.status === "active" ? <Button variant="secondary" onClick={() => onControl("pause")}>暂停</Button> : resource.status === "paused" ? <Button variant="secondary" onClick={() => onControl("resume")}>继续</Button> : null}{!["completed", "terminated"].includes(resource.status) ? <Button variant="danger" onClick={() => onControl("terminate")}>结束</Button> : null}</div></div>}
     conversation={<div className="deep-dive-conversation"><div className="deep-dive-conversation__timeline">
       {resource.messages.filter((message) => message.resolutionStatus !== "replaced").map((message) => <AgentMessage key={message.id} role={message.role} content={message.content} createdAt={message.createdAt} assistantLabel="项目教练" />)}
       {failed && unresolved ? <DeepDiveProcessCard execution={failed} onRetry={() => onRetry(failed.id)} onReplace={() => { const replacement = window.prompt("修改这条回答后重试", unresolved.content); if (replacement?.trim()) onResolve(unresolved.id, "replaced", replacement); }} onAbandon={() => onResolve(unresolved.id, "abandoned")} /> : null}
-    </div><AgentComposer busy={busy || running || Boolean(unresolved)} stopping={false} modelId="" models={[]} reasoningEffort="none" placeholder={unresolved ? "请先处理上一次未完成的回答" : "回答当前问题，尽量说明你的具体行动和结果…"} onModelChange={() => undefined} onReasoningEffortChange={() => undefined} onSend={onSend} onStop={() => onControl("pause")} /></div>}
+    </div><AgentComposer busy={busy || running || Boolean(unresolved) || resource.status !== "active"} stopping={false} modelId="" models={[]} reasoningEffort="none" recipientLabel="项目教练" placeholder={resource.status === "completed" ? "本次项目深挖已完成" : unresolved ? "请先处理上一次未完成的回答" : "回答当前问题，尽量说明你的具体行动和结果…"} onModelChange={() => undefined} onReasoningEffortChange={() => undefined} onSend={onSend} onStop={() => onControl("pause")} /></div>}
     aside={<DeepDiveContextPanel resource={resource} />}
   /></div>;
 }

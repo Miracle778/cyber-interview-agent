@@ -24,6 +24,7 @@ interface AgentComposerProps {
   onReasoningEffortChange: (effort: AgentReasoningEffort) => void;
   onSend: (message: string) => void;
   onStop: () => void;
+  recipientLabel?: string;
 }
 
 export function AgentComposer({
@@ -39,6 +40,7 @@ export function AgentComposer({
   onReasoningEffortChange,
   onSend,
   onStop,
+  recipientLabel = "画像助手",
 }: AgentComposerProps) {
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -72,7 +74,7 @@ export function AgentComposer({
   const selectedModel = models.find((model) => model.id === modelId)?.label ?? "工作区默认模型";
   return (
     <form className="agent-composer" onSubmit={submit}>
-      <label className="sr-only" htmlFor="agent-composer-message">发送给画像助手</label>
+      <label className="sr-only" htmlFor="agent-composer-message">发送给{recipientLabel}</label>
       <textarea
         ref={textareaRef}
         id="agent-composer-message"

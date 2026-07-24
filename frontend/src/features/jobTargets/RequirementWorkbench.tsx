@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "../../shared/ui/Button";
 import type { JobRequirement } from "./jobTargetTypes";
 
@@ -7,6 +7,14 @@ export function RequirementWorkbench({ requirements, busy = false, onDecide }: {
   const safe = useMemo(() => requirements.filter((item) => item.confirmationStatus === "pending" && !item.inferred && Boolean(item.sourceQuote)), [requirements]);
   const inferred = requirements.filter((item) => item.confirmationStatus === "pending" && item.inferred).length;
   const active = requirements.find((item) => item.id === selected[0]) ?? requirements[0];
+  useEffect(() => {
+    const pendingIds = new Set(
+      requirements
+        .filter((item) => item.confirmationStatus === "pending")
+        .map((item) => item.id),
+    );
+    setSelected((current) => current.filter((id) => pendingIds.has(id)));
+  }, [requirements]);
   function toggle(id: string) { setSelected((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]); }
   return <section className="requirement-workbench">
     <header><div><h2>岗位要求</h2><p>先确认原文明确写出的要求；推断内容需要逐条核对。</p></div><Button variant="secondary" onClick={() => setSelected(safe.map((item) => item.id))}>选择可安全确认项</Button></header>

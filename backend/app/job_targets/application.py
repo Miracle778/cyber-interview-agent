@@ -148,7 +148,14 @@ class JobTargetApplication:
             "controls": {
                 "canPause": run["status"] == "running",
                 "canResume": run["status"] in {"paused", "interrupted", "failed"},
-                "canTerminate": run["status"] not in {"completed", "terminated"},
+                "canTerminate": run["status"] in {
+                    "queued",
+                    "running",
+                    "pausing",
+                    "paused",
+                    "interrupted",
+                    "failed",
+                },
             },
         }
 
