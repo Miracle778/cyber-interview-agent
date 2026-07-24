@@ -18,6 +18,10 @@ export interface ActiveQuestion extends Omit<ReviewQuestion, "mastery"> {
   draftId: string;
   publicationId: string;
   publishedAt: string;
+  questionType?: "technical" | "project_experience";
+  projectClaimId?: string | null;
+  projectDimension?: string | null;
+  sourceJobTargetId?: string | null;
 }
 
 export interface CandidateQuestion {

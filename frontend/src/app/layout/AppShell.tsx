@@ -7,6 +7,7 @@ import { ReviewPage } from "../../features/review/ReviewPage";
 import type { ReviewQuestion } from "../../features/review/reviewTypes";
 import { ProfilePage } from "../../features/profile/ProfilePage";
 import { SettingsPage } from "../../features/settings/SettingsPage";
+import { JobTargetPage } from "../../features/jobTargets/JobTargetPage";
 import { getWorkspace, type WorkspaceConfig } from "../../features/settings/settingsApi";
 import { MobileNavigation } from "../navigation/MobileNavigation";
 import { PrimaryNavigation } from "../navigation/PrimaryNavigation";
@@ -135,6 +136,20 @@ export function AppShell() {
                   workspaceMode
                 >
                   <ProfilePage workspace={workspace} />
+                </PageFrame>
+              }
+            />
+            <Route
+              path="/targets"
+              element={
+                <PageFrame
+                  title="求职目标"
+                  description="围绕具体岗位准备项目经历、追问和复习任务。"
+                  health={health}
+                  workspace={workspace}
+                  workspaceMode
+                >
+                  <JobTargetPage workspace={workspace} />
                 </PageFrame>
               }
             />

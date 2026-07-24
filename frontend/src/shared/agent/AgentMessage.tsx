@@ -9,9 +9,10 @@ interface AgentMessageProps {
   createdAt?: string;
   pending?: boolean;
   children?: ReactNode;
+  assistantLabel?: string;
 }
 
-export function AgentMessage({ role, content, createdAt, pending = false, children }: AgentMessageProps) {
+export function AgentMessage({ role, content, createdAt, pending = false, children, assistantLabel = "画像助手" }: AgentMessageProps) {
   const user = role === "user";
   const displayTime = createdAt ? formatBeijingTime(createdAt, false) : null;
   return (
@@ -21,7 +22,7 @@ export function AgentMessage({ role, content, createdAt, pending = false, childr
       </span>
       <div className="agent-conversation-message__content">
         <header>
-          <strong>{user ? "你" : "画像助手"}</strong>
+          <strong>{user ? "你" : assistantLabel}</strong>
           {pending ? <span>发送中</span> : null}
           {displayTime ? <time dateTime={createdAt}>{displayTime}</time> : null}
           <button
