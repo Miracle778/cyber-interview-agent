@@ -814,11 +814,52 @@ class JobTargetRepository:
             (dive_id,),
         ).fetchall()
 
+    def get_project_question_candidate(self, candidate_id: str):
+        row = self.connection.execute(
+            "SELECT candidate.*, dive.job_target_id FROM project_question_candidates candidate "
+            "JOIN project_deep_dives dive ON dive.id = candidate.deep_dive_id "
+            "WHERE candidate.id = ?",
+            (candidate_id,),
+        ).fetchone()
+        if row is None:
+            raise JobTargetNotFound(candidate_id)
+        return row
+
     def decide_project_question_candidate(self, candidate_id: str, status: str) -> None:
         self.connection.execute(
             "UPDATE project_question_candidates SET status = ?, "
             "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (status, candidate_id),
+        )
+        self.connection.commit()
+
+    def batch_decide_project_question_candidates(
+        self, candidate_ids: tuple[str, ...], *, status: str
+    ) -> None:
+        if not candidate_ids:
+            return
+        placeholders = ", ".join("?" for _ in candidate_ids)
+        self.connection.execute(
+            "UPDATE project_question_candidates SET status = ?, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id IN ("
+            f"{placeholders}) AND status = 'review_pending'",
+            (status, *candidate_ids),
+        )
+        self.connection.commit()
+
+    def update_project_question_candidate(
+        self, candidate_id: str, *, title: str, question: str
+    ) -> None:
+        row = self.get_project_question_candidate(candidate_id)
+        if row["status"] != "review_pending":
+            raise JobTargetConflict("只有待确认的候选题可以编辑")
+        payload = json.loads(row["question_json"])
+        payload["title"] = title
+        payload["question"] = question
+        self.connection.execute(
+            "UPDATE project_question_candidates SET question_json = ?, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (json.dumps(payload, ensure_ascii=False, sort_keys=True), candidate_id),
         )
         self.connection.commit()
 

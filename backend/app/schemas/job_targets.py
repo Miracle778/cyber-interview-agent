@@ -177,6 +177,18 @@ class QuestionCandidateDecisionCommand(AgentModel):
     decision: Literal["confirmed", "ignored", "duplicate"]
 
 
+class QuestionCandidateBatchDecisionCommand(AgentModel):
+    workspace_id: str
+    candidate_ids: list[str] = Field(min_length=1, max_length=50)
+    decision: Literal["confirmed", "ignored"]
+
+
+class QuestionCandidateEditCommand(AgentModel):
+    workspace_id: str
+    title: str = Field(min_length=1, max_length=300)
+    question: str = Field(min_length=1, max_length=4_000)
+
+
 class NarrativeDecisionCommand(AgentModel):
     workspace_id: str
     section_ids: list[str] = Field(min_length=1, max_length=7)

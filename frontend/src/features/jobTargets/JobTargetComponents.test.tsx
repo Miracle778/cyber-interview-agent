@@ -1,9 +1,10 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import { DeepDiveWorkspace } from "./DeepDiveWorkspace";
 import { JobAnalysisStatus } from "./JobAnalysisStatus";
 import { RequirementWorkbench } from "./RequirementWorkbench";
+import { ProjectQuestionCandidates } from "./ProjectQuestionCandidates";
 import { getTargetIdentity } from "./JobTargetWorkspace";
 import { JobTargetList } from "./JobTargetList";
 import type { DeepDiveResource, JobAnalysis, JobRequirement } from "./jobTargetTypes";
@@ -39,6 +40,34 @@ describe("job target workspace", () => {
     expect(onDecide).toHaveBeenCalledWith(["direct"], "confirmed");
     fireEvent.click(screen.getByRole("button", { name: "确认这条" }));
     expect(onDecide).toHaveBeenLastCalledWith(["direct"], "confirmed");
+  });
+
+  it("makes project-question evidence, editing, and batch confirmation usable", () => {
+    const onBatchDecide = vi.fn();
+    const onEdit = vi.fn();
+    render(<ProjectQuestionCandidates projectTitle="订单系统" candidates={[{
+      id: "candidate-1", dimension: "target_specific", status: "review_pending",
+      question: {
+        title: "订单系统 · 目标岗位追问",
+        question: "如何用订单系统证明你胜任目标岗位？",
+        rationale: "围绕目标岗位追问核对项目讲解。",
+        requirements: [{ id: "r-1", text: "熟悉 Redis", priority: "must_have" }],
+        projectFacts: ["负责核心服务设计和压测"],
+        gaps: ["补充性能治理的取舍"],
+      },
+    }]} onDecide={vi.fn()} onBatchDecide={onBatchDecide} onEdit={onEdit} />);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择：如何用订单系统证明你胜任目标岗位？" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认选中并入库" }));
+    expect(onBatchDecide).toHaveBeenCalledWith(["candidate-1"], "confirmed");
+    fireEvent.click(screen.getByText("查看生成依据"));
+    expect(screen.getByText("本次参考的岗位重点")).toBeVisible();
+    expect(screen.getByText("熟悉 Redis")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    fireEvent.change(screen.getByLabelText("面试问题"), { target: { value: "请说明订单系统中的 Redis 取舍。" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+    expect(onEdit).toHaveBeenCalledWith("candidate-1", "订单系统 · 目标岗位追问", "请说明订单系统中的 Redis 取舍。");
+    cleanup();
   });
 
   it("keeps team narration out of the confirmation queue and separates detail from bulk selection", () => {

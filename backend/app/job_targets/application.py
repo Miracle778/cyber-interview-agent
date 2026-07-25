@@ -696,6 +696,19 @@ class JobTargetApplication:
         artifacts = self.repository.list_artifacts(dive_id)
         gaps = self.repository.list_gaps(dive_id)
         candidates = self.repository.list_project_question_candidates(dive_id)
+        project_context = self.profile.confirmed_profile_context(
+            purpose="job_target_analysis",
+            claim_ids=(dive["project_claim_id"],),
+            limit=1,
+        )
+        project = project_context.items[0].value if project_context.items else {}
+        requirements = tuple(
+            item
+            for item in self.service.list_preparation_requirements(
+                dive["job_target_id"]
+            )
+            if item.confirmation_status == "confirmed"
+        )
         return {
             "id": dive["id"],
             "jobTargetId": dive["job_target_id"],
@@ -706,7 +719,7 @@ class JobTargetApplication:
             "completedStageIds": json.loads(dive["completed_stage_ids_json"]),
             "waitingForInput": bool(dive["waiting_for_input"]),
             "version": dive["version"],
-            "projectTitle": _project_title_for_dive(self.profile, dive),
+            "projectTitle": _project_title(project),
             "messages": [_message_resource(item) for item in messages],
             "executions": [_execution_resource(item) for item in executions],
             "artifacts": [
@@ -721,7 +734,17 @@ class JobTargetApplication:
             ],
             "gaps": [dict(row) for row in gaps],
             "questionCandidates": [
-                {**dict(row), "question": json.loads(row["question_json"])}
+                {
+                    **dict(row),
+                    "question": _enrich_project_question(
+                        json.loads(row["question_json"]),
+                        dimension=row["dimension"],
+                        project=project,
+                        requirements=requirements,
+                        artifacts=artifacts,
+                        gaps=gaps,
+                    ),
+                }
                 for row in candidates
             ],
             "runtime": {
@@ -762,10 +785,43 @@ class JobTargetApplication:
             },
         }
 
-    def decide_question_candidate(self, candidate_id: str, decision: str) -> None:
+    def decide_question_candidate(
+        self, target_id: str, candidate_id: str, decision: str
+    ) -> None:
         if decision not in {"confirmed", "ignored", "duplicate"}:
             raise ValueError("不支持的题目决定")
+        candidate = self.repository.get_project_question_candidate(candidate_id)
+        if candidate["job_target_id"] != target_id:
+            raise JobTargetConflict("候选题不属于当前求职目标")
         self.repository.decide_project_question_candidate(candidate_id, decision)
+
+    def batch_decide_question_candidates(
+        self, target_id: str, candidate_ids: tuple[str, ...], decision: str
+    ) -> None:
+        if decision not in {"confirmed", "ignored"}:
+            raise ValueError("不支持的题目决定")
+        unique_ids = tuple(dict.fromkeys(candidate_ids))
+        if len(unique_ids) != len(candidate_ids):
+            raise JobTargetConflict("候选题不能重复选择")
+        for candidate_id in unique_ids:
+            candidate = self.repository.get_project_question_candidate(candidate_id)
+            if candidate["job_target_id"] != target_id:
+                raise JobTargetConflict("候选题不属于当前求职目标")
+            if candidate["status"] != "review_pending":
+                raise JobTargetConflict("只能批量处理待确认的候选题")
+        self.repository.batch_decide_project_question_candidates(
+            unique_ids, status=decision
+        )
+
+    def edit_question_candidate(
+        self, target_id: str, candidate_id: str, *, title: str, question: str
+    ) -> None:
+        candidate = self.repository.get_project_question_candidate(candidate_id)
+        if candidate["job_target_id"] != target_id:
+            raise JobTargetConflict("候选题不属于当前求职目标")
+        self.repository.update_project_question_candidate(
+            candidate_id, title=title.strip(), question=question.strip()
+        )
 
     def confirm_narrative_sections(
         self,
@@ -965,19 +1021,33 @@ class JobTargetApplication:
 
     def _generate_project_questions(self, dive_id: str) -> None:
         dive = self.repository.get_deep_dive(dive_id)
-        for dimension, text in (
-            ("background_role", "请介绍这个项目的背景、目标和你的职责。"),
-            ("architecture_solution", "你为什么选择这个技术方案，还有哪些备选方案？"),
-            ("difficulty_problem_solving", "项目中最难的问题是什么，你如何定位并解决？"),
-            ("outcome", "项目最终取得了什么可量化结果？"),
-            ("tradeoff_failure_retrospective", "如果重做一次，你会调整哪些设计？"),
-            ("target_specific", "这段项目经验如何证明你胜任当前目标岗位？"),
-        ):
+        project_context = self.profile.confirmed_profile_context(
+            purpose="job_target_analysis",
+            claim_ids=(dive["project_claim_id"],),
+            limit=1,
+        )
+        project = project_context.items[0].value if project_context.items else {}
+        requirements = tuple(
+            item
+            for item in self.service.list_preparation_requirements(
+                dive["job_target_id"]
+            )
+            if item.confirmation_status == "confirmed"
+        )
+        artifacts = self.repository.list_artifacts(dive_id)
+        gaps = self.repository.list_gaps(dive_id)
+        for dimension in _PROJECT_QUESTION_DIMENSIONS:
             self.repository.create_project_question_candidate(
                 dive_id,
                 dive["project_claim_id"],
                 dimension=dimension,
-                question={"title": text, "question": text},
+                question=_project_question_draft(
+                    dimension=dimension,
+                    project=project,
+                    requirements=requirements,
+                    artifacts=artifacts,
+                    gaps=gaps,
+                ),
             )
 
 
@@ -1213,3 +1283,141 @@ def _project_title_for_dive(profile: ProfileService, dive) -> str:
         limit=1,
     )
     return _project_title(context.items[0].value if context.items else {})
+
+
+_PROJECT_QUESTION_DIMENSIONS = (
+    "background_role",
+    "architecture_solution",
+    "difficulty_problem_solving",
+    "outcome",
+    "tradeoff_failure_retrospective",
+    "target_specific",
+)
+
+_PROJECT_QUESTION_LABELS = {
+    "background_role": "背景与职责",
+    "architecture_solution": "方案设计",
+    "difficulty_problem_solving": "难点解决",
+    "outcome": "结果成效",
+    "tradeoff_failure_retrospective": "取舍与复盘",
+    "target_specific": "目标岗位追问",
+}
+
+_PROJECT_QUESTION_STAGE = {
+    "background_role": ("background", "role"),
+    "architecture_solution": ("solution",),
+    "difficulty_problem_solving": ("difficulty",),
+    "outcome": ("outcome",),
+    "tradeoff_failure_retrospective": ("tradeoff",),
+    "target_specific": ("target_follow_up",),
+}
+
+
+def _enrich_project_question(
+    question: dict[str, object],
+    *,
+    dimension: str,
+    project: dict[str, object],
+    requirements,
+    artifacts,
+    gaps,
+) -> dict[str, object]:
+    """Fill legacy candidates with the same inspectable basis as new candidates."""
+    basis = _project_question_basis(
+        dimension=dimension,
+        project=project,
+        requirements=requirements,
+        artifacts=artifacts,
+        gaps=gaps,
+    )
+    return {**basis, **question}
+
+
+def _project_question_draft(
+    *, dimension: str, project: dict[str, object], requirements, artifacts, gaps
+) -> dict[str, object]:
+    basis = _project_question_basis(
+        dimension=dimension,
+        project=project,
+        requirements=requirements,
+        artifacts=artifacts,
+        gaps=gaps,
+    )
+    title = f"{_project_title(project)} · {_PROJECT_QUESTION_LABELS[dimension]}"
+    fact = basis["projectFacts"][0] if basis["projectFacts"] else "本轮尚未补充这部分项目细节"
+    requirement_text = "、".join(
+        str(item["text"]) for item in basis["requirements"][:2]
+    )
+    question = {
+        "background_role": f"围绕「{_project_title(project)}」，请结合“{fact}”说明项目要解决的问题、你的职责边界，以及如何判断工作是否完成。",
+        "architecture_solution": f"在「{_project_title(project)}」中，围绕“{fact}”说明你如何设计方案、比较过哪些备选项，并解释最终取舍。",
+        "difficulty_problem_solving": f"在「{_project_title(project)}」里，针对“{fact}”讲一个最棘手的问题：你如何定位、推进解决并验证结果？",
+        "outcome": f"请用「{_project_title(project)}」中的“{fact}”展开说明最终结果：哪些指标或用户变化能证明这次投入有效？",
+        "tradeoff_failure_retrospective": f"回看「{_project_title(project)}」的“{fact}”，当时做了什么取舍？如果重来一次，你会如何调整并说明原因？",
+        "target_specific": (
+            f"如果面试官追问「{_project_title(project)}」如何证明你适合当前岗位，"
+            f"请围绕 {requirement_text or '当前已确认的岗位重点'} 组织一个有事实支撑的回答。"
+        ),
+    }[dimension]
+    return {**basis, "title": title, "question": question}
+
+
+def _project_question_basis(
+    *, dimension: str, project: dict[str, object], requirements, artifacts, gaps
+) -> dict[str, object]:
+    stages = _PROJECT_QUESTION_STAGE.get(dimension, ())
+    narrative_facts = _narrative_facts(artifacts, stages)
+    profile_facts = _project_profile_facts(project)
+    facts = tuple(dict.fromkeys((*narrative_facts, *profile_facts)))[:3]
+    relevant_requirements = tuple(
+        {"id": item.id, "text": item.text, "priority": item.priority}
+        for item in requirements
+    )[:3]
+    related_gaps = tuple(
+        str(item["summary"])
+        for item in gaps
+        if item["status"] == "open"
+        and (
+            dimension == "target_specific"
+            or (dimension == "difficulty_problem_solving" and item["gap_kind"] == "knowledge")
+            or (dimension == "tradeoff_failure_retrospective" and item["gap_kind"] == "expression")
+        )
+    )[:2]
+    source = "本轮深挖回答" if narrative_facts else "已确认项目资料"
+    return {
+        "rationale": (
+            f"围绕{_PROJECT_QUESTION_LABELS.get(dimension, dimension)}核对「{_project_title(project)}」的讲解；"
+            f"本题优先参考{source}，确认前可以改写。"
+        ),
+        "projectFacts": list(facts),
+        "requirements": list(relevant_requirements),
+        "gaps": list(related_gaps),
+    }
+
+
+def _narrative_facts(artifacts, stages: tuple[str, ...]) -> tuple[str, ...]:
+    facts: list[str] = []
+    for artifact in artifacts:
+        payload = json.loads(artifact["payload_json"])
+        for item in payload.get("narrativeDelta", []):
+            if item.get("section") in stages and item.get("content"):
+                facts.append(_short_project_fact(str(item["content"])))
+    return tuple(facts)
+
+
+def _project_profile_facts(project: dict[str, object]) -> tuple[str, ...]:
+    facts: list[str] = []
+    for key in ("background", "description", "summary", "responsibility", "tech_stack", "techStack"):
+        value = project.get(key)
+        if isinstance(value, str) and value.strip():
+            facts.append(_short_project_fact(value))
+        elif isinstance(value, list):
+            joined = "、".join(str(item) for item in value if str(item).strip())
+            if joined:
+                facts.append(_short_project_fact(joined))
+    return tuple(facts)
+
+
+def _short_project_fact(value: str) -> str:
+    normalized = re.sub(r"\s+", " ", value).strip()
+    return normalized if len(normalized) <= 180 else f"{normalized[:177]}…"

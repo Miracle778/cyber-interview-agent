@@ -93,7 +93,14 @@ export interface ProjectQuestionCandidate {
   id: string;
   dimension: string;
   status: "review_pending" | "confirmed" | "ignored" | "duplicate";
-  question: { title: string; question: string };
+  question: {
+    title: string;
+    question: string;
+    rationale?: string;
+    projectFacts?: string[];
+    requirements?: { id: string; text: string; priority: string }[];
+    gaps?: string[];
+  };
 }
 
 export interface DeepDiveResource {

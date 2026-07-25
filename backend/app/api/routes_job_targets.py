@@ -30,6 +30,8 @@ from app.schemas.job_targets import (
     DeepDiveAnswerCommand,
     MessageResolutionCommand,
     QuestionCandidateDecisionCommand,
+    QuestionCandidateBatchDecisionCommand,
+    QuestionCandidateEditCommand,
     NarrativeDecisionCommand,
     GapDispatchCommand,
 )
@@ -248,7 +250,25 @@ async def restart_deep_dive(target_id: str, dive_id: str, command: AnalysisContr
 @router.post("/api/job-targets/{target_id}/question-candidates/{candidate_id}/decision", status_code=204)
 def decide_project_question(target_id: str, candidate_id: str, command: QuestionCandidateDecisionCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
     _service(application, command.workspace_id).get_target(target_id)
-    application.job_training(command.workspace_id).decide_question_candidate(candidate_id, command.decision)
+    application.job_training(command.workspace_id).decide_question_candidate(target_id, candidate_id, command.decision)
+    return Response(status_code=204)
+
+
+@router.post("/api/job-targets/{target_id}/question-candidates/decisions", status_code=204)
+def batch_decide_project_questions(target_id: str, command: QuestionCandidateBatchDecisionCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+    _service(application, command.workspace_id).get_target(target_id)
+    application.job_training(command.workspace_id).batch_decide_question_candidates(
+        target_id, tuple(command.candidate_ids), command.decision
+    )
+    return Response(status_code=204)
+
+
+@router.put("/api/job-targets/{target_id}/question-candidates/{candidate_id}", status_code=204)
+def edit_project_question(target_id: str, candidate_id: str, command: QuestionCandidateEditCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+    _service(application, command.workspace_id).get_target(target_id)
+    application.job_training(command.workspace_id).edit_question_candidate(
+        target_id, candidate_id, title=command.title, question=command.question
+    )
     return Response(status_code=204)
 
 

@@ -77,5 +77,11 @@ export const resolveDeepDiveMessage = (workspaceId: string, targetId: string, di
 export const decideProjectQuestion = (workspaceId: string, targetId: string, candidateId: string, decision: "confirmed" | "ignored" | "duplicate") =>
   apiRequest<void>(`/api/job-targets/${targetId}/question-candidates/${candidateId}/decision`, json("POST", { workspaceId, decision }, "question-decision"));
 
+export const decideProjectQuestions = (workspaceId: string, targetId: string, candidateIds: string[], decision: "confirmed" | "ignored") =>
+  apiRequest<void>(`/api/job-targets/${targetId}/question-candidates/decisions`, json("POST", { workspaceId, candidateIds, decision }, "question-decisions"));
+
+export const editProjectQuestion = (workspaceId: string, targetId: string, candidateId: string, input: { title: string; question: string }) =>
+  apiRequest<void>(`/api/job-targets/${targetId}/question-candidates/${candidateId}`, json("PUT", { workspaceId, ...input }, "question-edit"));
+
 export const dispatchProjectGap = (workspaceId: string, targetId: string, gapId: string) =>
   apiRequest(`/api/job-targets/${targetId}/gaps/${gapId}/dispatch`, json("POST", { workspaceId }, "dispatch-gap"));

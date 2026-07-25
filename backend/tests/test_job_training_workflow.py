@@ -174,9 +174,19 @@ async def test_analysis_deep_dive_and_project_question_library(tmp_path: Path):
             )
         assert dive["status"] == "completed"
         assert len(dive["questionCandidates"]) == 6
+        assert dive["questionCandidates"][0]["question"]["rationale"]
+        assert dive["questionCandidates"][0]["question"]["projectFacts"]
 
         first = dive["questionCandidates"][0]
-        training.decide_question_candidate(first["id"], "confirmed")
+        training.edit_question_candidate(
+            target.id,
+            first["id"],
+            title="订单系统 · 背景与职责",
+            question="请说明订单系统中你的职责边界和验证方式。",
+        )
+        training.batch_decide_question_candidates(
+            target.id, (first["id"],), "confirmed"
+        )
         questions = application.review("w1").list_questions()
         project_question = next(item for item in questions if item.question_type == "project_experience")
         assert project_question.project_claim_id == project.claim_id
