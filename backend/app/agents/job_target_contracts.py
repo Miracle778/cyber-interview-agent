@@ -71,3 +71,25 @@ class DeepDiveTurnResult(BaseModel):
     gaps: list[GapSuggestion] = Field(default_factory=list)
     next_question: NextQuestion | None = None
     stage_complete: bool
+
+
+ProjectQuestionDimension = Literal[
+    "background_role",
+    "architecture_solution",
+    "difficulty_problem_solving",
+    "outcome",
+    "tradeoff_failure_retrospective",
+    "target_specific",
+]
+
+
+class ProjectQuestionSuggestion(BaseModel):
+    dimension: ProjectQuestionDimension
+    title: str = Field(min_length=1, max_length=120)
+    question: str = Field(min_length=1, max_length=1200)
+
+
+class ProjectQuestionBatchOutput(BaseModel):
+    candidates: list[ProjectQuestionSuggestion] = Field(
+        min_length=1, max_length=6
+    )

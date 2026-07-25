@@ -10,6 +10,8 @@ from app.agents.job_target_contracts import (
     GapSuggestion,
     NarrativeSectionDelta,
     NextQuestion,
+    ProjectQuestionBatchOutput,
+    ProjectQuestionSuggestion,
 )
 from app.graphs.project_deep_dive import ProjectDeepDiveState
 from app.job_targets.application import (
@@ -27,6 +29,41 @@ def _graph_factory(_kind: str, **dependencies):
     graph.add_edge(START, "complete")
     graph.add_edge("complete", END)
     return graph.compile(checkpointer=dependencies.get("checkpointer"))
+
+
+class _QuestionGeneratingAgent:
+    def __init__(self) -> None:
+        self.question_generation_calls = 0
+
+    async def evaluate_turn(self, **_kwargs):
+        return DeepDiveTurnResult(
+            coach_reply="目标岗位关联已补充。",
+            answer_evaluation=AnswerEvaluation(
+                summary="岗位关联说明完整",
+                completeness="complete",
+            ),
+            narrative_delta=[],
+            target_findings=[],
+            gaps=[],
+            next_question=None,
+            stage_complete=True,
+        )
+
+    async def generate_project_questions(self, **kwargs):
+        self.question_generation_calls += 1
+        contexts = kwargs["dimension_contexts"]
+        assert len(contexts) == 6
+        assert contexts[0]["projectFacts"]
+        return ProjectQuestionBatchOutput(
+            candidates=[
+                ProjectQuestionSuggestion(
+                    dimension=item["dimension"],
+                    title=f"订单系统 · {item['label']}",
+                    question=f"请结合订单系统说明{item['label']}中的判断和验证方式。",
+                )
+                for item in contexts
+            ]
+        )
 
 
 def test_deep_dive_question_does_not_advance_or_write_narrative():
@@ -167,12 +204,23 @@ async def test_analysis_deep_dive_and_project_question_library(tmp_path: Path):
         )
         assert narrative["confirmedSectionIds"] == ["background"]
         assert profile.repository.get_claim(project.claim_id).version == 2
+        question_agent = _QuestionGeneratingAgent()
         for index in range(6):
+            if index == 5:
+                training.agents = question_agent  # type: ignore[assignment]
             dive = await training.answer_deep_dive(
                 dive["id"],
                 f"第 {index + 1} 个维度：我负责核心链路设计、压测和上线复盘，并记录了指标变化。",
             )
+            if index == 5:
+                await training.executions.wait(dive["executions"][-1]["id"])
+                dive = training.deep_dive_resource(dive["id"])
         assert dive["status"] == "completed"
+        assert question_agent.question_generation_calls == 1
+        assert dive["executions"][-1]["status"] == "completed", (
+            dive["executions"][-1]["errorCode"],
+            dive["executions"][-1]["errorMessage"],
+        )
         assert len(dive["questionCandidates"]) == 6
         assert dive["questionCandidates"][0]["question"]["rationale"]
         assert dive["questionCandidates"][0]["question"]["projectFacts"]

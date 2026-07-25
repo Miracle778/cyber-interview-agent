@@ -506,6 +506,18 @@ class JobTargetApplication:
                 detected_intent=detected_intent,
             )
         cancellation.raise_if_requested()
+        finished = result["nextStage"] == "finished"
+        question_drafts = (
+            await self._generate_project_questions(
+                dive_id,
+                agents=agents,
+                execution=execution,
+                pending_result=result,
+            )
+            if finished
+            else ()
+        )
+        cancellation.raise_if_requested()
         with cancellation.critical_section():
             artifact_id = self.repository.create_artifact(
                 dive_id,
@@ -528,7 +540,6 @@ class JobTargetApplication:
                     json.loads(dive["completed_stage_ids_json"]),
                 )
             )
-            finished = next_stage == "finished"
             self.repository.advance_deep_dive(
                 dive_id,
                 current_stage=next_stage,
@@ -537,7 +548,11 @@ class JobTargetApplication:
                 status="completed" if finished else "active",
             )
             if finished:
-                self._generate_project_questions(dive_id)
+                self.repository.create_project_question_candidates(
+                    dive_id,
+                    dive["project_claim_id"],
+                    candidates=question_drafts,
+                )
             self.product_repository.append_message(
                 dive["session_id"],
                 execution_id=execution.id,
@@ -1019,8 +1034,16 @@ class JobTargetApplication:
             ),
         }
 
-    def _generate_project_questions(self, dive_id: str) -> None:
+    async def _generate_project_questions(
+        self,
+        dive_id: str,
+        *,
+        agents: JobTargetAgents | None,
+        execution: ExecutionRecord,
+        pending_result: dict[str, object],
+    ) -> tuple[tuple[str, dict[str, object]], ...]:
         dive = self.repository.get_deep_dive(dive_id)
+        target = self.service.get_target(dive["job_target_id"])
         project_context = self.profile.confirmed_profile_context(
             purpose="job_target_analysis",
             claim_ids=(dive["project_claim_id"],),
@@ -1034,21 +1057,88 @@ class JobTargetApplication:
             )
             if item.confirmation_status == "confirmed"
         )
-        artifacts = self.repository.list_artifacts(dive_id)
-        gaps = self.repository.list_gaps(dive_id)
-        for dimension in _PROJECT_QUESTION_DIMENSIONS:
-            self.repository.create_project_question_candidate(
-                dive_id,
-                dive["project_claim_id"],
+        artifacts = [
+            *self.repository.list_artifacts(dive_id),
+            {"payload": pending_result},
+        ]
+        gaps = [
+            *self.repository.list_gaps(dive_id),
+            *[
+                {
+                    "gap_kind": item["kind"],
+                    "summary": item["summary"],
+                    "status": "open",
+                }
+                for item in pending_result.get("gaps", [])
+            ],
+        ]
+        basis_by_dimension = {
+            dimension: _project_question_basis(
                 dimension=dimension,
-                question=_project_question_draft(
-                    dimension=dimension,
-                    project=project,
-                    requirements=requirements,
-                    artifacts=artifacts,
-                    gaps=gaps,
-                ),
+                project=project,
+                requirements=requirements,
+                artifacts=artifacts,
+                gaps=gaps,
             )
+            for dimension in _PROJECT_QUESTION_DIMENSIONS
+        }
+        if agents is None:
+            return tuple(
+                (
+                    dimension,
+                    _project_question_draft(
+                        dimension=dimension,
+                        project=project,
+                        requirements=requirements,
+                        artifacts=artifacts,
+                        gaps=gaps,
+                    ),
+                )
+                for dimension in _PROJECT_QUESTION_DIMENSIONS
+            )
+
+        output = await agents.generate_project_questions(
+            target={
+                "company": target.company_name,
+                "role": target.role_name,
+                "seniority": target.seniority,
+            },
+            project=project,
+            dimension_contexts=[
+                {
+                    "dimension": dimension,
+                    "label": _PROJECT_QUESTION_LABELS[dimension],
+                    **basis_by_dimension[dimension],
+                }
+                for dimension in _PROJECT_QUESTION_DIMENSIONS
+            ],
+            context=self.executions.context(execution),
+            config={},
+        )
+        result: list[tuple[str, dict[str, object]]] = []
+        seen: set[str] = set()
+        for candidate in output.candidates:
+            dimension = candidate.dimension
+            if dimension in seen:
+                continue
+            title = candidate.title.strip()
+            question = candidate.question.strip()
+            if not title or not question:
+                raise ValueError("项目候选题标题和题目不能为空")
+            seen.add(dimension)
+            result.append(
+                (
+                    dimension,
+                    {
+                        **basis_by_dimension[dimension],
+                        "title": title,
+                        "question": question,
+                    },
+                )
+            )
+        if not result:
+            raise ValueError("模型未生成可用的项目候选题")
+        return tuple(result)
 
 
 def _extract_requirements(body: str) -> tuple[dict[str, object], ...]:
@@ -1398,7 +1488,11 @@ def _project_question_basis(
 def _narrative_facts(artifacts, stages: tuple[str, ...]) -> tuple[str, ...]:
     facts: list[str] = []
     for artifact in artifacts:
-        payload = json.loads(artifact["payload_json"])
+        payload = (
+            artifact["payload"]
+            if isinstance(artifact, dict) and "payload" in artifact
+            else json.loads(artifact["payload_json"])
+        )
         for item in payload.get("narrativeDelta", []):
             if item.get("section") in stages and item.get("content"):
                 facts.append(_short_project_fact(str(item["content"])))

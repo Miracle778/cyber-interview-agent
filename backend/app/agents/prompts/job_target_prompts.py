@@ -7,6 +7,7 @@ from app.agents.prompts.prompt_spec import PromptSpec
 
 JOB_ANALYSIS_PROMPT_VERSION = "job-analysis-v3"
 PROJECT_DEEP_DIVE_PROMPT_VERSION = "project-deep-dive-v3"
+PROJECT_QUESTION_GENERATION_PROMPT_VERSION = "project-question-generation-v1"
 
 JOB_ANALYSIS_PROMPT = PromptSpec(
     id="job-analysis",
@@ -38,6 +39,19 @@ PROJECT_DEEP_DIVE_PROMPT = PromptSpec(
         "回答缺少事实或细节时指出具体缺口；不要仅按字数判断。stage_complete 表示"
         "当前维度是否已有足够信息。next_question 要自然承接用户回答，不能机械重复"
         "固定题库。"
+    ),
+)
+
+PROJECT_QUESTION_GENERATION_PROMPT = PromptSpec(
+    id="project-question-generation",
+    version="1.0",
+    system=(
+        "你是项目面试题整理 Agent。根据已确认项目资料、本轮项目深挖回答、已确认岗位要求"
+        "和开放差距，一次批量生成最多 6 道候选题。只能使用输入中的事实，不得补写项目"
+        "规模、指标、职责或技术细节。每个 dimension 最多一题；题目要让用户解释真实经历、"
+        "设计判断、验证方式或岗位关联，不能只是换词复述。title 简短清楚，question 必须"
+        "明确指出要回答的范围，但不能在题干中把参考事实伪装成用户尚未确认的结论。"
+        "不允许发布题目或修改项目资料。"
     ),
 )
 
@@ -75,3 +89,20 @@ def render_deep_dive_turn(
         "user_message": answer,
     }
     return json.dumps(payload, ensure_ascii=False)
+
+
+def render_project_question_batch(
+    *,
+    target: dict,
+    project: dict,
+    dimension_contexts: list[dict],
+) -> str:
+    return json.dumps(
+        {
+            "target": target,
+            "confirmed_project": project,
+            "dimension_contexts": dimension_contexts,
+            "max_candidates": 6,
+        },
+        ensure_ascii=False,
+    )

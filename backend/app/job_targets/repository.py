@@ -789,23 +789,52 @@ class JobTargetRepository:
         dimension: str,
         question: dict[str, object],
     ) -> str:
-        encoded = json.dumps(question, ensure_ascii=False, sort_keys=True)
-        existing = self.connection.execute(
-            "SELECT id FROM project_question_candidates WHERE deep_dive_id = ? "
-            "AND project_claim_id = ? AND dimension = ? AND question_json = ?",
-            (dive_id, project_claim_id, dimension, encoded),
-        ).fetchone()
-        if existing is not None:
-            return existing["id"]
-        candidate_id = str(uuid4())
-        self.connection.execute(
-            "INSERT INTO project_question_candidates "
-            "(id, deep_dive_id, project_claim_id, dimension, question_json) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (candidate_id, dive_id, project_claim_id, dimension, encoded),
-        )
+        return self.create_project_question_candidates(
+            dive_id,
+            project_claim_id,
+            candidates=((dimension, question),),
+        )[0]
+
+    def create_project_question_candidates(
+        self,
+        dive_id: str,
+        project_claim_id: str,
+        *,
+        candidates: tuple[tuple[str, dict[str, object]], ...],
+    ) -> tuple[str, ...]:
+        candidate_ids: list[str] = []
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            for dimension, question in candidates:
+                encoded = json.dumps(question, ensure_ascii=False, sort_keys=True)
+                existing = self.connection.execute(
+                    "SELECT id FROM project_question_candidates "
+                    "WHERE deep_dive_id = ? AND project_claim_id = ? "
+                    "AND dimension = ? AND question_json = ?",
+                    (dive_id, project_claim_id, dimension, encoded),
+                ).fetchone()
+                if existing is not None:
+                    candidate_ids.append(existing["id"])
+                    continue
+                candidate_id = str(uuid4())
+                self.connection.execute(
+                    "INSERT INTO project_question_candidates "
+                    "(id, deep_dive_id, project_claim_id, dimension, question_json) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (
+                        candidate_id,
+                        dive_id,
+                        project_claim_id,
+                        dimension,
+                        encoded,
+                    ),
+                )
+                candidate_ids.append(candidate_id)
+        except Exception:
+            self.connection.rollback()
+            raise
         self.connection.commit()
-        return candidate_id
+        return tuple(candidate_ids)
 
     def list_project_question_candidates(self, dive_id: str):
         return self.connection.execute(

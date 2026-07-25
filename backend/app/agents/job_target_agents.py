@@ -11,12 +11,18 @@ from app.agents.agent_factory import AgentFactory, AgentSpec, ModelOverride
 from app.agents.agent_invocation import isolated_thread_config
 from app.agents.agent_protocols import AgentRunnable
 from app.agents.context import AgentContext
-from app.agents.job_target_contracts import DeepDiveTurnResult, JobRequirementExtraction
+from app.agents.job_target_contracts import (
+    DeepDiveTurnResult,
+    JobRequirementExtraction,
+    ProjectQuestionBatchOutput,
+)
 from app.agents.prompts.job_target_prompts import (
     JOB_ANALYSIS_PROMPT,
     PROJECT_DEEP_DIVE_PROMPT,
+    PROJECT_QUESTION_GENERATION_PROMPT,
     render_deep_dive_turn,
     render_job_analysis_input,
+    render_project_question_batch,
 )
 
 
@@ -26,6 +32,7 @@ class JobTargetAgents:
 
     analysis: AgentRunnable
     deep_dive: AgentRunnable
+    question_generation: AgentRunnable
 
     @classmethod
     def create(
@@ -57,6 +64,18 @@ class JobTargetAgents:
                     prompt=PROJECT_DEEP_DIVE_PROMPT,
                     middleware=middleware,
                     response_format=DeepDiveTurnResult,
+                ),
+                model_bindings=model_bindings,
+                model_override=model_override,
+                checkpointer=checkpointer,
+            ),
+            question_generation=factory.create(
+                AgentSpec(
+                    role="project_deep_dive",
+                    execution_name="project_question_generation",
+                    prompt=PROJECT_QUESTION_GENERATION_PROMPT,
+                    middleware=middleware,
+                    response_format=ProjectQuestionBatchOutput,
                 ),
                 model_bindings=model_bindings,
                 model_override=model_override,
@@ -127,3 +146,35 @@ class JobTargetAgents:
         if "structured_response" not in result:
             raise ValueError("模型未生成结构化项目深挖结果")
         return DeepDiveTurnResult.model_validate(result["structured_response"])
+
+    async def generate_project_questions(
+        self,
+        *,
+        target: dict,
+        project: dict,
+        dimension_contexts: list[dict],
+        context: AgentContext,
+        config: dict[str, Any],
+    ) -> ProjectQuestionBatchOutput:
+        result = await self.question_generation.ainvoke(
+            {
+                "messages": [
+                    HumanMessage(
+                        content=render_project_question_batch(
+                            target=target,
+                            project=project,
+                            dimension_contexts=dimension_contexts,
+                        )
+                    )
+                ]
+            },
+            isolated_thread_config(
+                config, context, "project_question_generation"
+            ),
+            context=context,
+        )
+        if "structured_response" not in result:
+            raise ValueError("模型未生成结构化项目候选题")
+        return ProjectQuestionBatchOutput.model_validate(
+            result["structured_response"]
+        )
