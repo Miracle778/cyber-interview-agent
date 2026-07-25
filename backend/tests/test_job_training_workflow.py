@@ -16,6 +16,7 @@ from app.agents.job_target_contracts import (
 from app.graphs.project_deep_dive import ProjectDeepDiveState
 from app.job_targets.application import (
     _deep_dive_result,
+    _job_metadata,
     classify_deep_dive_turn_intent,
 )
 from app.job_targets.requirement_classification import (
@@ -111,6 +112,7 @@ def test_deep_dive_question_does_not_advance_or_write_narrative():
     [
         ("应用服务团队", True),
         ("团队负责支付与会员相关的基础中间件", True),
+        ("团队持续探索大模型在研发流程、知识管理和智能助手中的落地", True),
         ("部门：应用服务团队", True),
         ("蚂蚁集团｜应用服务团队｜高级后端工程师（P6/P7）", True),
         (
@@ -127,6 +129,20 @@ def test_requirement_classifier_keeps_job_context_out_of_confirmation_queue(
     text: str, expected: bool
 ):
     assert is_job_background_or_heading(text) is expected
+
+
+def test_job_metadata_falls_back_to_structured_jd_header():
+    metadata = _job_metadata(
+        None,
+        "蚂蚁集团｜应用服务团队｜高级后端工程师（P6/P7）\n"
+        "要求 5 年以上后端研发经验",
+    )
+
+    assert metadata == {
+        "company_name": "蚂蚁集团",
+        "role_name": "高级后端工程师（P6/P7）",
+        "seniority": "P6",
+    }
 
 
 def test_legacy_mixed_requirement_hides_metadata_but_keeps_candidate_actions():

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+import re
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
@@ -34,6 +35,8 @@ from app.review.models import CurationSeedTaskRecord
 _DISCOVERY_POLICY = ModelInvocationPolicy(2_048, 90, 1)
 _ENRICHMENT_POLICY = ModelInvocationPolicy(4_096, 180, 1)
 _REVISION_POLICY = ModelInvocationPolicy(4_096, 180, 0)
+_MARKDOWN_HEADING_ONLY = re.compile(r"^\s{0,3}#{1,6}\s+\S.*$")
+_BOLD_HEADING_ONLY = re.compile(r"^\s*(?:\*\*|__)\S.+(?:\*\*|__)\s*$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +108,8 @@ class QuestionCurationAgents:
         config: dict[str, Any],
         unit_index: int,
     ) -> QuestionSeedChunk:
+        if all(_heading_only(section.text) for section in sections):
+            return QuestionSeedChunk(seeds=[])
         result = await self.discovery.ainvoke(
             {"messages": [HumanMessage(content=render_question_discovery_input(sections))]},
             isolated_thread_config(
@@ -190,6 +195,23 @@ def _structured(result: object) -> object:
     if not isinstance(result, dict) or "structured_response" not in result:
         raise ValueError("模型未生成结构化题目候选")
     return result["structured_response"]
+
+
+def _heading_only(text: str) -> bool:
+    lines = tuple(line.strip() for line in text.splitlines() if line.strip())
+    if not lines:
+        return True
+    if len(lines) > 1:
+        return all(
+            _MARKDOWN_HEADING_ONLY.fullmatch(line)
+            or _BOLD_HEADING_ONLY.fullmatch(line)
+            for line in lines
+        )
+    line = lines[0]
+    return bool(
+        _MARKDOWN_HEADING_ONLY.fullmatch(line)
+        or _BOLD_HEADING_ONLY.fullmatch(line)
+    )
 
 
 def _seed_primary_ref(seed: QuestionSeed | CurationSeedTaskRecord) -> str:

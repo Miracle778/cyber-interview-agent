@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, BookOpen, File, FileText, FolderLock, RefreshCw, Trash2, Upload } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
 import { toActionableError, type ActionableError } from "../../shared/api/errorAdvice";
@@ -44,6 +44,13 @@ function formatDate(value: string) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN");
 }
 
+function contentTypeLabel(value: string) {
+  if (value === "text/markdown") return "Markdown 文档";
+  if (value === "text/plain") return "文本文档";
+  if (value === "application/pdf") return "PDF 文档";
+  return "资料文件";
+}
+
 export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanned }: KnowledgePageProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selection, setSelection] = useState<ResourceSelection>(null);
@@ -54,6 +61,7 @@ export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanne
   const [isRescanning, setIsRescanning] = useState(false);
   const [publicationExecutionId, setPublicationExecutionId] = useState<string | null>(null);
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const workspaceId = workspace?.id ?? "";
   const hasWorkspace = workspace !== null;
 
@@ -143,15 +151,12 @@ export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanne
     }
   }
 
-  async function handleDeleteSource(hard: boolean) {
+  async function handleDeleteSource() {
     if (!workspace || !selectedSource) return;
-    const message = hard
-      ? "永久删除原始文件？此操作不可恢复，且存在题目证据引用时会被阻止。"
-      : "将原材料移到回收站？已生成题目和来源证据不会受影响。";
-    if (!globalThis.confirm(message)) return;
+    if (!globalThis.confirm("将原材料移到回收站？已生成题目和来源依据不会受影响。")) return;
     setError(null);
     try {
-      await deleteSource(workspace.id, selectedSource.id, hard);
+      await deleteSource(workspace.id, selectedSource.id, false);
       setSelection(null);
       await queryClient.invalidateQueries({ queryKey: ["knowledge-sources", workspace.id] });
     } catch (caught) {
@@ -199,9 +204,9 @@ export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanne
               <Upload size={16} aria-hidden="true" />上传资料
             </Button>
             <Button variant="secondary" onClick={handleRescan} disabled={!hasWorkspace || isRescanning} loading={isRescanning}>
-              <RefreshCw size={16} aria-hidden="true" />更新资料索引
+              <RefreshCw size={16} aria-hidden="true" />刷新资料
             </Button>
-            {indexedCount !== null ? <span className="status-note">已更新 {indexedCount} 份资料的检索索引</span> : null}
+            {indexedCount !== null ? <span className="status-note">已刷新 {indexedCount} 份资料</span> : null}
           </div>
         </div>
       </Card>
@@ -276,7 +281,7 @@ export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanne
             {selectedSource ? (
               <Card title={selectedSource.originalFilename} icon={<File size={18} />}>
                 <dl className="source-detail">
-                  <div><dt>文件类型</dt><dd>{selectedSource.contentType}</dd></div>
+                  <div><dt>文件类型</dt><dd>{contentTypeLabel(selectedSource.contentType)}</dd></div>
                   <div><dt>文件大小</dt><dd>{formatBytes(selectedSource.sizeBytes)}</dd></div>
                   <div><dt>上传时间</dt><dd>{formatDate(selectedSource.createdAt)}</dd></div>
                   <div><dt>整理状态</dt><dd>{selectedSource.draftId ? "已生成整理草稿" : "等待整理"}</dd></div>
@@ -286,9 +291,9 @@ export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanne
                     查看关联草稿
                   </Button>
                 ) : null}
+                {!selectedSource.draftId ? <div className="source-next-step"><div><strong>下一步：整理成可复习题目</strong><p>进入题库整理后选择这份资料，系统会保留处理进度和来源位置。</p></div><Button onClick={() => navigate("/review")}><BookOpen size={16} />去整理题目</Button></div> : null}
                 <div className="source-delete-actions">
-                  <Button variant="secondary" onClick={() => void handleDeleteSource(false)}><Trash2 size={16} />移到回收站</Button>
-                  <Button variant="danger" onClick={() => void handleDeleteSource(true)}>永久删除</Button>
+                  <Button variant="secondary" onClick={() => void handleDeleteSource()}><Trash2 size={16} />移到回收站</Button>
                 </div>
               </Card>
             ) : null}

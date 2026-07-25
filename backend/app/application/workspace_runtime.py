@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import sqlite3
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import asdict, dataclass, field
@@ -60,6 +61,27 @@ from app.job_targets.service import JobTargetService
 from app.job_targets.application import JobTargetApplication
 
 
+def _compact_session_title(content: str) -> str:
+    text = re.sub(r"\s+", " ", content).strip()
+    intent_titles = (
+        ("自我介绍", "生成一分钟自我介绍"),
+        ("简历", "完整", "检查简历信息完整性"),
+        ("冲突", "检查资料冲突"),
+        ("后端开发经历", "整理后端开发经历"),
+        ("项目经历", "整理项目经历"),
+    )
+    for rule in intent_titles:
+        *keywords, title = rule
+        if all(keyword in text for keyword in keywords):
+            return title
+    text = re.sub(r"^(?:请|麻烦|帮我|请你)\s*", "", text)
+    text = re.sub(r"^基于[^，。！？]{0,40}[，,]\s*", "", text)
+    first_clause = re.split(r"[。！？；;\n]", text, maxsplit=1)[0].strip(" ，,：:")
+    if not first_clause:
+        return "画像资料对话"
+    return first_clause if len(first_clause) <= 28 else f"{first_clause[:27]}…"
+
+
 class SqliteMiddlewareProjection:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self._connection = connection
@@ -115,7 +137,7 @@ class SqliteMiddlewareProjection:
         ).fetchone()
         title = candidate
         if user_message is not None:
-            title = " ".join(user_message["content"].split())[:60]
+            title = _compact_session_title(user_message["content"])
         cursor = self._connection.execute(
             "UPDATE agent_sessions SET title = ?, title_source = 'generated', "
             "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND "

@@ -134,7 +134,7 @@ class JobTargetApplication:
                 if key == "requirement_extraction":
                     if self.agents is None:
                         suggestions = _extract_requirements(document.body)
-                        metadata = None
+                        metadata = _job_metadata(None, document.body)
                     else:
                         result = await self.agents.extract_requirements(
                             role=target.role_name,
@@ -144,7 +144,7 @@ class JobTargetApplication:
                             context=self.executions.context(execution),
                             config={},
                         )
-                        metadata = result.metadata
+                        metadata = _job_metadata(result.metadata, document.body)
                         suggestions = tuple(
                             normalized
                             for item in result.requirements
@@ -152,25 +152,27 @@ class JobTargetApplication:
                             for normalized in (
                                 _normalized_requirement(item.model_dump(), document.body),
                             )
+                            if normalized["text"]
+                            and not is_job_background_or_heading(
+                                str(normalized["text"])
+                            )
                         )
                     with cancellation.critical_section():
                         requirements = self.service.replace_requirement_suggestions(
                             target.id, document.id, suggestions=suggestions
                         )
-                        if metadata is not None and any(
-                            (metadata.company_name, metadata.role_name, metadata.seniority)
-                        ):
+                        if any(metadata.values()):
                             fresh_target = self.service.get_target(target.id)
                             target = self.service.update_target(
                                 target.id,
                                 expected_version=fresh_target.version,
                                 company_name=(
-                                    metadata.company_name
-                                    if metadata.company_name is not None
+                                    metadata["company_name"]
+                                    if metadata["company_name"] is not None
                                     else fresh_target.company_name
                                 ),
-                                role_name=metadata.role_name or fresh_target.role_name,
-                                seniority=metadata.seniority or fresh_target.seniority,
+                                role_name=metadata["role_name"] or fresh_target.role_name,
+                                seniority=metadata["seniority"] or fresh_target.seniority,
                                 source_url=fresh_target.source_url,
                                 idempotency_key=f"analysis-metadata:{run_id}",
                             )
@@ -1206,6 +1208,13 @@ def _normalized_requirement(
     if quote and quote not in document:
         quote = ""
     start = document.find(quote) if quote else -1
+    nearby_heading = document[max(0, start - 120):start] if start >= 0 else ""
+    priority_context = f"{nearby_heading}\n{text}\n{quote}"
+    priority = (
+        "nice_to_have"
+        if re.search(r"(?:加分项|优先考虑|优先)$|(?:加分|优先)", priority_context)
+        else "must_have"
+    )
     return {
         **value,
         "stable_key": str(value.get("stable_key") or "").strip()
@@ -1215,7 +1224,48 @@ def _normalized_requirement(
         "source_start": start if start >= 0 else None,
         "source_end": start + len(quote) if start >= 0 else None,
         "inferred": bool(value.get("inferred")) or not bool(quote),
+        "priority": priority,
     }
+
+
+def _job_metadata(metadata: object | None, document: str) -> dict[str, str | None]:
+    company = _clean_metadata_value(getattr(metadata, "company_name", None))
+    role = _clean_metadata_value(getattr(metadata, "role_name", None))
+    seniority = _clean_metadata_value(getattr(metadata, "seniority", None))
+    lines = tuple(line.strip(" \t#*-") for line in document.splitlines() if line.strip())
+    labelled = {
+        key: match.group(1).strip()
+        for key, pattern in {
+            "company": r"^(?:公司|企业)[：:]\s*(.+)$",
+            "role": r"^(?:岗位|职位|岗位名称|职位名称)[：:]\s*(.+)$",
+            "seniority": r"^(?:职级|经验要求|工作经验)[：:]\s*(.+)$",
+        }.items()
+        for line in lines[:20]
+        if (match := re.match(pattern, line, re.I))
+    }
+    pipe_line = next((line for line in lines[:8] if line.count("｜") >= 2), "")
+    pipe_parts = tuple(part.strip() for part in pipe_line.split("｜") if part.strip())
+    company = company or labelled.get("company") or (pipe_parts[0] if pipe_parts else None)
+    role = role or labelled.get("role") or (pipe_parts[-1] if len(pipe_parts) >= 3 else None)
+    if not seniority:
+        seniority = labelled.get("seniority")
+    if not seniority:
+        match = re.search(
+            r"(P\d+|(?:\d+|[一二三四五六七八九十]+)\s*年(?:以上)?(?:相关)?(?:工作)?经验)",
+            document,
+            re.I,
+        )
+        seniority = match.group(1).replace(" ", "") if match else None
+    return {
+        "company_name": company,
+        "role_name": role,
+        "seniority": seniority,
+    }
+
+
+def _clean_metadata_value(value: object) -> str | None:
+    text = str(value or "").strip()
+    return text or None
 
 
 def _deep_dive_result(

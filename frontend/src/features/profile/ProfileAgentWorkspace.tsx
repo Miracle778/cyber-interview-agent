@@ -78,7 +78,16 @@ export function ProfileAgentWorkspace({
   const client = useQueryClient();
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [showRecycleBin, setShowRecycleBin] = useState(false);
-  const [scopeCategories, setScopeCategories] = useState<ProfileCardCategory[]>(["experience", "project", "skill"]);
+  const [scopeCategories, setScopeCategories] = useState<ProfileCardCategory[]>([
+    "summary",
+    "direction",
+    "experience",
+    "project",
+    "skill",
+    "education",
+    "certification",
+    "achievement",
+  ]);
   const [asideOpen, setAsideOpen] = useState(() => globalThis.localStorage?.getItem("profile-agent-aside-open") !== "false");
   const [modelId, setModelId] = useState("");
   const [reasoningEffort, setReasoningEffort] = useState<AgentReasoningEffort>("none");

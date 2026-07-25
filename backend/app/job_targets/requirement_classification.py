@@ -24,6 +24,12 @@ _CANDIDATE_CUES = (
     "参与",
     "能够",
     "需要",
+    "使用",
+    "构建",
+    "设计",
+    "开发",
+    "推动",
+    "解决",
 )
 _BACKGROUND_CUES = (
     "团队是",
@@ -47,6 +53,11 @@ _BACKGROUND_CUES = (
     "产品线",
     "福利",
     "工作地点",
+    "持续探索",
+    "探索",
+    "聚焦",
+    "面向",
+    "落地",
 )
 
 
@@ -64,6 +75,15 @@ def is_job_background_or_heading(text: str) -> bool:
         return True
     if re.match(r"^(?:团队|部门|技术团队).{0,18}(?:是|为|负责|服务|致力于)", normalized):
         return True
+    if re.match(
+        r"^(?:团队|部门|技术团队|业务线|产品线)"
+        r".{0,36}(?:持续探索|探索|聚焦|面向|落地|建设|提供)",
+        normalized,
+    ) and not re.search(
+        r"(?:候选人|应聘者|你)(?:需要|应当|须|需|具备|熟悉|掌握|负责)",
+        normalized,
+    ):
+        return True
     if re.search(
         r"(?:团队|部门|技术团队|业务线|产品线)"
         r"(?:负责|服务|致力于|提供|建设|强调)",
@@ -78,6 +98,16 @@ def is_job_background_or_heading(text: str) -> bool:
     if _BACKGROUND_NAME.fullmatch(normalized) and not has_candidate_cue:
         return True
     return has_background_cue and not has_candidate_cue
+
+
+def is_recommendable_requirement(text: str) -> bool:
+    """Only recommend atomic, explicit candidate expectations for bulk confirmation."""
+    normalized = re.sub(r"\s+", "", text).strip("-:：；;。")
+    if is_job_background_or_heading(normalized) or len(normalized) < 4:
+        return False
+    return any(cue in normalized for cue in _CANDIDATE_CUES) or bool(
+        re.search(r"(?:本科|硕士|博士|\d+\s*年|Java|Python|Go|C\+\+)", normalized, re.I)
+    )
 
 
 def clean_job_requirement_text(text: str) -> str:

@@ -9,6 +9,7 @@ interface PageHeaderProps {
   healthStatus: HealthStatus;
   healthMessage: string;
   workspace: WorkspaceConfig | null;
+  revealWorkspacePath?: boolean;
 }
 
 export function PageHeader({
@@ -17,6 +18,7 @@ export function PageHeader({
   healthStatus,
   healthMessage,
   workspace,
+  revealWorkspacePath = false,
 }: PageHeaderProps) {
   return (
     <header className="page-header">
@@ -37,7 +39,11 @@ export function PageHeader({
         </span>
         <span className="status-chip" data-state={workspace ? "connected" : "neutral"}>
           <Folder size={15} aria-hidden="true" />
-          {workspace ? `Workspace：${workspace.workspacePath}` : "Workspace：待初始化"}
+          {workspace
+            ? revealWorkspacePath
+              ? `工作区：${workspace.workspacePath}`
+              : "工作区已就绪"
+            : "工作区待初始化"}
         </span>
       </div>
     </header>

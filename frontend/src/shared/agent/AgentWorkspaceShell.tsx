@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { PanelRightClose, PanelRightOpen } from "lucide-react";
 
 interface AgentWorkspaceShellProps {
@@ -18,6 +18,17 @@ export function AgentWorkspaceShell({
   onAsideOpenChange,
   asideLabel = "本次依据",
 }: AgentWorkspaceShellProps) {
+  useEffect(() => {
+    const compact = globalThis.matchMedia?.("(max-width: 1199px)");
+    if (!compact) return;
+    const closeCompactAside = (event?: MediaQueryListEvent) => {
+      if (event?.matches ?? compact.matches) onAsideOpenChange(false);
+    };
+    closeCompactAside();
+    compact.addEventListener?.("change", closeCompactAside);
+    return () => compact.removeEventListener?.("change", closeCompactAside);
+  }, [onAsideOpenChange]);
+
   return (
     <section className={`agent-workspace${asideOpen ? "" : " agent-workspace--aside-collapsed"}`}>
       <header className="agent-workspace__header">
@@ -25,6 +36,7 @@ export function AgentWorkspaceShell({
         <button
           type="button"
           className="agent-workspace__aside-toggle"
+          aria-label={asideOpen ? `收起${asideLabel}` : `打开${asideLabel}`}
           aria-expanded={asideOpen}
           aria-controls="agent-workspace-aside"
           onClick={() => onAsideOpenChange(!asideOpen)}

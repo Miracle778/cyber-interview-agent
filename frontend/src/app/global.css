@@ -289,6 +289,8 @@
 }
 
 @media (max-width: 767px) {
+  .agent-workspace { min-height: 0; }
+  .agent-workspace__header { align-items: flex-start; }
   .agent-workspace__header { padding-right: var(--space-3); padding-left: var(--space-3); }
   .agent-workspace__aside-toggle span { display: none; }
   .profile-agent-header > div { display: grid; gap: 2px; }
@@ -2325,6 +2327,8 @@ select:disabled {
 .curation-session-item__meta { display: flex; flex-wrap: wrap; gap: var(--space-2); color: var(--text-soft); font-size: .76rem; }
 .curation-session-item__pending { color: var(--warning); font-weight: 600; }
 .source-delete-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--border); }
+.source-next-step { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); margin-top: var(--space-4); padding: var(--space-4); background: var(--primary-soft); border: 1px solid color-mix(in srgb, var(--primary) 18%, var(--border)); border-radius: var(--radius-md); }
+.source-next-step p { margin-top: 3px; color: var(--text-muted); font-size: .8rem; line-height: 1.5; }
 .curation-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--space-2); margin: var(--space-3) 0; }
 .curation-stat { display: grid; gap: 2px; padding: var(--space-3); text-align: center; background: var(--surface-subtle); border-radius: var(--radius-md); }
 .curation-stat__value { font-size: 1.4rem; font-weight: 700; color: var(--text); }
@@ -3855,6 +3859,7 @@ select:disabled {
 .profile-document-reader__view button { display: inline-flex; min-height: 34px; align-items: center; gap: 5px; padding: 5px 9px; color: var(--text-muted); background: transparent; border: 0; border-radius: calc(var(--radius-sm) - 2px); font-size: .7rem; }
 .profile-document-reader__view button[aria-pressed="true"] { color: var(--primary); font-weight: 700; background: var(--surface); box-shadow: var(--shadow-sm); }
 .profile-document-reader__download { display: inline-flex; min-height: 40px; align-items: center; gap: 6px; padding: 0 12px; color: var(--text); font-size: .72rem; font-weight: 700; text-decoration: none; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
+.profile-document-reader__directory-toggle.btn, .profile-document-reader__directory-close, .profile-document-reader__directory-backdrop { display: none; }
 .profile-document-reader__layout { display: grid; min-height: 0; grid-template-columns: clamp(220px, 23vw, 300px) minmax(0, 1fr); overflow: hidden; background: var(--canvas); }
 .profile-document-reader__layout > aside { min-height: 0; overflow-y: auto; padding: var(--space-4); background: var(--surface); border-right: 1px solid var(--border); scrollbar-gutter: stable; }
 .profile-document-reader__layout > aside > p { margin-top: 4px; color: var(--text-soft); font-size: .7rem; }
@@ -4141,6 +4146,18 @@ select:disabled {
 @media (max-width: 767px) {
   .profile-shell--workbench { min-height: 100dvh; overflow: visible; }
   .profile-shell--workbench .profile-page-content { display: block; overflow: visible; }
+  .profile-shell--agent,
+  .profile-shell--workbench:has(.profile-document-reader) { height: calc(100dvh - var(--app-mobile-header-height)); min-height: 0; overflow: hidden; }
+  .profile-shell--agent .profile-page-content,
+  .profile-shell--workbench:has(.profile-document-reader) .profile-page-content { display: flex; min-height: 0; overflow: hidden; }
+  .profile-shell--agent .profile-page-content > .agent-workspace,
+  .profile-shell--workbench:has(.profile-document-reader) .profile-page-content > .profile-document-reader { min-height: 0; flex: 1; }
+  .profile-shell--agent .profile-header,
+  .profile-shell--agent .profile-background-task,
+  .profile-shell--workbench:has(.profile-document-reader) .profile-header,
+  .profile-shell--workbench:has(.profile-document-reader) .profile-background-task { display: none; }
+  .profile-shell--agent .profile-tabs,
+  .profile-shell--workbench:has(.profile-document-reader) .profile-tabs { flex: 0 0 auto; }
   .profile-background-task { grid-template-columns: auto minmax(0, 1fr); }
   .profile-background-task .btn { grid-column: 1 / -1; width: 100%; }
   .profile-versions.task-workspace { display: block; width: calc(100% - 24px); margin-right: auto; margin-left: auto; padding-right: 0; padding-left: 0; }
@@ -4152,6 +4169,20 @@ select:disabled {
   .profile-version-menu { margin-left: auto; }
   .profile-document-entry { align-items: stretch; flex-direction: column; }
   .profile-document-entry .btn { width: 100%; }
+  .source-next-step { align-items: stretch; flex-direction: column; }
+  .source-next-step .btn { width: 100%; justify-content: center; }
+  .profile-document-reader { height: 100%; overflow: hidden; }
+  .profile-document-reader > header { grid-template-columns: auto minmax(0, 1fr) auto; padding: var(--space-2) var(--space-3); }
+  .profile-document-reader__directory-toggle.btn { display: inline-flex; }
+  .profile-document-reader__view { grid-column: 1 / -1; }
+  .profile-document-reader__download { grid-column: 1 / -1; justify-content: center; }
+  .profile-document-reader__layout { position: relative; display: block; min-height: 0; overflow: hidden; }
+  .profile-document-reader__layout > article { height: 100%; overflow-y: auto; padding: var(--space-3); }
+  .profile-document-reader__layout > aside { position: absolute; top: 0; bottom: 0; left: 0; z-index: 9; display: block; width: min(320px, 86vw); max-height: none; overflow-y: auto; border-right: 1px solid var(--border); border-bottom: 0; box-shadow: var(--shadow-md); transform: translateX(-105%); transition: transform var(--duration) var(--ease); }
+  .profile-document-reader__layout > aside[data-open] { transform: translateX(0); }
+  .profile-document-reader__directory-close { position: absolute; top: 10px; right: 10px; width: 36px; height: 36px; place-items: center; color: var(--text-muted); background: var(--surface-subtle); border: 0; border-radius: var(--radius-sm); }
+  .profile-document-reader__layout > aside[data-open] .profile-document-reader__directory-close { display: grid; }
+  .profile-document-reader__directory-backdrop { position: absolute; z-index: 8; inset: 0; display: block; background: rgb(15 23 42 / .28); border: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {

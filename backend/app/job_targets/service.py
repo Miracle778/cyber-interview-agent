@@ -18,6 +18,7 @@ from app.job_targets.repository import JobTargetRepository
 from app.job_targets.requirement_classification import (
     clean_job_requirement_text,
     is_job_background_or_heading,
+    is_recommendable_requirement,
 )
 from app.profile.errors import ProfileClaimNotFound
 from app.profile.repository import ProfileRepository
@@ -282,6 +283,7 @@ class JobTargetService:
                 item.confirmation_status == "pending"
                 and not item.inferred
                 and bool(item.source_quote.strip())
+                and is_recommendable_requirement(item.text)
             )
             if safe:
                 self.repository.set_requirement_confirmation(

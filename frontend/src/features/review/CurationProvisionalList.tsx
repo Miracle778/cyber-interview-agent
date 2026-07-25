@@ -20,11 +20,11 @@ export function CurationProvisionalList({ items, retryingSeedIds = new Set(), on
             {["retryable", "skipped", "degraded"].includes(item.status ?? "") ? <AlertTriangle size={16} aria-hidden="true" /> : <FileSearch size={16} aria-hidden="true" />}
             <div>
               <strong>{item.title}</strong>
-              <p>{item.questionText}</p>
+              {item.questionText !== item.title ? <p>{item.questionText}</p> : null}
               <div className="curation-quality-tags" aria-label="候选质量">
-                <span>{basisLabels[item.answerBasis ?? "unknown"]}</span>
-                <span>{supportLabels[item.materialSupport ?? "unknown"]}</span>
-                {item.needsReview ? <span>需要人工复核</span> : null}
+                {item.answerBasis && item.answerBasis !== "unknown" ? <span>{basisLabels[item.answerBasis]}</span> : null}
+                {item.materialSupport && item.materialSupport !== "unknown" ? <span>{supportLabels[item.materialSupport]}</span> : null}
+                {item.needsReview || !item.answerBasis || item.answerBasis === "unknown" || !item.materialSupport || item.materialSupport === "unknown" ? <span>等待质量判断</span> : null}
               </div>
             </div>
             <footer><small>{statusLabels[item.status ?? "completed"] ?? "状态待确认"} · {item.sourceRefs.length} 条证据</small>{item.seedTaskId && ["retryable", "skipped"].includes(item.status ?? "") ? <button type="button" disabled={retryingSeedIds.has(item.seedTaskId)} onClick={() => onRetry(item)}><RotateCcw size={14} />{retryingSeedIds.has(item.seedTaskId) ? "已接受，处理中" : "重试这一题"}</button> : null}</footer>

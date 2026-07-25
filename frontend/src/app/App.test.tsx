@@ -100,7 +100,7 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("管理 Agent 可引用的资料、草稿与 Vault 索引。")).toBeInTheDocument();
+    expect(await screen.findByText("集中管理面试资料和整理结果。")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "前往设置" })).toHaveAttribute("href", "/settings");
     expect(screen.queryByLabelText("流程状态")).not.toBeInTheDocument();
   });
@@ -148,7 +148,7 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findByText("后端已连接")).toBeInTheDocument();
-    expect(screen.getByText("Workspace：待初始化")).toBeInTheDocument();
+    expect(screen.getByText("工作区待初始化")).toBeInTheDocument();
     expect(screen.getByText("请先初始化工作区")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "前往设置" })).toHaveAttribute("href", "/settings");
   });

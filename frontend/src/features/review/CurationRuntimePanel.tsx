@@ -14,6 +14,26 @@ const candidateStatusLabels: Record<QuestionCandidate["status"], string> = {
   rejected: "待修改",
 };
 
+const executionStatusLabels: Record<string, string> = {
+  queued: "等待开始",
+  running: "正在处理",
+  waiting_for_input: "等待输入",
+  waiting_for_approval: "等待确认",
+  interrupted: "已中断",
+  completed: "已完成",
+  failed: "处理失败",
+  cancelled: "已停止",
+};
+
+function failureMessage(code?: string | null, message?: string | null) {
+  if (code === "curation_work_item_failed") return "部分资料没有生成有效结果。已有进度已保存，可以继续整理或单独重试问题项。";
+  if (code === "provider_timeout") return "模型响应超时。已有进度已保存，稍后继续即可。";
+  if (code === "rate_limited") return "模型服务当前较忙。已有进度已保存，稍后继续即可。";
+  if (code === "network_error") return "连接模型服务时中断。请检查网络后继续整理。";
+  if (message && !/^[a-z0-9_.-]+$/i.test(message)) return message;
+  return "这次整理没有完成。已有进度已保存，可以继续整理。";
+}
+
 function tokenLabel(value: number) {
   const precision = value >= 100_000 ? 1 : 2;
   return `${(value / 1000).toFixed(precision).replace(/\.0+$|(?<=\.[0-9])0+$/, "")}k`;
@@ -208,9 +228,9 @@ export function CurationRuntimePanel({ session, candidates = null, activeModelLa
           </div> : candidates === null ? <p className="curation-candidate-status__empty">正在同步候选题…</p> : recentCandidate === null ? <p className="curation-candidate-status__empty">候选题生成后会在这里显示。</p> : <div className="curation-candidate-status__recent"><small>最近更新</small><div><span>{ordinalByCandidate.get(recentCandidate.id) ?? "旧"}</span><strong title={recentCandidate.question.title}>{recentCandidate.question.title}</strong><em className={`candidate-status candidate-status--${recentCandidate.status}`}>{candidateStatusLabels[recentCandidate.status]}</em></div></div>}
         </section>
         {activeFilterLabel ? null : <>
-        {session.stage === "failed" ? <section className="curation-retry" role="status" aria-live="polite"><TriangleAlert size={17} /><div><strong>Agent 执行失败</strong><p>{session.executionErrorMessage ?? session.executionErrorCode ?? "已保留当前进度，可以继续整理。"}</p>{session.executionErrorCode ? <code>{session.executionErrorCode}</code> : null}</div></section> : null}
+        {session.stage === "failed" ? <section className="curation-retry" role="status" aria-live="polite"><TriangleAlert size={17} /><div><strong>本次整理未完成</strong><p>{failureMessage(session.executionErrorCode, session.executionErrorMessage)}</p></div></section> : null}
         {!session.batchStatus && session.stage === "generating" && generationLabel ? <section className="curation-progress" role="status" aria-live="polite" aria-atomic="true"><Activity size={17} /><div><strong>{generationLabel}</strong><p>{session.progress?.completed ?? 0} / {session.progress?.total ?? 0}</p></div></section> : null}
-        <details className="curation-runtime-disclosure" open={runtimeOpen}><summary onClick={(event) => { event.preventDefault(); setRuntimeOpen((current) => !current); }}><span><Activity size={16} />运行详情</span><small>{session.usage.callCount} 次调用</small><ChevronDown size={16} /></summary><div className="curation-runtime-disclosure__body"><dl><div><dt>执行状态</dt><dd>{session.executionStatus ?? "尚未启动"}</dd></div>{activeModelLabel ? <div><dt>执行模型</dt><dd title={activeModelLabel}>{activeModelLabel}</dd></div> : null}<div><dt>Token</dt><dd>{tokenLabel(session.usage.totalTokens)}</dd></div></dl><div className="curation-context-compact"><div className="curation-context-ring" style={{ "--context-progress": `${contextPercentage * 3.6}deg` } as CSSProperties}><span>{contextPercentage}%</span></div><div><small>当前上下文 / 压缩阈值</small><strong>{tokenLabel(currentContextTokens)} / {contextThresholdTokens > 0 ? tokenLabel(contextThresholdTokens) : "—"}</strong></div></div></div></details>
+        <details className="curation-runtime-disclosure" open={runtimeOpen}><summary onClick={(event) => { event.preventDefault(); setRuntimeOpen((current) => !current); }}><span><Activity size={16} />运行详情</span><small>{session.usage.callCount} 次调用</small><ChevronDown size={16} /></summary><div className="curation-runtime-disclosure__body"><dl><div><dt>执行状态</dt><dd>{executionStatusLabels[session.executionStatus ?? ""] ?? "尚未启动"}</dd></div>{activeModelLabel ? <div><dt>执行模型</dt><dd title={activeModelLabel}>{activeModelLabel}</dd></div> : null}<div><dt>Token</dt><dd>{tokenLabel(session.usage.totalTokens)}</dd></div></dl><div className="curation-context-compact"><div className="curation-context-ring" style={{ "--context-progress": `${contextPercentage * 3.6}deg` } as CSSProperties}><span>{contextPercentage}%</span></div><div><small>当前上下文 / 压缩阈值</small><strong>{tokenLabel(currentContextTokens)} / {contextThresholdTokens > 0 ? tokenLabel(contextThresholdTokens) : "—"}</strong></div></div></div></details>
         {(session.warnings?.length ?? 0) > 0 ? <details className="curation-runtime-warning" open={warningsOpen}><summary onClick={(event) => { event.preventDefault(); setWarningsOpen((current) => !current); }}><TriangleAlert size={16} />提示 <span>{session.warnings?.length ?? 0}</span></summary><p>{candidateLimitReached ? "已生成前 200 道候选题，请先审核当前结果" : "包含重复或正在整理的资料。题匠会保留全部来源，并在候选生成后合并高置信相似题。"}</p></details> : null}
         </>}
       </>}

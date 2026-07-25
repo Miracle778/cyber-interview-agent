@@ -63,7 +63,7 @@ describe("KnowledgePage", () => {
 
     expect(screen.getByText("请先初始化工作区")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "上传资料" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "更新资料索引" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "刷新资料" })).toBeDisabled();
   });
 
   it("uploads and displays a source without pretending a question was generated", async () => {
@@ -136,9 +136,9 @@ describe("KnowledgePage", () => {
       { wrapper },
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "更新资料索引" }));
+    fireEvent.click(screen.getByRole("button", { name: "刷新资料" }));
 
-    expect(await screen.findByText("已更新 3 份资料的检索索引")).toBeInTheDocument();
+    expect(await screen.findByText("已刷新 3 份资料")).toBeInTheDocument();
     await waitFor(() => expect(onVaultRescanned).toHaveBeenCalledWith(3));
   });
 

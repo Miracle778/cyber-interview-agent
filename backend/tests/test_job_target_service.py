@@ -84,6 +84,14 @@ def test_safe_bulk_confirmation_excludes_inferred_requirements(tmp_path):
                 "source_quote": "",
                 "inferred": True,
             },
+            {
+                "stable_key": "culture-slogan",
+                "requirement_type": "experience",
+                "priority": "must_have",
+                "text": "开放、务实、追求卓越",
+                "source_quote": "开放、务实、追求卓越",
+                "inferred": False,
+            },
         ),
     )
 
@@ -94,10 +102,11 @@ def test_safe_bulk_confirmation_excludes_inferred_requirements(tmp_path):
     )
 
     assert len(receipt.confirmed_ids) == 1
-    assert len(receipt.excluded_ids) == 1
+    assert len(receipt.excluded_ids) == 2
     requirements = service.list_requirements(target.id)
     assert requirements[0].confirmation_status == "confirmed"
     assert requirements[1].confirmation_status == "pending"
+    assert requirements[2].confirmation_status == "pending"
 
 
 def test_team_background_and_section_headings_stay_out_of_preparation(tmp_path):

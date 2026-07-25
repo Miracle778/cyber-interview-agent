@@ -485,6 +485,32 @@ async def test_concrete_agents_normalize_provider_discovery_output(
     ]
 
 
+@pytest.mark.asyncio
+async def test_concrete_agents_skip_heading_only_discovery_without_model_call(
+    tmp_path: Path,
+) -> None:
+    class Runnable:
+        calls = 0
+
+        async def ainvoke(self, _input, config=None, *, context=None):
+            self.calls += 1
+            raise AssertionError("heading-only content must not call the model")
+
+    runnable = Runnable()
+    agents = QuestionCurationAgents(runnable, runnable, runnable)
+    sections = (
+        SourceSection("s1", "s1#section-0001", 1, "# MySQL", "a" * 64),
+        SourceSection("s1", "s1#section-0002", 2, "**补充记录**", "b" * 64),
+    )
+
+    result = await agents.discover(
+        sections, context=context(tmp_path), config={}, unit_index=0
+    )
+
+    assert result.seeds == []
+    assert runnable.calls == 0
+
+
 @pytest.mark.parametrize("_transport_failure", ["429", "5xx", "network"])
 def test_curation_transport_failures_have_at_most_one_retry(
     _transport_failure: str,

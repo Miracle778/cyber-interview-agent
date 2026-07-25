@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Download, FileText, LockKeyhole, ShieldCheck } from "lucide-react";
+import { ArrowLeft, Download, FileText, List, LockKeyhole, ShieldCheck, X } from "lucide-react";
 import { Button } from "../../shared/ui/Button";
 import type { ProfileDocumentOutlineItem, ProfileMaterialDocument } from "./profileTypes";
 
@@ -26,6 +26,20 @@ function formatInline(text: string): ReactNode[] {
   });
 }
 
+function cleanOutlineTitle(item: ProfileDocumentOutlineItem, lines: string[], headingTitles: Set<string>) {
+  const { start } = lineRange(item);
+  const sourceLine = start > 0 ? lines[start - 1]?.trim() ?? "" : "";
+  const markdownHeading = /^#{1,6}\s+(.+)$/.exec(sourceLine)?.[1];
+  const boldHeading = /^(?:\*\*|__)(.+?)(?:\*\*|__)\s*$/.exec(sourceLine)?.[1];
+  const candidate = (markdownHeading ?? boldHeading ?? item.title)
+    .replace(/^#{1,6}\s*/, "")
+    .replace(/^(?:\*\*|__)|(?:\*\*|__)$/g, "")
+    .trim();
+  if (headingTitles.size > 0 && !headingTitles.has(candidate)) return null;
+  if (!candidate || candidate.length > 36 || /[。！？；：]\s*\S/.test(candidate)) return null;
+  return candidate;
+}
+
 function displayLine(line: string, lineNumber: number, focused: boolean) {
   const heading = /^(#{1,6})\s+(.+)$/.exec(line);
   const bullet = /^\s*[-*]\s+(.+)$/.exec(line);
@@ -47,11 +61,27 @@ export function ProfileDocumentReader({
   onBack: () => void;
 }) {
   const [view, setView] = useState<"original" | "redacted">("original");
+  const [directoryOpen, setDirectoryOpen] = useState(false);
   const [focusedId, setFocusedId] = useState(focusEvidenceId ?? document.outline[0]?.evidenceId ?? "");
   const bodyRef = useRef<HTMLElement>(null);
   const focusedItem = document.outline.find((item) => item.evidenceId === focusedId) ?? null;
   const focusedRange = focusedItem ? lineRange(focusedItem) : { start: 0, end: 0 };
   const lines = useMemo(() => (view === "original" ? document.originalText : document.redactedText).split("\n"), [document, view]);
+  const outline = useMemo(() => {
+    const headingTitles = new Set(lines.flatMap((line) => {
+      const trimmed = line.trim();
+      const title = /^#{1,6}\s+(.+)$/.exec(trimmed)?.[1]
+        ?? /^(?:\*\*|__)(.+?)(?:\*\*|__)\s*$/.exec(trimmed)?.[1];
+      return title ? [title.trim()] : [];
+    }));
+    const seen = new Set<string>();
+    return document.outline.flatMap((item) => {
+      const title = cleanOutlineTitle(item, lines, headingTitles);
+      if (!title || seen.has(title)) return [];
+      seen.add(title);
+      return [{ item, title }];
+    });
+  }, [document.outline, lines]);
 
   useEffect(() => {
     if (!focusedRange.start) return;
@@ -60,6 +90,7 @@ export function ProfileDocumentReader({
 
   function focus(item: ProfileDocumentOutlineItem) {
     setFocusedId(item.evidenceId);
+    setDirectoryOpen(false);
     const range = lineRange(item);
     if (range.start) bodyRef.current?.querySelector(`[data-line="${range.start}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
   }
@@ -73,14 +104,17 @@ export function ProfileDocumentReader({
         <button type="button" aria-pressed={view === "original"} onClick={() => setView("original")}><LockKeyhole size={14} />本地原文</button>
         <button type="button" aria-pressed={view === "redacted"} onClick={() => setView("redacted")}><ShieldCheck size={14} />模型脱敏版</button>
       </div>
+      <Button className="profile-document-reader__directory-toggle" variant="secondary" size="sm" onClick={() => setDirectoryOpen(true)}><List size={16} />目录</Button>
       <a className="profile-document-reader__download" href={downloadUrl}><Download size={16} />下载原文件</a>
     </header>
     <div className="profile-document-reader__layout">
-      <aside aria-label="简历目录">
+      <aside aria-label="简历目录" data-open={directoryOpen || undefined}>
+        <button className="profile-document-reader__directory-close" type="button" aria-label="关闭目录" onClick={() => setDirectoryOpen(false)}><X size={18} /></button>
         <strong>内容目录</strong>
         <p>点击可定位到对应原文。</p>
-        <nav>{document.outline.map((item) => <button key={item.evidenceId} type="button" aria-current={focusedId === item.evidenceId} onClick={() => focus(item)}>{item.title}</button>)}</nav>
+        <nav>{outline.map(({ item, title }) => <button key={item.evidenceId} type="button" aria-current={focusedId === item.evidenceId} onClick={() => focus(item)}>{title}</button>)}</nav>
       </aside>
+      {directoryOpen ? <button className="profile-document-reader__directory-backdrop" type="button" aria-label="关闭目录" onClick={() => setDirectoryOpen(false)} /> : null}
       <article ref={bodyRef}>
         <div className="profile-document-reader__privacy"><LockKeyhole size={15} /><span>{view === "original" ? "本地原文仅在当前工作区显示，不会发送给模型。" : "这是画像助手实际可读取的脱敏内容。"}</span></div>
         <div className="profile-document-reader__paper">

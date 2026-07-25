@@ -110,7 +110,7 @@ export function AppShell() {
               element={
                 <PageFrame
                   title="知识库"
-                  description="管理 Agent 可引用的资料、草稿与 Vault 索引。"
+                  description="集中管理面试资料和整理结果。"
                   health={health}
                   workspace={workspace}
                 >
@@ -161,6 +161,7 @@ export function AppShell() {
                   description="配置工作区、模型服务与不同任务的模型用途。"
                   health={health}
                   workspace={workspace}
+                  revealWorkspacePath
                 >
                   <SettingsPage
                     workspace={workspace}
@@ -188,9 +189,10 @@ interface PageFrameProps {
   workspace: WorkspaceConfig | null;
   children: ReactNode;
   workspaceMode?: boolean;
+  revealWorkspacePath?: boolean;
 }
 
-function PageFrame({ title, description, health, workspace, children, workspaceMode = false }: PageFrameProps) {
+function PageFrame({ title, description, health, workspace, children, workspaceMode = false, revealWorkspacePath = false }: PageFrameProps) {
   return (
     <div className={workspaceMode ? "page-shell page-shell--workspace" : "page-shell"}>
       {workspaceMode ? null : <PageHeader
@@ -199,6 +201,7 @@ function PageFrame({ title, description, health, workspace, children, workspaceM
           healthStatus={health.status}
           healthMessage={health.message}
           workspace={workspace}
+          revealWorkspacePath={revealWorkspacePath}
         />}
       <div className="page-content">{children}</div>
     </div>
