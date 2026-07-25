@@ -13,6 +13,7 @@ const reasoningLabels: Record<AgentReasoningEffort, string> = {
 
 interface AgentComposerProps {
   busy: boolean;
+  disabled?: boolean;
   stopping: boolean;
   modelId: string;
   models: { id: string; label: string }[];
@@ -29,6 +30,7 @@ interface AgentComposerProps {
 
 export function AgentComposer({
   busy,
+  disabled = false,
   stopping,
   modelId,
   models,
@@ -67,7 +69,7 @@ export function AgentComposer({
   function submit(event: FormEvent) {
     event.preventDefault();
     const value = text.trim();
-    if (!value || busy) return;
+    if (!value || busy || disabled) return;
     setText("");
     onSend(value);
   }
@@ -75,65 +77,67 @@ export function AgentComposer({
   return (
     <form className="agent-composer" onSubmit={submit}>
       <label className="sr-only" htmlFor="agent-composer-message">发送给{recipientLabel}</label>
-      <textarea
-        ref={textareaRef}
-        id="agent-composer-message"
-        rows={1}
-        value={text}
-        disabled={busy}
-        placeholder={placeholder}
-        onChange={(event) => setText(event.target.value)}
-        onCompositionStart={() => {
-          composing.current = true;
-          compositionJustEnded.current = false;
-          if (compositionResetTimer.current !== null) {
-            window.clearTimeout(compositionResetTimer.current);
-            compositionResetTimer.current = null;
-          }
-        }}
-        onCompositionEnd={() => {
-          composing.current = false;
-          compositionJustEnded.current = true;
-          compositionResetTimer.current = window.setTimeout(() => {
+      <div className="agent-composer__field">
+        <textarea
+          ref={textareaRef}
+          id="agent-composer-message"
+          rows={1}
+          value={text}
+          disabled={busy || disabled}
+          placeholder={placeholder}
+          onChange={(event) => setText(event.target.value)}
+          onCompositionStart={() => {
+            composing.current = true;
             compositionJustEnded.current = false;
-            compositionResetTimer.current = null;
-          }, 0);
-        }}
-        onKeyDown={(event) => {
-          if (event.key !== "Enter" || event.shiftKey) return;
-          if (
-            composing.current
-            || compositionJustEnded.current
-            || event.nativeEvent.isComposing
-            || event.nativeEvent.keyCode === 229
-          ) return;
-          event.preventDefault();
-          event.currentTarget.form?.requestSubmit();
-        }}
-      />
-      <div className="agent-composer__toolbar">
-        <details className="agent-composer__settings">
-          <summary onClick={(event) => { if (busy) event.preventDefault(); }}>
-            <SlidersHorizontal size={16} />
-            <span>{selectedModel} · {reasoningLabels[reasoningEffort]}</span>
-            <ChevronDown size={14} />
-          </summary>
-          <div>
-            <label htmlFor="agent-composer-model">本次执行模型</label>
-            <select id="agent-composer-model" value={modelId} disabled={busy} onChange={(event) => onModelChange(event.target.value)}>
-              <option value="">使用工作区默认模型</option>
-              {models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
-            </select>
-            <label htmlFor="agent-composer-reasoning">思考强度</label>
-            <select id="agent-composer-reasoning" value={reasoningEffort} disabled={busy} onChange={(event) => onReasoningEffortChange(event.target.value as AgentReasoningEffort)}>
-              {Object.entries(reasoningLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-            </select>
-          </div>
-        </details>
-        <small>Shift+Enter 换行</small>
-        {busy
-          ? <Button type="button" variant="danger" disabled={stopping} onClick={onStop}><Square size={15} />{stopping ? "正在停止…" : "停止"}</Button>
-          : <Button type="submit" disabled={!text.trim()} aria-label="发送"><Send size={17} /></Button>}
+            if (compositionResetTimer.current !== null) {
+              window.clearTimeout(compositionResetTimer.current);
+              compositionResetTimer.current = null;
+            }
+          }}
+          onCompositionEnd={() => {
+            composing.current = false;
+            compositionJustEnded.current = true;
+            compositionResetTimer.current = window.setTimeout(() => {
+              compositionJustEnded.current = false;
+              compositionResetTimer.current = null;
+            }, 0);
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" || event.shiftKey) return;
+            if (
+              composing.current
+              || compositionJustEnded.current
+              || event.nativeEvent.isComposing
+              || event.nativeEvent.keyCode === 229
+            ) return;
+            event.preventDefault();
+            event.currentTarget.form?.requestSubmit();
+          }}
+        />
+        <div className="agent-composer__toolbar">
+          <details className="agent-composer__settings">
+            <summary onClick={(event) => { if (busy || disabled) event.preventDefault(); }}>
+              <SlidersHorizontal size={16} />
+              <span>{selectedModel} · {reasoningLabels[reasoningEffort]}</span>
+              <ChevronDown size={14} />
+            </summary>
+            <div>
+              <label htmlFor="agent-composer-model">本次执行模型</label>
+              <select id="agent-composer-model" value={modelId} disabled={busy || disabled} onChange={(event) => onModelChange(event.target.value)}>
+                <option value="">使用工作区默认模型</option>
+                {models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
+              </select>
+              <label htmlFor="agent-composer-reasoning">思考强度</label>
+              <select id="agent-composer-reasoning" value={reasoningEffort} disabled={busy || disabled} onChange={(event) => onReasoningEffortChange(event.target.value as AgentReasoningEffort)}>
+                {Object.entries(reasoningLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+            </div>
+          </details>
+          <small>Shift+Enter 换行</small>
+          {busy
+            ? <Button type="button" variant="danger" disabled={stopping} onClick={onStop}><Square size={15} />{stopping ? "正在停止…" : "停止"}</Button>
+            : <Button type="submit" disabled={disabled || !text.trim()} aria-label="发送"><Send size={17} /></Button>}
+        </div>
       </div>
     </form>
   );

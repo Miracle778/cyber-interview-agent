@@ -57,6 +57,7 @@ export interface JobAnalysis {
   status: string;
   stage: string;
   version: number;
+  executionId?: string | null;
   progress: { completed: number; total: number; activeWorkers: number };
   timing: { currentElapsedMs: number; cumulativeElapsedMs: number };
   latestProgressAt: string | null;
@@ -82,6 +83,10 @@ export interface DeepDiveExecution {
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
+  configuration?: {
+    providerModelId: string | null;
+    reasoningEffort: "none" | "low" | "medium" | "high";
+  };
 }
 
 export interface ProjectQuestionCandidate {
@@ -95,6 +100,7 @@ export interface DeepDiveResource {
   id: string;
   jobTargetId: string;
   projectClaimId: string;
+  projectTitle?: string;
   sessionId: string;
   status: string;
   currentStage: string;
@@ -108,6 +114,8 @@ export interface DeepDiveResource {
   questionCandidates: ProjectQuestionCandidate[];
   runtime: {
     modelRole: string;
+    providerModelId?: string | null;
+    reasoningEffort?: "none" | "low" | "medium" | "high";
     calls: number;
     inputTokens: number;
     outputTokens: number;

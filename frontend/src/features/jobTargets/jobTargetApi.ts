@@ -23,8 +23,8 @@ export const confirmDocumentVersion = (workspaceId: string, target: JobTarget, v
 export const listRequirements = (workspaceId: string, targetId: string, signal?: AbortSignal) =>
   apiGet<JobRequirement[]>(`/api/job-targets/${targetId}/requirements?workspaceId=${workspaceId}`, { signal });
 
-export const decideRequirements = (workspaceId: string, targetId: string, decisions: { requirementId: string; expectedVersion: number; decision: "confirmed" | "rejected" }[]) =>
-  apiRequest<{ confirmedIds: string[]; rejectedIds: string[]; excludedIds: string[] }>(
+export const decideRequirements = (workspaceId: string, targetId: string, decisions: { requirementId: string; expectedVersion: number; decision: "pending" | "confirmed" | "rejected" }[]) =>
+  apiRequest<{ confirmedIds: string[]; rejectedIds: string[]; pendingIds: string[]; excludedIds: string[] }>(
     `/api/job-targets/${targetId}/requirements/decisions`,
     json("POST", { workspaceId, decisions }, "requirements"),
   );
@@ -50,17 +50,32 @@ export const createDeepDive = (workspaceId: string, targetId: string, projectCla
 export const getCurrentDeepDive = (workspaceId: string, targetId: string, projectClaimId: string, signal?: AbortSignal) =>
   apiGet<DeepDiveResource | null>(`/api/job-targets/${targetId}/projects/${projectClaimId}/deep-dives/current?workspaceId=${workspaceId}`, { signal });
 
-export const answerDeepDive = (workspaceId: string, targetId: string, diveId: string, content: string) =>
-  apiRequest<DeepDiveResource>(`/api/job-targets/${targetId}/deep-dives/${diveId}/messages`, json("POST", { workspaceId, content }, "answer"));
+export const answerDeepDive = (
+  workspaceId: string,
+  targetId: string,
+  diveId: string,
+  content: string,
+  configuration: { providerModelId?: string; reasoningEffort: "none" | "low" | "medium" | "high" },
+) =>
+  apiRequest<DeepDiveResource>(`/api/job-targets/${targetId}/deep-dives/${diveId}/messages`, json("POST", { workspaceId, content, ...configuration }, "answer"));
 
 export const controlDeepDive = (workspaceId: string, targetId: string, diveId: string, version: number, action: "pause" | "resume" | "terminate") =>
   apiRequest<DeepDiveResource>(`/api/job-targets/${targetId}/deep-dives/${diveId}/${action}`, json("POST", { workspaceId, expectedVersion: version }, `dive-${action}`));
 
+export const restartDeepDive = (workspaceId: string, targetId: string, diveId: string, version: number) =>
+  apiRequest<DeepDiveResource>(`/api/job-targets/${targetId}/deep-dives/${diveId}/restart`, json("POST", { workspaceId, expectedVersion: version }, "restart-deep-dive"));
+
 export const retryDeepDive = (workspaceId: string, targetId: string, diveId: string, executionId: string) =>
   apiRequest<DeepDiveResource>(`/api/job-targets/${targetId}/deep-dives/${diveId}/executions/${executionId}/retry`, json("POST", { workspaceId, expectedVersion: 1 }, "retry"));
+
+export const cancelDeepDive = (workspaceId: string, targetId: string, diveId: string, executionId: string) =>
+  apiRequest<DeepDiveResource>(`/api/job-targets/${targetId}/deep-dives/${diveId}/executions/${executionId}/cancel`, json("POST", { workspaceId, expectedVersion: 1 }, "cancel-deep-dive"));
 
 export const resolveDeepDiveMessage = (workspaceId: string, targetId: string, diveId: string, messageId: string, resolution: "abandoned" | "replaced", replacementContent?: string) =>
   apiRequest<DeepDiveResource>(`/api/job-targets/${targetId}/deep-dives/${diveId}/messages/${messageId}/resolve`, json("POST", { workspaceId, resolution, replacementContent }, "resolve-message"));
 
 export const decideProjectQuestion = (workspaceId: string, targetId: string, candidateId: string, decision: "confirmed" | "ignored" | "duplicate") =>
   apiRequest<void>(`/api/job-targets/${targetId}/question-candidates/${candidateId}/decision`, json("POST", { workspaceId, decision }, "question-decision"));
+
+export const dispatchProjectGap = (workspaceId: string, targetId: string, gapId: string) =>
+  apiRequest(`/api/job-targets/${targetId}/gaps/${gapId}/dispatch`, json("POST", { workspaceId }, "dispatch-gap"));

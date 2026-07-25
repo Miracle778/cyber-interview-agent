@@ -144,30 +144,30 @@ def current_analysis(target_id: str, workspace_id: Annotated[str, Query(alias="w
     return application.job_training(workspace_id).current_analysis(target_id)
 
 
-def _analysis_control(target_id, run_id, command, application, action):
+async def _analysis_control(target_id, run_id, command, application, action):
     _service(application, command.workspace_id).get_target(target_id)
-    return application.job_training(command.workspace_id).control_analysis(run_id, action)
+    return await application.job_training(command.workspace_id).control_analysis(run_id, action)
 
 
 @router.post("/api/job-targets/{target_id}/analysis-runs/{run_id}/pause")
-def pause_analysis(target_id: str, run_id: str, command: AnalysisControlCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
-    return _analysis_control(target_id, run_id, command, application, "pause")
+async def pause_analysis(target_id: str, run_id: str, command: AnalysisControlCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+    return await _analysis_control(target_id, run_id, command, application, "pause")
 
 
 @router.post("/api/job-targets/{target_id}/analysis-runs/{run_id}/resume")
-def resume_analysis(target_id: str, run_id: str, command: AnalysisControlCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
-    return _analysis_control(target_id, run_id, command, application, "resume")
+async def resume_analysis(target_id: str, run_id: str, command: AnalysisControlCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+    return await _analysis_control(target_id, run_id, command, application, "resume")
 
 
 @router.post("/api/job-targets/{target_id}/analysis-runs/{run_id}/terminate")
-def terminate_analysis(target_id: str, run_id: str, command: AnalysisControlCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
-    return _analysis_control(target_id, run_id, command, application, "terminate")
+async def terminate_analysis(target_id: str, run_id: str, command: AnalysisControlCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+    return await _analysis_control(target_id, run_id, command, application, "terminate")
 
 
 @router.post("/api/job-targets/{target_id}/analysis-runs/{run_id}/work-items/{item_id}/retry")
-def retry_work_item(target_id: str, run_id: str, item_id: str, command: AnalysisControlCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+async def retry_work_item(target_id: str, run_id: str, item_id: str, command: AnalysisControlCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
     _service(application, command.workspace_id).get_target(target_id)
-    return application.job_training(command.workspace_id).retry_work_item(run_id, item_id)
+    return await application.job_training(command.workspace_id).retry_work_item(run_id, item_id)
 
 
 @router.get("/api/job-targets/{target_id}/readiness")
@@ -190,7 +190,21 @@ def current_deep_dive(target_id: str, project_id: str, workspace_id: Annotated[s
 @router.post("/api/job-targets/{target_id}/deep-dives/{dive_id}/messages")
 async def answer_deep_dive(target_id: str, dive_id: str, command: DeepDiveAnswerCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
     _service(application, command.workspace_id).get_target(target_id)
-    return await application.job_training(command.workspace_id).answer_deep_dive(dive_id, command.content, message_id=command.message_id)
+    return await application.job_training(command.workspace_id).answer_deep_dive(
+        dive_id,
+        command.content,
+        message_id=command.message_id,
+        provider_model_id=command.provider_model_id,
+        reasoning_effort=command.reasoning_effort,
+    )
+
+
+@router.post("/api/job-targets/{target_id}/deep-dives/{dive_id}/executions/{execution_id}/cancel")
+async def cancel_deep_dive_execution(target_id: str, dive_id: str, execution_id: str, command: AnalysisControlCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+    _service(application, command.workspace_id).get_target(target_id)
+    return await application.job_training(command.workspace_id).cancel_deep_dive_execution(
+        dive_id, execution_id
+    )
 
 
 @router.post("/api/job-targets/{target_id}/deep-dives/{dive_id}/executions/{execution_id}/retry")
@@ -205,24 +219,30 @@ def resolve_deep_dive_message(target_id: str, dive_id: str, message_id: str, com
     return application.job_training(command.workspace_id).resolve_message(dive_id, message_id, resolution=command.resolution, replacement=command.replacement_content)
 
 
-def _deep_dive_control(target_id, dive_id, command, application, action):
+async def _deep_dive_control(target_id, dive_id, command, application, action):
     _service(application, command.workspace_id).get_target(target_id)
-    return application.job_training(command.workspace_id).control_deep_dive(dive_id, action)
+    return await application.job_training(command.workspace_id).control_deep_dive(dive_id, action)
 
 
 @router.post("/api/job-targets/{target_id}/deep-dives/{dive_id}/pause")
-def pause_deep_dive(target_id: str, dive_id: str, command: AnalysisControlCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
-    return _deep_dive_control(target_id, dive_id, command, application, "pause")
+async def pause_deep_dive(target_id: str, dive_id: str, command: AnalysisControlCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+    return await _deep_dive_control(target_id, dive_id, command, application, "pause")
 
 
 @router.post("/api/job-targets/{target_id}/deep-dives/{dive_id}/resume")
-def resume_deep_dive(target_id: str, dive_id: str, command: AnalysisControlCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
-    return _deep_dive_control(target_id, dive_id, command, application, "resume")
+async def resume_deep_dive(target_id: str, dive_id: str, command: AnalysisControlCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+    return await _deep_dive_control(target_id, dive_id, command, application, "resume")
 
 
 @router.post("/api/job-targets/{target_id}/deep-dives/{dive_id}/terminate")
-def terminate_deep_dive(target_id: str, dive_id: str, command: AnalysisControlCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
-    return _deep_dive_control(target_id, dive_id, command, application, "terminate")
+async def terminate_deep_dive(target_id: str, dive_id: str, command: AnalysisControlCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+    return await _deep_dive_control(target_id, dive_id, command, application, "terminate")
+
+
+@router.post("/api/job-targets/{target_id}/deep-dives/{dive_id}/restart", status_code=201)
+async def restart_deep_dive(target_id: str, dive_id: str, command: AnalysisControlCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+    _service(application, command.workspace_id).get_target(target_id)
+    return await application.job_training(command.workspace_id).restart_deep_dive(dive_id)
 
 
 @router.post("/api/job-targets/{target_id}/question-candidates/{candidate_id}/decision", status_code=204)

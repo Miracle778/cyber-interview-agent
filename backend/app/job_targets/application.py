@@ -1,13 +1,25 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
-from dataclasses import asdict
+from collections.abc import Callable
+from datetime import UTC, datetime
 
-from app.application.execution_service import AgentExecutionService
-from app.application.session_service import AgentSessionService, ProductRepository
+from app.agents.agent_factory import ModelOverride
+from app.agents.job_target_agents import JobTargetAgents
+from app.application.execution_service import (
+    AgentExecutionService,
+    ExecutionCancellation,
+)
+from app.application.session_service import (
+    AgentSessionService,
+    ExecutionRecord,
+    ProductRepository,
+)
 from app.graphs.project_deep_dive import advance_stage
 from app.job_targets.errors import JobTargetBusy, JobTargetConflict
+from app.job_targets.requirement_classification import is_job_background_or_heading
 from app.job_targets.repository import JobTargetRepository
 from app.job_targets.service import JobTargetService
 from app.profile.service import ProfileService
@@ -26,6 +38,8 @@ class JobTargetApplication:
         sessions: AgentSessionService,
         executions: AgentExecutionService,
         product_repository: ProductRepository,
+        agents: JobTargetAgents | None = None,
+        agents_factory: Callable[[ModelOverride], JobTargetAgents] | None = None,
     ) -> None:
         self.workspace_id = workspace_id
         self.service = service
@@ -34,6 +48,8 @@ class JobTargetApplication:
         self.sessions = sessions
         self.executions = executions
         self.product_repository = product_repository
+        self.agents = agents
+        self.agents_factory = agents_factory
 
     async def start_analysis(self, target_id: str) -> dict:
         target = self.service.get_target(target_id)
@@ -65,14 +81,44 @@ class JobTargetApplication:
             ("final_projection", digest),
         ]
         self.repository.create_analysis_work_items(run_id, tuple(work))
-        self._run_analysis(run_id)
+        session = await self.sessions.create(
+            workspace_id=self.workspace_id,
+            kind="job.analysis",
+            title=f"岗位分析：{target.role_name or '待识别岗位'}",
+            visibility="system",
+        )
+        execution = await self.executions.prepare(
+            session,
+            input={"jobTargetId": target_id, "analysisRunId": run_id},
+            project_input_message=False,
+        )
+        self.repository.bind_analysis_execution(run_id, execution.id)
+        self._schedule_analysis(run_id, execution)
+        if self.agents is None:
+            await self.executions.wait(execution.id)
         return self.analysis_resource(run_id)
 
-    def _run_analysis(self, run_id: str) -> None:
+    def _schedule_analysis(
+        self, run_id: str, execution: ExecutionRecord
+    ) -> None:
+        async def handler(
+            active: ExecutionRecord, cancellation: ExecutionCancellation
+        ) -> None:
+            await self._run_analysis(run_id, active, cancellation)
+
+        self.executions.run_background(execution, handler)
+
+    async def _run_analysis(
+        self,
+        run_id: str,
+        execution: ExecutionRecord,
+        cancellation: ExecutionCancellation,
+    ) -> None:
         run = self.repository.get_analysis_run(run_id)
         target = self.service.get_target(run["job_target_id"])
         document = self.service.get_document_version(run["document_version_id"])
         for item in self.repository.list_analysis_work_items(run_id):
+            cancellation.raise_if_requested()
             if item["status"] == "completed":
                 continue
             fresh = self.repository.get_analysis_run(run_id)
@@ -83,31 +129,89 @@ class JobTargetApplication:
                 self.repository.transition_analysis(run_id, status="paused", control_intent=None)
                 return
             key = item["work_key"]
-            if key == "requirement_extraction":
-                suggestions = _extract_requirements(document.body)
-                requirements = self.service.replace_requirement_suggestions(
-                    target.id, document.id, suggestions=suggestions
+            try:
+                if key == "requirement_extraction":
+                    if self.agents is None:
+                        suggestions = _extract_requirements(document.body)
+                        metadata = None
+                    else:
+                        result = await self.agents.extract_requirements(
+                            role=target.role_name,
+                            seniority=target.seniority,
+                            company=target.company_name,
+                            document=document.body,
+                            context=self.executions.context(execution),
+                            config={},
+                        )
+                        metadata = result.metadata
+                        suggestions = tuple(
+                            normalized
+                            for item in result.requirements
+                            if not is_job_background_or_heading(item.text)
+                            for normalized in (
+                                _normalized_requirement(item.model_dump(), document.body),
+                            )
+                        )
+                    with cancellation.critical_section():
+                        requirements = self.service.replace_requirement_suggestions(
+                            target.id, document.id, suggestions=suggestions
+                        )
+                        if metadata is not None and any(
+                            (metadata.company_name, metadata.role_name, metadata.seniority)
+                        ):
+                            fresh_target = self.service.get_target(target.id)
+                            target = self.service.update_target(
+                                target.id,
+                                expected_version=fresh_target.version,
+                                company_name=(
+                                    metadata.company_name
+                                    if metadata.company_name is not None
+                                    else fresh_target.company_name
+                                ),
+                                role_name=metadata.role_name or fresh_target.role_name,
+                                seniority=metadata.seniority or fresh_target.seniority,
+                                source_url=fresh_target.source_url,
+                                idempotency_key=f"analysis-metadata:{run_id}",
+                            )
+                        output = {"requirements": len(requirements)}
+                        stage = "mapping_profile"
+                elif key == "profile_mapping":
+                    output = {"profileVersion": run["profile_version"]}
+                    stage = "mapping_projects"
+                elif key.startswith("project_mapping:"):
+                    output = {"projectId": key.split(":", 1)[1], "mapped": True}
+                    stage = "mapping_projects"
+                else:
+                    output = {"readyForReview": True}
+                    stage = "finalizing"
+                with cancellation.critical_section():
+                    self.repository.complete_analysis_work_item(item["id"], output)
+                    self.repository.transition_analysis(
+                        run_id, status="running", stage=stage
+                    )
+            except (asyncio.CancelledError,):
+                raise
+            except Exception as error:
+                self.repository.fail_analysis_work_item(
+                    item["id"], getattr(error, "code", type(error).__name__)
                 )
-                output = {"requirements": len(requirements)}
-                stage = "mapping_profile"
-            elif key == "profile_mapping":
-                output = {"profileVersion": run["profile_version"]}
-                stage = "mapping_projects"
-            elif key.startswith("project_mapping:"):
-                output = {"projectId": key.split(":", 1)[1], "mapped": True}
-                stage = "mapping_projects"
-            else:
-                output = {"readyForReview": True}
-                stage = "finalizing"
-            self.repository.complete_analysis_work_item(item["id"], output)
-            self.repository.transition_analysis(run_id, status="running", stage=stage)
+                self.repository.transition_analysis(
+                    run_id, status="failed", stage="failed"
+                )
+                raise
         self.repository.transition_analysis(
             run_id, status="review_pending", stage="waiting_for_review"
         )
+        await self.executions.complete_background_execution(execution.id)
 
     def analysis_resource(self, run_id: str) -> dict:
         run = self.repository.get_analysis_run(run_id)
         items = self.repository.list_analysis_work_items(run_id)
+        execution = (
+            None
+            if run["execution_id"] is None
+            else self.product_repository.get_execution(run["execution_id"])
+        )
         completed = sum(item["status"] == "completed" for item in items)
         outputs = [
             json.loads(item["output_json"])
@@ -122,13 +226,14 @@ class JobTargetApplication:
             "status": run["status"],
             "stage": run["stage"],
             "version": run["version"],
+            "executionId": None if execution is None else execution.id,
             "progress": {
                 "completed": completed,
                 "total": len(items),
                 "activeWorkers": int(run["status"] == "running"),
             },
             "timing": {
-                "currentElapsedMs": 0,
+                "currentElapsedMs": _execution_elapsed_ms(execution),
                 "cumulativeElapsedMs": run["cumulative_elapsed_ms"],
             },
             "latestProgressAt": run["latest_progress_at"],
@@ -164,25 +269,49 @@ class JobTargetApplication:
         row = self.repository.current_analysis_run(target_id)
         return None if row is None else self.analysis_resource(row["id"])
 
-    def control_analysis(self, run_id: str, action: str) -> dict:
+    async def control_analysis(self, run_id: str, action: str) -> dict:
         row = self.repository.get_analysis_run(run_id)
         if action == "pause":
+            if row["execution_id"]:
+                await self.executions.cancel(row["execution_id"])
             self.repository.transition_analysis(run_id, status="paused", control_intent=None)
         elif action == "resume":
-            self.repository.transition_analysis(run_id, status="running", control_intent=None)
-            self._run_analysis(run_id)
+            previous = (
+                None
+                if row["execution_id"] is None
+                else self.product_repository.get_execution(row["execution_id"])
+            )
+            session = (
+                await self.sessions.create(
+                    workspace_id=self.workspace_id,
+                    kind="job.analysis",
+                    title="岗位分析",
+                    visibility="system",
+                )
+                if previous is None
+                else self.sessions.get(previous.session_id)
+            )
+            execution = await self.executions.prepare(
+                session,
+                input={"jobTargetId": row["job_target_id"], "analysisRunId": run_id},
+                project_input_message=False,
+            )
+            self.repository.bind_analysis_execution(run_id, execution.id)
+            self._schedule_analysis(run_id, execution)
+            if self.agents is None:
+                await self.executions.wait(execution.id)
         elif action == "terminate":
+            if row["execution_id"]:
+                await self.executions.cancel(row["execution_id"])
             self.repository.transition_analysis(run_id, status="terminated", stage="terminated")
         else:
             raise ValueError("不支持的岗位分析操作")
         return self.analysis_resource(run_id)
 
-    def retry_work_item(self, run_id: str, item_id: str) -> dict:
-        self.repository.get_analysis_run(run_id)
+    async def retry_work_item(self, run_id: str, item_id: str) -> dict:
+        row = self.repository.get_analysis_run(run_id)
         self.repository.retry_analysis_work_item(item_id)
-        self.repository.transition_analysis(run_id, status="running", control_intent=None)
-        self._run_analysis(run_id)
-        return self.analysis_resource(run_id)
+        return await self.control_analysis(run_id, "resume")
 
     async def create_deep_dive(self, target_id: str, project_claim_id: str) -> dict:
         self.service.get_target(target_id)
@@ -192,10 +321,18 @@ class JobTargetApplication:
         current = self.repository.current_deep_dive(target_id, project_claim_id)
         if current is not None:
             return self.deep_dive_resource(current["id"])
+        project_context = self.profile.confirmed_profile_context(
+            purpose="job_target_analysis",
+            claim_ids=(project_claim_id,),
+            limit=1,
+        )
+        project_title = _project_title(
+            project_context.items[0].value if project_context.items else {}
+        )
         session = await self.sessions.create(
             workspace_id=self.workspace_id,
             kind="project.deep_dive",
-            title="项目深挖",
+            title=f"项目深挖：{project_title}",
         )
         dive_id = self.repository.create_deep_dive(
             target_id, project_claim_id, session.id
@@ -212,8 +349,24 @@ class JobTargetApplication:
         row = self.repository.current_deep_dive(target_id, project_claim_id)
         return None if row is None else self.deep_dive_resource(row["id"])
 
+    async def restart_deep_dive(self, dive_id: str) -> dict:
+        """Start a new attempt without overwriting the completed/ended conversation."""
+        dive = self.repository.get_deep_dive(dive_id)
+        if dive["status"] not in {"completed", "terminated"}:
+            raise JobTargetConflict("只有已完成或已结束的项目深挖可以重新开始")
+        self.repository.archive_deep_dive(dive_id)
+        return await self.create_deep_dive(
+            dive["job_target_id"], dive["project_claim_id"]
+        )
+
     async def answer_deep_dive(
-        self, dive_id: str, content: str, *, message_id: str | None = None
+        self,
+        dive_id: str,
+        content: str,
+        *,
+        message_id: str | None = None,
+        provider_model_id: str | None = None,
+        reasoning_effort: str = "none",
     ) -> dict:
         dive = self.repository.get_deep_dive(dive_id)
         if dive["status"] != "active":
@@ -241,9 +394,111 @@ class JobTargetApplication:
             session,
             input_message_id=message.id,
             input={"message": message.content, "deepDiveId": dive_id},
+            configuration={
+                "providerModelId": provider_model_id,
+                "reasoningEffort": reasoning_effort,
+            },
         )
-        try:
+        self.repository.advance_deep_dive(
+            dive_id,
+            current_stage=dive["current_stage"],
+            completed_stage_ids=tuple(
+                json.loads(dive["completed_stage_ids_json"])
+            ),
+            waiting_for_input=False,
+            status="active",
+        )
+        self._schedule_deep_dive(dive_id, message.id, execution)
+        if self.agents is None:
+            await self.executions.wait(execution.id)
+        return self.deep_dive_resource(dive_id)
+
+    def _schedule_deep_dive(
+        self, dive_id: str, message_id: str, execution: ExecutionRecord
+    ) -> None:
+        async def handler(
+            active: ExecutionRecord, cancellation: ExecutionCancellation
+        ) -> None:
+            try:
+                await self._process_deep_dive_turn(
+                    dive_id, message_id, active, cancellation
+                )
+            except asyncio.CancelledError:
+                self._mark_message_unresolved(message_id)
+                raise
+            except Exception:
+                self._mark_message_unresolved(message_id)
+                raise
+
+        self.executions.run_background(execution, handler)
+
+    async def _process_deep_dive_turn(
+        self,
+        dive_id: str,
+        message_id: str,
+        execution: ExecutionRecord,
+        cancellation: ExecutionCancellation,
+    ) -> None:
+        dive = self.repository.get_deep_dive(dive_id)
+        message = next(
+            item
+            for item in self.product_repository.list_messages(dive["session_id"])
+            if item.id == message_id
+        )
+        target = self.service.get_target(dive["job_target_id"])
+        project_context = self.profile.confirmed_profile_context(
+            purpose="job_target_analysis",
+            claim_ids=(dive["project_claim_id"],),
+            limit=1,
+        )
+        project = (
+            project_context.items[0].value if project_context.items else {}
+        )
+        requirements = [
+            {
+                "id": item.id,
+                "type": item.requirement_type,
+                "priority": item.priority,
+                "text": item.text,
+            }
+            for item in self.service.list_preparation_requirements(target.id)
+            if item.confirmation_status == "confirmed"
+        ]
+        recent_messages = [
+            {"role": item.role, "content": item.content}
+            for item in self.product_repository.list_messages(dive["session_id"])
+            if item.resolution_status == "active"
+        ][-12:]
+        cancellation.raise_if_requested()
+        agents = self._agents_for_execution(execution)
+        if agents is None:
             result = self._evaluate_turn(dive, message.content)
+        else:
+            model_result = await agents.evaluate_turn(
+                stage=dive["current_stage"],
+                target={
+                    "company": target.company_name,
+                    "role": target.role_name,
+                    "seniority": target.seniority,
+                },
+                project=project,
+                requirements=requirements,
+                recent_messages=recent_messages,
+                answer=message.content,
+                context=self.executions.context(execution),
+                config={},
+            )
+            result = _deep_dive_result(
+                dive,
+                model_result,
+                has_previous_follow_up=any(
+                    json.loads(item["payload_json"]).get("stage")
+                    == dive["current_stage"]
+                    for item in self.repository.list_artifacts(dive_id)
+                ),
+            )
+        cancellation.raise_if_requested()
+        with cancellation.critical_section():
             artifact_id = self.repository.create_artifact(
                 dive_id,
                 artifact_kind="turn_result",
@@ -259,8 +514,11 @@ class JobTargetApplication:
                     source_artifact_id=artifact_id,
                 )
             next_stage = result["nextStage"]
-            completed = tuple(json.loads(dive["completed_stage_ids_json"])) + (
-                dive["current_stage"],
+            completed = tuple(
+                result.get(
+                    "completedStageIds",
+                    json.loads(dive["completed_stage_ids_json"]),
+                )
             )
             finished = next_stage == "finished"
             self.repository.advance_deep_dive(
@@ -278,22 +536,36 @@ class JobTargetApplication:
                 role="assistant",
                 content=result["reply"],
             )
-            self.product_repository.transition_execution(
-                execution.id, expected=("running",), target="completed"
+            await self.executions.complete_background_execution(execution.id)
+
+    def _agents_for_execution(
+        self, execution: ExecutionRecord
+    ) -> JobTargetAgents | None:
+        model_id = execution.configuration.provider_model_id
+        if model_id and self.agents_factory is not None:
+            return self.agents_factory(
+                ModelOverride(
+                    provider_model_id=model_id,
+                    reasoning_effort=execution.configuration.reasoning_effort,
+                )
             )
-        except Exception:
+        return self.agents
+
+    def _mark_message_unresolved(self, message_id: str) -> None:
+        message = next(
+            (
+                item
+                for item in self.product_repository.connection.execute(
+                    "SELECT resolution_status FROM agent_messages WHERE id = ?",
+                    (message_id,),
+                )
+            ),
+            None,
+        )
+        if message is not None and message["resolution_status"] == "active":
             self.product_repository.resolve_message(
-                message.id, expected=("active",), target="unresolved"
+                message_id, expected=("active",), target="unresolved"
             )
-            self.product_repository.transition_execution(
-                execution.id,
-                expected=("running",),
-                target="failed",
-                error_code="deep_dive_failed",
-                error_message="本次回答处理未完成",
-            )
-            raise
-        return self.deep_dive_resource(dive_id)
 
     async def retry_deep_dive(self, dive_id: str, execution_id: str) -> dict:
         dive = self.repository.get_deep_dive(dive_id)
@@ -314,14 +586,14 @@ class JobTargetApplication:
             input_message_id=message.id,
             input={"message": message.content, "deepDiveId": dive_id},
             retry_of_execution_id=execution_id,
+            configuration={
+                "providerModelId": previous.configuration.provider_model_id,
+                "reasoningEffort": previous.configuration.reasoning_effort,
+            },
         )
-        result = self._evaluate_turn(dive, message.content)
-        self.product_repository.append_message(
-            dive["session_id"], execution_id=attempt.id, role="assistant", content=result["reply"]
-        )
-        self.product_repository.transition_execution(
-            attempt.id, expected=("running",), target="completed"
-        )
+        self._schedule_deep_dive(dive_id, message.id, attempt)
+        if self.agents is None:
+            await self.executions.wait(attempt.id)
         return self.deep_dive_resource(dive_id)
 
     def resolve_message(
@@ -342,11 +614,71 @@ class JobTargetApplication:
             raise ValueError("消息处理方式无效")
         return self.deep_dive_resource(dive_id)
 
-    def control_deep_dive(self, dive_id: str, action: str) -> dict:
+    async def cancel_deep_dive_execution(
+        self, dive_id: str, execution_id: str
+    ) -> dict:
+        dive = self.repository.get_deep_dive(dive_id)
+        execution = self.product_repository.get_execution(execution_id)
+        if execution.session_id != dive["session_id"]:
+            raise JobTargetConflict("运行记录不属于当前项目深挖")
+        cancelled = await self.executions.cancel(execution_id)
+        if cancelled.input_message_id:
+            self._mark_message_unresolved(cancelled.input_message_id)
+        self.repository.advance_deep_dive(
+            dive_id,
+            current_stage=dive["current_stage"],
+            completed_stage_ids=tuple(
+                json.loads(dive["completed_stage_ids_json"])
+            ),
+            waiting_for_input=True,
+            status=dive["status"],
+        )
+        return self.deep_dive_resource(dive_id)
+
+    async def control_deep_dive(self, dive_id: str, action: str) -> dict:
         statuses = {"pause": "paused", "resume": "active", "terminate": "terminated"}
         if action not in statuses:
             raise ValueError("不支持的项目深挖操作")
+        dive = self.repository.get_deep_dive(dive_id)
+        running = next(
+            (
+                item
+                for item in reversed(
+                    self.product_repository.list_executions(dive["session_id"])
+                )
+                if item.status == "running"
+            ),
+            None,
+        )
+        if running is not None and action in {"pause", "terminate"}:
+            await self.executions.cancel(running.id)
+            if running.input_message_id:
+                self._mark_message_unresolved(running.input_message_id)
         self.repository.transition_deep_dive(dive_id, statuses[action])
+        if action == "resume":
+            unfinished = next(
+                (
+                    item
+                    for item in reversed(
+                        self.product_repository.list_messages(dive["session_id"])
+                    )
+                    if item.role == "user" and item.resolution_status == "unresolved"
+                ),
+                None,
+            )
+            if unfinished is not None:
+                previous = next(
+                    (
+                        item
+                        for item in reversed(
+                            self.product_repository.list_executions(dive["session_id"])
+                        )
+                        if item.input_message_id == unfinished.id
+                    ),
+                    None,
+                )
+                if previous is not None:
+                    return await self.retry_deep_dive(dive_id, previous.id)
         return self.deep_dive_resource(dive_id)
 
     def deep_dive_resource(self, dive_id: str) -> dict:
@@ -366,8 +698,9 @@ class JobTargetApplication:
             "completedStageIds": json.loads(dive["completed_stage_ids_json"]),
             "waitingForInput": bool(dive["waiting_for_input"]),
             "version": dive["version"],
-            "messages": [asdict(item) for item in messages],
-            "executions": [asdict(item) for item in executions],
+            "projectTitle": _project_title_for_dive(self.profile, dive),
+            "messages": [_message_resource(item) for item in messages],
+            "executions": [_execution_resource(item) for item in executions],
             "artifacts": [
                 {
                     "id": row["id"],
@@ -385,13 +718,39 @@ class JobTargetApplication:
             ],
             "runtime": {
                 "modelRole": "project_deep_dive",
-                "calls": len(executions),
-                "inputTokens": 0,
-                "outputTokens": 0,
-                "contextTokens": 0,
-                "contextThreshold": 0,
-                "estimated": True,
-                "compacted": False,
+                "providerModelId": (
+                    executions[-1].configuration.provider_model_id
+                    if executions
+                    else None
+                ),
+                "reasoningEffort": (
+                    executions[-1].configuration.reasoning_effort
+                    if executions
+                    else "none"
+                ),
+                "calls": self.product_repository.usage(dive["session_id"])[
+                    "callCount"
+                ],
+                "inputTokens": self.product_repository.usage(dive["session_id"])[
+                    "inputTokens"
+                ],
+                "outputTokens": self.product_repository.usage(dive["session_id"])[
+                    "outputTokens"
+                ],
+                "contextTokens": self.product_repository.context_usage(
+                    dive["session_id"]
+                )["currentTokens"],
+                "contextThreshold": self.product_repository.context_usage(
+                    dive["session_id"]
+                )["thresholdTokens"],
+                "estimated": bool(
+                    self.product_repository.usage(dive["session_id"])[
+                        "estimatedCount"
+                    ]
+                ),
+                "compacted": self.product_repository.context_compacted(
+                    dive["session_id"]
+                ),
             },
         }
 
@@ -496,7 +855,7 @@ class JobTargetApplication:
         return {"gapId": gap_id, "status": status, "resolutionRef": ref}
 
     def readiness(self, target_id: str) -> dict:
-        requirements = self.service.list_requirements(target_id)
+        requirements = self.service.list_preparation_requirements(target_id)
         if any(item.confirmation_status == "pending" for item in requirements):
             status = "requirements_pending"
         elif not self.repository.list_project_priorities(target_id):
@@ -543,6 +902,8 @@ class JobTargetApplication:
         )
         question = _stage_question(next_stage)
         return {
+            "stage": stage,
+            "stageComplete": True,
             "evaluation": {
                 "summary": "已保存本轮回答",
                 "completeness": "basic" if needs_detail else "complete",
@@ -551,6 +912,14 @@ class JobTargetApplication:
             "targetFindings": [],
             "gaps": gaps,
             "nextStage": next_stage,
+            "completedStageIds": list(
+                dict.fromkeys(
+                    (
+                        *json.loads(dive["completed_stage_ids_json"]),
+                        stage,
+                    )
+                )
+            ),
             "reply": (
                 "项目核心维度已经梳理完成，可以检查讲解草稿和候选题。"
                 if next_stage == "finished"
@@ -586,6 +955,8 @@ def _extract_requirements(body: str) -> tuple[dict[str, object], ...]:
         lines = [body.strip()]
     result = []
     for index, line in enumerate(lines[:100]):
+        if is_job_background_or_heading(line):
+            continue
         lowered = line.lower()
         kind = (
             "skill"
@@ -629,3 +1000,125 @@ def _stage_question(stage: str) -> str:
         "target_follow_up": "这段经历如何证明你能胜任当前目标岗位？",
         "finished": "",
     }.get(stage, "请继续补充这个项目。")
+
+
+def _normalized_requirement(
+    value: dict[str, object], document: str
+) -> dict[str, object]:
+    text = str(value.get("text") or "").strip()
+    quote = str(value.get("source_quote") or "").strip()
+    if quote and quote not in document:
+        quote = ""
+    start = document.find(quote) if quote else -1
+    return {
+        **value,
+        "stable_key": str(value.get("stable_key") or "").strip()
+        or hashlib.sha256(text.encode()).hexdigest()[:16],
+        "text": text,
+        "source_quote": quote,
+        "source_start": start if start >= 0 else None,
+        "source_end": start + len(quote) if start >= 0 else None,
+        "inferred": bool(value.get("inferred")) or not bool(quote),
+    }
+
+
+def _deep_dive_result(
+    dive, model_result, *, has_previous_follow_up: bool
+) -> dict[str, object]:
+    stage_complete = bool(model_result.stage_complete) or has_previous_follow_up
+    current_stage = dive["current_stage"]
+    next_stage = advance_stage(current_stage) if stage_complete else current_stage
+    completed = tuple(json.loads(dive["completed_stage_ids_json"]))
+    if stage_complete:
+        completed = tuple(dict.fromkeys((*completed, current_stage)))
+    question = (
+        None
+        if model_result.next_question is None
+        else model_result.next_question.content.strip()
+    )
+    coach_reply = model_result.coach_reply.strip()
+    follow_up = (
+        "项目核心维度已经梳理完成，可以检查讲解草稿和候选题。"
+        if next_stage == "finished"
+        else question or _stage_question(next_stage)
+    )
+    reply = f"{coach_reply}\n\n{follow_up}" if coach_reply else follow_up
+    return {
+        "stage": current_stage,
+        "stageComplete": stage_complete,
+        "evaluation": model_result.answer_evaluation.model_dump(),
+        "narrativeDelta": [
+            item.model_dump() for item in model_result.narrative_delta
+        ],
+        "targetFindings": [
+            item.model_dump() for item in model_result.target_findings
+        ],
+        "gaps": [item.model_dump() for item in model_result.gaps],
+        "nextStage": next_stage,
+        "completedStageIds": list(completed),
+        "reply": reply,
+    }
+
+
+def _message_resource(item) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "executionId": item.execution_id,
+        "role": item.role,
+        "content": item.content,
+        "messageKind": item.message_kind,
+        "payload": item.payload,
+        "createdAt": item.created_at,
+        "replacesMessageId": item.replaces_message_id,
+        "resolutionStatus": item.resolution_status,
+    }
+
+
+def _execution_resource(item: ExecutionRecord) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "sessionId": item.session_id,
+        "inputMessageId": item.input_message_id,
+        "retryOfExecutionId": item.retry_of_execution_id,
+        "status": item.status,
+        "configuration": {
+            "providerModelId": item.configuration.provider_model_id,
+            "reasoningEffort": item.configuration.reasoning_effort,
+        },
+        "cancelRequestedAt": item.cancel_requested_at,
+        "errorCode": item.error_code,
+        "errorMessage": item.error_message,
+        "createdAt": item.created_at,
+        "startedAt": item.started_at,
+        "finishedAt": item.finished_at,
+    }
+
+
+def _execution_elapsed_ms(execution: ExecutionRecord | None) -> int:
+    if execution is None or execution.started_at is None:
+        return 0
+    started = _utc_datetime(execution.started_at)
+    finished = (
+        _utc_datetime(execution.finished_at)
+        if execution.finished_at is not None
+        else datetime.now(UTC)
+    )
+    return max(0, int((finished - started).total_seconds() * 1000))
+
+
+def _utc_datetime(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace(" ", "T"))
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def _project_title(value: dict[str, object]) -> str:
+    return str(value.get("name") or value.get("title") or "当前项目").strip()
+
+
+def _project_title_for_dive(profile: ProfileService, dive) -> str:
+    context = profile.confirmed_profile_context(
+        purpose="job_target_analysis",
+        claim_ids=(dive["project_claim_id"],),
+        limit=1,
+    )
+    return _project_title(context.items[0].value if context.items else {})

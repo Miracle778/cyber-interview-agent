@@ -16,7 +16,16 @@ class JobRequirementSuggestion(BaseModel):
     inferred: bool = False
 
 
+class JobTargetMetadataSuggestion(BaseModel):
+    company_name: str | None = None
+    role_name: str | None = None
+    seniority: str | None = None
+
+
 class JobRequirementExtraction(BaseModel):
+    metadata: JobTargetMetadataSuggestion = Field(
+        default_factory=JobTargetMetadataSuggestion
+    )
     requirements: list[JobRequirementSuggestion] = Field(max_length=100)
 
 
@@ -54,6 +63,7 @@ class NextQuestion(BaseModel):
 
 
 class DeepDiveTurnResult(BaseModel):
+    coach_reply: str = Field(default="", max_length=3000)
     answer_evaluation: AnswerEvaluation
     narrative_delta: list[NarrativeSectionDelta] = Field(default_factory=list)
     target_findings: list[TargetFinding] = Field(default_factory=list)

@@ -73,10 +73,25 @@ async def test_analysis_deep_dive_and_project_question_library(tmp_path: Path):
             idempotency_key="priorities-workflow-1",
         )
         dive = await training.create_deep_dive(target.id, project.claim_id)
-        dive = await training.answer_deep_dive(
-            dive["id"],
-            "项目背景是交易链路扩容，我负责核心服务设计、压测与上线复盘，并记录指标变化。",
+        original = training.product_repository.append_user_message(
+            dive["sessionId"],
+            content="项目背景是交易链路扩容，我负责核心服务设计、压测与上线复盘，并记录指标变化。",
         )
+        training.product_repository.resolve_message(
+            original.id, expected=("active",), target="unresolved"
+        )
+        previous = await training.executions.prepare_for_message(
+            training.product_repository.get_session(dive["sessionId"]),
+            input_message_id=original.id,
+            input={"message": original.content, "deepDiveId": dive["id"]},
+            configuration={"providerModelId": None, "reasoningEffort": "none"},
+        )
+        await training.executions.cancel(previous.id)
+        training.repository.transition_deep_dive(dive["id"], "paused")
+        dive = await training.control_deep_dive(dive["id"], "resume")
+        assert [item["content"] for item in dive["messages"] if item["role"] == "user"] == [original.content]
+        resumed_execution = dive["executions"][-1]
+        assert resumed_execution["retryOfExecutionId"] == previous.id
         first_artifact = dive["artifacts"][0]
         narrative = training.confirm_narrative_sections(
             first_artifact["id"],

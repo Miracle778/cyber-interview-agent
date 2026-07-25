@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, FileUp, FolderLock, Upload, UserRound } from "lucide-react";
-import { Link } from "react-router-dom";
+import { AlertCircle, ArrowLeft, FileUp, FolderLock, Upload, UserRound } from "lucide-react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "../../shared/ui/Button";
 import { cancelAgentExecution } from "../agent/agentApi";
 import type { WorkspaceConfig } from "../settings/settingsApi";
@@ -45,6 +45,8 @@ function errorMessage(error: unknown) {
 
 export function ProfilePage({ workspace }: { workspace: WorkspaceConfig | null }) {
   const client = useQueryClient();
+  const location = useLocation();
+  const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const workspaceId = workspace?.id ?? "";
@@ -58,6 +60,9 @@ export function ProfilePage({ workspace }: { workspace: WorkspaceConfig | null }
   const [editingCard, setEditingCard] = useState<UnifiedProfileCard | null>(null);
   const [creatingCategory, setCreatingCategory] = useState<ProfileCardCategory | null>(null);
   const [editorError, setEditorError] = useState<string | null>(null);
+  const returnState = location.state as { returnTo?: unknown; returnLabel?: unknown } | null;
+  const returnTo = typeof returnState?.returnTo === "string" ? returnState.returnTo : null;
+  const returnLabel = typeof returnState?.returnLabel === "string" ? returnState.returnLabel : "返回项目深挖";
 
   useEffect(() => { headingRef.current?.focus(); }, []);
 
@@ -204,7 +209,7 @@ export function ProfilePage({ workspace }: { workspace: WorkspaceConfig | null }
 
   return <section className={`profile-shell ${workbenchMode ? "profile-shell--workbench" : "profile-shell--reading"} ${tab === "agent" && !documentView ? "profile-shell--agent" : ""}`}>
     <header className="profile-header">
-      <div><h1 ref={headingRef} tabIndex={-1}>个人画像</h1><p>集中管理你的经历、项目和技能，供岗位分析、简历优化与面试训练使用。</p></div>
+      <div>{returnTo ? <Button variant="secondary" size="sm" className="profile-header__return" onClick={() => navigate(returnTo)}><ArrowLeft size={15} />{returnLabel}</Button> : null}<h1 ref={headingRef} tabIndex={-1}>个人画像</h1><p>集中管理你的经历、项目和技能，供岗位分析、简历优化与面试训练使用。</p></div>
       <div className="profile-header__summary"><UserRound size={16} /><span>{confirmedProfileCount === null ? "正在读取" : `${confirmedProfileCount} 条已确认资料`}</span></div>
     </header>
     <nav className="profile-tabs" aria-label="个人画像页面">

@@ -15,6 +15,7 @@ from app.job_targets.models import (
     TargetDeletionImpact,
 )
 from app.job_targets.repository import JobTargetRepository
+from app.job_targets.requirement_classification import is_job_background_or_heading
 from app.profile.errors import ProfileClaimNotFound
 from app.profile.repository import ProfileRepository
 
@@ -44,8 +45,8 @@ class JobTargetService:
     ) -> JobTargetRecord:
         clean_role = role_name.strip()
         clean_seniority = seniority.strip()
-        if not clean_role or not clean_seniority:
-            raise ValueError("岗位名称和职级不能为空")
+        if bool(clean_role) != bool(clean_seniority):
+            raise ValueError("岗位名称和职级需要同时填写，或交给岗位分析识别")
         operation = "create_target"
         replay = self.repository.receipt(
             self.workspace_id, operation, idempotency_key
@@ -244,6 +245,15 @@ class JobTargetService:
         self.get_target(target_id)
         return self.repository.list_requirements(target_id)
 
+    def list_preparation_requirements(
+        self, target_id: str
+    ) -> tuple[JobRequirementRecord, ...]:
+        return tuple(
+            item
+            for item in self.list_requirements(target_id)
+            if not is_job_background_or_heading(item.text)
+        )
+
     def confirm_safe_requirements(
         self,
         target_id: str,
@@ -252,8 +262,12 @@ class JobTargetService:
         idempotency_key: str,
     ) -> RequirementDecisionReceipt:
         self.get_target(target_id)
-        requirements = self.repository.list_requirements(
-            target_id, document_version_id=document_version_id
+        requirements = tuple(
+            item
+            for item in self.repository.list_requirements(
+                target_id, document_version_id=document_version_id
+            )
+            if not is_job_background_or_heading(item.text)
         )
         confirmed: list[str] = []
         excluded: list[str] = []
@@ -275,6 +289,7 @@ class JobTargetService:
         return RequirementDecisionReceipt(
             confirmed_ids=tuple(confirmed),
             rejected_ids=(),
+            pending_ids=(),
             excluded_ids=tuple(excluded),
         )
 
@@ -288,6 +303,7 @@ class JobTargetService:
         self.get_target(target_id)
         confirmed: list[str] = []
         rejected: list[str] = []
+        pending: list[str] = []
         for decision in decisions:
             item = self.repository.get_requirement(
                 str(decision["requirement_id"])
@@ -295,19 +311,23 @@ class JobTargetService:
             if item.job_target_id != target_id:
                 raise JobTargetNotFound(target_id)
             target_status = str(decision["decision"])
-            if target_status not in {"confirmed", "rejected"}:
+            if target_status not in {"pending", "confirmed", "rejected"}:
                 raise ValueError("不支持的岗位要求决定")
             updated = self.repository.set_requirement_confirmation(
                 item.id,
                 expected_version=int(decision["expected_version"]),
                 status=target_status,
             )
-            (confirmed if updated.confirmation_status == "confirmed" else rejected).append(
-                updated.id
-            )
+            if updated.confirmation_status == "confirmed":
+                confirmed.append(updated.id)
+            elif updated.confirmation_status == "rejected":
+                rejected.append(updated.id)
+            else:
+                pending.append(updated.id)
         return RequirementDecisionReceipt(
             confirmed_ids=tuple(confirmed),
             rejected_ids=tuple(rejected),
+            pending_ids=tuple(pending),
             excluded_ids=(),
         )
 

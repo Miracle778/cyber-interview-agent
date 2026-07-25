@@ -290,6 +290,41 @@ class WorkspaceRuntime:
             )
         )
 
+        job_agents_factory = getattr(
+            graph_factory, "create_job_target_agents", None
+        )
+        job_agents_available = (
+            job_agents_factory is not None
+            and {
+                "job_analysis",
+                "project_deep_dive",
+                "report_summarization",
+            }.issubset(configured_model_bindings)
+        )
+        job_agents = (
+            None
+            if not job_agents_available
+            else job_agents_factory(
+                model_bindings=configured_model_bindings,
+                projection=projection,
+                audit=audit,
+                observability=observability,
+                publish_event=events.publish,
+            )
+        )
+
+        def create_job_agents(override: ModelOverride):
+            if job_agents_factory is None:
+                raise RuntimeError("job target agents are not configured")
+            return job_agents_factory(
+                model_bindings=configured_model_bindings,
+                projection=projection,
+                audit=audit,
+                observability=observability,
+                publish_event=events.publish,
+                interaction_override=override,
+            )
+
         def create_command_agents(
             override: ModelOverride,
         ):
@@ -359,6 +394,10 @@ class WorkspaceRuntime:
             sessions=sessions,
             executions=executions,
             product_repository=repository,
+            agents=job_agents,
+            agents_factory=(
+                create_job_agents if job_agents_available else None
+            ),
         )
         return cls(
             workspace_id=workspace_id,

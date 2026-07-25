@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import sqlite3
+import unicodedata
 from uuid import uuid4
 
 from app.job_targets.errors import (
@@ -223,8 +226,45 @@ class JobTargetRepository:
         document = self.get_document_version(document_version_id)
         if document.job_target_id != target_id:
             raise JobDocumentVersionNotFound(document_version_id)
+        existing = self.list_requirements(
+            target_id, document_version_id=document_version_id
+        )
+        # Model output is a fresh suggestion snapshot.  The model's own stable key
+        # cannot be trusted across runs, so reconcile by a server-owned canonical
+        # text key.  A prior user decision always wins over a fresh suggestion.
+        existing_by_identity: dict[str, JobRequirementRecord] = {}
+        for requirement in existing:
+            identity = _requirement_identity(requirement.text)
+            current = existing_by_identity.get(identity)
+            if current is None or (
+                current.confirmation_status == "pending"
+                and requirement.confirmation_status != "pending"
+            ):
+                existing_by_identity[identity] = requirement
+
+        fresh: dict[str, dict[str, object]] = {}
+        for item in suggestions:
+            identity = _requirement_identity(str(item.get("text") or ""))
+            if not identity:
+                continue
+            # When the Agent emits the same requirement twice, prefer a source
+            # backed, non-inferred suggestion rather than creating two rows.
+            current = fresh.get(identity)
+            if current is None or (
+                bool(current.get("inferred")) and not bool(item.get("inferred"))
+            ):
+                fresh[identity] = item
+
+        active_keys: set[str] = set()
         try:
-            for item in suggestions:
+            for identity, item in fresh.items():
+                matched = existing_by_identity.get(identity)
+                stable_key = (
+                    matched.stable_key
+                    if matched is not None
+                    else _stable_requirement_key(identity)
+                )
+                active_keys.add(stable_key)
                 self.connection.execute(
                     "INSERT INTO job_requirements "
                     "(id, job_target_id, document_version_id, stable_key, "
@@ -243,7 +283,7 @@ class JobTargetRepository:
                         str(uuid4()),
                         target_id,
                         document_version_id,
-                        str(item["stable_key"]),
+                        stable_key,
                         str(item["requirement_type"]),
                         str(item["priority"]),
                         str(item["text"]),
@@ -252,6 +292,25 @@ class JobTargetRepository:
                         item.get("source_end"),
                         int(bool(item.get("inferred", False))),
                     ),
+                )
+            # Pending rows are provisional model output, not a user decision.
+            # Remove suggestions absent from this run so repeated analysis does
+            # not keep accumulating stale or differently-keyed candidates.
+            if active_keys:
+                placeholders = ", ".join("?" for _ in active_keys)
+                self.connection.execute(
+                    "DELETE FROM job_requirements "
+                    "WHERE job_target_id = ? AND document_version_id = ? "
+                    "AND confirmation_status = 'pending' "
+                    f"AND stable_key NOT IN ({placeholders})",
+                    (target_id, document_version_id, *sorted(active_keys)),
+                )
+            else:
+                self.connection.execute(
+                    "DELETE FROM job_requirements "
+                    "WHERE job_target_id = ? AND document_version_id = ? "
+                    "AND confirmation_status = 'pending'",
+                    (target_id, document_version_id),
                 )
             self.connection.commit()
         except sqlite3.Error:
@@ -442,6 +501,15 @@ class JobTargetRepository:
         self.connection.commit()
         return run_id
 
+    def bind_analysis_execution(self, run_id: str, execution_id: str) -> None:
+        self.connection.execute(
+            "UPDATE job_analysis_runs SET execution_id = ?, status = 'running', "
+            "latest_progress_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ?",
+            (execution_id, run_id),
+        )
+        self.connection.commit()
+
     def current_analysis_run(self, target_id: str):
         return self.connection.execute(
             "SELECT * FROM job_analysis_runs WHERE job_target_id = ? "
@@ -482,6 +550,15 @@ class JobTargetRepository:
             "attempt_count = attempt_count + 1, output_json = ?, "
             "last_error_code = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (json.dumps(output, ensure_ascii=False), item_id),
+        )
+        self.connection.commit()
+
+    def fail_analysis_work_item(self, item_id: str, error_code: str) -> None:
+        self.connection.execute(
+            "UPDATE job_analysis_work_items SET status = 'retryable', "
+            "attempt_count = attempt_count + 1, last_error_code = ?, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (error_code[:120], item_id),
         )
         self.connection.commit()
 
@@ -570,6 +647,10 @@ class JobTargetRepository:
             (status, dive_id),
         )
         self.connection.commit()
+
+    def archive_deep_dive(self, dive_id: str) -> None:
+        """Keep a finished attempt in history while allowing a fresh attempt."""
+        self.transition_deep_dive(dive_id, "archived")
 
     def create_artifact(
         self,
@@ -805,3 +886,14 @@ def _requirement(row) -> JobRequirementRecord:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
+
+
+def _requirement_identity(text: str) -> str:
+    """Make cosmetic model variations resolve to the same JD requirement."""
+    normalized = unicodedata.normalize("NFKC", text).casefold()
+    normalized = normalized.replace("或者", "或")
+    return re.sub(r"[\s\W_]+", "", normalized)
+
+
+def _stable_requirement_key(identity: str) -> str:
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]

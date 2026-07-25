@@ -191,6 +191,8 @@
 .agent-conversation-message__content > header strong { color: var(--text-muted); }
 .agent-conversation-message__content > header button { display: inline-grid; width: 26px; height: 26px; place-items: center; color: var(--text-soft); background: transparent; border: 0; border-radius: var(--radius-sm); opacity: 0; }
 .agent-conversation-message:hover .agent-conversation-message__content > header button, .agent-conversation-message__content > header button:focus-visible { opacity: 1; }
+.agent-conversation-message__copy-status { color: var(--success); font-size: .7rem; }
+.agent-conversation-message__copy-status--failed { color: var(--danger); }
 .agent-conversation-message__bubble { overflow-wrap: anywhere; padding: var(--space-3) var(--space-4); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); }
 .agent-conversation-message--user .agent-conversation-message__bubble { background: var(--primary-soft); border-color: color-mix(in srgb, var(--primary) 24%, var(--border)); }
 .agent-conversation-message__bubble > p { white-space: pre-wrap; }
@@ -207,12 +209,14 @@
 .agent-process-card__body > p { margin-bottom: 6px; }
 .agent-process-card .profile-tool-stage { margin: 5px 0; padding: 3px 8px; background: var(--surface-subtle); border: 0; }
 
-.agent-composer { padding: 10px clamp(var(--space-4), 3vw, var(--space-6)) 12px; background: var(--surface); border-top: 1px solid var(--border); }
-.agent-composer > textarea { display: block; width: 100%; min-height: 44px; max-height: 128px; resize: vertical; padding: 10px 12px; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-md); }
-.agent-composer__toolbar { display: flex; min-height: 38px; align-items: center; gap: var(--space-3); margin-top: 6px; }
+.agent-composer { padding: 12px clamp(var(--space-4), 2vw, var(--space-6)) 14px; background: var(--surface); border-top: 1px solid var(--border); }
+.agent-composer__field { display: grid; width: 100%; overflow: visible; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 15px; box-shadow: var(--shadow-sm); }
+.agent-composer__field:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 16%, transparent); }
+.agent-composer__field > textarea { display: block; width: 100%; min-height: 52px; max-height: 120px; padding: 15px 16px 7px; overflow-y: auto; resize: none; font: inherit; color: var(--text); background: transparent; border: 0; outline: 0; }
+.agent-composer__toolbar { display: grid; width: 100%; min-width: 0; min-height: 52px; grid-template-columns:minmax(0,auto) minmax(0,1fr) auto; align-items: center; gap: var(--space-3); padding: 6px 8px 8px; }
 .agent-composer__toolbar > small { flex: 1; color: var(--text-soft); }
 .agent-composer__settings { position: relative; }
-.agent-composer__settings summary { display: flex; min-height: 34px; align-items: center; gap: 5px; padding: 4px 8px; color: var(--text-muted); font-size: .72rem; cursor: pointer; list-style: none; background: var(--surface-subtle); border-radius: var(--radius-sm); }
+.agent-composer__settings summary { display: flex; min-height: 38px; align-items: center; gap: 5px; padding: 5px 9px; color: var(--text-muted); font-size: .72rem; cursor: pointer; list-style: none; background: var(--surface-subtle); border-radius: var(--radius-sm); }
 .agent-composer__settings > div { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 5; display: grid; width: 260px; gap: 6px; padding: var(--space-3); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-md); }
 .agent-composer__settings label { color: var(--text-muted); font-size: .7rem; }
 .agent-composer__settings select { min-height: 36px; padding: 5px 8px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); }

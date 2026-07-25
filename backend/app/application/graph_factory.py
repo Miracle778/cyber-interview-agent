@@ -12,6 +12,7 @@ from app.agents.context_assembly import model_token_counter
 from app.agents.single_review_agents import SingleReviewAgents
 from app.agents.review_round_agents import ReviewRoundAgents
 from app.agents.profile_agents import ProfileAgents
+from app.agents.job_target_agents import JobTargetAgents
 from app.graphs.publication import create_publication_graph
 from app.graphs.question_curation import create_question_curation_graph
 from app.graphs.review import create_review_graph
@@ -97,6 +98,48 @@ class ProductionGraphFactory:
             middleware=middleware,
             context_limit_tokens=context_limit_tokens,
             token_counter=model_token_counter(classifier_model),
+        )
+
+    def create_job_target_agents(
+        self,
+        *,
+        model_bindings,
+        projection,
+        audit,
+        observability,
+        publish_event=None,
+        interaction_override: ModelOverride | None = None,
+    ) -> JobTargetAgents:
+        context_limit_tokens = min(
+            self._agents.resolve_context_limit(
+                role,
+                model_bindings=model_bindings,
+                model_override=interaction_override,
+            )
+            for role in ("job_analysis", "project_deep_dive")
+        )
+        middleware = build_default_middleware(
+            summary_model=self._agents.resolve_model(
+                "report_summarization", model_bindings=model_bindings
+            ),
+            summary_provider_model_id=model_bindings["report_summarization"],
+            trace_writer=self.trace_writer,
+            projection=projection,
+            policy=ToolPolicyMiddleware(
+                audit=audit,
+                required_scopes={},
+                publish_event=publish_event,
+            ),
+            observability=observability,
+            interrupt_on={},
+            budget_profile=PROFILE_CHAT_BUDGET_PROFILE,
+            context_limit_tokens=context_limit_tokens,
+        )
+        return JobTargetAgents.create(
+            self._agents,
+            model_bindings=model_bindings,
+            middleware=middleware,
+            model_override=interaction_override,
         )
 
     def __call__(self, kind: str, **dependencies):

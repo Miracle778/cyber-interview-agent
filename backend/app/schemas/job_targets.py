@@ -8,8 +8,8 @@ from app.schemas.agent import AgentModel
 
 
 class CreateJobTargetCommand(AgentModel):
-    role_name: str = Field(min_length=1, max_length=120)
-    seniority: str = Field(min_length=1, max_length=80)
+    role_name: str = Field(default="", max_length=120)
+    seniority: str = Field(default="", max_length=80)
     company_name: str | None = Field(default=None, max_length=160)
     source_url: str | None = Field(default=None, max_length=2000)
 
@@ -38,7 +38,7 @@ class ConfirmJobDocumentCommand(AgentModel):
 class RequirementDecisionItem(AgentModel):
     requirement_id: str
     expected_version: int = Field(ge=1)
-    decision: Literal["confirmed", "rejected"]
+    decision: Literal["pending", "confirmed", "rejected"]
 
 
 class RequirementDecisionCommand(AgentModel):
@@ -105,6 +105,7 @@ class JobRequirementResource(AgentModel):
 class RequirementDecisionResource(AgentModel):
     confirmed_ids: list[str]
     rejected_ids: list[str]
+    pending_ids: list[str]
     excluded_ids: list[str]
 
 
@@ -149,6 +150,8 @@ class DeepDiveAnswerCommand(AgentModel):
     workspace_id: str
     content: str = Field(min_length=1, max_length=20_000)
     message_id: str | None = None
+    provider_model_id: str | None = None
+    reasoning_effort: Literal["none", "low", "medium", "high"] = "none"
 
 
 class MessageAttemptCommand(AgentModel):

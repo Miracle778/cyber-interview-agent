@@ -1366,6 +1366,54 @@ git commit -m "docs(targets): close job preparation delivery"
 
 ---
 
+### Task 10: Real-model and interaction remediation after user acceptance
+
+**Why this task exists:** The first Task 1–9 pass marked the job Agent and deep-dive
+runtime complete while production still used deterministic extraction/questions and
+several UI controls only changed local status. Real-page acceptance exposed the gap.
+
+**Files:**
+- Modify: `backend/app/agents/job_target_*`
+- Modify: `backend/app/application/{graph_factory,workspace_runtime,execution_service}.py`
+- Modify: `backend/app/job_targets/*`
+- Modify: `backend/app/api/routes_job_targets.py`
+- Modify: `frontend/src/features/jobTargets/*`
+- Modify: `frontend/src/shared/agent/*`
+
+- [x] **Step 1: Make JD-first creation the default**
+
+Persist JD immediately, then use one structured `job_analysis` call to extract company,
+role, seniority and atomic requirements. Preserve a manual no-JD path.
+
+- [x] **Step 2: Wire real production Agents**
+
+Create and inject `job_analysis` and `project_deep_dive` Agents through the Workspace
+runtime. Keep deterministic behavior only for isolated tests without Agent bindings.
+
+- [x] **Step 3: Separate Session and Execution controls**
+
+Pause/resume/end control the deep-dive Session. Composer Stop cancels only the active
+Execution. Failure and stop keep one unresolved user Message and retry creates a new
+Execution against that Message.
+
+- [x] **Step 4: Normalize API resources and runtime facts**
+
+Return camelCase Message/Execution resources, Beijing-displayable timestamps, execution
+duration inputs, real model usage, context usage and compaction state.
+
+- [x] **Step 5: Correct the target and Agent workspaces**
+
+Make overview summaries and steps navigable, add JD/manual mode selection, show safe
+recognition placeholders, reuse the established Agent composer, and replace the empty
+gray runtime panel with a structured status/summary/detail hierarchy.
+
+- [x] **Step 6: Focused verification**
+
+Run only the two current backend target tests, the target component test, TypeScript,
+production build and one real browser critical path on the user’s local service.
+
+---
+
 ## Plan Self-Review Checklist
 
 Coverage audit:

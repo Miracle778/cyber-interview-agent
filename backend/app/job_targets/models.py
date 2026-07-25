@@ -128,6 +128,7 @@ class ProjectDeepDiveRecord:
 class RequirementDecisionReceipt:
     confirmed_ids: tuple[str, ...]
     rejected_ids: tuple[str, ...]
+    pending_ids: tuple[str, ...]
     excluded_ids: tuple[str, ...]
 
 

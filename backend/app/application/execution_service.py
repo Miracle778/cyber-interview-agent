@@ -189,6 +189,9 @@ class AgentExecutionService:
     def usage(self, session_id: str) -> dict[str, int]:
         return self._repository.usage(session_id)
 
+    def context(self, execution: ExecutionRecord) -> AgentContext:
+        return self._execution_context(execution)
+
     async def start(
         self,
         session: SessionRecord,
