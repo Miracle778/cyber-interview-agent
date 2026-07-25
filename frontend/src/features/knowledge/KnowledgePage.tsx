@@ -170,8 +170,8 @@ export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanne
     <section className="page-section" aria-labelledby="knowledge-title">
       <div className="page-section__header">
         <span className="page-section__icon" aria-hidden="true"><BookOpen size={18} /></span>
-        <h2 id="knowledge-title" className="page-section__title">知识文档</h2>
-        {hasWorkspace ? <span className="page-section__hint">管理资料、草稿和发布状态</span> : null}
+        <h2 id="knowledge-title" className="page-section__title">学习资料</h2>
+        {hasWorkspace ? <span className="page-section__hint">管理导入资料和整理结果</span> : null}
       </div>
 
       <Card className="knowledge-toolbar" ariaLabel="知识库工具栏">
@@ -199,9 +199,9 @@ export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanne
               <Upload size={16} aria-hidden="true" />上传资料
             </Button>
             <Button variant="secondary" onClick={handleRescan} disabled={!hasWorkspace || isRescanning} loading={isRescanning}>
-              <RefreshCw size={16} aria-hidden="true" />重新扫描 Vault
+              <RefreshCw size={16} aria-hidden="true" />更新资料索引
             </Button>
-            {indexedCount !== null ? <span className="status-note">索引文档数：{indexedCount}</span> : null}
+            {indexedCount !== null ? <span className="status-note">已更新 {indexedCount} 份资料的检索索引</span> : null}
           </div>
         </div>
       </Card>
@@ -212,7 +212,7 @@ export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanne
             <section className="resource-group" aria-labelledby="source-group-title">
               <div className="resource-group__heading">
                 <File size={16} aria-hidden="true" />
-                <h3 id="source-group-title">原始资料</h3>
+                <h3 id="source-group-title">导入资料</h3>
                 <span>{sources.length}</span>
               </div>
               {sourcesQuery.isLoading ? <p className="status-note">正在读取资料…</p> : null}
@@ -242,7 +242,7 @@ export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanne
             <section className="resource-group" aria-labelledby="draft-group-title">
               <div className="resource-group__heading">
                 <FileText size={16} aria-hidden="true" />
-                <h3 id="draft-group-title">生成草稿</h3>
+                <h3 id="draft-group-title">整理结果</h3>
                 <span>{drafts.length}</span>
               </div>
               {draftsQuery.isLoading ? <p className="status-note">正在读取草稿…</p> : null}
@@ -279,7 +279,7 @@ export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanne
                   <div><dt>文件类型</dt><dd>{selectedSource.contentType}</dd></div>
                   <div><dt>文件大小</dt><dd>{formatBytes(selectedSource.sizeBytes)}</dd></div>
                   <div><dt>上传时间</dt><dd>{formatDate(selectedSource.createdAt)}</dd></div>
-                  <div><dt>存储位置</dt><dd>{selectedSource.storedPath}</dd></div>
+                  <div><dt>整理状态</dt><dd>{selectedSource.draftId ? "已生成整理草稿" : "等待整理"}</dd></div>
                 </dl>
                 {selectedSource.draftId ? (
                   <Button variant="secondary" onClick={() => selectResource({ kind: "draft", id: selectedSource.draftId! })}>

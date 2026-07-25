@@ -23,6 +23,8 @@ import { SettingsNavigation, type SettingsSection } from "./SettingsNavigation";
 import { SettingsOverview, type SettingsStatusItem } from "./SettingsOverview";
 import { SettingsDisclosure } from "./SettingsDisclosure";
 
+const REQUIRED_MODEL_ROLE_COUNT = 8;
+
 interface SettingsPageProps {
   workspace: WorkspaceConfig | null;
   onWorkspaceReady: (workspace: WorkspaceConfig) => void;
@@ -107,9 +109,9 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
       {
         id: "bindings",
         title: "模型用途绑定",
-        status: bindingsQuery.isError ? "读取失败" : `${bindingCount}/6 已绑定`,
-        description: bindingsQuery.isError ? "进入模型服务查看绑定状态" : bindingCount === 6 ? "六种用途均已有模型" : "补齐对应用途后即可运行相关 Agent 功能",
-        tone: bindingsQuery.isError ? "danger" : bindingCount === 6 ? "success" : "warning",
+        status: bindingsQuery.isError ? "读取失败" : `${bindingCount}/${REQUIRED_MODEL_ROLE_COUNT} 已绑定`,
+        description: bindingsQuery.isError ? "进入模型服务查看绑定状态" : bindingCount === REQUIRED_MODEL_ROLE_COUNT ? "所有用途均已有模型" : "补齐对应用途后即可运行相关 Agent 功能",
+        tone: bindingsQuery.isError ? "danger" : bindingCount === REQUIRED_MODEL_ROLE_COUNT ? "success" : "warning",
         section: "models",
       },
       {
@@ -127,7 +129,7 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
     ? "workspace"
     : (providersQuery.data?.length ?? 0) === 0
       ? "models"
-      : Object.values(bindingsQuery.data?.bindings ?? {}).filter(Boolean).length < 6
+      : Object.values(bindingsQuery.data?.bindings ?? {}).filter(Boolean).length < REQUIRED_MODEL_ROLE_COUNT
         ? "models"
         : "diagnostics";
 

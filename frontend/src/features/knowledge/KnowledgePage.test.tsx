@@ -63,7 +63,7 @@ describe("KnowledgePage", () => {
 
     expect(screen.getByText("请先初始化工作区")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "上传资料" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "重新扫描 Vault" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "更新资料索引" })).toBeDisabled();
   });
 
   it("uploads and displays a source without pretending a question was generated", async () => {
@@ -119,7 +119,7 @@ describe("KnowledgePage", () => {
     )?.[1]?.body as FormData;
     expect(form.get("workspaceId")).toBe("w1");
     expect(form.get("workspacePath")).toBeNull();
-    expect(screen.getByText("artifacts/review/sources/source_1.txt")).toBeInTheDocument();
+    expect(screen.getByText("已生成整理草稿")).toBeInTheDocument();
   });
 
   it("rescans the vault and displays indexed count", async () => {
@@ -136,9 +136,9 @@ describe("KnowledgePage", () => {
       { wrapper },
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "重新扫描 Vault" }));
+    fireEvent.click(screen.getByRole("button", { name: "更新资料索引" }));
 
-    expect(await screen.findByText("索引文档数：3")).toBeInTheDocument();
+    expect(await screen.findByText("已更新 3 份资料的检索索引")).toBeInTheDocument();
     await waitFor(() => expect(onVaultRescanned).toHaveBeenCalledWith(3));
   });
 
@@ -218,8 +218,8 @@ describe("KnowledgePage", () => {
       { wrapper },
     );
 
-    expect(await screen.findByRole("heading", { name: "原始资料" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "生成草稿" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "导入资料" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "整理结果" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /缓存资料\.md/ })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /缓存穿透/ })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { level: 1, name: "缓存穿透" })).toBeInTheDocument();
@@ -233,7 +233,7 @@ describe("KnowledgePage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /缓存资料\.md/ }));
     expect(screen.getByRole("heading", { name: "缓存资料.md" })).toBeInTheDocument();
-    expect(screen.getByText("artifacts/review/sources/source_1.md")).toBeInTheDocument();
+    expect(screen.getByText("已生成整理草稿")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "查看关联草稿" })).toBeInTheDocument();
     // knowledge page hides the diagnostic test button
     expect(screen.queryByRole("button", { name: "运行确认测试" })).toBeNull();

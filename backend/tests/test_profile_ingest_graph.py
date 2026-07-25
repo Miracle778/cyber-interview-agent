@@ -70,6 +70,35 @@ class DuplicateAliasExtractionAgent:
         )
 
 
+class DuplicateProjectExtractionAgent:
+    async def extract(self, *, evidence, confirmed_profile, context, config):
+        evidence_id = evidence[0]["id"]
+        return ProfileExtractionOutput(
+            candidates=[
+                ProfileClaimCandidate(
+                    category="project",
+                    value={
+                        "name": "Cyber Interview Agent",
+                        "role": "后端开发",
+                    },
+                    evidence_ids=[evidence_id],
+                    confidence=0.8,
+                    rationale="项目名称和职责有直接依据",
+                ),
+                ProfileClaimCandidate(
+                    category="project",
+                    value={
+                        "name": "Cyber Interview Agent",
+                        "results": ["上线可恢复的 Agent 工作流"],
+                    },
+                    evidence_ids=[evidence_id],
+                    confidence=0.9,
+                    rationale="项目名称和成果有直接依据",
+                ),
+            ]
+        )
+
+
 class AssessmentAgent:
     def __init__(self, version_id: str, evidence_id: str, *, invalid: bool = False):
         self.version_id = version_id
@@ -240,6 +269,36 @@ async def test_ingest_normalizes_category_fields_and_merges_exact_duplicates(pro
     assert proposals[0].proposed_value["name"] == "Python"
     assert "text" not in proposals[0].proposed_value
     assert proposals[0].reason == "more explicit"
+
+
+@pytest.mark.asyncio
+async def test_ingest_merges_complementary_candidates_for_the_same_project(profile_runtime):
+    root, connection, repository, storage = profile_runtime
+    version = _seed(repository, storage, b"Cyber Interview Agent")
+    _seed_execution(connection, version.id)
+    graph = create_profile_ingest_graph(
+        DuplicateProjectExtractionAgent(),
+        repository=repository,
+        storage=storage,
+        publish_event=None,
+    )
+
+    await graph.ainvoke(
+        {"material_id": version.material_id, "version_id": version.id},
+        config={"configurable": {"thread_id": version.id}},
+        context=_context(root, version.id),
+    )
+
+    proposals = repository.list_proposals("w1")
+    assert len(proposals) == 1
+    assert proposals[0].proposed_value == {
+        "category": "project",
+        "name": "Cyber Interview Agent",
+        "role": "后端开发",
+        "results": ["上线可恢复的 Agent 工作流"],
+        "confidence": 0.9,
+    }
+    assert proposals[0].reason == "项目名称和成果有直接依据"
 
 
 @pytest.mark.asyncio

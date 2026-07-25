@@ -22,7 +22,7 @@ const STATUS_LABEL: Record<KnowledgeDraftStatus, string> = {
   draft: "草稿",
   review_pending: "等待确认",
   rejected: "已拒绝",
-  published: "已发布",
+  published: "已加入学习资料",
   superseded: "已替代",
 };
 
@@ -139,7 +139,7 @@ export function DraftReview({
       setError(null);
     },
     onSuccess: (run) => {
-      setMessage("已请求发布，等待人工确认");
+      setMessage("已提交加入学习资料的确认请求");
       queryClient.invalidateQueries({ queryKey });
       onPublicationRequested?.(run.executionId);
     },
@@ -224,16 +224,16 @@ export function DraftReview({
 
             {selected.status === "published" && selected.publication ? (
               <p className="status-note">
-                已发布路径：knowledge-vault/{selected.publication.targetPath}
+                已加入学习资料，可以在复习中使用。
               </p>
             ) : null}
             {selected.publication?.state === "index_stale" ? (
               <p className="status-note status-note--warning">
-                Markdown 已发布，但索引尚未更新；请运行“重新扫描 Vault”修复。
+                内容已保存，但检索索引尚未更新；请返回资料页选择“更新资料索引”。
               </p>
             ) : null}
             {selected.status === "review_pending" ? (
-              <p className="status-note">等待人工确认，批准后会发布到 Vault</p>
+              <p className="status-note">核对内容后，可以申请加入学习资料。</p>
             ) : null}
             {selected.status === "rejected" ? (
               <p className="status-note">该草稿已被拒绝，重新上传资料可生成新草稿</p>
@@ -274,7 +274,7 @@ export function DraftReview({
                       disabled={busy}
                     >
                       <Send size={16} aria-hidden="true" />
-                      请求发布
+                      加入学习资料
                     </Button>
                   ) : null}
                 </>

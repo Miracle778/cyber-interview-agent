@@ -174,10 +174,10 @@ describe("DraftReview", () => {
       { wrapper },
     );
     await screen.findByRole("heading", { level: 1, name: "缓存穿透" });
-    fireEvent.click(screen.getByRole("button", { name: "请求发布" }));
+    fireEvent.click(screen.getByRole("button", { name: "加入学习资料" }));
 
-    expect(await screen.findByText("已请求发布，等待人工确认")).toBeInTheDocument();
-    expect(await screen.findByText("等待人工确认，批准后会发布到 Vault")).toBeInTheDocument();
+    expect(await screen.findByText("已提交加入学习资料的确认请求")).toBeInTheDocument();
+    expect(await screen.findByText("核对内容后，可以申请加入学习资料。")).toBeInTheDocument();
     expect(onPublicationRequested).toHaveBeenCalledWith("r1");
   });
 
@@ -198,8 +198,8 @@ describe("DraftReview", () => {
     });
 
     render(<DraftReview workspaceId="w1" />, { wrapper });
-    expect(await screen.findByText("已发布路径：knowledge-vault/10_question_bank/q1.md")).toBeInTheDocument();
-    expect(screen.queryByText("已请求发布，等待人工确认")).toBeNull();
+    expect(await screen.findByText("已加入学习资料，可以在复习中使用。")).toBeInTheDocument();
+    expect(screen.queryByText("已提交加入学习资料的确认请求")).toBeNull();
   });
 
   it("renders a superseded draft as historical and non-actionable", async () => {
@@ -213,7 +213,7 @@ describe("DraftReview", () => {
     expect(await screen.findAllByText("已替代")).toHaveLength(2);
     expect(screen.getByText("该草稿已被后续修订替代，仅保留为历史版本")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "编辑" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "请求发布" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "加入学习资料" })).toBeNull();
   });
 
   it("shows how to repair an index-stale publication", async () => {
@@ -231,7 +231,7 @@ describe("DraftReview", () => {
     render(<DraftReview workspaceId="w1" />, { wrapper });
 
     expect(await screen.findByText(/索引尚未更新/)).toBeInTheDocument();
-    expect(screen.getByText(/重新扫描 Vault/)).toBeInTheDocument();
+    expect(screen.getByText(/更新资料索引/)).toBeInTheDocument();
   });
 
   it("maps an external-document conflict to actionable advice", async () => {
@@ -248,7 +248,7 @@ describe("DraftReview", () => {
 
     render(<DraftReview workspaceId="w1" />, { wrapper });
     await screen.findByRole("heading", { level: 1, name: "缓存穿透" });
-    fireEvent.click(screen.getByRole("button", { name: "请求发布" }));
+    fireEvent.click(screen.getByRole("button", { name: "加入学习资料" }));
 
     expect(await screen.findByText(/Vault 文档已被外部修改/)).toBeInTheDocument();
   });

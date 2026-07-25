@@ -313,24 +313,34 @@ def _evidence_specs(segments: tuple[ExtractedSegment, ...]) -> tuple[dict[str, A
 
 
 def _normalize_extraction(output: ProfileExtractionOutput) -> ProfileExtractionOutput:
-    """Canonicalize category fields and merge exact duplicate facts.
+    """Canonicalize category fields and merge duplicate entity candidates.
 
-    This deliberately avoids semantic fuzzy merging: only candidates with the
-    same category, canonical value and target identity are combined.
+    The model may split one resume entity into complementary candidates, such
+    as a project's role and results.  Once a category has a stable identity we
+    merge those fields and their Evidence before they become review items.
+    This is intentionally not fuzzy matching: the existing category identity
+    rules remain the only definition of "the same entity".
     """
     merged: dict[str, ProfileClaimCandidate] = {}
     order: list[str] = []
     for candidate in output.candidates:
         value = _canonical_claim_value(candidate.category, candidate.value)
         normalized = candidate.model_copy(update={"value": value})
+        identity = _claim_identity(normalized.category, normalized.value)
+        key_fields: dict[str, object] = {
+            "category": normalized.category,
+            "proposalType": normalized.proposal_type,
+            "targetClaimId": normalized.target_claim_id,
+            "baseClaimVersionId": normalized.base_claim_version_id,
+        }
+        # Prefer the shared domain identity when it is available.  Falling
+        # back to the whole value keeps anonymous/incomplete candidates apart.
+        if identity is not None:
+            key_fields["identity"] = identity
+        else:
+            key_fields["value"] = normalized.value
         key = json.dumps(
-            {
-                "category": normalized.category,
-                "value": normalized.value,
-                "proposalType": normalized.proposal_type,
-                "targetClaimId": normalized.target_claim_id,
-                "baseClaimVersionId": normalized.base_claim_version_id,
-            },
+            key_fields,
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -340,20 +350,38 @@ def _normalize_extraction(output: ProfileExtractionOutput) -> ProfileExtractionO
             merged[key] = normalized
             order.append(key)
             continue
-        evidence_ids = list(
-            dict.fromkeys([*existing.evidence_ids, *normalized.evidence_ids])
-        )[:50]
-        higher_confidence = (
-            normalized if normalized.confidence > existing.confidence else existing
-        )
-        merged[key] = existing.model_copy(
-            update={
-                "evidence_ids": evidence_ids,
-                "confidence": max(existing.confidence, normalized.confidence),
-                "rationale": higher_confidence.rationale,
-            }
-        )
+        merged[key] = _merge_extraction_candidates(existing, normalized)
     return ProfileExtractionOutput(candidates=[merged[key] for key in order])
+
+
+def _merge_extraction_candidates(
+    existing: ProfileClaimCandidate,
+    incoming: ProfileClaimCandidate,
+) -> ProfileClaimCandidate:
+    """Keep complementary facts, while resolving a conflicting field safely."""
+    incoming_is_preferred = incoming.confidence > existing.confidence
+    preferred = incoming if incoming_is_preferred else existing
+    fallback = existing if incoming_is_preferred else incoming
+    value = dict(preferred.value)
+    for key, candidate in fallback.value.items():
+        current = value.get(key)
+        if current in (None, "", [], {}):
+            value[key] = candidate
+            continue
+        if candidate in (None, "", [], {}) or candidate == current:
+            continue
+        if isinstance(current, list) and isinstance(candidate, list):
+            value[key] = list(dict.fromkeys([*current, *candidate]))
+
+    return preferred.model_copy(
+        update={
+            "value": value,
+            "evidence_ids": list(
+                dict.fromkeys([*existing.evidence_ids, *incoming.evidence_ids])
+            )[:50],
+            "confidence": max(existing.confidence, incoming.confidence),
+        }
+    )
 
 
 def _merge_incremental_extraction(

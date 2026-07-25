@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Search, ShieldCheck, SlidersHorizontal, Trash2, X } from "lucide-react";
+import { Search, ShieldCheck, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ActionCenter } from "../agent/ActionCenter";
 import { listActions } from "../agent/hitlApi";
@@ -128,6 +128,7 @@ export function QuestionLibrary({ workspace, sources, initialCandidateId = null,
         <div className="question-library__filters" aria-label="题目筛选">
           <span className="question-library__filter-label">状态</span>
           {(["review_pending", "published", "rejected"] as const).map((value) => <button key={value} type="button" className={`question-library__status question-library__status--${value}`} aria-pressed={status === value} onClick={() => setStatus(status === value ? "" : value)}><span>{statusLabels[value]}</span><strong>{statusCounts[value]}</strong></button>)}
+          <label><span>主题</span><select aria-label="主题筛选" value={topic} onChange={(event) => setTopic(event.target.value)}><option value="">全部主题</option>{topicCounts.map(([name, count]) => <option key={name} value={name}>{name}（{count}）</option>)}</select></label>
           <label><span>难度</span><select aria-label="难度筛选" value={difficulty} onChange={(event) => setDifficulty(event.target.value)}><option value="">全部</option><option value="easy">简单</option><option value="medium">中等</option><option value="hard">困难</option></select></label>
           <label><span>来源</span><select aria-label="来源筛选" value={sourceId} onChange={(event) => setSourceId(event.target.value)}><option value="">全部来源</option>{sources.map((source) => <option key={source.id} value={source.id}>{source.originalFilename}</option>)}</select></label>
           <button type="button" className="question-library__clear" disabled={!hasFilters} onClick={resetFilters}><SlidersHorizontal size={15} />清除筛选</button>
@@ -136,12 +137,6 @@ export function QuestionLibrary({ workspace, sources, initialCandidateId = null,
       </header>
 
       <div className="question-library__workspace">
-        <aside className="question-library__taxonomy" aria-label="题目分类">
-          <header><strong>目录</strong></header>
-          <button type="button" className="question-library__topic" aria-current={!topic} onClick={() => setTopic("")}><span>全部题目</span><strong>{topicFacetGroups.length}</strong></button>
-          <div className="question-library__topic-group"><small>按主题</small>{topicCounts.map(([name, count]) => <button key={name} type="button" className="question-library__topic" aria-current={topic === name} onClick={() => setTopic(topic === name ? "" : name)}><span>{name}</span><strong>{count}</strong><ChevronRight size={14} /></button>)}</div>
-        </aside>
-
         <section className="question-library__results" aria-label="题目结果">
           <header><strong>{resultGroups.length} 道逻辑题目</strong><span>{resultScope}</span>{selectedIds.size > 0 ? <div className="question-library__bulk"><span>已选 {selectedIds.size} 道</span><Button size="sm" variant="danger" loading={remove.isPending} onClick={() => confirmDelete((catalog.data ?? []).filter((item) => selectedIds.has(item.id)))}><Trash2 size={14} />批量删除</Button></div> : null}</header>
           {catalog.isLoading ? <p className="status-note">正在读取候选题…</p> : null}
