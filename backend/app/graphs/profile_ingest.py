@@ -17,6 +17,12 @@ from app.profile.errors import (
     ProfileEvidenceMismatch,
     ProfileExtractionFailed,
 )
+from app.profile.claim_values import (
+    canonical_claim_value,
+    claim_identity,
+    comparable_claim_value,
+    merge_claim_values,
+)
 from app.profile.models import ClaimProposalRecord, CreateClaimProposalSpec
 from app.profile.parsers import ExtractedSegment, parse_document
 from app.profile.privacy import redact_profile_text
@@ -324,9 +330,9 @@ def _normalize_extraction(output: ProfileExtractionOutput) -> ProfileExtractionO
     merged: dict[str, ProfileClaimCandidate] = {}
     order: list[str] = []
     for candidate in output.candidates:
-        value = _canonical_claim_value(candidate.category, candidate.value)
+        value = canonical_claim_value(candidate.category, candidate.value)
         normalized = candidate.model_copy(update={"value": value})
-        identity = _claim_identity(normalized.category, normalized.value)
+        identity = claim_identity(normalized.category, normalized.value)
         key_fields: dict[str, object] = {
             "category": normalized.category,
             "proposalType": normalized.proposal_type,
@@ -362,16 +368,7 @@ def _merge_extraction_candidates(
     incoming_is_preferred = incoming.confidence > existing.confidence
     preferred = incoming if incoming_is_preferred else existing
     fallback = existing if incoming_is_preferred else incoming
-    value = dict(preferred.value)
-    for key, candidate in fallback.value.items():
-        current = value.get(key)
-        if current in (None, "", [], {}):
-            value[key] = candidate
-            continue
-        if candidate in (None, "", [], {}) or candidate == current:
-            continue
-        if isinstance(current, list) and isinstance(candidate, list):
-            value[key] = list(dict.fromkeys([*current, *candidate]))
+    value = merge_claim_values(preferred.value, fallback.value)
 
     return preferred.model_copy(
         update={
@@ -396,18 +393,18 @@ def _merge_incremental_extraction(
     existing_by_identity = {
         identity: claim
         for claim in snapshot.claims
-        if (identity := _claim_identity(claim.claim_type, claim.value)) is not None
+        if (identity := claim_identity(claim.claim_type, claim.value)) is not None
     }
     seen_identities: set[str] = set()
     source_links = 0
     proposal_specs: list[CreateClaimProposalSpec] = []
 
     for candidate in output.candidates:
-        identity = _claim_identity(candidate.category, candidate.value)
+        identity = claim_identity(candidate.category, candidate.value)
         if identity is not None:
             seen_identities.add(identity)
         existing = existing_by_identity.get(identity) if identity is not None else None
-        candidate_facts = _comparable_value(candidate.category, candidate.value)
+        candidate_facts = comparable_claim_value(candidate.category, candidate.value)
         source_ref = {
             "materialVersionId": material_version_id,
             "evidenceIds": list(candidate.evidence_ids),
@@ -416,7 +413,7 @@ def _merge_incremental_extraction(
             source_ref["baseProfileVersion"] = snapshot.profile_version
 
         if existing is not None:
-            current_facts = _comparable_value(existing.claim_type, existing.value)
+            current_facts = comparable_claim_value(existing.claim_type, existing.value)
             changed = {
                 key: value
                 for key, value in candidate_facts.items()
@@ -497,7 +494,7 @@ def _missing_source_gap_count(
     current_version = repository.get_material_version(material_version_id)
     count = 0
     for claim in snapshot_claims:
-        identity = _claim_identity(claim.claim_type, claim.value)
+        identity = claim_identity(claim.claim_type, claim.value)
         if identity is None or identity in seen_identities:
             continue
         supported_by_same_material = False
@@ -517,94 +514,6 @@ def _missing_source_gap_count(
         if supported_by_same_material:
             count += 1
     return count
-
-
-def _claim_identity(category: str, value: dict[str, object]) -> str | None:
-    normalized = _comparable_value(category, value)
-
-    def text(key: str) -> str:
-        candidate = normalized.get(key)
-        return str(candidate).strip().casefold() if candidate else ""
-
-    if category == "skill":
-        parts = (text("name"),)
-    elif category == "project":
-        parts = (text("name"),)
-    elif category == "experience":
-        parts = (text("organization"), text("title"), text("period"))
-    elif category == "education":
-        parts = (text("school"), text("degree"), text("major"), text("period"))
-    elif category == "certification":
-        parts = (text("name"), text("issuer"))
-    elif category == "achievement":
-        parts = (text("title"), text("date"))
-    elif category == "link":
-        parts = (text("url"),)
-    else:
-        return None
-    if not parts[0]:
-        return None
-    return json.dumps(
-        [category, *parts],
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-
-
-def _comparable_value(
-    category: str, raw_value: dict[str, object]
-) -> dict[str, object]:
-    value = _canonical_claim_value(category, raw_value)
-    return {
-        key: item
-        for key, item in value.items()
-        if key not in {"category", "confidence"} and item not in (None, "", [], {})
-    }
-
-
-def _canonical_claim_value(
-    category: str, raw_value: dict[str, object]
-) -> dict[str, object]:
-    value = dict(raw_value)
-
-    def alias(target: str, *sources: str) -> None:
-        if target not in value:
-            for source in sources:
-                candidate = value.get(source)
-                if candidate is not None and candidate != "" and candidate != [] and candidate != {}:
-                    value[target] = candidate
-                    break
-        for source in sources:
-            if source != target:
-                value.pop(source, None)
-
-    if category == "skill":
-        alias("name", "name", "text", "skill")
-    elif category == "project":
-        alias("name", "name", "title", "project")
-        alias("background", "background", "description")
-        alias("role", "role", "position")
-        alias("tech_stack", "tech_stack", "techStack", "technologies")
-        alias("results", "results", "result", "outcomes")
-    elif category == "experience":
-        alias("organization", "organization", "company", "employer")
-        alias("title", "title", "role", "position")
-        alias("period", "period", "dates", "duration")
-    elif category == "education":
-        alias("school", "school", "institution", "university")
-        alias("major", "major", "field")
-        alias("period", "period", "dates", "duration")
-    elif category == "certification":
-        alias("name", "name", "title", "certificate")
-        alias("issuer", "issuer", "organization")
-        alias("issued_at", "issued_at", "issuedAt", "date")
-    elif category == "achievement":
-        alias("title", "title", "name")
-        alias("date", "date", "period")
-    elif category == "link":
-        alias("label", "label", "name", "title")
-        alias("url", "url", "href", "link")
-    return value
 
 
 def _section(segment: ExtractedSegment) -> str:

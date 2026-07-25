@@ -3882,6 +3882,7 @@ select:disabled {
 .claim-review__toolbar { display: flex; min-height: 78px; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-4); border-bottom: 1px solid var(--border); }
 .claim-review__toolbar h2 { font-size: 1.2rem; }
 .claim-review__toolbar p { margin-top: 3px; color: var(--text-muted); font-size: .8rem; }
+.claim-review__toolbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); }
 .claim-review__filters { display: flex; min-height: 58px; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-4); background: var(--surface-subtle); border-bottom: 1px solid var(--border); }
 .claim-review__filters label { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--text-muted); font-size: .75rem; white-space: nowrap; }
 .claim-review__filters .claim-review__select-all { min-height: 36px; padding: 0 var(--space-2); color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); }
@@ -3890,6 +3891,11 @@ select:disabled {
 .claim-review__filters > span { margin-left: auto; color: var(--text-muted); font-size: .78rem; }
 .claim-review__filters > span strong { color: var(--warning); font-variant-numeric: tabular-nums; }
 .claim-review__notice { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); color: var(--warning); font-size: .78rem; background: var(--warning-soft); border-bottom: 1px solid color-mix(in srgb, var(--warning) 20%, var(--border)); }
+.profile-duplicate-dialog__summary { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4); color: var(--text-muted); background: var(--surface-subtle); border-radius: var(--radius-md); }
+.profile-duplicate-dialog__summary strong { color: var(--primary); font-size: 1.7rem; font-variant-numeric: tabular-nums; }
+.profile-duplicate-dialog__groups { display: grid; max-height: 230px; gap: var(--space-2); margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+.profile-duplicate-dialog__groups li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.profile-duplicate-dialog__groups span { color: var(--text-muted); font-size: .75rem; }
 .claim-review__workspace { display: grid; min-height: 0; flex: 1; grid-template-columns: clamp(280px, 29vw, 380px) minmax(0, 1fr); overflow: hidden; }
 .claim-review__queue { min-width: 0; overflow-y: auto; border-right: 1px solid var(--border); overscroll-behavior: contain; scrollbar-gutter: stable; }
 .claim-review__queue > article { display: grid; min-height: 90px; grid-template-columns: auto minmax(0, 1fr); align-items: center; padding-left: var(--space-3); border-bottom: 1px solid var(--border); }
@@ -4062,6 +4068,7 @@ select:disabled {
   .profile-document-reader__layout > article { overflow: visible; padding: var(--space-3); }
   .profile-document-reader__paper { padding: var(--space-4); }
   .claim-review__toolbar { align-items: stretch; flex-direction: column; }
+  .claim-review__toolbar-actions { justify-content: flex-start; flex-wrap: wrap; }
   .claim-review__filters { align-items: stretch; flex-wrap: wrap; }
   .claim-review__filters > span { margin-left: 0; }
   .claim-review__workspace { display: block; min-height: 0; }

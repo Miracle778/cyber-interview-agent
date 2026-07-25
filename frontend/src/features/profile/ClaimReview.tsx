@@ -1,11 +1,12 @@
-import { useMemo, useState } from "react";
-import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, ChevronRight, FileSearch, RefreshCw, XCircle } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, ChevronRight, FileSearch, Layers3, RefreshCw, XCircle } from "lucide-react";
 import { ApiError } from "../../shared/api/client";
 import { Button } from "../../shared/ui/Button";
-import { batchDecideClaimProposals, decideClaimProposal } from "./profileApi";
-import type { ClaimDecision, ProfileClaimProposal, ProfileClaimReview, ProfileClaimWorkspace, ProfileEvidence } from "./profileTypes";
+import { batchDecideClaimProposals, consolidateDuplicateClaimProposals, decideClaimProposal, previewDuplicateClaimProposals } from "./profileApi";
+import type { ClaimDecision, DuplicateProposalPreview, ProfileClaimProposal, ProfileClaimReview, ProfileClaimWorkspace, ProfileEvidence } from "./profileTypes";
 import { formatEvidenceLocator } from "./evidenceLocator";
 import { ProfileBatchConfirmDialog } from "./ProfileBatchConfirmDialog";
+import { ProfileDuplicateMergeDialog } from "./ProfileDuplicateMergeDialog";
 import { ProfileProposalPreview } from "./ProfileProposalPreview";
 import { profileClaimTypeLabel, userFacingClaimReason } from "./profilePresentation";
 
@@ -62,6 +63,8 @@ export function ClaimReview({ workspaceId, snapshot, loading = false, onRefresh,
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmSafeBatch, setConfirmSafeBatch] = useState(false);
+  const [duplicatePreview, setDuplicatePreview] = useState<DuplicateProposalPreview | null>(null);
+  const [confirmDuplicateMerge, setConfirmDuplicateMerge] = useState(false);
 
   const proposals = snapshot?.proposals ?? [];
   const categories = useMemo(() => [...new Set([
@@ -86,6 +89,24 @@ export function ClaimReview({ workspaceId, snapshot, loading = false, onRefresh,
       : status === "rejected"
         ? "条已忽略"
         : "条简历要点";
+
+  async function refreshDuplicatePreview() {
+    try {
+      const preview = await previewDuplicateClaimProposals(workspaceId);
+      setDuplicatePreview(preview.groupCount ? preview : null);
+    } catch {
+      setDuplicatePreview(null);
+    }
+  }
+
+  useEffect(() => {
+    void refreshDuplicatePreview();
+  }, [workspaceId, proposals.length]);
+
+  async function refreshReview() {
+    await onRefresh();
+    await refreshDuplicatePreview();
+  }
 
   function setSelected(proposal: ProfileClaimProposal, checked: boolean) {
     const claim = snapshot ? proposalClaim(snapshot, proposal) : null;
@@ -119,11 +140,11 @@ export function ClaimReview({ workspaceId, snapshot, loading = false, onRefresh,
     try {
       await decideClaimProposal(workspaceId, proposal.id, decision, claim?.version ?? 0);
       setPending((value) => { const next = { ...value }; delete next[proposal.id]; return next; });
-      await onRefresh();
+      await refreshReview();
     } catch (error) {
       if (error instanceof ApiError && error.code.includes("conflict")) {
         setNotice("这条信息已经发生变化，页面已刷新；其他选择仍然保留。");
-        await onRefresh();
+        await refreshReview();
       } else setNotice(error instanceof Error ? error.message : "决定没有保存，请重试");
     } finally { setBusy(null); }
   }
@@ -138,7 +159,7 @@ export function ClaimReview({ workspaceId, snapshot, loading = false, onRefresh,
       setPending((value) => Object.fromEntries(Object.entries(value).filter(([id]) => !completed.has(id))));
       const failedCount = result.items.length - completed.size;
       setNotice(failedCount ? `${completed.size} 条已保存，${failedCount} 条发生变化或保存失败，已保留供你重新核对。` : `${completed.size} 条信息已保存。`);
-      await onRefresh();
+      await refreshReview();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "批量决定没有保存");
     } finally {
@@ -160,19 +181,39 @@ export function ClaimReview({ workspaceId, snapshot, loading = false, onRefresh,
     void submitEntries(entries);
   }
 
+  async function consolidateDuplicates() {
+    if (!duplicatePreview) return;
+    setBusy("duplicates");
+    setNotice(null);
+    try {
+      const result = await consolidateDuplicateClaimProposals(workspaceId, duplicatePreview);
+      setNotice(`已把 ${result.supersededProposalIds.length} 条重复内容整理到对应建议中，请继续核对。`);
+      setConfirmDuplicateMerge(false);
+      await refreshReview();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "重复信息没有整理成功，请刷新后重试");
+      await refreshDuplicatePreview();
+    } finally {
+      setBusy(null);
+    }
+  }
+
   if (loading) return <div className="profile-loading" role="status"><p>正在读取待确认内容…</p></div>;
 
   return <section className="claim-review">
     <header className="claim-review__toolbar">
       <div><h2>待确认</h2><p>核对系统从简历或对话中整理的信息。确认后，它们才会进入你的个人画像。</p></div>
-      {status === "pending" && filtered.length ? <Button size="sm" onClick={() => setConfirmSafeBatch(true)}>一键确认当前可靠信息</Button> : null}
+      <div className="claim-review__toolbar-actions">
+        {status === "pending" && duplicatePreview ? <Button variant="secondary" size="sm" onClick={() => setConfirmDuplicateMerge(true)}><Layers3 size={15} />整理重复信息（{duplicatePreview.groupCount} 组）</Button> : null}
+        {status === "pending" && filtered.length ? <Button size="sm" onClick={() => setConfirmSafeBatch(true)}>一键确认当前可靠信息</Button> : null}
+      </div>
     </header>
     <div className="claim-review__filters" aria-label="简历要点筛选">
       <label>状态<select aria-label="按状态筛选" value={status} onChange={(event) => setStatus(event.target.value)}><option value="pending">待确认</option><option value="accepted">已确认</option><option value="rejected">已忽略</option><option value="all">全部</option></select></label>
       <label>分类<select aria-label="按分类筛选" value={category} onChange={(event) => setCategory(event.target.value)}><option value="all">全部分类</option>{categories.map((item) => <option key={item} value={item}>{profileClaimTypeLabel(item)}</option>)}</select></label>
       {selectable.length ? <label className="claim-review__select-all"><input type="checkbox" checked={allCurrentSelected} onChange={selectCurrentFilter} />全选当前筛选</label> : null}
       <span><strong>{filtered.length}</strong> {filteredCountLabel}</span>
-      <Button variant="ghost" size="sm" onClick={() => void onRefresh()}><RefreshCw size={15} />刷新</Button>
+      <Button variant="ghost" size="sm" onClick={() => void refreshReview()}><RefreshCw size={15} />刷新</Button>
     </div>
     {notice ? <div className="claim-review__notice" role="status"><AlertTriangle size={17} />{notice}</div> : null}
     <div className={`claim-review__workspace${selectedProposalId ? " claim-review__workspace--detail" : ""}`}>
@@ -225,5 +266,6 @@ export function ClaimReview({ workspaceId, snapshot, loading = false, onRefresh,
       <div><Button variant="ghost" onClick={() => setPending({})}>清空选择</Button><Button variant="secondary" loading={busy === "batch"} onClick={() => submitSelected("rejected")}>批量不保留</Button><Button loading={busy === "batch"} onClick={() => submitSelected("accepted")}>批量确认</Button></div>
     </footer> : null}
     {confirmSafeBatch ? <ProfileBatchConfirmDialog acceptedCount={safeFiltered.length} excludedCount={filtered.length - safeFiltered.length} busy={busy === "batch"} onCancel={() => setConfirmSafeBatch(false)} onConfirm={submitSafeFiltered} /> : null}
+    {confirmDuplicateMerge && duplicatePreview ? <ProfileDuplicateMergeDialog preview={duplicatePreview} busy={busy === "duplicates"} onCancel={() => setConfirmDuplicateMerge(false)} onConfirm={() => void consolidateDuplicates()} /> : null}
   </section>;
 }

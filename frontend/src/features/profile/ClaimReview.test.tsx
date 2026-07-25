@@ -3,7 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ClaimReview } from "./ClaimReview";
 import type { ProfileClaimWorkspace } from "./profileTypes";
 
-const api = vi.hoisted(() => ({ decideClaimProposal: vi.fn(), batchDecideClaimProposals: vi.fn() }));
+const api = vi.hoisted(() => ({
+  decideClaimProposal: vi.fn(),
+  batchDecideClaimProposals: vi.fn(),
+  previewDuplicateClaimProposals: vi.fn(),
+  consolidateDuplicateClaimProposals: vi.fn(),
+}));
 vi.mock("./profileApi", () => api);
 
 const evidence = { id: "e1", materialVersionId: "mv1", locator: { lineStart: 11, lineEnd: 13 }, startOffset: 1, endOffset: 9, excerpt: "负责 Agent 工作流设计", sensitivity: "private", createdAt: "2026-07-22" };
@@ -16,7 +21,11 @@ const snapshot: ProfileClaimWorkspace = { workspaceId: "w1", profileVersion: "pv
 
 describe("ClaimReview", () => {
   afterEach(cleanup);
-  beforeEach(() => { vi.clearAllMocks(); api.decideClaimProposal.mockResolvedValue({ proposalId: "p1", status: "accepted" }); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    api.decideClaimProposal.mockResolvedValue({ proposalId: "p1", status: "accepted" });
+    api.previewDuplicateClaimProposals.mockResolvedValue({ workspaceId: "w1", groupCount: 0, proposalCount: 0, groups: [] });
+  });
 
   it("filters the queue and exposes conflict, user-facing preview and evidence navigation without color-only cues", async () => {
     const onOpenEvidence = vi.fn();
@@ -78,5 +87,38 @@ describe("ClaimReview", () => {
     expect(dialog).toHaveTextContent("1条可以直接确认");
     expect(dialog).toHaveTextContent("1条需要逐项核对");
     expect(dialog).toHaveTextContent("不会被自动确认");
+  });
+
+  it("previews and explicitly consolidates duplicate pending information", async () => {
+    const refresh = vi.fn();
+    const preview = {
+      workspaceId: "w1",
+      groupCount: 1,
+      proposalCount: 2,
+      groups: [{
+        category: "project",
+        label: "Cyber Interview Agent",
+        canonicalProposalId: "p1",
+        proposalIds: ["p1", "p2"],
+        mergedValue: { category: "project", name: "Cyber Interview Agent" },
+        evidenceCount: 2,
+      }],
+    };
+    api.previewDuplicateClaimProposals.mockResolvedValue(preview);
+    api.consolidateDuplicateClaimProposals.mockResolvedValue({
+      workspaceId: "w1",
+      canonicalProposalIds: ["p1"],
+      supersededProposalIds: ["p2"],
+    });
+
+    render(<ClaimReview workspaceId="w1" snapshot={snapshot} onRefresh={refresh} onOpenEvidence={vi.fn()} />);
+    const trigger = await screen.findByRole("button", { name: /整理重复信息（1 组）/ });
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "整理重复的待确认信息" });
+    expect(dialog).toHaveTextContent("已确认资料不会改变");
+    expect(dialog).toHaveTextContent("Cyber Interview Agent");
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认整理" }));
+    await waitFor(() => expect(api.consolidateDuplicateClaimProposals).toHaveBeenCalledWith("w1", preview));
+    expect(refresh).toHaveBeenCalled();
   });
 });

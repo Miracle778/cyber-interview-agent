@@ -158,6 +158,26 @@ export interface BatchClaimDecisionResult {
   items: { proposalId: string; status: "completed" | "conflict" | "failed_terminal"; result: ClaimDecisionResult | null; errorCode: string | null; retryable: boolean }[];
 }
 
+export interface DuplicateProposalPreview {
+  workspaceId: string;
+  groupCount: number;
+  proposalCount: number;
+  groups: {
+    category: string;
+    label: string;
+    canonicalProposalId: string;
+    proposalIds: string[];
+    mergedValue: Record<string, unknown>;
+    evidenceCount: number;
+  }[];
+}
+
+export interface DuplicateProposalConsolidationResult {
+  workspaceId: string;
+  canonicalProposalIds: string[];
+  supersededProposalIds: string[];
+}
+
 export interface MaterialDeletionPreview {
   deletionPlanId: string;
   materialId: string;

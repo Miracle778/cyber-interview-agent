@@ -26,6 +26,12 @@ from app.profile.errors import (
     ProfilePublicationSelectionNotFound,
     ProfileSnapshotChanged,
 )
+from app.profile.claim_values import (
+    canonical_claim_value,
+    claim_identity,
+    merge_claim_values,
+    proposal_confidence,
+)
 from app.profile.models import (
     ActionPlanItemRecord,
     ActionPlanItemSpec,
@@ -42,6 +48,9 @@ from app.profile.models import (
     CreatePublicationSelectionCommand,
     DecideProposalCommand,
     DeletionItemReceipt,
+    DuplicateProposalConsolidationResult,
+    DuplicateProposalGroup,
+    DuplicateProposalPreview,
     EvidenceRecord,
     ProfileActionPlanRecord,
     ProfileAgentFocus,
@@ -829,6 +838,206 @@ class ProfileRepository:
         if row is None:
             raise ProfileProposalNotFound(proposal_id)
         return self._proposal_record(row)
+
+    def duplicate_proposal_preview(
+        self, workspace_id: str
+    ) -> DuplicateProposalPreview:
+        proposals = self.list_proposals(workspace_id, status="pending")
+        by_identity: dict[str, list[ClaimProposalRecord]] = {}
+        for proposal in proposals:
+            if proposal.proposal_type != "create":
+                continue
+            category = proposal.proposed_value.get("category")
+            if not isinstance(category, str):
+                continue
+            identity = claim_identity(category, proposal.proposed_value)
+            if identity is not None:
+                by_identity.setdefault(identity, []).append(proposal)
+
+        groups: list[DuplicateProposalGroup] = []
+        for identity, duplicates in by_identity.items():
+            if len(duplicates) < 2:
+                continue
+            ordered = sorted(
+                duplicates,
+                key=lambda item: (
+                    -proposal_confidence(item.proposed_value),
+                    item.created_at,
+                    item.id,
+                ),
+            )
+            canonical = ordered[0]
+            category = str(canonical.proposed_value["category"])
+            merged_value = canonical_claim_value(
+                category, canonical.proposed_value
+            )
+            evidence_ids: list[str] = list(canonical.evidence_ids)
+            for proposal in ordered[1:]:
+                merged_value = merge_claim_values(
+                    merged_value,
+                    canonical_claim_value(category, proposal.proposed_value),
+                )
+                evidence_ids.extend(proposal.evidence_ids)
+            label = self._duplicate_proposal_label(category, merged_value)
+            groups.append(
+                DuplicateProposalGroup(
+                    category=category,
+                    identity=identity,
+                    label=label,
+                    canonical_proposal_id=canonical.id,
+                    proposal_ids=tuple(sorted(item.id for item in duplicates)),
+                    merged_value=merged_value,
+                    evidence_count=len(set(evidence_ids)),
+                )
+            )
+        groups.sort(key=lambda item: (item.category, item.label, item.identity))
+        return DuplicateProposalPreview(
+            workspace_id=workspace_id,
+            groups=tuple(groups),
+        )
+
+    def consolidate_duplicate_proposals(
+        self,
+        workspace_id: str,
+        *,
+        expected_groups: Sequence[Sequence[str]],
+        idempotency_key: str,
+    ) -> DuplicateProposalConsolidationResult:
+        normalized_groups = tuple(
+            tuple(sorted(dict.fromkeys(group))) for group in expected_groups
+        )
+        request = {
+            "workspaceId": workspace_id,
+            "groups": [list(group) for group in normalized_groups],
+        }
+        request_hash = self._request_hash(request)
+        operation = "claim_proposals.consolidate_duplicates"
+        with self._transaction():
+            existing = self._load_idempotency_receipt(
+                workspace_id, operation, idempotency_key, request_hash
+            )
+            if existing is not None:
+                return DuplicateProposalConsolidationResult(
+                    workspace_id=workspace_id,
+                    canonical_proposal_ids=tuple(existing["canonicalProposalIds"]),
+                    superseded_proposal_ids=tuple(existing["supersededProposalIds"]),
+                )
+
+            preview = self.duplicate_proposal_preview(workspace_id)
+            current_groups = {
+                tuple(sorted(group.proposal_ids)): group for group in preview.groups
+            }
+            if not normalized_groups or set(normalized_groups) != set(current_groups):
+                raise ProfileClaimVersionConflict(
+                    "duplicate proposal preview changed"
+                )
+
+            canonical_ids: list[str] = []
+            superseded_ids: list[str] = []
+            for proposal_ids in normalized_groups:
+                group = current_groups[proposal_ids]
+                rows = self._connection.execute(
+                    "SELECT * FROM profile_claim_proposals "
+                    f"WHERE workspace_id = ? AND id IN ({','.join('?' for _ in proposal_ids)})",
+                    (workspace_id, *proposal_ids),
+                ).fetchall()
+                if len(rows) != len(proposal_ids):
+                    raise ProfileClaimVersionConflict(
+                        "duplicate proposal set changed"
+                    )
+                proposals = [self._proposal_record(row) for row in rows]
+                ordered = sorted(
+                    proposals,
+                    key=lambda item: (
+                        -proposal_confidence(item.proposed_value),
+                        item.created_at,
+                        item.id,
+                    ),
+                )
+                canonical = ordered[0]
+                if canonical.id != group.canonical_proposal_id:
+                    raise ProfileClaimVersionConflict(
+                        "duplicate proposal priority changed"
+                    )
+                merged_evidence = list(canonical.evidence_ids)
+                reasons = [canonical.reason]
+                merged_sources = [
+                    {
+                        "sourceKind": canonical.source_kind,
+                        "sourceRef": canonical.source_ref,
+                    }
+                ]
+                for proposal in ordered[1:]:
+                    merged_evidence.extend(proposal.evidence_ids)
+                    if proposal.reason not in reasons:
+                        reasons.append(proposal.reason)
+                    source = {
+                        "sourceKind": proposal.source_kind,
+                        "sourceRef": proposal.source_ref,
+                    }
+                    if source not in merged_sources:
+                        merged_sources.append(source)
+                source_ref = dict(canonical.source_ref)
+                source_ref["mergedSources"] = merged_sources
+                self._connection.execute(
+                    "UPDATE profile_claim_proposals SET "
+                    "proposed_value_json = ?, reason = ?, evidence_ids_json = ?, "
+                    "source_ref_json = ? WHERE id = ? AND status = 'pending'",
+                    (
+                        _canonical_json(group.merged_value),
+                        "；".join(reasons),
+                        _canonical_json(list(dict.fromkeys(merged_evidence))),
+                        _canonical_json(source_ref),
+                        canonical.id,
+                    ),
+                )
+                duplicate_ids = [item.id for item in ordered[1:]]
+                self._connection.execute(
+                    "UPDATE profile_claim_proposals SET status = 'superseded', "
+                    "decided_at = CURRENT_TIMESTAMP "
+                    f"WHERE id IN ({','.join('?' for _ in duplicate_ids)}) "
+                    "AND status = 'pending'",
+                    tuple(duplicate_ids),
+                )
+                canonical_ids.append(canonical.id)
+                superseded_ids.extend(duplicate_ids)
+
+            result = DuplicateProposalConsolidationResult(
+                workspace_id=workspace_id,
+                canonical_proposal_ids=tuple(canonical_ids),
+                superseded_proposal_ids=tuple(superseded_ids),
+            )
+            self._store_idempotency_receipt(
+                workspace_id,
+                operation,
+                idempotency_key,
+                request_hash,
+                {
+                    "canonicalProposalIds": list(result.canonical_proposal_ids),
+                    "supersededProposalIds": list(result.superseded_proposal_ids),
+                },
+            )
+            return result
+
+    @staticmethod
+    def _duplicate_proposal_label(
+        category: str, value: dict[str, object]
+    ) -> str:
+        keys_by_category = {
+            "skill": ("name",),
+            "project": ("name",),
+            "experience": ("organization", "title"),
+            "education": ("school", "major"),
+            "certification": ("name",),
+            "achievement": ("title",),
+            "link": ("label", "url"),
+        }
+        parts = [
+            str(value[key]).strip()
+            for key in keys_by_category.get(category, ())
+            if value.get(key)
+        ]
+        return " · ".join(parts) or category
 
     # --- Claim decision ---
 

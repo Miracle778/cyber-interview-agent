@@ -386,6 +386,39 @@ class BatchClaimDecisionResource(AgentModel):
     items: list[BatchClaimDecisionItemResource]
 
 
+class DuplicateProposalGroupResource(AgentModel):
+    category: str
+    label: str
+    canonical_proposal_id: str
+    proposal_ids: list[str]
+    merged_value: dict[str, Any]
+    evidence_count: int
+
+
+class DuplicateProposalPreviewResource(AgentModel):
+    workspace_id: str
+    group_count: int
+    proposal_count: int
+    groups: list[DuplicateProposalGroupResource]
+
+
+class DuplicateProposalGroupCommand(AgentModel):
+    proposal_ids: list[str] = Field(min_length=2, max_length=50)
+
+
+class ConsolidateDuplicateProposalsCommand(AgentModel):
+    workspace_id: str
+    groups: list[DuplicateProposalGroupCommand] = Field(
+        min_length=1, max_length=50
+    )
+
+
+class ConsolidateDuplicateProposalsResource(AgentModel):
+    workspace_id: str
+    canonical_proposal_ids: list[str]
+    superseded_proposal_ids: list[str]
+
+
 class MaterialDeletionPreviewCommand(MaterialActionCommand):
     pass
 

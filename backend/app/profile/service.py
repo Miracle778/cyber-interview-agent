@@ -867,6 +867,26 @@ class ProfileService:
                 raise ProfileProposalNotFound(command.proposal_id)
         return self.repository.batch_decide_proposals(commands)
 
+    def duplicate_proposal_preview(self):
+        return self.repository.duplicate_proposal_preview(self.workspace_id)
+
+    def consolidate_duplicate_proposals(
+        self,
+        *,
+        expected_groups: tuple[tuple[str, ...], ...],
+        idempotency_key: str,
+    ):
+        for group in expected_groups:
+            for proposal_id in group:
+                proposal = self.repository.get_proposal(proposal_id)
+                if proposal.workspace_id != self.workspace_id:
+                    raise ProfileProposalNotFound(proposal_id)
+        return self.repository.consolidate_duplicate_proposals(
+            self.workspace_id,
+            expected_groups=expected_groups,
+            idempotency_key=idempotency_key,
+        )
+
     # --- Assessment and constrained action plans ---
 
     def save_assessment(

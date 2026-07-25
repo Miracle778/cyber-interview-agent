@@ -10,6 +10,7 @@ from app.infrastructure.runtime_database import connect_runtime_database
 from app.knowledge.workspace_layout import initialize_knowledge_artifacts
 from app.profile.errors import (
     ProfileClaimSelectedForPublication,
+    ProfileClaimVersionConflict,
     ProfileDeletionPlanConflict,
     ProfileMaterialNotFound,
     ProfilePublicationRevocationRequired,
@@ -142,6 +143,125 @@ def test_batch_decision_reports_completed_and_conflict_without_rolling_back(
     assert result.conflicts == (first.id,)
     assert [item.proposal_id for item in result.completed] == [second.id]
     assert service.repository.get_proposal(second.id).status == "accepted"
+
+
+def test_duplicate_preview_and_consolidation_merge_only_pending_create_entities(
+    service: ProfileService,
+) -> None:
+    uploaded = service.upload_material(
+        file_name="resume.txt",
+        content=b"Cyber Interview Agent project",
+        title="Resume",
+    )
+    service.record_ingest_success(uploaded.version.id)
+    evidence = service.repository.replace_version_evidence(
+        uploaded.version.id,
+        (
+            {
+                "section": "projects",
+                "start_offset": 0,
+                "end_offset": 12,
+                "sanitized_text": "负责 Agent 工作流设计",
+                "content_sha256": "a" * 64,
+                "sensitivity": "normal",
+            },
+            {
+                "section": "projects",
+                "start_offset": 13,
+                "end_offset": 28,
+                "sanitized_text": "使用 LangGraph 与 SQLite",
+                "content_sha256": "b" * 64,
+                "sensitivity": "normal",
+            },
+        ),
+    )
+    proposals = service.repository.create_claim_proposals(
+        uploaded.version.id,
+        (
+            CreateClaimProposalSpec(
+                proposal_type="create",
+                proposed_value={
+                    "category": "project",
+                    "name": "Cyber Interview Agent",
+                    "role": "后端开发",
+                    "confidence": 0.91,
+                },
+                reason="简历列出了职责",
+                evidence_ids=(evidence[0].id,),
+            ),
+            CreateClaimProposalSpec(
+                proposal_type="create",
+                proposed_value={
+                    "category": "project",
+                    "name": "Cyber Interview Agent",
+                    "techStack": ["LangGraph", "SQLite"],
+                    "confidence": 0.88,
+                },
+                reason="简历列出了技术栈",
+                evidence_ids=(evidence[1].id,),
+            ),
+            CreateClaimProposalSpec(
+                proposal_type="create",
+                proposed_value={"category": "project", "role": "匿名项目职责"},
+                reason="缺少稳定项目名称",
+                evidence_ids=(evidence[0].id,),
+            ),
+        ),
+    )
+
+    preview = service.duplicate_proposal_preview()
+    assert len(preview.groups) == 1
+    assert set(preview.groups[0].proposal_ids) == {proposals[0].id, proposals[1].id}
+    assert preview.groups[0].merged_value["role"] == "后端开发"
+    assert preview.groups[0].merged_value["tech_stack"] == ["LangGraph", "SQLite"]
+
+    result = service.consolidate_duplicate_proposals(
+        expected_groups=(preview.groups[0].proposal_ids,),
+        idempotency_key="consolidate-duplicate-proposals-1",
+    )
+    assert result.canonical_proposal_ids == (proposals[0].id,)
+    assert result.superseded_proposal_ids == (proposals[1].id,)
+    canonical = service.repository.get_proposal(proposals[0].id)
+    assert canonical.status == "pending"
+    assert canonical.proposed_value["tech_stack"] == ["LangGraph", "SQLite"]
+    assert set(canonical.evidence_ids) == {evidence[0].id, evidence[1].id}
+    assert service.repository.get_proposal(proposals[1].id).status == "superseded"
+    assert service.repository.get_proposal(proposals[2].id).status == "pending"
+
+
+def test_duplicate_consolidation_rejects_a_stale_preview(
+    service: ProfileService,
+) -> None:
+    uploaded, evidence, first = _proposal(service, text="Python")
+    second = service.repository.create_claim_proposals(
+        uploaded.version.id,
+        (
+            CreateClaimProposalSpec(
+                proposal_type="create",
+                proposed_value={
+                    "category": "skill",
+                    "name": "Python",
+                    "confidence": -0.1,
+                },
+                reason="再次列出",
+                evidence_ids=(evidence.id,),
+            ),
+        ),
+    )[0]
+    preview = service.duplicate_proposal_preview()
+    assert set(preview.groups[0].proposal_ids) == {first.id, second.id}
+    service.decide_claim_proposal(
+        second.id,
+        decision="rejected",
+        expected_version=0,
+        idempotency_key="reject-before-consolidate-1",
+    )
+
+    with pytest.raises(ProfileClaimVersionConflict):
+        service.consolidate_duplicate_proposals(
+            expected_groups=(preview.groups[0].proposal_ids,),
+            idempotency_key="consolidate-stale-preview-1",
+        )
 
 
 def test_permanent_delete_tombstones_evidence_and_retains_confirmed_claim_as_unsupported(

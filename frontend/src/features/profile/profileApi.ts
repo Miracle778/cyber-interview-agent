@@ -1,6 +1,6 @@
 import { apiGet, apiPost, apiRequest, apiUpload } from "../../shared/api/client";
 import type { AgentSession } from "../agent/agentTypes";
-import type { AcceptedMaterialRetry, AcceptedMaterialUpload, BatchClaimDecisionResult, ClaimDecision, ClaimDecisionResult, MaterialDeletionPreview, PermanentMaterialDeletionResult, ProfileActionPlan, ProfileAssessment, ProfileCardCommand, ProfileCardWriteResult, ProfileClaimWorkspace, ProfileMaterial, ProfileMaterialDocument, ProfileMaterialVersion, ProfileMaterialVersionDetail, ProfilePresentation, UnifiedProfile } from "./profileTypes";
+import type { AcceptedMaterialRetry, AcceptedMaterialUpload, BatchClaimDecisionResult, ClaimDecision, ClaimDecisionResult, DuplicateProposalConsolidationResult, DuplicateProposalPreview, MaterialDeletionPreview, PermanentMaterialDeletionResult, ProfileActionPlan, ProfileAssessment, ProfileCardCommand, ProfileCardWriteResult, ProfileClaimWorkspace, ProfileMaterial, ProfileMaterialDocument, ProfileMaterialVersion, ProfileMaterialVersionDetail, ProfilePresentation, UnifiedProfile } from "./profileTypes";
 
 function commandKey(prefix: string) {
   return `${prefix}-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
@@ -71,6 +71,21 @@ export function decideClaimProposal(workspaceId: string, proposalId: string, dec
 
 export function batchDecideClaimProposals(workspaceId: string, decisions: { proposalId: string; decision: ClaimDecision; expectedVersion: number; editedValue?: Record<string, unknown> }[], idempotencyKey = commandKey("profile-claim-batch")) {
   return apiPost("/api/profile/claim-proposals/batch-decide", { workspaceId, decisions }, commandOptions(idempotencyKey)) as Promise<BatchClaimDecisionResult>;
+}
+
+export function previewDuplicateClaimProposals(workspaceId: string, signal?: AbortSignal) {
+  return apiGet<DuplicateProposalPreview>(`/api/workspaces/${workspaceId}/profile/claim-proposals/duplicate-preview`, { signal });
+}
+
+export function consolidateDuplicateClaimProposals(workspaceId: string, preview: DuplicateProposalPreview, idempotencyKey = commandKey("profile-claim-consolidate")) {
+  return apiPost(
+    `/api/workspaces/${workspaceId}/profile/claim-proposals/consolidate-duplicates`,
+    {
+      workspaceId,
+      groups: preview.groups.map((group) => ({ proposalIds: group.proposalIds })),
+    },
+    commandOptions(idempotencyKey),
+  ) as Promise<DuplicateProposalConsolidationResult>;
 }
 
 export function previewMaterialDeletion(workspaceId: string, material: ProfileMaterial, idempotencyKey = commandKey("profile-delete-preview")) {

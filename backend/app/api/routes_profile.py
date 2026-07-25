@@ -48,8 +48,12 @@ from app.schemas.profile import (
     ConfirmedProfileContextCommand,
     ConfirmedProfileContextItemResource,
     ConfirmedProfileContextResource,
+    ConsolidateDuplicateProposalsCommand,
+    ConsolidateDuplicateProposalsResource,
     ActionableProfileGapResource,
     DeletionItemReceiptResource,
+    DuplicateProposalGroupResource,
+    DuplicateProposalPreviewResource,
     EvidencePageResource,
     MaterialActionCommand,
     MaterialDeletionPreviewCommand,
@@ -878,6 +882,60 @@ def batch_decide_profile_claim_proposals(
                 )
             )
     return BatchClaimDecisionResource(items=items)
+
+
+@router.get(
+    "/api/workspaces/{workspace_id}/profile/claim-proposals/duplicate-preview",
+    response_model=DuplicateProposalPreviewResource,
+)
+def preview_duplicate_profile_claim_proposals(
+    workspace_id: str,
+    application: AgentApplication = Depends(get_agent_application),
+) -> DuplicateProposalPreviewResource:
+    preview = application.profile(workspace_id).duplicate_proposal_preview()
+    return DuplicateProposalPreviewResource(
+        workspace_id=workspace_id,
+        group_count=len(preview.groups),
+        proposal_count=preview.proposal_count,
+        groups=[
+            DuplicateProposalGroupResource(
+                category=group.category,
+                label=group.label,
+                canonical_proposal_id=group.canonical_proposal_id,
+                proposal_ids=list(group.proposal_ids),
+                merged_value=group.merged_value,
+                evidence_count=group.evidence_count,
+            )
+            for group in preview.groups
+        ],
+    )
+
+
+@router.post(
+    "/api/workspaces/{workspace_id}/profile/claim-proposals/consolidate-duplicates",
+    response_model=ConsolidateDuplicateProposalsResource,
+)
+def consolidate_duplicate_profile_claim_proposals(
+    workspace_id: str,
+    command: ConsolidateDuplicateProposalsCommand,
+    idempotency_key: Annotated[
+        str, Header(alias="Idempotency-Key", min_length=8, max_length=200)
+    ],
+    application: AgentApplication = Depends(get_agent_application),
+) -> ConsolidateDuplicateProposalsResource:
+    if command.workspace_id != workspace_id:
+        raise ProfileClaimNotFound("workspace")
+    result = application.profile(workspace_id).consolidate_duplicate_proposals(
+        expected_groups=tuple(
+            tuple(group.proposal_ids) for group in command.groups
+        ),
+        idempotency_key=idempotency_key,
+    )
+    return ConsolidateDuplicateProposalsResource(
+        workspace_id=workspace_id,
+        canonical_proposal_ids=list(result.canonical_proposal_ids),
+        superseded_proposal_ids=list(result.superseded_proposal_ids),
+    )
 
 
 @router.post(

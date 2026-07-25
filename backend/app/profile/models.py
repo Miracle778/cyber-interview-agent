@@ -432,6 +432,34 @@ class BatchClaimDecisionResult:
 
 
 @dataclass(frozen=True, slots=True)
+class DuplicateProposalGroup:
+    category: str
+    identity: str
+    label: str
+    canonical_proposal_id: str
+    proposal_ids: tuple[str, ...]
+    merged_value: dict[str, object]
+    evidence_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class DuplicateProposalPreview:
+    workspace_id: str
+    groups: tuple[DuplicateProposalGroup, ...]
+
+    @property
+    def proposal_count(self) -> int:
+        return sum(len(group.proposal_ids) for group in self.groups)
+
+
+@dataclass(frozen=True, slots=True)
+class DuplicateProposalConsolidationResult:
+    workspace_id: str
+    canonical_proposal_ids: tuple[str, ...]
+    superseded_proposal_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ClaimReviewDetail:
     claim: ProfileClaimRecord
     current_version: ProfileClaimVersionRecord

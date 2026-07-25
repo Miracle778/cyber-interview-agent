@@ -164,6 +164,55 @@ async def test_batch_decision_returns_item_level_partial_receipts(
 
 
 @pytest.mark.asyncio
+async def test_duplicate_proposals_require_preview_before_explicit_consolidation(
+    client: AsyncClient, application: AgentApplication
+) -> None:
+    async with client:
+        uploaded, _material, evidence, proposals = await _prepare_proposals(
+            client, application
+        )
+        duplicate = application.profile("w1").repository.create_claim_proposals(
+            uploaded["versionId"],
+            (
+                CreateClaimProposalSpec(
+                    proposal_type="create",
+                    proposed_value={
+                        "category": "skill",
+                        "name": "Python",
+                        "confidence": -0.1,
+                    },
+                    reason="再次列出",
+                    evidence_ids=(evidence.id,),
+                ),
+            ),
+        )[0]
+
+        preview = await client.get(
+            "/api/workspaces/w1/profile/claim-proposals/duplicate-preview"
+        )
+        assert preview.status_code == 200, preview.text
+        body = preview.json()
+        assert body["groupCount"] == 1
+        assert set(body["groups"][0]["proposalIds"]) == {
+            proposals[0].id,
+            duplicate.id,
+        }
+
+        consolidated = await client.post(
+            "/api/workspaces/w1/profile/claim-proposals/consolidate-duplicates",
+            json={
+                "workspaceId": "w1",
+                "groups": [
+                    {"proposalIds": body["groups"][0]["proposalIds"]}
+                ],
+            },
+            headers={"Idempotency-Key": "claim-api-consolidate-1"},
+        )
+        assert consolidated.status_code == 200, consolidated.text
+        assert consolidated.json()["supersededProposalIds"] == [duplicate.id]
+
+
+@pytest.mark.asyncio
 async def test_deletion_preview_requires_exact_claim_choice_and_returns_receipts(
     client: AsyncClient, application: AgentApplication
 ) -> None:
