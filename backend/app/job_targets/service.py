@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 from app.application.session_service import ProductRepository
 from app.job_targets.errors import JobTargetBusy, JobTargetNotFound
@@ -15,7 +15,10 @@ from app.job_targets.models import (
     TargetDeletionImpact,
 )
 from app.job_targets.repository import JobTargetRepository
-from app.job_targets.requirement_classification import is_job_background_or_heading
+from app.job_targets.requirement_classification import (
+    clean_job_requirement_text,
+    is_job_background_or_heading,
+)
 from app.profile.errors import ProfileClaimNotFound
 from app.profile.repository import ProfileRepository
 
@@ -243,7 +246,10 @@ class JobTargetService:
         self, target_id: str
     ) -> tuple[JobRequirementRecord, ...]:
         self.get_target(target_id)
-        return self.repository.list_requirements(target_id)
+        return tuple(
+            replace(item, text=clean_job_requirement_text(item.text))
+            for item in self.repository.list_requirements(target_id)
+        )
 
     def list_preparation_requirements(
         self, target_id: str

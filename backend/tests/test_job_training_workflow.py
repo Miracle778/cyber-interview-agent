@@ -18,7 +18,10 @@ from app.job_targets.application import (
     _deep_dive_result,
     classify_deep_dive_turn_intent,
 )
-from app.job_targets.requirement_classification import is_job_background_or_heading
+from app.job_targets.requirement_classification import (
+    clean_job_requirement_text,
+    is_job_background_or_heading,
+)
 from app.tools.job_target_tools import ScopedJobTargetReader, ToolScopeViolation
 from app.agents.review_round_contracts import RoundAnswerEvaluation
 
@@ -109,6 +112,13 @@ def test_deep_dive_question_does_not_advance_or_write_narrative():
         ("应用服务团队", True),
         ("团队负责支付与会员相关的基础中间件", True),
         ("部门：应用服务团队", True),
+        ("蚂蚁集团｜应用服务团队｜高级后端工程师（P6/P7）", True),
+        (
+            "蚂蚁集团｜应用服务团队｜高级后端工程师（P6/P7）；"
+            "应用服务团队负责集团内部研发效能、服务治理与智能化工程平台建设，"
+            "为多个业务域提供统一的应用交付能力",
+            True,
+        ),
         ("熟悉 Redis 与 MySQL", False),
         ("具备 3 年以上后端研发经验", False),
     ],
@@ -117,6 +127,18 @@ def test_requirement_classifier_keeps_job_context_out_of_confirmation_queue(
     text: str, expected: bool
 ):
     assert is_job_background_or_heading(text) is expected
+
+
+def test_legacy_mixed_requirement_hides_metadata_but_keeps_candidate_actions():
+    text = (
+        "蚂蚁集团｜应用服务团队｜高级后端工程师（P6/P7）；"
+        "1. 负责高可用后端平台和核心服务的架构设计；"
+        "2. 参与 Agent 应用平台建设"
+    )
+
+    assert clean_job_requirement_text(text) == (
+        "负责高可用后端平台和核心服务的架构设计；参与 Agent 应用平台建设"
+    )
 
 
 @pytest.mark.asyncio

@@ -12,6 +12,8 @@ const backgroundName = /^.{1,20}(团队|部门|事业群|业务线|产品线)$/;
 
 export function isJobBackground(item: JobRequirement) {
   if (item.inferred) return false;
+  const rawParts = item.text.split(/[；;]/).map((part) => part.trim()).filter(Boolean);
+  if (rawParts.length === 1 && (rawParts[0].match(/｜/g)?.length ?? 0) >= 2) return true;
   const text = item.text.replace(/\s+/g, "").replace(/[-:：；;。]+$/g, "");
   const hasCandidateCue = candidateCues.some((cue) => text.includes(cue));
   return !text || heading.test(text) || backgroundLabel.test(text) || (backgroundName.test(text) && !hasCandidateCue) || /^(团队|部门|技术团队).{0,18}(是|为|负责|服务|致力于)/.test(text) || (backgroundCues.some((cue) => text.includes(cue)) && !hasCandidateCue);

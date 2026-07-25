@@ -52,6 +52,9 @@ _BACKGROUND_CUES = (
 
 def is_job_background_or_heading(text: str) -> bool:
     """Keep company/team narration and section labels out of the confirmable queue."""
+    raw_parts = [part.strip() for part in re.split(r"[；;]", text) if part.strip()]
+    if len(raw_parts) == 1 and raw_parts[0].count("｜") >= 2:
+        return True
     normalized = re.sub(r"\s+", "", text).strip("-:：；;。")
     if not normalized:
         return True
@@ -61,8 +64,34 @@ def is_job_background_or_heading(text: str) -> bool:
         return True
     if re.match(r"^(?:团队|部门|技术团队).{0,18}(?:是|为|负责|服务|致力于)", normalized):
         return True
+    if re.search(
+        r"(?:团队|部门|技术团队|业务线|产品线)"
+        r"(?:负责|服务|致力于|提供|建设|强调)",
+        normalized,
+    ) and not re.search(
+        r"(?:候选人|应聘者|你)(?:需要|应当|须|需|具备|熟悉|掌握|负责)",
+        normalized,
+    ):
+        return True
     has_candidate_cue = any(cue in normalized for cue in _CANDIDATE_CUES)
     has_background_cue = any(cue in normalized for cue in _BACKGROUND_CUES)
     if _BACKGROUND_NAME.fullmatch(normalized) and not has_candidate_cue:
         return True
     return has_background_cue and not has_candidate_cue
+
+
+def clean_job_requirement_text(text: str) -> str:
+    """Remove mixed JD metadata/background prefixes from legacy requirement rows."""
+    parts = re.split(r"[；;]\s*", text.strip())
+    kept: list[str] = []
+    for part in parts:
+        candidate = part.strip()
+        if not candidate:
+            continue
+        compact = re.sub(r"\s+", "", candidate)
+        if compact.count("｜") >= 2 or is_job_background_or_heading(candidate):
+            continue
+        candidate = re.sub(r"^\s*\d+\s*[.、)]\s*", "", candidate).strip()
+        if candidate:
+            kept.append(candidate)
+    return "；".join(kept) or text.strip()

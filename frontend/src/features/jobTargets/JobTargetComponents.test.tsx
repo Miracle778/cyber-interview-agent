@@ -20,6 +20,7 @@ describe("job target workspace", () => {
     fireEvent.change(screen.getByLabelText("当前求职目标"), { target: { value: "two" } });
     expect(onSelect).toHaveBeenCalledWith("two");
     expect(screen.getByRole("option", { name: "岗位信息待补充" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "岗位信息待补充 已保存岗位描述" })).toBeInTheDocument();
   });
 
   it("keeps inferred requirements out of safe select-all", () => {
@@ -73,6 +74,7 @@ describe("job target workspace", () => {
   it("keeps team narration out of the confirmation queue and separates detail from bulk selection", () => {
     const requirements = [
       { id: "background", text: "团队服务于全站业务，产品包括服务注册中心", sourceQuote: "团队服务于全站业务，产品包括服务注册中心", inferred: false, requirementType: "responsibility", priority: "must_have", confirmationStatus: "confirmed" },
+      { id: "metadata", text: "蚂蚁集团｜应用服务团队｜高级后端工程师（P6/P7）", sourceQuote: "蚂蚁集团｜应用服务团队｜高级后端工程师（P6/P7）", inferred: false, requirementType: "responsibility", priority: "must_have", confirmationStatus: "confirmed" },
       { id: "redis", text: "熟悉 Redis", sourceQuote: "熟悉 Redis", inferred: false, requirementType: "skill", priority: "must_have", confirmationStatus: "pending" },
     ].map((item) => ({
       ...item, jobTargetId: "t", documentVersionId: "d", stableKey: item.id,
@@ -81,6 +83,7 @@ describe("job target workspace", () => {
     const { container } = render(<RequirementWorkbench requirements={requirements} onDecide={vi.fn()} />);
 
     expect(within(container).getByText("了解岗位背景")).toBeVisible();
+    expect(within(container).queryByRole("button", { name: /蚂蚁集团/ })).toBeNull();
     fireEvent.click(within(container).getByRole("button", { name: "技能要求 熟悉 Redis 推荐确认" }));
     expect(within(container).getByText(/已选 0 条/)).toBeVisible();
   });
