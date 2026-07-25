@@ -122,6 +122,7 @@ export function AppShell() {
                   description="集中管理面试资料和整理结果。"
                   health={health}
                   workspace={workspace}
+                  contained
                 >
                   <KnowledgePage
                     workspace={workspace}
@@ -198,12 +199,19 @@ interface PageFrameProps {
   workspace: WorkspaceConfig | null;
   children: ReactNode;
   workspaceMode?: boolean;
+  contained?: boolean;
   revealWorkspacePath?: boolean;
 }
 
-function PageFrame({ title, description, health, workspace, children, workspaceMode = false, revealWorkspacePath = false }: PageFrameProps) {
+function PageFrame({ title, description, health, workspace, children, workspaceMode = false, contained = false, revealWorkspacePath = false }: PageFrameProps) {
+  const shellClassName = [
+    "page-shell",
+    workspaceMode ? "page-shell--workspace" : "",
+    contained ? "page-shell--contained" : "",
+  ].filter(Boolean).join(" ");
+
   return (
-    <div className={workspaceMode ? "page-shell page-shell--workspace" : "page-shell"}>
+    <div className={shellClassName}>
       {workspaceMode ? null : <PageHeader
           title={title}
           description={description}

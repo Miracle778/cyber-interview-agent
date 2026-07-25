@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, BookOpen, File, FileText, FolderLock, RefreshCw, Trash2, Upload } from "lucide-react";
+import { AlertCircle, BookOpen, ChevronDown, File, FileText, FolderLock, RefreshCw, Search, Trash2, Upload } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
@@ -53,6 +53,7 @@ function contentTypeLabel(value: string) {
 
 export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanned }: KnowledgePageProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [resourceQuery, setResourceQuery] = useState("");
   const [selection, setSelection] = useState<ResourceSelection>(null);
   const [draftDirty, setDraftDirty] = useState(false);
   const [indexedCount, setIndexedCount] = useState<number | null>(null);
@@ -77,6 +78,19 @@ export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanne
   });
   const sources = useMemo(() => sourcesQuery.data ?? [], [sourcesQuery.data]);
   const drafts = useMemo(() => draftsQuery.data ?? [], [draftsQuery.data]);
+  const normalizedQuery = resourceQuery.trim().toLocaleLowerCase("zh-CN");
+  const filteredSources = useMemo(
+    () => normalizedQuery
+      ? sources.filter((item) => item.originalFilename.toLocaleLowerCase("zh-CN").includes(normalizedQuery))
+      : sources,
+    [normalizedQuery, sources],
+  );
+  const filteredDrafts = useMemo(
+    () => normalizedQuery
+      ? drafts.filter((item) => item.title.toLocaleLowerCase("zh-CN").includes(normalizedQuery))
+      : drafts,
+    [drafts, normalizedQuery],
+  );
 
   useEffect(() => {
     if (!workspace) {
@@ -172,13 +186,7 @@ export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanne
   }
 
   return (
-    <section className="page-section" aria-labelledby="knowledge-title">
-      <div className="page-section__header">
-        <span className="page-section__icon" aria-hidden="true"><BookOpen size={18} /></span>
-        <h2 id="knowledge-title" className="page-section__title">学习资料</h2>
-        {hasWorkspace ? <span className="page-section__hint">管理导入资料和整理结果</span> : null}
-      </div>
-
+    <section className="page-section knowledge-page" aria-label="知识库内容">
       <Card className="knowledge-toolbar" ariaLabel="知识库工具栏">
         {!hasWorkspace ? (
           <div className="empty-state">
@@ -188,32 +196,54 @@ export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanne
           </div>
         ) : null}
         <div className="knowledge-toolbar__controls">
-          <label className="file-field" htmlFor="sourceFile">
-            <span className="file-field__label">选择资料文件</span>
-            <input
-              id="sourceFile"
-              name="sourceFile"
-              type="file"
-              className="file-field__input"
-              disabled={!hasWorkspace || isUploading}
-              onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
-            />
-          </label>
-          <div className="btn-row">
-            <Button onClick={handleUpload} disabled={!hasWorkspace || isUploading} loading={isUploading}>
-              <Upload size={16} aria-hidden="true" />上传资料
-            </Button>
-            <Button variant="secondary" onClick={handleRescan} disabled={!hasWorkspace || isRescanning} loading={isRescanning}>
-              <RefreshCw size={16} aria-hidden="true" />刷新资料
-            </Button>
-            {indexedCount !== null ? <span className="status-note">已刷新 {indexedCount} 份资料</span> : null}
-          </div>
+          <details className="knowledge-upload">
+            <summary>
+              <Upload size={16} aria-hidden="true" />
+              添加资料
+              <ChevronDown className="knowledge-upload__chevron" size={16} aria-hidden="true" />
+            </summary>
+            <div className="knowledge-upload__body">
+              <label className="file-field" htmlFor="sourceFile">
+                <span className="file-field__label">选择资料文件</span>
+                <input
+                  id="sourceFile"
+                  name="sourceFile"
+                  type="file"
+                  className="file-field__input"
+                  disabled={!hasWorkspace || isUploading}
+                  onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
+                />
+              </label>
+              <Button onClick={handleUpload} disabled={!hasWorkspace || isUploading} loading={isUploading}>
+                <Upload size={16} aria-hidden="true" />上传资料
+              </Button>
+            </div>
+          </details>
+          <Button variant="secondary" onClick={handleRescan} disabled={!hasWorkspace || isRescanning} loading={isRescanning}>
+            <RefreshCw size={16} aria-hidden="true" />刷新资料
+          </Button>
+          {indexedCount !== null ? <span className="status-note">已刷新 {indexedCount} 份资料</span> : null}
+          {hasWorkspace ? (
+            <span className="knowledge-toolbar__summary">
+              {sources.length} 份资料 · {drafts.length} 条整理结果
+            </span>
+          ) : null}
         </div>
       </Card>
 
       {hasWorkspace ? (
         <div className="knowledge-workspace">
           <nav className="knowledge-resources" aria-label="知识库资源">
+            <label className="knowledge-search" htmlFor="knowledgeResourceSearch">
+              <Search size={16} aria-hidden="true" />
+              <input
+                id="knowledgeResourceSearch"
+                type="search"
+                value={resourceQuery}
+                onChange={(event) => setResourceQuery(event.target.value)}
+                placeholder="搜索资料或整理结果"
+              />
+            </label>
             <section className="resource-group" aria-labelledby="source-group-title">
               <div className="resource-group__heading">
                 <File size={16} aria-hidden="true" />
@@ -230,7 +260,8 @@ export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanne
                 </div>
               ) : null}
               {!sourcesQuery.isLoading && !sourcesQuery.isError && sources.length === 0 ? <p className="status-note">尚未上传资料</p> : null}
-              {sources.map((item) => (
+              {!sourcesQuery.isLoading && sources.length > 0 && filteredSources.length === 0 ? <p className="status-note">没有匹配的导入资料</p> : null}
+              {filteredSources.map((item) => (
                 <button
                   key={item.id}
                   type="button"
@@ -252,7 +283,8 @@ export function KnowledgePage({ workspace, onDraftQuestionReady, onVaultRescanne
               </div>
               {draftsQuery.isLoading ? <p className="status-note">正在读取草稿…</p> : null}
               {!draftsQuery.isLoading && drafts.length === 0 ? <p className="status-note">题库整理或 Agent 报告生成后显示</p> : null}
-              {drafts.map((item) => (
+              {!draftsQuery.isLoading && drafts.length > 0 && filteredDrafts.length === 0 ? <p className="status-note">没有匹配的整理结果</p> : null}
+              {filteredDrafts.map((item) => (
                 <button
                   key={item.id}
                   type="button"
