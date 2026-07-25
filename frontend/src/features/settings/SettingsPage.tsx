@@ -1,11 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, FolderCog, Server } from "lucide-react";
+import { AlertCircle, Server } from "lucide-react";
 import { toActionableError, type ActionableError } from "../../shared/api/errorAdvice";
-import { Badge } from "../../shared/ui/Badge";
-import { Button } from "../../shared/ui/Button";
-import { Card } from "../../shared/ui/Card";
-import { Field } from "../../shared/ui/Field";
 import { ModelBindings } from "./ModelBindings";
 import { ProviderManager } from "./ProviderManager";
 import { RuntimeDiagnostics } from "./RuntimeDiagnostics";
@@ -16,29 +12,34 @@ import {
   listWorkspaces,
   listProviders,
   getWorkspaceModelBindings,
-  registerWorkspace,
   type WorkspaceConfig,
 } from "./settingsApi";
 import { SettingsNavigation, type SettingsSection } from "./SettingsNavigation";
 import { SettingsOverview, type SettingsStatusItem } from "./SettingsOverview";
 import { SettingsDisclosure } from "./SettingsDisclosure";
+import { WorkspaceManager } from "./WorkspaceManager";
 
 const REQUIRED_MODEL_ROLE_COUNT = 8;
 
 interface SettingsPageProps {
   workspace: WorkspaceConfig | null;
-  onWorkspaceReady: (workspace: WorkspaceConfig) => void;
+  onWorkspaceReady: (workspace: WorkspaceConfig | null) => void;
 }
 
 export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps) {
-  const [workspacePath, setWorkspacePath] = useState(workspace?.workspacePath ?? "");
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
-  const [workspaceMessage, setWorkspaceMessage] = useState("");
   const [error, setError] = useState<ActionableError | null>(null);
-  const [isInitializingWorkspace, setIsInitializingWorkspace] = useState(false);
   const [providerRevision, setProviderRevision] = useState(0);
   const [section, setSection] = useState<SettingsSection>("overview");
+  const [modelBindingsDirty, setModelBindingsDirty] = useState(false);
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    const requested = new URLSearchParams(globalThis.location.search).get("section");
+    if (requested === "workspace" || requested === "models" || requested === "diagnostics") {
+      setSection(requested);
+    }
+  }, []);
 
   useEffect(() => {
     if (!workspace) {
@@ -46,7 +47,6 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
       return;
     }
     let cancelled = false;
-    setWorkspacePath(workspace.workspacePath);
     void listWorkspaces()
       .then((workspaces) => {
         if (cancelled) return;
@@ -57,9 +57,8 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
           setWorkspaceId(registered.id);
           setError(null);
         } else {
-          return registerWorkspace(workspace.workspacePath).then((created) => {
-            if (!cancelled) setWorkspaceId(created.id);
-          });
+          setWorkspaceId(null);
+          setError(toActionableError(new Error("当前工作区未注册"), "恢复工作区失败"));
         }
       })
       .catch((caught) => {
@@ -93,24 +92,24 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
       {
         id: "workspace",
         title: "工作区",
-        status: workspace ? "已就绪" : "未初始化",
-        description: workspace?.workspacePath ?? "需要先初始化 Workspace",
+        status: workspace ? "已就绪" : "未创建",
+        description: workspace?.workspacePath ?? "需要先创建或关联一个本地工作区",
         tone: workspace ? "success" : "warning",
         section: "workspace",
       },
       {
         id: "providers",
-        title: "Provider",
+        title: "模型服务",
         status: providersQuery.isError ? "读取失败" : providersQuery.isLoading ? "加载中…" : `${providersQuery.data?.length ?? 0} 个已配置`,
-        description: providersQuery.isError ? "进入模型服务查看错误和恢复建议" : providersQuery.data?.length ? "模型服务已准备好继续绑定用途" : "尚未添加 Provider",
+        description: providersQuery.isError ? "进入模型服务查看错误和恢复建议" : providersQuery.data?.length ? "模型服务已准备好继续分配任务" : "尚未添加模型服务",
         tone: providersQuery.isError ? "danger" : providersQuery.data?.length ? "success" : "warning",
         section: "models",
       },
       {
         id: "bindings",
-        title: "模型用途绑定",
+        title: "任务模型",
         status: bindingsQuery.isError ? "读取失败" : `${bindingCount}/${REQUIRED_MODEL_ROLE_COUNT} 已绑定`,
-        description: bindingsQuery.isError ? "进入模型服务查看绑定状态" : bindingCount === REQUIRED_MODEL_ROLE_COUNT ? "所有用途均已有模型" : "补齐对应用途后即可运行相关 Agent 功能",
+        description: bindingsQuery.isError ? "进入模型服务查看分配状态" : bindingCount === REQUIRED_MODEL_ROLE_COUNT ? "所有任务均已分配模型" : "补齐任务模型后即可使用相关助手功能",
         tone: bindingsQuery.isError ? "danger" : bindingCount === REQUIRED_MODEL_ROLE_COUNT ? "success" : "warning",
         section: "models",
       },
@@ -133,30 +132,16 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
         ? "models"
         : "diagnostics";
 
-  async function handleWorkspaceInit() {
-    setError(null);
-    setWorkspaceMessage("");
-    const trimmedPath = workspacePath.trim();
-    if (!trimmedPath) {
-      setError(toActionableError(new Error("请输入 Workspace Path"), "初始化工作区失败"));
+  function selectSection(next: SettingsSection) {
+    if (
+      section === "models" &&
+      next !== "models" &&
+      modelBindingsDirty &&
+      !globalThis.confirm("模型配置还没有保存，确定离开吗？")
+    ) {
       return;
     }
-    setIsInitializingWorkspace(true);
-    try {
-      const registered = await registerWorkspace(trimmedPath);
-      const ready = {
-        id: registered.id,
-        workspacePath: registered.rootPath,
-        vaultPath: registered.vaultPath,
-      };
-      setWorkspaceId(registered.id);
-      onWorkspaceReady(ready);
-      setWorkspaceMessage(`Vault：${registered.vaultPath}`);
-    } catch (caught) {
-      setError(toActionableError(caught, "初始化工作区失败"));
-    } finally {
-      setIsInitializingWorkspace(false);
-    }
+    setSection(next);
   }
 
   return (
@@ -168,13 +153,13 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
         <h2 id="settings-title" className="page-section__title">
           设置
         </h2>
-        {workspace ? <span className="page-section__hint">配置 Provider 与工作区</span> : null}
+        {workspace ? <span className="page-section__hint">管理工作区与模型服务</span> : null}
       </div>
 
       <div className="settings-layout">
         <SettingsNavigation
           current={section}
-          onSelect={setSection}
+          onSelect={selectSection}
           disabledSections={workspaceId ? [] : ["models", "diagnostics"]}
         />
         <div className="settings-content">
@@ -183,29 +168,16 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
               items={overviewItems}
               recommendedSection={recommendedSection}
               onSelect={(next) => {
-                if (next === "workspace" && !workspace) setSection("workspace");
-                else setSection(next);
+                selectSection(next);
               }}
             />
           ) : null}
 
           {section === "workspace" ? (
-            <Card title="工作区" icon={<FolderCog size={18} />}>
-              <Field
-                label="Workspace Path"
-                name="workspacePath"
-                value={workspacePath}
-                onChange={(event) => setWorkspacePath(event.target.value)}
-                helper="初始化会创建 Obsidian 兼容的 knowledge-vault 目录结构"
-              />
-              <div className="btn-row">
-                <Button onClick={handleWorkspaceInit} loading={isInitializingWorkspace}>
-                  初始化工作区
-                </Button>
-                {workspace ? <Badge tone="success" dot>{workspace.workspacePath}</Badge> : null}
-              </div>
-              {workspaceMessage ? <p className="status-note">{workspaceMessage}</p> : null}
-            </Card>
+            <WorkspaceManager
+              workspace={workspace}
+              onWorkspaceChanged={onWorkspaceReady}
+            />
           ) : null}
 
           {section === "models" && workspaceId ? (
@@ -221,6 +193,7 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
                 workspaceId={workspaceId}
                 refreshKey={providerRevision}
                 onBindingsChanged={() => void queryClient.invalidateQueries({ queryKey: ["workspace-model-bindings", workspaceId] })}
+                onDirtyChange={setModelBindingsDirty}
               />
             </div>
           ) : null}

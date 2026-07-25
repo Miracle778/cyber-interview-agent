@@ -14,9 +14,14 @@ function renderSettings(workspace: WorkspaceConfig | null, onWorkspaceReady = vi
 
 const workspaceResource = {
   id: "w1",
+  displayName: "测试工作区",
   rootPath: "/tmp/cyber-demo",
   vaultPath: "/tmp/cyber-demo/knowledge-vault",
   available: true,
+  lifecycleStatus: "active",
+  isCurrent: true,
+  recycledAt: null,
+  activeExecutionCount: 0,
   createdAt: "2026-07-10T00:00:00Z",
   updatedAt: "2026-07-10T00:00:00Z",
 };
@@ -25,7 +30,7 @@ function installSettingsFetch() {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = typeof input === "string" ? input : (input as Request).url;
     const method = init?.method ?? "GET";
-    if (url === "/api/settings/workspaces" && method === "GET") {
+    if ((url === "/api/settings/workspaces" || url === "/api/settings/workspaces?status=all") && method === "GET") {
       return Response.json([workspaceResource]);
     }
     if (url === "/api/settings/workspaces" && method === "POST") {
@@ -64,13 +69,13 @@ describe("SettingsPage", () => {
     renderSettings(workspace);
 
     expect(await screen.findByRole("heading", { name: "配置概览" })).toBeInTheDocument();
-    expect(screen.queryByText("Provider 管理")).not.toBeInTheDocument();
+    expect(screen.queryByText("模型服务和密钥由所有工作区复用")).not.toBeInTheDocument();
     expect(screen.queryByText("Agent Runtime")).not.toBeInTheDocument();
     expect(screen.getByText(workspace.workspacePath)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "模型服务" }));
-    expect(await screen.findByText("Provider 管理")).toBeInTheDocument();
-    expect(screen.getByText("模型用途绑定")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "模型服务" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "任务使用的模型" })).toBeInTheDocument();
     expect(screen.queryByText("Agent Runtime")).not.toBeInTheDocument();
   });
 
@@ -80,33 +85,30 @@ describe("SettingsPage", () => {
 
     renderSettings(null, onWorkspaceReady);
 
-    fireEvent.click(screen.getByRole("button", { name: "下一步：初始化工作区" }));
-    fireEvent.change(screen.getByLabelText("Workspace Path"), {
+    fireEvent.click(screen.getByRole("button", { name: "下一步：创建工作区" }));
+    fireEvent.change(screen.getByLabelText("本地文件夹路径"), {
       target: { value: workspaceResource.rootPath },
     });
-    fireEvent.click(screen.getByRole("button", { name: "初始化工作区" }));
+    fireEvent.click(screen.getByRole("button", { name: "创建工作区" }));
 
     await waitFor(() =>
       expect(onWorkspaceReady).toHaveBeenCalledWith({
         workspacePath: workspaceResource.rootPath,
         id: workspaceResource.id,
+        displayName: workspaceResource.displayName,
         vaultPath: workspaceResource.vaultPath,
       }),
     );
-    expect(await screen.findByText(`Vault：${workspaceResource.vaultPath}`)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "配置概览" }));
-    expect(await screen.findByRole("heading", { name: "配置概览" })).toBeInTheDocument();
-    expect(screen.getByText("下一步：配置模型服务")).toBeInTheDocument();
+    expect(await screen.findByText(workspaceResource.displayName)).toBeInTheDocument();
   });
 
   it("shows actionable advice when workspace path is empty", () => {
     renderSettings(null);
 
-    fireEvent.click(screen.getByRole("button", { name: "下一步：初始化工作区" }));
-    fireEvent.click(screen.getByRole("button", { name: "初始化工作区" }));
+    fireEvent.click(screen.getByRole("button", { name: "下一步：创建工作区" }));
+    fireEvent.click(screen.getByRole("button", { name: "创建工作区" }));
 
-    expect(screen.getByText("错误：请输入 Workspace Path")).toBeInTheDocument();
-    expect(screen.getByText("下一步：填写本地 workspace 路径")).toBeInTheDocument();
+    expect(screen.getByText("错误：请输入本地文件夹路径")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "运行自检" })).not.toBeInTheDocument();
   });
 });

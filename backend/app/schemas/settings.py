@@ -29,6 +29,7 @@ class ProviderConfig(BaseModel):
 
 class WorkspaceConfig(BaseModel):
     id: str
+    display_name: str = Field(alias="displayName")
     workspace_path: str = Field(alias="workspacePath")
     vault_path: str = Field(alias="vaultPath")
 
@@ -176,6 +177,7 @@ MODEL_ROLES = {
 
 class RegisterWorkspaceCommand(CamelModel):
     root_path: str
+    display_name: str | None = None
 
 
 class RelinkWorkspaceCommand(CamelModel):
@@ -183,16 +185,33 @@ class RelinkWorkspaceCommand(CamelModel):
 
 
 class UpdateWorkspaceCommand(CamelModel):
-    available: bool
+    available: bool | None = None
+    display_name: str | None = None
 
 
 class WorkspaceResource(CamelModel):
     id: str
     root_path: str
+    display_name: str
     vault_path: str
     available: bool
+    lifecycle_status: Literal["active", "recycled"]
+    is_current: bool
+    recycled_at: str | None = None
+    active_execution_count: int = 0
     created_at: str
     updated_at: str
+
+
+class WorkspaceDeletionImpactResource(CamelModel):
+    workspace_id: str
+    display_name: str
+    active_execution_count: int
+    session_count: int
+    material_count: int
+    question_count: int
+    job_target_count: int
+    preserves_vault: bool = True
 
 
 class UpdateWorkspaceModelBindingsCommand(CamelModel):

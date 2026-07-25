@@ -30,6 +30,8 @@ from app.core.errors import (
     ProviderModelNotFoundError,
     ProviderNotFoundError,
     WorkspaceBindingError,
+    WorkspaceBusyError,
+    WorkspaceConflictError,
     WorkspaceNotFoundError,
 )
 from app.db.app_database import connect_app_database
@@ -116,7 +118,11 @@ async def lifespan(application: FastAPI):
 
         def workspace_record(workspace_id: str):
             record = workspaces.workspaces.get(workspace_id)
-            if record is None:
+            if (
+                record is None
+                or record.lifecycle_status != "active"
+                or not record.available
+            ):
                 raise WorkspaceNotFoundError(workspace_id)
             return record
 
@@ -364,6 +370,20 @@ async def invalid_workspace_binding(
     _request: Request, error_value: WorkspaceBindingError
 ) -> JSONResponse:
     return _error(422, "invalid_model_bindings", str(error_value))
+
+
+@app.exception_handler(WorkspaceConflictError)
+async def workspace_conflict(
+    _request: Request, error_value: WorkspaceConflictError
+) -> JSONResponse:
+    return _error(409, "workspace_conflict", str(error_value))
+
+
+@app.exception_handler(WorkspaceBusyError)
+async def workspace_busy(
+    _request: Request, error_value: WorkspaceBusyError
+) -> JSONResponse:
+    return _error(409, "workspace_busy", str(error_value))
 
 
 @app.exception_handler(WorkspaceError)

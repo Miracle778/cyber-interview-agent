@@ -877,7 +877,14 @@ class AgentApplication:
         self._workspaces.clear()
         self._observability.force_flush(self._observability_flush_timeout_ms)
 
+    async def unload_workspace(self, workspace_id: str) -> None:
+        context = self._workspaces.pop(workspace_id, None)
+        if context is not None:
+            await context.close()
+
     def _context(self, workspace_id: str) -> WorkspaceRuntime:
+        if workspace_id not in self._workspace_ids():
+            raise ProductRecordNotFoundError("Workspace 不存在或不可用")
         if workspace_id in self._workspaces:
             return self._workspaces[workspace_id]
         root = self._workspace_resolver(workspace_id)

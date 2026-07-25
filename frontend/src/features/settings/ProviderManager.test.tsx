@@ -71,19 +71,20 @@ describe("ProviderManager", () => {
 
     render(<ProviderManager />);
 
-    await waitFor(() => expect(screen.getByRole("button", { name: "添加 Provider" })).toBeEnabled());
-    expect(screen.getByRole("button", { name: "添加 Provider" })).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByLabelText("Provider 名称")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "添加 Provider" }));
-    expect(screen.getByRole("button", { name: "添加 Provider" })).toHaveAttribute("aria-expanded", "true");
+    await waitFor(() => expect(screen.getByRole("button", { name: "添加模型服务" })).toBeEnabled());
+    expect(screen.getByRole("button", { name: "添加模型服务" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByLabelText("服务名称")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "添加模型服务" }));
+    expect(screen.getByRole("button", { name: "添加模型服务" })).toHaveAttribute("aria-expanded", "true");
 
-    fireEvent.change(screen.getByLabelText("Provider 名称"), { target: { value: "P" } });
+    fireEvent.change(screen.getByLabelText("服务名称"), { target: { value: "P" } });
     fireEvent.change(screen.getByLabelText("Base URL"), { target: { value: "https://example.test/v1" } });
     fireEvent.change(screen.getByLabelText("API Key"), { target: { value: "sk-test-secret" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存 Provider" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存模型服务" }));
 
     await screen.findByText("P");
-    expect(screen.queryByLabelText("Provider 名称")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("服务名称")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "管理模型服务 P" }));
 
     fireEvent.change(screen.getByLabelText("Model ID"), { target: { value: "model-a" } });
     fireEvent.change(screen.getByLabelText("显示名称"), { target: { value: "Model A" } });
@@ -121,10 +122,11 @@ describe("ProviderManager", () => {
     render(<ProviderManager />);
     await screen.findByText("P");
 
-    fireEvent.click(screen.getByRole("button", { name: "删除 Provider P" }));
+    fireEvent.click(screen.getByRole("button", { name: "管理模型服务 P" }));
+    fireEvent.click(screen.getByRole("button", { name: "删除模型服务 P" }));
 
     expect(await screen.findByText(/仍被 1 个工作区绑定/)).toBeInTheDocument();
-    expect(screen.getByText(/解除.*绑定/)).toBeInTheDocument();
+    expect(screen.getByText(/移除各工作区中的任务模型分配/)).toBeInTheDocument();
     // provider is retained (not removed) on conflict
     expect(screen.getByText("P")).toBeInTheDocument();
   });
@@ -134,12 +136,12 @@ describe("ProviderManager", () => {
     const confirm = vi.spyOn(globalThis, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
 
     render(<ProviderManager />);
-    fireEvent.click(screen.getByRole("button", { name: "添加 Provider" }));
-    fireEvent.change(screen.getByLabelText("Provider 名称"), { target: { value: "未保存" } });
+    fireEvent.click(screen.getByRole("button", { name: "添加模型服务" }));
+    fireEvent.change(screen.getByLabelText("服务名称"), { target: { value: "未保存" } });
     fireEvent.click(screen.getByRole("button", { name: "取消添加" }));
-    expect(confirm).toHaveBeenCalledWith("放弃未保存的 Provider 配置？");
-    expect(screen.getByLabelText("Provider 名称")).toHaveValue("未保存");
+    expect(confirm).toHaveBeenCalledWith("放弃未保存的模型服务配置？");
+    expect(screen.getByLabelText("服务名称")).toHaveValue("未保存");
     fireEvent.click(screen.getByRole("button", { name: "取消添加" }));
-    expect(screen.queryByLabelText("Provider 名称")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("服务名称")).not.toBeInTheDocument();
   });
 });

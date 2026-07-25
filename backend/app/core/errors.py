@@ -41,3 +41,11 @@ class WorkspaceNotFoundError(LookupError):
 
 class WorkspaceBindingError(ValueError):
     pass
+
+
+class WorkspaceConflictError(ValueError):
+    pass
+
+
+class WorkspaceBusyError(RuntimeError):
+    pass

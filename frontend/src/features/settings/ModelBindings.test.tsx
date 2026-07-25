@@ -78,19 +78,19 @@ describe("ModelBindings", () => {
     const onBindingsChanged = vi.fn();
     render(<ModelBindings workspaceId="w1" onBindingsChanged={onBindingsChanged} />);
 
-    expect(await screen.findByLabelText("题目生成模型")).toHaveValue("m1");
-    expect(screen.getByLabelText("回答评估模型")).toHaveValue("m1");
-    expect(screen.getByLabelText("报告总结模型")).toHaveValue("m1");
-    expect(screen.getByLabelText("Agent 对话模型")).toHaveValue("m1");
-    expect(screen.getByLabelText("简历结构化提取模型")).toHaveValue("m1");
-    expect(screen.getByLabelText("画像评估模型")).toHaveValue("m1");
-    expect(screen.getByLabelText("岗位分析模型")).toHaveValue("m1");
-    expect(screen.getByLabelText("项目深挖模型")).toHaveValue("m1");
+    expect(await screen.findByLabelText("题目生成")).toHaveValue("m1");
+    expect(screen.getByLabelText("回答评估")).toHaveValue("m1");
+    expect(screen.getByLabelText("复习总结")).toHaveValue("m1");
+    expect(screen.getByLabelText("通用对话")).toHaveValue("m1");
+    expect(screen.getByLabelText("简历信息整理")).toHaveValue("m1");
+    expect(screen.getByLabelText("个人资料分析")).toHaveValue("m1");
+    expect(screen.getByLabelText("岗位分析")).toHaveValue("m1");
+    expect(screen.getByLabelText("项目深挖")).toHaveValue("m1");
 
-    fireEvent.change(screen.getByLabelText("Agent 对话模型"), {
+    fireEvent.change(screen.getByLabelText("通用对话"), {
       target: { value: "m2" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "保存模型绑定" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存配置" }));
 
     await waitFor(() =>
       expect(putBody).toEqual({
@@ -112,6 +112,6 @@ describe("ModelBindings", () => {
     render(<ModelBindings workspaceId="w1" />);
 
     expect(await screen.findByText("没有可用于绑定的模型")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "保存模型绑定" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "保存配置" })).toBeDisabled();
   });
 });

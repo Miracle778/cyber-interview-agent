@@ -28,7 +28,7 @@ const ICONS = {
 } as const;
 
 const NEXT_ACTIONS: Record<SettingsOverviewProps["recommendedSection"], string> = {
-  workspace: "下一步：初始化工作区",
+  workspace: "下一步：创建工作区",
   models: "下一步：配置模型服务",
   diagnostics: "下一步：运行诊断",
 };

@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "../../shared/api/client";
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut, apiRequest } from "../../shared/api/client";
 import type {
   CreateProviderCommand,
   CreateProviderModelCommand,
@@ -10,6 +10,7 @@ import type {
   UpdateProviderModelCommand,
   WorkspaceModelBindingsResource,
   WorkspaceResource,
+  WorkspaceDeletionImpactResource,
 } from "./providerTypes";
 
 // Legacy (pre-R1) types still used by the current SettingsPage; removed in task 7.
@@ -17,6 +18,7 @@ export type { ProviderFormat } from "./providerTypes";
 
 export interface WorkspaceConfig {
   id: string;
+  displayName?: string;
   workspacePath: string;
   vaultPath: string;
 }
@@ -68,12 +70,44 @@ export function testProviderModel(modelId: string): Promise<ProviderModelResourc
   return apiPost<undefined, ProviderModelResource>(`/api/settings/provider-models/${modelId}/test`, undefined);
 }
 
-export function listWorkspaces(): Promise<WorkspaceResource[]> {
-  return apiGet<WorkspaceResource[]>("/api/settings/workspaces");
+export function listWorkspaces(status: "active" | "recycled" | "all" = "active"): Promise<WorkspaceResource[]> {
+  return apiGet<WorkspaceResource[]>(
+    status === "active" ? "/api/settings/workspaces" : `/api/settings/workspaces?status=${status}`,
+  );
 }
 
-export function registerWorkspace(rootPath: string): Promise<WorkspaceResource> {
-  return apiPost<{ rootPath: string }, WorkspaceResource>("/api/settings/workspaces", { rootPath });
+export function registerWorkspace(rootPath: string, displayName?: string): Promise<WorkspaceResource> {
+  return apiPost<{ rootPath: string; displayName?: string }, WorkspaceResource>("/api/settings/workspaces", { rootPath, displayName });
+}
+
+export function updateWorkspace(
+  workspaceId: string,
+  command: { displayName?: string; available?: boolean },
+): Promise<WorkspaceResource> {
+  return apiPatch<typeof command, WorkspaceResource>(`/api/settings/workspaces/${workspaceId}`, command);
+}
+
+export function selectWorkspace(workspaceId: string): Promise<WorkspaceResource> {
+  return apiPost<undefined, WorkspaceResource>(`/api/settings/workspaces/${workspaceId}/select`, undefined);
+}
+
+export function recycleWorkspace(workspaceId: string): Promise<WorkspaceResource> {
+  return apiPost<undefined, WorkspaceResource>(`/api/settings/workspaces/${workspaceId}/recycle`, undefined);
+}
+
+export function restoreWorkspace(workspaceId: string): Promise<WorkspaceResource> {
+  return apiPost<undefined, WorkspaceResource>(`/api/settings/workspaces/${workspaceId}/restore`, undefined);
+}
+
+export function getWorkspaceDeletionImpact(workspaceId: string): Promise<WorkspaceDeletionImpactResource> {
+  return apiGet<WorkspaceDeletionImpactResource>(`/api/settings/workspaces/${workspaceId}/deletion-impact`);
+}
+
+export function permanentlyDeleteWorkspace(workspaceId: string, confirmation: string): Promise<void> {
+  return apiRequest<void>(
+    `/api/settings/workspaces/${workspaceId}?confirmation=${encodeURIComponent(confirmation)}`,
+    { method: "DELETE" },
+  );
 }
 
 export function getWorkspaceModelBindings(workspaceId: string): Promise<WorkspaceModelBindingsResource> {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertCircle, FlaskConical, Pencil, Plus, Server, Trash2, X } from "lucide-react";
+import { AlertCircle, ChevronDown, FlaskConical, Pencil, Plus, Server, Trash2, X } from "lucide-react";
 import { Badge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
@@ -57,7 +57,7 @@ const FORMAT_LABEL: Record<ProviderFormat, string> = {
   "anthropic-compatible": "Anthropic 兼容",
 };
 
-const UNBIND_ADVICE = "请先解除 Workspace 模型绑定后再删除";
+const UNBIND_ADVICE = "请先移除各工作区中的任务模型分配，再删除";
 
 function isResourceInUse(caught: unknown): caught is ApiError {
   return caught instanceof ApiError && caught.code === "resource_in_use";
@@ -78,6 +78,7 @@ export function ProviderManager({ onProvidersChanged }: ProviderManagerProps = {
   const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [createExpanded, setCreateExpanded] = useState(false);
+  const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null);
 
   useEffect(() => {
     void loadProviders();
@@ -89,7 +90,7 @@ export function ProviderManager({ onProvidersChanged }: ProviderManagerProps = {
       setProviders(await listProviders());
       setError(null);
     } catch (caught) {
-      setError(toActionableError(caught, "加载 Provider 失败"));
+      setError(toActionableError(caught, "加载模型服务失败"));
     } finally {
       setLoading(false);
     }
@@ -98,7 +99,7 @@ export function ProviderManager({ onProvidersChanged }: ProviderManagerProps = {
   async function handleCreate() {
     setError(null);
     if (!name.trim() || !baseUrl.trim() || !apiKey.trim()) {
-      setError(toActionableError(new Error("请填写名称、Base URL 和 API Key"), "创建 Provider 失败"));
+      setError(toActionableError(new Error("请填写名称、Base URL 和 API Key"), "创建模型服务失败"));
       return;
     }
     setSaving(true);
@@ -118,7 +119,7 @@ export function ProviderManager({ onProvidersChanged }: ProviderManagerProps = {
       setApiKey("");
       setCreateExpanded(false);
     } catch (caught) {
-      setError(toActionableError(caught, "创建 Provider 失败"));
+      setError(toActionableError(caught, "创建模型服务失败"));
     } finally {
       setSaving(false);
     }
@@ -136,7 +137,7 @@ export function ProviderManager({ onProvidersChanged }: ProviderManagerProps = {
 
   function closeCreateForm() {
     const dirty = Boolean(name.trim() || baseUrl.trim() || apiKey.trim());
-    if (dirty && !globalThis.confirm("放弃未保存的 Provider 配置？")) return;
+    if (dirty && !globalThis.confirm("放弃未保存的模型服务配置？")) return;
     setName("");
     setBaseUrl("");
     setApiKey("");
@@ -144,10 +145,11 @@ export function ProviderManager({ onProvidersChanged }: ProviderManagerProps = {
   }
 
   return (
-    <Card title="Provider 管理" icon={<Server size={18} aria-hidden="true" />}>
-      <div className="btn-row"><Button variant={createExpanded ? "secondary" : "primary"} aria-expanded={createExpanded} aria-controls="provider-create-form" onClick={() => setCreateExpanded((expanded) => !expanded)}><Plus size={16} aria-hidden="true" />添加 Provider</Button></div>
+    <Card title="模型服务" icon={<Server size={18} aria-hidden="true" />}>
+      <p className="settings-section-intro">模型服务和密钥由所有工作区复用；一次只展开一个服务进行管理。</p>
+      <div className="btn-row"><Button variant={createExpanded ? "secondary" : "primary"} aria-expanded={createExpanded} aria-controls="provider-create-form" onClick={() => setCreateExpanded((expanded) => !expanded)}><Plus size={16} aria-hidden="true" />添加模型服务</Button></div>
       {createExpanded ? <div id="provider-create-form" className="settings-disclosure-panel"><div className="field-group provider-form-grid">
-        <Field label="Provider 名称" name="new-provider-name" value={name} onChange={(e) => setName(e.target.value)} />
+        <Field label="服务名称" name="new-provider-name" value={name} onChange={(e) => setName(e.target.value)} />
         <div className="field">
           <label className="field__label" htmlFor="new-provider-format">
             协议
@@ -182,19 +184,21 @@ export function ProviderManager({ onProvidersChanged }: ProviderManagerProps = {
       </div>
       <div className="btn-row">
         <Button onClick={handleCreate} loading={saving} disabled={saving}>
-          保存 Provider
+          保存模型服务
         </Button>
         <Button variant="ghost" onClick={closeCreateForm} disabled={saving}>取消添加</Button>
       </div>
       </div> : null}
 
       {loading ? <p className="status-note">加载中…</p> : null}
-      {!loading && providers.length === 0 ? <p className="status-note">暂无 Provider</p> : null}
+      {!loading && providers.length === 0 ? <p className="status-note">还没有模型服务</p> : null}
 
       {providers.map((provider) => (
         <ProviderCard
           key={provider.id}
           provider={provider}
+          expanded={expandedProviderId === provider.id}
+          onToggle={() => setExpandedProviderId((current) => current === provider.id ? null : provider.id)}
           onUpdated={replaceProvider}
           onRemoved={removeProvider}
         />
@@ -213,11 +217,13 @@ export function ProviderManager({ onProvidersChanged }: ProviderManagerProps = {
 
 interface ProviderCardProps {
   provider: ProviderResource;
+  expanded: boolean;
+  onToggle: () => void;
   onUpdated: (provider: ProviderResource) => void;
   onRemoved: (providerId: string) => void;
 }
 
-function ProviderCard({ provider, onUpdated, onRemoved }: ProviderCardProps) {
+function ProviderCard({ provider, expanded, onToggle, onUpdated, onRemoved }: ProviderCardProps) {
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(provider.name);
   const [editFormat, setEditFormat] = useState<ProviderFormat>(provider.apiFormat);
@@ -260,7 +266,7 @@ function ProviderCard({ provider, onUpdated, onRemoved }: ProviderCardProps) {
       setEditApiKey("");
       setEditing(false);
     } catch (caught) {
-      setError(toActionableError(caught, "保存 Provider 失败"));
+      setError(toActionableError(caught, "保存模型服务失败"));
     } finally {
       setSavingProvider(false);
     }
@@ -277,7 +283,7 @@ function ProviderCard({ provider, onUpdated, onRemoved }: ProviderCardProps) {
       if (isResourceInUse(caught)) {
         setConflict(caught.message);
       } else {
-        setError(toActionableError(caught, "删除 Provider 失败"));
+        setError(toActionableError(caught, "删除模型服务失败"));
       }
     } finally {
       setDeletingProvider(false);
@@ -366,42 +372,71 @@ function ProviderCard({ provider, onUpdated, onRemoved }: ProviderCardProps) {
   }
 
   return (
-    <div className="provider-card" aria-label={`Provider ${provider.name}`}>
+    <div className="provider-card" data-expanded={expanded} aria-label={`模型服务 ${provider.name}`}>
       <div className="provider-card__header">
         <div className="provider-card__title">
           <h4 className="provider-card__name">{provider.name}</h4>
-          <Badge tone="primary">{FORMAT_LABEL[provider.apiFormat]}</Badge>
-          <span className="muted-text">{provider.baseUrl}</span>
+          <Badge tone={provider.hasSecret ? "success" : "warning"} dot>
+            {provider.hasSecret ? "密钥已配置" : "缺少密钥"}
+          </Badge>
+          <span className="muted-text">{provider.models.length} 个模型</span>
         </div>
         <div className="btn-row">
           <Button
-            variant="ghost"
+            variant="secondary"
             size="sm"
-            onClick={() => {
-              setEditing((prev) => !prev);
-              setEditApiKey("");
-            }}
-            aria-label={`编辑 Provider ${provider.name}`}
+            onClick={onToggle}
+            aria-expanded={expanded}
+            aria-label={`管理模型服务 ${provider.name}`}
           >
-            <Pencil size={14} aria-hidden="true" />
-            编辑
-          </Button>
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={handleDeleteProvider}
-            loading={deletingProvider}
-            aria-label={`删除 Provider ${provider.name}`}
-          >
-            <Trash2 size={14} aria-hidden="true" />
-            删除
+            管理
+            <ChevronDown className="provider-card__chevron" size={15} aria-hidden="true" />
           </Button>
         </div>
       </div>
 
+      {expanded ? <div className="provider-card__details">
+      <div className="provider-card__overview">
+        <div>
+          <span>连接协议</span>
+          <strong>{FORMAT_LABEL[provider.apiFormat]}</strong>
+        </div>
+        <div>
+          <span>服务地址</span>
+          <strong title={provider.baseUrl}>{provider.baseUrl}</strong>
+        </div>
+        <div>
+          <span>服务状态</span>
+          <strong>{provider.enabled ? "已启用" : "已停用"}</strong>
+        </div>
+      </div>
+      <div className="btn-row">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            setEditing((prev) => !prev);
+            setEditApiKey("");
+          }}
+          aria-label={`编辑模型服务 ${provider.name}`}
+        >
+          <Pencil size={14} aria-hidden="true" />
+          编辑服务
+        </Button>
+        <Button
+          variant="danger"
+          size="sm"
+          onClick={handleDeleteProvider}
+          loading={deletingProvider}
+          aria-label={`删除模型服务 ${provider.name}`}
+        >
+          <Trash2 size={14} aria-hidden="true" />
+          删除服务
+        </Button>
+      </div>
       {editing ? (
         <div className="field-group provider-card__edit">
-          <Field label="Provider 名称" name={`edit-name-${provider.id}`} value={editName} onChange={(e) => setEditName(e.target.value)} />
+          <Field label="服务名称" name={`edit-name-${provider.id}`} value={editName} onChange={(e) => setEditName(e.target.value)} />
           <div className="field">
             <label className="field__label" htmlFor={`edit-format-${provider.id}`}>协议</label>
             <select
@@ -452,9 +487,9 @@ function ProviderCard({ provider, onUpdated, onRemoved }: ProviderCardProps) {
               </div>
             ) : (
               <div className="model-row__main">
-                <span className="model-row__id">{model.modelId}</span>
-                <span className="muted-text">{model.displayName}</span>
-                <span className="muted-text">{(model.maxInputTokens / 1000).toFixed(model.maxInputTokens >= 100000 ? 0 : 1)}k 上下文</span>
+                <strong className="model-row__name">{model.displayName}</strong>
+                <span className="model-row__id" title="模型技术 ID">{model.modelId}</span>
+                <span className="model-row__context">{(model.maxInputTokens / 1000).toFixed(model.maxInputTokens >= 100000 ? 0 : 1)}k 上下文</span>
                 <Badge tone={STATUS_TONE[model.connectivityStatus]} dot>
                   {STATUS_LABEL[model.connectivityStatus]}
                 </Badge>
@@ -508,6 +543,7 @@ function ProviderCard({ provider, onUpdated, onRemoved }: ProviderCardProps) {
           <span>{error.advice}</span>
         </div>
       ) : null}
+      </div> : null}
     </div>
   );
 }

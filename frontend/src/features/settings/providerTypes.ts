@@ -80,11 +80,27 @@ export type ModelRole =
 
 export interface WorkspaceResource {
   id: string;
+  displayName: string;
   rootPath: string;
   vaultPath: string;
   available: boolean;
+  lifecycleStatus: "active" | "recycled";
+  isCurrent: boolean;
+  recycledAt: string | null;
+  activeExecutionCount: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface WorkspaceDeletionImpactResource {
+  workspaceId: string;
+  displayName: string;
+  activeExecutionCount: number;
+  sessionCount: number;
+  materialCount: number;
+  questionCount: number;
+  jobTargetCount: number;
+  preservesVault: boolean;
 }
 
 export interface WorkspaceModelBindingsResource {

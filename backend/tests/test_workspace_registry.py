@@ -1,10 +1,13 @@
 import sqlite3
+from pathlib import Path
 
 import pytest
 
 from app.db.app_database import connect_app_database
 from app.repositories.provider_repository import ProviderRepository
 from app.repositories.workspace_repository import WorkspaceRepository
+from app.core.errors import WorkspaceConflictError
+from app.services.workspace_service import WorkspaceService
 
 
 @pytest.fixture
@@ -85,3 +88,38 @@ def test_delete_bound_model_raises_integrity_error(app_connection, tmp_path):
 
     with pytest.raises(sqlite3.IntegrityError):
         ProviderRepository(app_connection).delete_model(model.id)
+
+
+def test_workspace_selection_and_recycle_are_explicit(app_connection, tmp_path):
+    service = WorkspaceService(app_connection)
+    first = service.register(str(tmp_path / "first"))
+    second = service.register(str(tmp_path / "second"), "面试准备")
+
+    assert service.get_current().id == second.id
+    assert second.display_name == "面试准备"
+    with pytest.raises(WorkspaceConflictError, match="先切换"):
+        service.recycle(second.id)
+
+    service.select(first.id)
+    recycled = service.recycle(second.id)
+    assert recycled.lifecycle_status == "recycled"
+    assert [item.id for item in service.list_workspaces()] == [first.id]
+    assert service.restore(second.id).lifecycle_status == "active"
+
+
+def test_permanent_workspace_delete_preserves_vault(app_connection, tmp_path):
+    service = WorkspaceService(app_connection)
+    workspace = service.register(str(tmp_path / "only"), "测试空间")
+    root = Path(workspace.root_path)
+    (root / ".cyber-interview-agent").mkdir()
+    (root / ".cyber-interview-agent" / "runtime.sqlite").write_bytes(b"")
+    (root / "artifacts").mkdir()
+    (root / "artifacts" / "private.txt").write_text("private")
+
+    service.recycle(workspace.id)
+    service.permanently_delete(workspace.id)
+
+    assert service.list_workspaces(lifecycle_status=None) == []
+    assert (root / "knowledge-vault").is_dir()
+    assert not (root / ".cyber-interview-agent").exists()
+    assert not (root / "artifacts").exists()

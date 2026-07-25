@@ -7,7 +7,10 @@ from dataclasses import dataclass
 class WorkspaceRecord:
     id: str
     root_path: str
+    display_name: str
     available: bool
+    lifecycle_status: str
+    recycled_at: str | None
     created_at: str
     updated_at: str
 
@@ -21,7 +24,10 @@ class WorkspaceModelBindingRecord:
     updated_at: str
 
 
-_WORKSPACE_COLUMNS = "id, root_path, available, created_at, updated_at"
+_WORKSPACE_COLUMNS = (
+    "id, root_path, display_name, available, lifecycle_status, recycled_at, "
+    "created_at, updated_at"
+)
 _BINDING_COLUMNS = (
     "workspace_id, role, provider_model_id, created_at, updated_at"
 )
@@ -37,11 +43,18 @@ class WorkspaceRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self._connection = connection
 
-    def register(self, *, root_path: str, available: bool = True) -> WorkspaceRecord:
+    def register(
+        self,
+        *,
+        root_path: str,
+        display_name: str = "",
+        available: bool = True,
+    ) -> WorkspaceRecord:
         workspace_id = str(uuid.uuid4())
         self._connection.execute(
-            "INSERT INTO workspaces (id, root_path, available) VALUES (?, ?, ?)",
-            (workspace_id, root_path, 1 if available else 0),
+            "INSERT INTO workspaces "
+            "(id, root_path, display_name, available) VALUES (?, ?, ?, ?)",
+            (workspace_id, root_path, display_name, 1 if available else 0),
         )
         return self._require_workspace(workspace_id)
 
@@ -64,15 +77,71 @@ class WorkspaceRepository:
     def get_current(self) -> WorkspaceRecord | None:
         row = self._connection.execute(
             f"SELECT {_WORKSPACE_COLUMNS} FROM workspaces "
-            "ORDER BY updated_at DESC, rowid DESC LIMIT 1"
+            "WHERE id = (SELECT current_workspace_id FROM workspace_preferences "
+            "WHERE singleton_id = 1) AND lifecycle_status = 'active'"
         ).fetchone()
         return None if row is None else self._workspace_from_row(row)
 
-    def list_workspaces(self) -> tuple[WorkspaceRecord, ...]:
+    def list_workspaces(
+        self, *, lifecycle_status: str | None = None
+    ) -> tuple[WorkspaceRecord, ...]:
+        where = ""
+        parameters: tuple[str, ...] = ()
+        if lifecycle_status is not None:
+            where = " WHERE lifecycle_status = ?"
+            parameters = (lifecycle_status,)
         rows = self._connection.execute(
-            f"SELECT {_WORKSPACE_COLUMNS} FROM workspaces ORDER BY rowid"
+            f"SELECT {_WORKSPACE_COLUMNS} FROM workspaces{where} "
+            "ORDER BY updated_at DESC, rowid DESC",
+            parameters,
         ).fetchall()
         return tuple(self._workspace_from_row(row) for row in rows)
+
+    def select(self, workspace_id: str) -> WorkspaceRecord:
+        self._connection.execute(
+            "INSERT INTO workspace_preferences "
+            "(singleton_id, current_workspace_id, updated_at) "
+            "VALUES (1, ?, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(singleton_id) DO UPDATE SET "
+            "current_workspace_id = excluded.current_workspace_id, "
+            "updated_at = CURRENT_TIMESTAMP",
+            (workspace_id,),
+        )
+        return self._require_workspace(workspace_id)
+
+    def rename(self, workspace_id: str, display_name: str) -> WorkspaceRecord:
+        self._connection.execute(
+            "UPDATE workspaces SET display_name = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ?",
+            (display_name, workspace_id),
+        )
+        return self._require_workspace(workspace_id)
+
+    def recycle(self, workspace_id: str) -> WorkspaceRecord:
+        self._connection.execute(
+            "UPDATE workspaces SET lifecycle_status = 'recycled', "
+            "recycled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ?",
+            (workspace_id,),
+        )
+        self._connection.execute(
+            "UPDATE workspace_preferences SET current_workspace_id = NULL, "
+            "updated_at = CURRENT_TIMESTAMP "
+            "WHERE singleton_id = 1 AND current_workspace_id = ?",
+            (workspace_id,),
+        )
+        return self._require_workspace(workspace_id)
+
+    def restore(self, workspace_id: str) -> WorkspaceRecord:
+        self._connection.execute(
+            "UPDATE workspaces SET lifecycle_status = 'active', recycled_at = NULL, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (workspace_id,),
+        )
+        return self._require_workspace(workspace_id)
+
+    def delete(self, workspace_id: str) -> None:
+        self._connection.execute("DELETE FROM workspaces WHERE id = ?", (workspace_id,))
 
     def relink(self, workspace_id: str, root_path: str) -> WorkspaceRecord:
         self._connection.execute(
@@ -143,7 +212,10 @@ class WorkspaceRepository:
         return WorkspaceRecord(
             id=row["id"],
             root_path=row["root_path"],
+            display_name=row["display_name"],
             available=bool(row["available"]),
+            lifecycle_status=row["lifecycle_status"],
+            recycled_at=row["recycled_at"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )

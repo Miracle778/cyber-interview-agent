@@ -1,7 +1,15 @@
-from fastapi import APIRouter, Depends, Response, status
+from typing import Annotated, Literal
+
+from fastapi import APIRouter, Depends, Query, Response, status
 from pydantic import BaseModel, Field
 
-from app.api.dependencies import get_provider_service, get_workspace_service
+from app.api.dependencies import (
+    get_agent_application,
+    get_provider_service,
+    get_workspace_service,
+)
+from app.application.workspace_runtime import AgentApplication
+from app.core.errors import WorkspaceConflictError
 from app.schemas.settings import (
     CreateProviderCommand,
     CreateProviderModelCommand,
@@ -14,6 +22,7 @@ from app.schemas.settings import (
     UpdateWorkspaceCommand,
     UpdateWorkspaceModelBindingsCommand,
     WorkspaceConfig,
+    WorkspaceDeletionImpactResource,
     WorkspaceModelBindingsResource,
     WorkspaceResource,
 )
@@ -112,9 +121,14 @@ async def test_provider_model(
 
 @router.get("/workspaces", response_model=list[WorkspaceResource])
 def list_workspaces(
+    lifecycle_status: Annotated[
+        Literal["active", "recycled", "all"], Query(alias="status")
+    ] = "active",
     service: WorkspaceService = Depends(get_workspace_service),
 ) -> list[WorkspaceResource]:
-    return service.list_workspaces()
+    return service.list_workspaces(
+        lifecycle_status=None if lifecycle_status == "all" else lifecycle_status
+    )
 
 
 @router.post(
@@ -126,7 +140,7 @@ def register_workspace(
     command: RegisterWorkspaceCommand,
     service: WorkspaceService = Depends(get_workspace_service),
 ) -> WorkspaceResource:
-    return service.register(command.root_path)
+    return service.register(command.root_path, command.display_name)
 
 
 @router.patch("/workspaces/{workspace_id}", response_model=WorkspaceResource)
@@ -135,7 +149,64 @@ def update_workspace(
     command: UpdateWorkspaceCommand,
     service: WorkspaceService = Depends(get_workspace_service),
 ) -> WorkspaceResource:
-    return service.update_available(workspace_id, command.available)
+    return service.update(
+        workspace_id,
+        available=command.available,
+        display_name=command.display_name,
+    )
+
+
+@router.post("/workspaces/{workspace_id}/select", response_model=WorkspaceResource)
+def select_workspace(
+    workspace_id: str,
+    service: WorkspaceService = Depends(get_workspace_service),
+) -> WorkspaceResource:
+    return service.select(workspace_id)
+
+
+@router.post("/workspaces/{workspace_id}/recycle", response_model=WorkspaceResource)
+async def recycle_workspace(
+    workspace_id: str,
+    service: WorkspaceService = Depends(get_workspace_service),
+    application: AgentApplication = Depends(get_agent_application),
+) -> WorkspaceResource:
+    resource = service.recycle(workspace_id)
+    await application.unload_workspace(workspace_id)
+    return resource
+
+
+@router.post("/workspaces/{workspace_id}/restore", response_model=WorkspaceResource)
+def restore_workspace(
+    workspace_id: str,
+    service: WorkspaceService = Depends(get_workspace_service),
+) -> WorkspaceResource:
+    return service.restore(workspace_id)
+
+
+@router.get(
+    "/workspaces/{workspace_id}/deletion-impact",
+    response_model=WorkspaceDeletionImpactResource,
+)
+def workspace_deletion_impact(
+    workspace_id: str,
+    service: WorkspaceService = Depends(get_workspace_service),
+) -> WorkspaceDeletionImpactResource:
+    return service.deletion_impact(workspace_id)
+
+
+@router.delete("/workspaces/{workspace_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def permanently_delete_workspace(
+    workspace_id: str,
+    confirmation: str,
+    service: WorkspaceService = Depends(get_workspace_service),
+    application: AgentApplication = Depends(get_agent_application),
+) -> Response:
+    impact = service.deletion_impact(workspace_id)
+    if confirmation != f"DELETE {impact.display_name}":
+        raise WorkspaceConflictError("永久删除确认文字不匹配")
+    await application.unload_workspace(workspace_id)
+    service.permanently_delete(workspace_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/workspaces/{workspace_id}/relink", response_model=WorkspaceResource)
@@ -179,6 +250,7 @@ def get_legacy_workspace(
         return None
     return WorkspaceConfig(
         id=workspace.id,
+        displayName=workspace.display_name,
         workspacePath=workspace.root_path,
         vaultPath=workspace.vault_path,
     )
@@ -192,6 +264,7 @@ def set_legacy_workspace(
     workspace = service.register(command.workspace_path)
     return WorkspaceConfig(
         id=workspace.id,
+        displayName=workspace.display_name,
         workspacePath=workspace.root_path,
         vaultPath=workspace.vault_path,
     )
