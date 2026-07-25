@@ -95,6 +95,7 @@ export function QuestionLibrary({ workspace, sources, initialCandidateId = null,
   useEffect(() => { if (initialCandidateId) setSelectedId(initialCandidateId); }, [initialCandidateId]);
   const invalidate = async () => Promise.all([
     client.invalidateQueries({ queryKey: ["review-candidates-overview", workspace.id] }),
+    client.invalidateQueries({ queryKey: ["active-review-questions", workspace.id] }),
   ]);
   const save = useMutation({ mutationFn: (values: { version: number; title: string; questionText: string; referenceAnswer: string; keyPoints: string[] }) => updateQuestionCandidate(selected!.id, values), onSuccess: invalidate });
   const rewrite = useMutation({ mutationFn: (feedback: string) => rewriteQuestionCandidate(selected!.id, feedback), onSuccess: async (session) => { await invalidate(); onOpenDirectSession(session); } });

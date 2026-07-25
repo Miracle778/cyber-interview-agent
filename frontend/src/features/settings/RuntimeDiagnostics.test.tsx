@@ -89,7 +89,7 @@ describe("RuntimeDiagnostics", () => {
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
     const source = FakeEventSource.instances[0];
     act(() => source.onopen?.(new Event("open")));
-    const completed = { id: 3, type: "execution.completed", sessionId: "s1", executionId: "r1", timestamp: "now", payload: {} };
+    const completed = { id: 3, type: "execution.completed", sessionId: "s1", executionId: "r1", timestamp: "2026-07-25 05:28:03", payload: {} };
     act(() => {
       source.emit({ id: 1, type: "execution.started", sessionId: "s1", executionId: "r1", timestamp: "now", payload: {} });
       source.emit({ id: 2, type: "assistant.delta", sessionId: "s1", executionId: "r1", timestamp: "now", payload: { messageId: "m1", content: "Echo: runtime-check" } });
@@ -107,6 +107,7 @@ describe("RuntimeDiagnostics", () => {
 
     expect(await screen.findByText("自检完成")).toBeInTheDocument();
     expect(screen.getAllByText("运行完成")).toHaveLength(1);
+    expect(screen.getByText("13:28:03")).toBeInTheDocument();
     expect(screen.getByText("SSE 已连接")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "运行自检" })).toBeEnabled();
 

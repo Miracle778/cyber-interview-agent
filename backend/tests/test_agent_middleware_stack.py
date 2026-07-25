@@ -17,7 +17,10 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from app.agents.context import AgentContext
+from app.application.session_service import ProductRepository
+from app.application.workspace_runtime import SqliteMiddlewareProjection
 from app.diagnostics.agent_trace import AgentTraceWriter, read_trace_rows
+from app.infrastructure.runtime_database import connect_runtime_database
 from app.middleware.middleware_stack import (
     PROFILE_CHAT_BUDGET_PROFILE,
     build_default_middleware,
@@ -91,6 +94,32 @@ def _context() -> AgentContext:
 
 def _runtime():
     return SimpleNamespace(context=_context())
+
+
+def test_sqlite_title_projection_prefers_product_user_message(tmp_path):
+    connection = connect_runtime_database(tmp_path)
+    repository = ProductRepository(connection)
+    session = repository.create_session(
+        workspace_id="workspace-1",
+        kind="profile.manage",
+        title="当前画像快照：内部状态",
+        title_source="generated",
+    )
+    repository.append_message(
+        session.id,
+        execution_id=None,
+        role="user",
+        content="请帮我检查项目经历是否缺少量化结果",
+    )
+    context = SimpleNamespace(session_id=session.id)
+
+    changed = SqliteMiddlewareProjection(connection).ensure_title(
+        context,
+        '当前画像快照：{"claim_id": null, "material": "internal state"}',
+    )
+
+    assert changed is True
+    assert repository.get_session(session.id).title == "请帮我检查项目经历是否缺少量化结果"
 
 
 def test_default_stack_is_official_and_contains_only_four_project_middlewares():

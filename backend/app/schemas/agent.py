@@ -43,6 +43,10 @@ class StartExecutionCommand(AgentModel):
     configuration: ExecutionConfigurationResource | None = None
 
 
+class RetryExecutionCommand(AgentModel):
+    message: str | None = Field(default=None, min_length=1, max_length=20_000)
+
+
 class SessionResource(AgentModel):
     id: str
     workspace_id: str
@@ -59,6 +63,8 @@ class SessionResource(AgentModel):
 class ExecutionResource(AgentModel):
     id: str
     session_id: str
+    input_message_id: str | None = None
+    retry_of_execution_id: str | None = None
     status: str
     configuration: "ExecutionConfigurationResource"
     cancel_requested_at: str | None
@@ -78,6 +84,8 @@ class MessageResource(AgentModel):
     message_kind: str
     payload: dict[str, Any]
     created_at: str
+    replaces_message_id: str | None = None
+    resolution_status: str = "active"
 
 
 class PendingActionSummaryResource(AgentModel):

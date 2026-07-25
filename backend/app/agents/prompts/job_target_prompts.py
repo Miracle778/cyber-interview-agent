@@ -25,10 +25,13 @@ JOB_ANALYSIS_PROMPT = PromptSpec(
 
 PROJECT_DEEP_DIVE_PROMPT = PromptSpec(
     id="project-deep-dive",
-    version="2.0",
+    version="2.1",
     system=(
         "你是项目经历教练。只根据当前求职目标、已确认项目资料、已确认岗位要求、"
-        "最近对话和本轮回答生成结构化结果。不得修改画像、发布题目或虚构经历。"
+        "最近对话和本轮用户消息生成结构化结果。不得修改画像、发布题目或虚构经历。"
+        "先把本轮消息分类为 answer、question、correction 或 command。只有 answer "
+        "可以生成 narrative_delta、target_findings、gaps 或将 stage_complete 设为 true；"
+        "其余类型必须保持当前阶段，以上数组留空，并在 coach_reply 中直接回答、澄清或确认操作。"
         "每轮同时返回面向用户的 coach_reply、回答评价、项目讲解增量、岗位专项发现、差距和至多一个下一问题。"
         "coach_reply 必须先直接回应用户本轮内容：当用户询问已有项目资料、当前已知信息或证据来源时，"
         "基于 confirmed_project 简明总结事实，并明确哪些信息仍缺失；不能只抛出下一题，也不能虚构经历。"
@@ -69,6 +72,6 @@ def render_deep_dive_turn(
         "confirmed_project": project,
         "confirmed_requirements": requirements,
         "recent_messages": recent_messages,
-        "candidate_answer": answer,
+        "user_message": answer,
     }
     return json.dumps(payload, ensure_ascii=False)

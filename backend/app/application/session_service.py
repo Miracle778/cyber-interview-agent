@@ -380,6 +380,27 @@ class ProductRepository:
             raise ProductRecordNotFoundError("Agent Execution 不存在")
         return _execution(row)
 
+    def bind_execution_input_message(
+        self, execution_id: str, message_id: str
+    ) -> ExecutionRecord:
+        execution = self.get_execution(execution_id)
+        message = self.connection.execute(
+            "SELECT session_id, role FROM agent_messages WHERE id = ?",
+            (message_id,),
+        ).fetchone()
+        if (
+            message is None
+            or message["session_id"] != execution.session_id
+            or message["role"] != "user"
+        ):
+            raise ValueError("input message must belong to the execution session")
+        self.connection.execute(
+            "UPDATE agent_runs SET input_message_id = ? WHERE id = ?",
+            (message_id, execution_id),
+        )
+        self.connection.commit()
+        return self.get_execution(execution_id)
+
     def latest_execution(self, session_id: str) -> ExecutionRecord | None:
         row = self.connection.execute(
             "SELECT * FROM agent_runs WHERE session_id = ? "

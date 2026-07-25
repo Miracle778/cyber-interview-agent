@@ -5,7 +5,11 @@ import { parseApiTimestamp } from "../../shared/time";
 import type { AgentSession } from "../agent/agentTypes";
 
 function readableTitle(title: string) {
-  return ["个人画像对话", "画像会话", "简历助手对话"].includes(title) ? "画像助手对话" : title;
+  return ["个人画像对话", "画像会话", "简历助手对话"].includes(title)
+    || title.startsWith("当前画像快照：")
+    || title.includes("（当前问题见本轮用户消息）")
+    ? "画像助手对话"
+    : title;
 }
 
 function readablePreview(content?: string | null) {

@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 import { ProfilePage } from "./ProfilePage";
 
 const api = vi.hoisted(() => ({
@@ -26,7 +27,7 @@ vi.mock("./profileApi", () => api);
 
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(<QueryClientProvider client={client}><ProfilePage workspace={{ id: "w1", workspacePath: "/workspace", vaultPath: "/vault" }} /></QueryClientProvider>);
+  return render(<MemoryRouter><QueryClientProvider client={client}><ProfilePage workspace={{ id: "w1", workspacePath: "/workspace", vaultPath: "/vault" }} /></QueryClientProvider></MemoryRouter>);
 }
 
 describe("ProfilePage", () => {

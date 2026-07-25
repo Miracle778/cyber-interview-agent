@@ -4,7 +4,19 @@ import pytest
 from langgraph.graph import END, START, StateGraph
 
 from app.application.workspace_runtime import AgentApplication
+from app.agents.job_target_contracts import (
+    AnswerEvaluation,
+    DeepDiveTurnResult,
+    GapSuggestion,
+    NarrativeSectionDelta,
+    NextQuestion,
+)
 from app.graphs.project_deep_dive import ProjectDeepDiveState
+from app.job_targets.application import (
+    _deep_dive_result,
+    classify_deep_dive_turn_intent,
+)
+from app.job_targets.requirement_classification import is_job_background_or_heading
 from app.tools.job_target_tools import ScopedJobTargetReader, ToolScopeViolation
 from app.agents.review_round_contracts import RoundAnswerEvaluation
 
@@ -15,6 +27,59 @@ def _graph_factory(_kind: str, **dependencies):
     graph.add_edge(START, "complete")
     graph.add_edge("complete", END)
     return graph.compile(checkpointer=dependencies.get("checkpointer"))
+
+
+def test_deep_dive_question_does_not_advance_or_write_narrative():
+    dive = {
+        "current_stage": "role",
+        "completed_stage_ids_json": '["background"]',
+    }
+    message = "在继续之前，请先回顾已读取到的项目事实，并说明信息来源。"
+    model_result = DeepDiveTurnResult(
+        coach_reply="已确认的项目事实来自简历，量化结果来自你刚才的回答。",
+        answer_evaluation=AnswerEvaluation(
+            summary="这是追问，不是当前阶段回答",
+            completeness="basic",
+        ),
+        narrative_delta=[
+            NarrativeSectionDelta(section="role", content=message),
+        ],
+        gaps=[GapSuggestion(kind="expression", summary="需要补充职责")],
+        next_question=NextQuestion(stage="role", content="你具体负责什么？"),
+        stage_complete=True,
+    )
+
+    intent = classify_deep_dive_turn_intent(message)
+    result = _deep_dive_result(
+        dive,
+        model_result,
+        has_previous_follow_up=True,
+        detected_intent=intent,
+    )
+
+    assert intent == "question"
+    assert result["stageComplete"] is False
+    assert result["nextStage"] == "role"
+    assert result["completedStageIds"] == ["background"]
+    assert result["narrativeDelta"] == []
+    assert result["gaps"] == []
+    assert result["reply"] == model_result.coach_reply
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("应用服务团队", True),
+        ("团队负责支付与会员相关的基础中间件", True),
+        ("部门：应用服务团队", True),
+        ("熟悉 Redis 与 MySQL", False),
+        ("具备 3 年以上后端研发经验", False),
+    ],
+)
+def test_requirement_classifier_keeps_job_context_out_of_confirmation_queue(
+    text: str, expected: bool
+):
+    assert is_job_background_or_heading(text) is expected
 
 
 @pytest.mark.asyncio

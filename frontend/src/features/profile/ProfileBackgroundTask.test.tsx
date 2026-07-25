@@ -14,7 +14,7 @@ const detail = {
 } satisfies ProfileMaterialVersionDetail;
 
 describe("ProfileBackgroundTask", () => {
-  afterEach(cleanup);
+  afterEach(() => { cleanup(); vi.useRealTimers(); });
 
   it("shows honest progress and exposes stop without inventing a percentage", () => {
     const onStop = vi.fn();
@@ -24,6 +24,13 @@ describe("ProfileBackgroundTask", () => {
     expect(screen.queryByText(/%/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "停止整理" }));
     expect(onStop).toHaveBeenCalledOnce();
+  });
+
+  it("treats SQLite timestamps as UTC when calculating live elapsed time", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-24T08:00:05Z"));
+    render(<ProfileBackgroundTask detail={{ ...detail, execution: { ...detail.execution!, startedAt: "2026-07-24 08:00:00" } }} stopping={false} continuing={false} onOpen={vi.fn()} onStop={vi.fn()} onContinue={vi.fn()} onOpenPending={vi.fn()} />);
+    expect(screen.getByRole("status")).toHaveTextContent("已运行 5 秒");
   });
 
   it("turns a completed task into a clear review entry", () => {

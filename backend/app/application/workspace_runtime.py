@@ -106,10 +106,22 @@ class SqliteMiddlewareProjection:
         return True
 
     def ensure_title(self, context, candidate: str) -> bool:
+        user_message = self._connection.execute(
+            "SELECT content FROM agent_messages "
+            "WHERE session_id = ? AND role = 'user' "
+            "AND resolution_status IN ('active', 'unresolved') "
+            "ORDER BY created_at, rowid LIMIT 1",
+            (context.session_id,),
+        ).fetchone()
+        title = candidate
+        if user_message is not None:
+            title = " ".join(user_message["content"].split())[:60]
         cursor = self._connection.execute(
             "UPDATE agent_sessions SET title = ?, title_source = 'generated', "
-            "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND title_source = 'placeholder'",
-            (candidate, context.session_id),
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND "
+            "(title_source = 'placeholder' OR "
+            "(graph_id = 'profile.manage' AND title LIKE '当前画像快照：%'))",
+            (title, context.session_id),
         )
         self._connection.commit()
         return cursor.rowcount == 1
@@ -546,6 +558,94 @@ class AgentApplication:
         return await context.executions.start(
             session, input=input, configuration=configuration
         )
+
+    async def retry_execution(
+        self,
+        execution_id: str,
+        *,
+        replacement_message: str | None = None,
+    ) -> ExecutionRecord:
+        context = self._locate_execution(execution_id)
+        previous = context.repository.get_execution(execution_id)
+        if previous.status not in {"failed", "interrupted", "cancelled"}:
+            raise ValueError("只有失败或已停止的执行可以重试")
+        session = context.repository.get_session(previous.session_id)
+        message = self._execution_input_message(context.repository, previous)
+        retry_input = previous.input
+        input_message_id = message.id
+        if replacement_message is None:
+            if message.resolution_status == "unresolved":
+                context.repository.resolve_message(
+                    message.id, expected=("unresolved",), target="active"
+                )
+        else:
+            if message.resolution_status not in {"active", "unresolved"}:
+                raise ValueError("这条消息已经处理，不能再编辑重试")
+            replacement = context.repository.append_user_message(
+                session.id,
+                content=replacement_message,
+                replaces_message_id=message.id,
+            )
+            retry_input = {**previous.input, "message": replacement.content}
+            for alias in ("text", "userAnswer", "user_answer"):
+                if alias in retry_input:
+                    retry_input[alias] = replacement.content
+            input_message_id = replacement.id
+        configuration = {
+            "providerModelId": previous.configuration.provider_model_id,
+            "reasoningEffort": previous.configuration.reasoning_effort,
+        }
+        retry = await context.executions.prepare_for_message(
+            session,
+            input_message_id=input_message_id,
+            input=retry_input,
+            retry_of_execution_id=previous.id,
+            configuration=configuration,
+        )
+        context.executions.run_prepared(retry, graph_input=retry_input)
+        return retry
+
+    def abandon_execution(self, execution_id: str):
+        context = self._locate_execution(execution_id)
+        execution = context.repository.get_execution(execution_id)
+        if execution.status not in {"failed", "interrupted", "cancelled"}:
+            raise ValueError("只有失败或已停止的执行可以放弃")
+        message = self._execution_input_message(context.repository, execution)
+        if message.resolution_status == "abandoned":
+            return message
+        if message.resolution_status not in {"active", "unresolved"}:
+            raise ValueError("这条消息已经处理")
+        return context.repository.resolve_message(
+            message.id,
+            expected=(message.resolution_status,),
+            target="abandoned",
+        )
+
+    @staticmethod
+    def _execution_input_message(repository, execution: ExecutionRecord):
+        messages = repository.list_messages(execution.session_id)
+        if execution.input_message_id is not None:
+            message = next(
+                (
+                    item
+                    for item in messages
+                    if item.id == execution.input_message_id
+                ),
+                None,
+            )
+        else:
+            message = next(
+                (
+                    item
+                    for item in messages
+                    if item.role == "user"
+                    and item.execution_id == execution.id
+                ),
+                None,
+            )
+        if message is None:
+            raise ProductRecordNotFoundError("未找到本次执行对应的用户消息")
+        return message
 
     async def wait_execution(self, execution_id: str) -> ExecutionRecord:
         context = self._locate_execution(execution_id)

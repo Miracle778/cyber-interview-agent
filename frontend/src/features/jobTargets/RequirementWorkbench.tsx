@@ -4,13 +4,17 @@ import type { JobRequirement } from "./jobTargetTypes";
 
 type RequirementView = "pending" | "confirmed" | "rejected";
 
-const backgroundCues = ["团队是", "团队为", "服务于", "致力于", "产品包括", "产品有", "全站", "最大的", "上线了", "对外输出", "技术团队", "基础中间件"];
-const candidateCues = ["要求", "具备", "熟悉", "掌握", "精通", "了解", "学历", "经验", "能力", "优先", "负责", "主导", "参与", "能够"];
-const heading = /^(任职资格|职位要求|岗位要求|优先(考虑)?条件|加分项|岗位职责|工作职责)[:：]?$/;
+const backgroundCues = ["团队是", "团队为", "服务于", "致力于", "产品包括", "产品有", "全站", "最大的", "上线了", "对外输出", "技术团队", "基础中间件", "团队负责", "部门负责", "团队介绍", "部门介绍", "公司简介", "业务线", "产品线", "福利", "工作地点"];
+const candidateCues = ["要求", "具备", "熟悉", "掌握", "精通", "了解", "学历", "经验", "能力", "优先", "负责", "主导", "参与", "能够", "需要"];
+const heading = /^(公司简介|岗位介绍|职位介绍|团队介绍|部门介绍|任职资格|职位要求|岗位要求|优先(考虑)?条件|加分项|岗位职责|工作职责|福利待遇|工作地点)[:：]?$/;
+const backgroundLabel = /^(公司|部门|团队|技术团队|业务线|产品线|事业群)[:：].+$/;
+const backgroundName = /^.{1,20}(团队|部门|事业群|业务线|产品线)$/;
 
 export function isJobBackground(item: JobRequirement) {
+  if (item.inferred) return false;
   const text = item.text.replace(/\s+/g, "").replace(/[-:：；;。]+$/g, "");
-  return !text || heading.test(text) || (backgroundCues.some((cue) => text.includes(cue)) && !candidateCues.some((cue) => text.includes(cue)));
+  const hasCandidateCue = candidateCues.some((cue) => text.includes(cue));
+  return !text || heading.test(text) || backgroundLabel.test(text) || (backgroundName.test(text) && !hasCandidateCue) || /^(团队|部门|技术团队).{0,18}(是|为|负责|服务|致力于)/.test(text) || (backgroundCues.some((cue) => text.includes(cue)) && !hasCandidateCue);
 }
 
 function isRecommended(item: JobRequirement) {

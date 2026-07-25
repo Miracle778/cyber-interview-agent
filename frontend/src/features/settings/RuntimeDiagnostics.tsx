@@ -12,6 +12,7 @@ import { useAgentEvents } from "../agent/useAgentEvents";
 import { Badge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
+import { formatBeijingTime } from "../../shared/time";
 
 const DIAGNOSTIC_KIND = "diagnostic.echo";
 const DIAGNOSTIC_TITLE = "Agent Runtime 自检";
@@ -166,7 +167,7 @@ export function RuntimeDiagnostics({ workspaceId }: { workspaceId: string }) {
             {visibleEvents.map((event) => (
               <li key={event.id} className="runtime-timeline__item">
                 <span>{EVENT_LABELS[event.type]}</span>
-                <time>{event.timestamp}</time>
+                <time>{formatBeijingTime(event.timestamp) ?? event.timestamp}</time>
               </li>
             ))}
           </ol>

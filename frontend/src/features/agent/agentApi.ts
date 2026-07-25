@@ -1,5 +1,5 @@
 import { apiDelete, apiGet, apiPatch, apiPost } from "../../shared/api/client";
-import type { AgentExecution, AgentSession, AgentSessionDetail } from "./agentTypes";
+import type { AgentExecution, AgentMessage, AgentSession, AgentSessionDetail } from "./agentTypes";
 
 export interface CreateAgentSessionCommand {
   workspaceId: string;
@@ -58,6 +58,23 @@ export function startAgentExecution(
 export function cancelAgentExecution(executionId: string): Promise<AgentExecution> {
   return apiPost<undefined, AgentExecution>(
     `/api/agent/executions/${executionId}/cancel`,
+    undefined,
+  );
+}
+
+export function retryAgentExecution(
+  executionId: string,
+  message?: string,
+): Promise<AgentExecution> {
+  return apiPost<{ message?: string }, AgentExecution>(
+    `/api/agent/executions/${executionId}/retry`,
+    message === undefined ? {} : { message },
+  );
+}
+
+export function abandonAgentExecution(executionId: string): Promise<AgentMessage> {
+  return apiPost<undefined, AgentMessage>(
+    `/api/agent/executions/${executionId}/abandon`,
     undefined,
   );
 }

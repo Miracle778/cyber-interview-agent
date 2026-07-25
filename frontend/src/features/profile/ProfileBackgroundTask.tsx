@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, CheckCircle2, Clock3, LoaderCircle, RotateCcw, Square, WandSparkles } from "lucide-react";
+import { formatElapsedSeconds, parseApiTimestamp } from "../../shared/time";
 import { Button } from "../../shared/ui/Button";
 import type { ProfileMaterialVersionDetail } from "./profileTypes";
 
@@ -7,11 +8,10 @@ const activeStatuses = new Set(["uploaded", "parsing", "parsed", "extracting"]);
 
 function elapsedLabel(startedAt: string | null | undefined, now: number) {
   if (!startedAt) return "刚刚开始";
-  const started = new Date(startedAt).getTime();
+  const started = parseApiTimestamp(startedAt).getTime();
   if (!Number.isFinite(started)) return "正在处理";
   const seconds = Math.max(0, Math.floor((now - started) / 1000));
-  const minutes = Math.floor(seconds / 60);
-  return minutes ? `${minutes} 分 ${String(seconds % 60).padStart(2, "0")} 秒` : `${seconds} 秒`;
+  return formatElapsedSeconds(seconds);
 }
 
 export function ProfileBackgroundTask({

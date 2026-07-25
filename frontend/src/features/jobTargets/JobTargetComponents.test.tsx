@@ -4,9 +4,23 @@ import { describe, expect, it, vi } from "vitest";
 import { DeepDiveWorkspace } from "./DeepDiveWorkspace";
 import { JobAnalysisStatus } from "./JobAnalysisStatus";
 import { RequirementWorkbench } from "./RequirementWorkbench";
+import { getTargetIdentity } from "./JobTargetWorkspace";
+import { JobTargetList } from "./JobTargetList";
 import type { DeepDiveResource, JobAnalysis, JobRequirement } from "./jobTargetTypes";
 
 describe("job target workspace", () => {
+  it("offers a compact target selector instead of forcing the desktop sidebar on mobile", () => {
+    const onSelect = vi.fn();
+    const targets = [
+      { id: "one", workspaceId: "w", companyName: "示例公司", roleName: "后端工程师", seniority: "3 年", sourceUrl: null, lifecycleStatus: "active", currentDocumentVersionId: "d", version: 1, createdAt: "", updatedAt: "" },
+      { id: "two", workspaceId: "w", companyName: null, roleName: "", seniority: "", sourceUrl: null, lifecycleStatus: "active", currentDocumentVersionId: "d", version: 1, createdAt: "", updatedAt: "" },
+    ] as const;
+    render(<JobTargetList targets={[...targets]} selectedId="one" onSelect={onSelect} onCreate={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("当前求职目标"), { target: { value: "two" } });
+    expect(onSelect).toHaveBeenCalledWith("two");
+    expect(screen.getByRole("option", { name: "岗位信息待补充" })).toBeInTheDocument();
+  });
+
   it("keeps inferred requirements out of safe select-all", () => {
     const requirements = [
       { id: "direct", text: "负责高并发服务", sourceQuote: "负责高并发服务", inferred: false },
@@ -84,6 +98,20 @@ describe("job target workspace", () => {
     expect(screen.getByText("正在分析项目相关性")).toBeVisible();
     expect(screen.getByText(/已完成 4 \/ 7/)).toBeVisible();
     expect(screen.getByText("12 条已保存")).toBeVisible();
+  });
+
+  it("does not present a completed analysis as still identifying the role", () => {
+    const target = {
+      id: "t", workspaceId: "w", companyName: null, roleName: "", seniority: "", sourceUrl: null,
+      lifecycleStatus: "active", currentDocumentVersionId: "d", version: 1, createdAt: "", updatedAt: "",
+    } satisfies import("./jobTargetTypes").JobTarget;
+    const identity = getTargetIdentity(target, {
+      id: "a", jobTargetId: "t", status: "review_pending", stage: "waiting_for_review", version: 1,
+      progress: { completed: 5, total: 5, activeWorkers: 0 }, timing: { currentElapsedMs: 0, cumulativeElapsedMs: 0 }, latestProgressAt: null,
+      savedOutputs: { requirements: 4, projectMappings: 1 }, controls: { canPause: false, canResume: false, canTerminate: false },
+    });
+    expect(identity.title).toBe("岗位信息待补充");
+    expect(identity.badge).toBe("待补充");
   });
 
   it("does not send while the IME is composing", () => {

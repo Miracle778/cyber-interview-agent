@@ -6,10 +6,12 @@ import type { AgentReasoningEffort } from "../../shared/agent/AgentComposer";
 import { elapsedSeconds, formatElapsedSeconds } from "../../shared/time";
 import { Button } from "../../shared/ui/Button";
 import {
+  abandonAgentExecution,
   cancelAgentExecution,
   deleteAgentSession,
   getAgentSession,
   renameAgentSession,
+  retryAgentExecution,
   restoreAgentSession,
   startAgentExecution,
 } from "../agent/agentApi";
@@ -31,7 +33,11 @@ const reasoningLabels: Record<AgentReasoningEffort, string> = {
 };
 
 function readableTitle(title: string) {
-  return ["个人画像对话", "画像会话", "简历助手对话"].includes(title) ? "画像助手对话" : title;
+  return ["个人画像对话", "画像会话", "简历助手对话"].includes(title)
+    || title.startsWith("当前画像快照：")
+    || title.includes("（当前问题见本轮用户消息）")
+    ? "画像助手对话"
+    : title;
 }
 
 function formatTokens(value: number) {
@@ -109,7 +115,14 @@ export function ProfileAgentWorkspace({
   const running = ["running", "cancelling"].includes(executionStatus ?? "");
   const streaming = latest ? live.streamingByExecution[latest.id] ?? null : null;
   const latestUserMessage = [...(detail.data?.messages ?? [])].reverse().find(
-    (message) => message.role === "user" && message.executionId === latest?.id,
+    (message) => message.role === "user" && (
+      message.id === latest?.inputMessageId || message.executionId === latest?.id
+    ),
+  );
+  const failedInputMessage = executionStatus === "failed" ? latestUserMessage : undefined;
+  const recoveryAvailable = Boolean(
+    failedInputMessage
+    && !["replaced", "abandoned"].includes(failedInputMessage.resolutionStatus ?? "active"),
   );
   const streamAnswer = latestUserMessage ? shouldStreamProfileAnswer(latestUserMessage.content) : true;
   const latestEventId = live.events[live.events.length - 1]?.id;
@@ -202,6 +215,14 @@ export function ProfileAgentWorkspace({
     mutationFn: () => cancelAgentExecution(latest!.id),
     onSuccess: () => client.invalidateQueries({ queryKey: ["agent-session", sessionId] }),
   });
+  const retry = useMutation({
+    mutationFn: (message?: string) => retryAgentExecution(latest!.id, message),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["agent-session", sessionId] }),
+  });
+  const abandon = useMutation({
+    mutationFn: () => abandonAgentExecution(latest!.id),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["agent-session", sessionId] }),
+  });
   const toolEvents = useMemo(
     () => live.events.filter((event) => event.executionId === latest?.id && event.type.startsWith("agent.tool.")),
     [latest?.id, live.events],
@@ -235,7 +256,9 @@ export function ProfileAgentWorkspace({
   }
 
   const title = readableTitle(detail.data?.title ?? "画像助手对话");
-  const busy = Boolean(running || send.isPending || stop.isPending);
+  const busy = Boolean(
+    running || send.isPending || stop.isPending || retry.isPending || abandon.isPending
+  );
   return <AgentWorkspaceShell
     asideOpen={asideOpen}
     onAsideOpenChange={updateAside}
@@ -266,6 +289,22 @@ export function ProfileAgentWorkspace({
       onReasoningEffortChange={setReasoningEffort}
       onSend={(message) => send.mutate(message)}
       onStop={() => stop.mutate()}
+      failureRecovery={recoveryAvailable ? {
+        reason: "模型服务或网络请求没有完成，本次消息已保留。",
+        retrying: retry.isPending,
+        abandoning: abandon.isPending,
+        onRetry: () => retry.mutate(undefined),
+        onEditAndRetry: () => {
+          const replacement = window.prompt(
+            "修改这条消息后重新发送",
+            failedInputMessage?.content ?? "",
+          )?.trim();
+          if (replacement && replacement !== failedInputMessage?.content) {
+            retry.mutate(replacement);
+          }
+        },
+        onAbandon: () => abandon.mutate(),
+      } : null}
       onChanged={() => client.invalidateQueries({ queryKey: ["agent-session", sessionId] })}
       onOpenPending={onOpenPending}
     />}
@@ -302,7 +341,7 @@ export function ProfileAgentWorkspace({
           <p>会话 ID：{sessionId}</p>
         </div>
       </details>
-      {live.executionError ? <div className="profile-agent-context__error" role="alert">{live.executionError.message}</div> : null}
+      {live.executionError && executionStatus !== "failed" ? <div className="profile-agent-context__error" role="alert">{live.executionError.message}</div> : null}
       {detail.isError ? <Button size="sm" variant="secondary" onClick={() => detail.refetch()}><RefreshCw size={14} />重新读取</Button> : null}
     </div>}
   />;

@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   renameSession: vi.fn(),
   restoreSession: vi.fn(),
   startExecution: vi.fn(),
+  retryExecution: vi.fn(),
+  abandonExecution: vi.fn(),
   live: {
     status: "disconnected",
     events: [] as Array<Record<string, unknown>>,
@@ -31,6 +33,8 @@ vi.mock("./profileApi", () => ({
 vi.mock("../agent/agentApi", () => ({
   getAgentSession: mocks.getSession,
   startAgentExecution: mocks.startExecution,
+  retryAgentExecution: mocks.retryExecution,
+  abandonAgentExecution: mocks.abandonExecution,
   cancelAgentExecution: vi.fn(),
   deleteAgentSession: mocks.deleteSession,
   renameAgentSession: mocks.renameSession,
@@ -78,6 +82,8 @@ describe("ProfileAgentWorkspace", () => {
     });
     mocks.deleteSession.mockResolvedValue(undefined);
     mocks.restoreSession.mockResolvedValue(session());
+    mocks.retryExecution.mockResolvedValue({ id: "r2" });
+    mocks.abandonExecution.mockResolvedValue({ id: "m1", resolutionStatus: "abandoned" });
     mocks.live.status = "disconnected";
     mocks.live.events = [];
     mocks.live.streamingByExecution = {};
@@ -171,5 +177,34 @@ describe("ProfileAgentWorkspace", () => {
 
     expect(screen.getByDisplayValue("整理我的后端开发经历")).toBeInTheDocument();
     expect(mocks.startExecution).not.toHaveBeenCalled();
+  });
+
+  it("offers retry, edit-and-retry, and abandon after a failed run", async () => {
+    mocks.activeSessions = [session()];
+    mocks.getSession.mockResolvedValue(detail({
+      messages: [{
+        id: "m1", executionId: "r1", role: "user",
+        content: "检查项目经历", messageKind: "text", payload: {},
+        createdAt: "2026-07-25 08:00:00", resolutionStatus: "active",
+        replacesMessageId: null,
+      }],
+      latestExecutionId: "r1",
+      latestExecution: {
+        id: "r1", sessionId: "s1", status: "failed", resumeCount: 0,
+        inputMessageId: "m1", retryOfExecutionId: null,
+        errorCode: "agent_execution_failed", errorMessage: "provider unavailable",
+        createdAt: "2026-07-25 08:00:00", startedAt: "2026-07-25 08:00:00",
+        finishedAt: "2026-07-25 08:00:33",
+      },
+    }));
+
+    renderWorkspace();
+    fireEvent.click(await screen.findByRole("button", { name: /画像助手对话/ }));
+
+    expect(await screen.findByText("本次回答没有完成")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重试本次" }));
+    await waitFor(() => expect(mocks.retryExecution).toHaveBeenCalledWith("r1", undefined));
+    expect(screen.getByRole("button", { name: "编辑后重试" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "放弃本次" })).toBeEnabled();
   });
 });

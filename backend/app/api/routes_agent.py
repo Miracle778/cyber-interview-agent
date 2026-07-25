@@ -14,6 +14,8 @@ from app.application.workspace_runtime import AgentApplication
 from app.schemas.agent import (
     CreateSessionCommand,
     ExecutionResource,
+    MessageResource,
+    RetryExecutionCommand,
     SessionDetailResource,
     SessionResource,
     StartExecutionCommand,
@@ -133,6 +135,42 @@ async def cancel_execution(
         return await application.cancel_execution(execution_id)
     except ProductRecordNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.post(
+    "/executions/{execution_id}/retry",
+    response_model=ExecutionResource,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_execution(
+    execution_id: str,
+    command: RetryExecutionCommand,
+    application: AgentApplication = Depends(get_agent_application),
+) -> ExecutionRecord:
+    try:
+        return await application.retry_execution(
+            execution_id, replacement_message=command.message
+        )
+    except ProductRecordNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (SessionBusyError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.post(
+    "/executions/{execution_id}/abandon",
+    response_model=MessageResource,
+)
+async def abandon_execution(
+    execution_id: str,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    try:
+        return application.abandon_execution(execution_id)
+    except ProductRecordNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.get("/sessions/{session_id}/events")

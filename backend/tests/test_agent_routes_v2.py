@@ -88,6 +88,7 @@ async def test_session_and_execution_resources_do_not_expose_graph_internals(api
         assert started.status_code == 202
         execution = started.json()
         assert execution["status"] == "running"
+        assert execution["inputMessageId"]
         assert execution["configuration"] == {
             "providerModelId": "model-1",
             "reasoningEffort": "medium",
@@ -116,6 +117,50 @@ async def test_session_and_execution_resources_do_not_expose_graph_internals(api
         assert {row["agent_name"] for row in trace_rows} == {
             "execution_runtime"
         }
+
+
+@pytest.mark.asyncio
+async def test_failed_execution_can_retry_without_duplicate_user_message(api, application):
+    session = await application.create_session(
+        workspace_id="w1", kind="diagnostic.echo", title="Echo"
+    )
+    context = application._context("w1")
+    message = context.repository.append_user_message(
+        session.id, content="hello again"
+    )
+    failed = context.repository.create_execution(
+        session.id,
+        input={"text": "hello again"},
+        model_bindings={},
+        input_message_id=message.id,
+    )
+    context.repository.transition_execution(
+        failed.id,
+        expected=("running",),
+        target="failed",
+        error_code="provider_error",
+        error_message="provider unavailable",
+    )
+    context.repository.resolve_message(
+        message.id, expected=("active",), target="unresolved"
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            f"/api/agent/executions/{failed.id}/retry", json={}
+        )
+        assert response.status_code == 202
+        retried = response.json()
+        await application.wait_execution(retried["id"])
+
+        detail = (await client.get(f"/api/agent/sessions/{session.id}")).json()
+
+    assert retried["retryOfExecutionId"] == failed.id
+    assert retried["inputMessageId"] == message.id
+    assert [item["content"] for item in detail["messages"]].count("hello again") == 1
+    assert detail["messages"][0]["resolutionStatus"] == "active"
 
 
 @pytest.mark.asyncio

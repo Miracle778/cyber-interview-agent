@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowRight, Bot, ClipboardCheck } from "lucide-react";
+import { ArrowDown, ArrowRight, Ban, Bot, ClipboardCheck, PencilLine, RotateCcw } from "lucide-react";
 import { AgentComposer, type AgentReasoningEffort } from "../../shared/agent/AgentComposer";
 import { AgentMessage as SharedAgentMessage } from "../../shared/agent/AgentMessage";
 import { AgentProcessCard } from "../../shared/agent/AgentProcessCard";
@@ -32,6 +32,14 @@ interface ProfileConversationProps {
   onReasoningEffortChange: (effort: AgentReasoningEffort) => void;
   onSend: (message: string) => void;
   onStop: () => void;
+  failureRecovery?: {
+    reason: string;
+    retrying: boolean;
+    abandoning: boolean;
+    onRetry: () => void;
+    onEditAndRetry: () => void;
+    onAbandon: () => void;
+  } | null;
   onChanged: () => void;
   onOpenPending?: () => void;
 }
@@ -52,6 +60,7 @@ export function ProfileConversation({
   onReasoningEffortChange,
   onSend,
   onStop,
+  failureRecovery,
   onChanged,
   onOpenPending,
 }: ProfileConversationProps) {
@@ -118,6 +127,25 @@ export function ProfileConversation({
         ) : null}
         {executionActive && streamAnswer && streaming?.text ? <SharedAgentMessage role="assistant" content={streaming.text} pending /> : null}
         {executionActive && !streamAnswer ? <SharedAgentMessage role="assistant" content="正在整理可确认的结果…" pending /> : null}
+        {failureRecovery ? (
+          <section className="agent-failure-recovery" role="alert">
+            <div>
+              <strong>本次回答没有完成</strong>
+              <p>{failureRecovery.reason}你不需要重新输入。</p>
+            </div>
+            <div className="agent-failure-recovery__actions">
+              <button type="button" disabled={failureRecovery.retrying || failureRecovery.abandoning} onClick={failureRecovery.onRetry}>
+                <RotateCcw size={15} />重试本次
+              </button>
+              <button type="button" disabled={failureRecovery.retrying || failureRecovery.abandoning} onClick={failureRecovery.onEditAndRetry}>
+                <PencilLine size={15} />编辑后重试
+              </button>
+              <button className="is-quiet" type="button" disabled={failureRecovery.retrying || failureRecovery.abandoning} onClick={failureRecovery.onAbandon}>
+                <Ban size={15} />放弃本次
+              </button>
+            </div>
+          </section>
+        ) : null}
       </div>
       {!following ? <button className="agent-conversation__new-message" type="button" onClick={scrollToBottom}><ArrowDown size={15} />有新回复，回到底部</button> : null}
       <AgentComposer

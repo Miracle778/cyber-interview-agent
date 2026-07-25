@@ -24,6 +24,8 @@ export interface AgentSession {
 export interface AgentExecution {
   id: string;
   sessionId: string;
+  inputMessageId?: string | null;
+  retryOfExecutionId?: string | null;
   status: AgentExecutionStatus;
   configuration?: {
     providerModelId: string | null;
@@ -51,6 +53,8 @@ export interface AgentMessage {
   messageKind?: string;
   payload?: Record<string, unknown>;
   createdAt: string;
+  replacesMessageId?: string | null;
+  resolutionStatus?: "active" | "unresolved" | "replaced" | "abandoned";
 }
 
 export interface AgentSessionDetail extends AgentSession {

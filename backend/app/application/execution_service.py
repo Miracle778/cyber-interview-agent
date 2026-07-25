@@ -231,11 +231,14 @@ class AgentExecutionService:
             retry_of_execution_id=retry_of_execution_id,
         )
         if project_input_message:
-            self._repository.append_message(
+            message = self._repository.append_message(
                 session.id,
                 execution_id=execution.id,
                 role="user",
                 content=_user_content(input),
+            )
+            execution = self._repository.bind_execution_input_message(
+                execution.id, message.id
             )
         await self._events.publish(
             session.id,

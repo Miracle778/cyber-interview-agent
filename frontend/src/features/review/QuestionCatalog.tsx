@@ -157,7 +157,11 @@ export function QuestionCatalog({ workspace }: { workspace: WorkspaceConfig }) {
     return result;
   }, [sessions.data, sources.data]);
   const refresh = () => client.invalidateQueries({ queryKey: ["review-curation-sessions", workspace.id] });
-  const refreshCandidates = () => client.invalidateQueries({ queryKey: ["review-question-candidates", workspace.id] });
+  const refreshCandidates = () => Promise.all([
+    client.invalidateQueries({ queryKey: ["review-question-candidates", workspace.id] }),
+    client.invalidateQueries({ queryKey: ["review-candidates-overview", workspace.id] }),
+    client.invalidateQueries({ queryKey: ["active-review-questions", workspace.id] }),
+  ]);
   useEffect(() => {
     const unhandled = agentEvents.events.filter((event) => event.id > lastHandledEventId.current);
     if (unhandled.length === 0) return;

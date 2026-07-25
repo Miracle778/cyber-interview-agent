@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 
@@ -470,9 +471,12 @@ class JobTargetApplication:
             if item.resolution_status == "active"
         ][-12:]
         cancellation.raise_if_requested()
+        detected_intent = classify_deep_dive_turn_intent(message.content)
         agents = self._agents_for_execution(execution)
         if agents is None:
-            result = self._evaluate_turn(dive, message.content)
+            result = self._evaluate_turn(
+                dive, message.content, detected_intent=detected_intent
+            )
         else:
             model_result = await agents.evaluate_turn(
                 stage=dive["current_stage"],
@@ -492,10 +496,14 @@ class JobTargetApplication:
                 dive,
                 model_result,
                 has_previous_follow_up=any(
-                    json.loads(item["payload_json"]).get("stage")
+                    (
+                        payload := json.loads(item["payload_json"])
+                    ).get("stage")
                     == dive["current_stage"]
+                    and payload.get("intent", "answer") == "answer"
                     for item in self.repository.list_artifacts(dive_id)
                 ),
+                detected_intent=detected_intent,
             )
         cancellation.raise_if_requested()
         with cancellation.critical_section():
@@ -891,8 +899,35 @@ class JobTargetApplication:
             "requirements": len(requirements),
         }
 
-    def _evaluate_turn(self, dive, answer: str) -> dict:
+    def _evaluate_turn(
+        self, dive, answer: str, *, detected_intent: str = "answer"
+    ) -> dict:
         stage = dive["current_stage"]
+        if detected_intent != "answer":
+            reply = (
+                "我会先回答这个问题，不推进当前深挖阶段。"
+                if detected_intent == "question"
+                else "已记录你的修正，本轮不会推进当前深挖阶段。"
+                if detected_intent == "correction"
+                else "已收到操作指令，本轮不会写入项目讲解。"
+            )
+            return {
+                "stage": stage,
+                "intent": detected_intent,
+                "stageComplete": False,
+                "evaluation": {
+                    "summary": "本轮不是当前阶段回答",
+                    "completeness": "basic",
+                },
+                "narrativeDelta": [],
+                "targetFindings": [],
+                "gaps": [],
+                "nextStage": stage,
+                "completedStageIds": list(
+                    json.loads(dive["completed_stage_ids_json"])
+                ),
+                "reply": reply,
+            }
         next_stage = advance_stage(stage)
         needs_detail = len(answer.strip()) < 30
         gaps = (
@@ -903,6 +938,7 @@ class JobTargetApplication:
         question = _stage_question(next_stage)
         return {
             "stage": stage,
+            "intent": "answer",
             "stageComplete": True,
             "evaluation": {
                 "summary": "已保存本轮回答",
@@ -1023,10 +1059,35 @@ def _normalized_requirement(
 
 
 def _deep_dive_result(
-    dive, model_result, *, has_previous_follow_up: bool
+    dive,
+    model_result,
+    *,
+    has_previous_follow_up: bool,
+    detected_intent: str = "answer",
 ) -> dict[str, object]:
-    stage_complete = bool(model_result.stage_complete) or has_previous_follow_up
     current_stage = dive["current_stage"]
+    intent = (
+        detected_intent
+        if detected_intent != "answer"
+        else getattr(model_result, "intent", "answer")
+    )
+    if intent != "answer":
+        return {
+            "stage": current_stage,
+            "intent": intent,
+            "stageComplete": False,
+            "evaluation": model_result.answer_evaluation.model_dump(),
+            "narrativeDelta": [],
+            "targetFindings": [],
+            "gaps": [],
+            "nextStage": current_stage,
+            "completedStageIds": list(
+                json.loads(dive["completed_stage_ids_json"])
+            ),
+            "reply": model_result.coach_reply.strip()
+            or "我会先处理这条消息，不推进当前深挖阶段。",
+        }
+    stage_complete = bool(model_result.stage_complete) or has_previous_follow_up
     next_stage = advance_stage(current_stage) if stage_complete else current_stage
     completed = tuple(json.loads(dive["completed_stage_ids_json"]))
     if stage_complete:
@@ -1045,10 +1106,13 @@ def _deep_dive_result(
     reply = f"{coach_reply}\n\n{follow_up}" if coach_reply else follow_up
     return {
         "stage": current_stage,
+        "intent": "answer",
         "stageComplete": stage_complete,
         "evaluation": model_result.answer_evaluation.model_dump(),
         "narrativeDelta": [
-            item.model_dump() for item in model_result.narrative_delta
+            item.model_dump()
+            for item in model_result.narrative_delta
+            if item.section == current_stage
         ],
         "targetFindings": [
             item.model_dump() for item in model_result.target_findings
@@ -1058,6 +1122,33 @@ def _deep_dive_result(
         "completedStageIds": list(completed),
         "reply": reply,
     }
+
+
+def classify_deep_dive_turn_intent(
+    content: str,
+) -> str:
+    """Conservatively keep non-answers out of the narrative state machine."""
+    normalized = re.sub(r"\s+", " ", content).strip()
+    if re.search(
+        r"^(?:暂停|停止|结束|退出|重新开始|换一个项目|返回)(?:[。！! ]|$)",
+        normalized,
+    ):
+        return "command"
+    if re.search(
+        r"(?:纠正|更正|改成|改为|不是.+而是|刚才.+说错|上一条.+有误)",
+        normalized,
+    ):
+        return "correction"
+    if (
+        normalized.endswith(("?", "？"))
+        or re.search(
+            r"(?:^|[，,。；;])(?:请先|能否|可以|请问|我想知道|告诉我|帮我)"
+            r".*(?:回顾|总结|说明|解释|列出|区分|回答|查看)",
+            normalized,
+        )
+    ):
+        return "question"
+    return "answer"
 
 
 def _message_resource(item) -> dict[str, object]:

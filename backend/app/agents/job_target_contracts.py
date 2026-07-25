@@ -63,6 +63,7 @@ class NextQuestion(BaseModel):
 
 
 class DeepDiveTurnResult(BaseModel):
+    intent: Literal["answer", "question", "correction", "command"] = "answer"
     coach_reply: str = Field(default="", max_length=3000)
     answer_evaluation: AnswerEvaluation
     narrative_delta: list[NarrativeSectionDelta] = Field(default_factory=list)
