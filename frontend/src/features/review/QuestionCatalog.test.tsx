@@ -255,8 +255,9 @@ describe("QuestionCatalog", () => {
     fireEvent.click(screen.getByRole("button", { name: /已发布/ }));
     expect(await screen.findByRole("button", { name: "已入库 1" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("region", { name: "题目结果" })).toHaveTextContent("1 道逻辑题目");
-    const topic = screen.getByRole("button", { name: "database 1" });
-    fireEvent.click(topic);
+    fireEvent.change(screen.getByRole("combobox", { name: "主题筛选" }), {
+      target: { value: "database" },
+    });
     await waitFor(() => expect(screen.getByRole("region", { name: "题目结果" })).toHaveTextContent("1 道逻辑题目"));
     expect(screen.getByRole("region", { name: "题目结果" })).toHaveTextContent("database主题");
   });
