@@ -164,13 +164,27 @@ export function CurationRuntimePanel({ session, candidates = null, activeModelLa
   const cumulativeElapsed = activeClock.cumulativeBase + activeDelta;
   const controlState = session?.stage === "pausing" ? "pausing" : session?.batchStatus;
   const seedProgress = session?.seedProgress;
-  const processedSeedCount = seedProgress
-    ? seedProgress.completed + seedProgress.degraded + seedProgress.skipped
+  const activeSeedProgress = session?.progress?.phase === "discovery"
+    ? null
+    : seedProgress ?? null;
+  const processedSeedCount = activeSeedProgress
+    ? activeSeedProgress.completed + activeSeedProgress.degraded + activeSeedProgress.skipped
     : session?.progress?.completed ?? 0;
-  const generatedSeedCount = seedProgress
-    ? seedProgress.completed + seedProgress.degraded
+  const generatedSeedCount = session?.progress?.phase === "discovery"
+    ? seedProgress?.total ?? 0
+    : activeSeedProgress
+    ? activeSeedProgress.completed + activeSeedProgress.degraded
     : session?.progress?.generatedCandidateCount ?? 0;
-  const totalSeedCount = seedProgress?.total ?? session?.progress?.total ?? 0;
+  const totalSeedCount = activeSeedProgress
+    ? activeSeedProgress.total
+    : session?.progress?.total ?? 0;
+  const retryableCount = activeSeedProgress
+    ? activeSeedProgress.retrying
+    : session?.progress?.retryableUnits ?? session?.progress?.activeWorkers ?? 0;
+  const pendingCount = activeSeedProgress
+    ? activeSeedProgress.pending
+    : session?.progress?.pendingUnits ?? 0;
+  const skippedCount = activeSeedProgress ? activeSeedProgress.skipped : 0;
   const controlPresentation = controlState ? {
     generating: { label: generationLabel ?? "正在整理", detail: "已提交的处理单元会持续保存", icon: Activity },
     pausing: { label: "正在暂停…", detail: "正在安全停止活动工作单元", icon: Pause },
@@ -195,11 +209,11 @@ export function CurationRuntimePanel({ session, candidates = null, activeModelLa
             <div><strong>{controlPresentation.label}</strong><small>{controlPresentation.detail}</small></div>
           </div>
           <div className="curation-control-state__progress" role="status" aria-label="整理进度" aria-live="polite" aria-atomic="true">
-            <div><strong>{processedSeedCount} / {totalSeedCount}</strong><span>已处理</span></div>
-            <div><strong>{generatedSeedCount}</strong><span>已生成候选</span></div>
-            <div><strong>{session.seedProgress?.retrying ?? session.progress?.activeWorkers ?? 0}</strong><span>处理中或可重试</span></div>
-            <div><strong>{session.seedProgress?.skipped ?? 0}</strong><span>已跳过</span></div>
-            <div><strong>{session.seedProgress?.pending ?? 0}</strong><span>等待处理</span></div>
+            <div><strong>{processedSeedCount} / {totalSeedCount}</strong><span>{session.progress?.phase === "discovery" ? "已完成识别" : "已处理"}</span></div>
+            <div><strong>{generatedSeedCount}</strong><span>{session.progress?.phase === "discovery" ? "已发现题目" : "已生成候选"}</span></div>
+            <div><strong>{retryableCount}</strong><span>{session.progress?.activeWorkers ? "正在处理" : "可继续处理"}</span></div>
+            <div><strong>{skippedCount}</strong><span>已跳过</span></div>
+            <div><strong>{pendingCount}</strong><span>等待处理</span></div>
           </div>
           <div className="curation-control-state__activity"><span>{session.progress?.activeWorkers ?? 0} 个工作单元运行中</span><span>已生成 {session.progress?.generatedCandidateCount ?? 0} 道候选</span></div>
           <div className="curation-control-state__timing" aria-live="off">

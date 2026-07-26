@@ -111,7 +111,7 @@ describe("CurationRuntimePanel candidate status", () => {
       executionErrorMessage: "Agent 执行失败",
     }} />);
 
-    const failure = screen.getByText("Agent 执行失败", { selector: "strong" }).closest("section");
+    const failure = screen.getByText("Agent 执行失败").closest("section");
     expect(failure).toHaveClass("curation-retry");
     expect(failure).not.toHaveClass("curation-progress");
     expect(failure).toHaveAttribute("role", "status");
@@ -141,6 +141,39 @@ describe("CurationRuntimePanel candidate status", () => {
     fireEvent.click(retry);
     expect(onRetry).toHaveBeenCalledWith(expect.objectContaining({ seedTaskId: "seed-1", version: 3 }));
     expect(screen.queryByText("Agent 执行失败", { selector: "strong" })).toBeNull();
+  });
+
+  it("keeps discovery work-item progress when provisional seeds already exist", () => {
+    render(<CurationRuntimePanel session={{
+      ...session,
+      stage: "failed",
+      batchStatus: "failed",
+      progress: {
+        phase: "discovery",
+        completed: 77,
+        total: 80,
+        generatedCandidateCount: 0,
+        activeWorkers: 0,
+        retryableUnits: 2,
+        pendingUnits: 1,
+      },
+      seedProgress: {
+        total: 125,
+        completed: 0,
+        degraded: 0,
+        retrying: 10,
+        skipped: 0,
+        pending: 115,
+      },
+      controls: { canPause: false, canResume: true, canTerminate: true },
+    }} />);
+
+    const progress = screen.getByRole("status", { name: "整理进度" });
+    expect(progress).toHaveTextContent("77 / 80");
+    expect(progress).toHaveTextContent("已完成识别");
+    expect(screen.getByText("已发现题目").closest("div")).toHaveTextContent("125");
+    expect(screen.getByText("可继续处理").closest("div")).toHaveTextContent("2");
+    expect(screen.getByText("等待处理").closest("div")).toHaveTextContent("1");
   });
 
   it("ticks from the server snapshot with a monotonic clock and ignores wall-clock skew", () => {

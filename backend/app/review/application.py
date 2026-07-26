@@ -570,6 +570,13 @@ class ReviewApplication:
                         else work_items
                     )
                 ),
+                "retryable_units": sum(
+                    item.status in {"failed", "interrupted", "retryable"}
+                    for item in phase_items
+                ),
+                "pending_units": sum(
+                    item.status == "pending" for item in phase_items
+                ),
             },
             "timing": {
                 "current_elapsed_ms": (
@@ -2184,6 +2191,17 @@ class ReviewApplication:
         }:
             return None
         items = self.repository.list_curation_work_items(record.active_batch_id)
+        discovery_items = tuple(
+            item for item in items if item.stage == "discovery"
+        )
+        if discovery_items and all(
+            item.status == "completed" for item in discovery_items
+        ):
+            seed_tasks = self.repository.list_curation_seed_tasks(
+                record.active_batch_id
+            )
+            if seed_tasks:
+                return "enrichment"
         if any(item.stage == "enrichment" for item in items):
             return "enrichment"
         return "discovery" if items else None

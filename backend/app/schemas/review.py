@@ -357,6 +357,8 @@ class CurationProgressResource(ReviewModel):
     total: int = Field(ge=0)
     generated_candidate_count: int = Field(default=0, ge=0)
     active_workers: int = Field(default=0, ge=0)
+    retryable_units: int = Field(default=0, ge=0)
+    pending_units: int = Field(default=0, ge=0)
 
 
 class CurationTimingResource(ReviewModel):

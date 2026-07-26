@@ -4320,7 +4320,7 @@ class ReviewRepository:
         try:
             from app.agents.question_curation_contracts import (
                 QuestionCandidateChunk,
-                QuestionSeedChunk,
+                QuestionSeedBatch,
             )
         except ImportError:
             # Task 1 and this persistence foundation can land independently.
@@ -4375,7 +4375,7 @@ class ReviewRepository:
             validated = output
         else:
             contract = (
-                QuestionSeedChunk if stage == "discovery" else QuestionCandidateChunk
+                QuestionSeedBatch if stage == "discovery" else QuestionCandidateChunk
             )
             validated = contract.model_validate(output).model_dump(mode="json")
         encoded = _canonical_json(validated)

@@ -72,8 +72,7 @@ class ChatModelResolver:
 
         if provider.api_format == "openai-compatible":
             options = {}
-            normalized_model_id = model.model_id.lower().rsplit("/", 1)[-1]
-            if normalized_model_id.startswith(_GLM_THINKING_MODEL_PREFIXES):
+            if _uses_glm_thinking_control(model):
                 options["extra_body"] = {
                     "thinking": {
                         "type": (
@@ -109,6 +108,11 @@ class ChatModelResolver:
                 else 8192
             )
             max_tokens = visible_output_tokens
+            if (
+                reasoning_effort == "none"
+                and _uses_glm_thinking_control(model)
+            ):
+                options["thinking"] = {"type": "disabled"}
             if reasoning_effort != "none":
                 budget = budgets[reasoning_effort]
                 options["thinking"] = {
@@ -137,3 +141,13 @@ class ChatModelResolver:
         if model is None or not model.enabled:
             raise ModelResolutionError(ProviderErrorCode.MODEL_NOT_FOUND)
         return model.max_input_tokens
+
+
+def _uses_glm_thinking_control(model) -> bool:
+    if model.capability_profile.get("reasoningControl") == "glm_thinking_switch":
+        return True
+    for candidate in (model.resolved_model_id, model.model_id):
+        normalized = (candidate or "").casefold().rsplit("/", 1)[-1]
+        if normalized.startswith(_GLM_THINKING_MODEL_PREFIXES):
+            return True
+    return False

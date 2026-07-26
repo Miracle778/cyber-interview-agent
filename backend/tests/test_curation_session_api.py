@@ -913,9 +913,11 @@ async def test_curation_control_api_uses_header_and_resumes_same_batch(
     assert paused.json()["progress"] == {
         "phase": "discovery",
         "completed": 1,
-        "total": 2,
-        "generatedCandidateCount": 0,
-        "activeWorkers": 0,
+            "total": 2,
+            "generatedCandidateCount": 0,
+            "activeWorkers": 0,
+            "retryableUnits": 1,
+            "pendingUnits": 0,
     }
     assert repeated_pause.status_code == 202
     assert repeated_pause.json()["batchVersion"] == paused.json()["batchVersion"]
@@ -1302,6 +1304,8 @@ async def test_curation_resource_projects_timing_workers_and_read_only_provision
         "total": 2,
         "generatedCandidateCount": 2,
         "activeWorkers": 1,
+        "retryableUnits": 0,
+        "pendingUnits": 0,
     }
     assert resource["timing"] == {
         "currentElapsedMs": 10_000,
@@ -1345,6 +1349,48 @@ async def test_curation_resource_projects_timing_workers_and_read_only_provision
     assert formal_candidates.status_code == 200
     assert formal_candidates.json() == []
     assert "draft" not in resource["provisionalCandidates"][0]
+
+
+@pytest.mark.asyncio
+async def test_curation_resource_switches_to_seed_progress_after_discovery(
+    application,
+) -> None:
+    app, source_ids = application
+    review = app.review("w1")
+    session, batch, _execution = await _seed_running_curation(
+        review, source_ids[0]
+    )
+    source_ref = f"{source_ids[0]}#section-0001"
+    discovery = review.repository.plan_curation_work_item(
+        batch_id=batch.id,
+        stage="discovery",
+        unit_index=0,
+        input_digest="a" * 64,
+        source_refs=(source_ref,),
+        processor_kind="deterministic",
+    )
+    review.repository.complete_deterministic_curation_work_item(
+        discovery.id,
+        output={
+            "seeds": [{
+                "question_text": "What happens after discovery?",
+                "source_ref": source_ref,
+                "source_refs": [source_ref],
+            }]
+        },
+    )
+
+    resource = await review.curation_resource(session.id)
+
+    assert resource["progress"] == {
+        "phase": "enrichment",
+        "completed": 0,
+        "total": 1,
+        "generated_candidate_count": 0,
+        "active_workers": 0,
+        "retryable_units": 0,
+        "pending_units": 1,
+    }
 
 
 @pytest.mark.asyncio

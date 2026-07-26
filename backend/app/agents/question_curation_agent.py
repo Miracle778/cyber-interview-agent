@@ -39,6 +39,15 @@ _MARKDOWN_HEADING_ONLY = re.compile(r"^\s{0,3}#{1,6}\s+\S.*$")
 _BOLD_HEADING_ONLY = re.compile(r"^\s*(?:\*\*|__)\S.+(?:\*\*|__)\s*$")
 
 
+class ModelOutputTruncatedError(RuntimeError):
+    """The Provider exhausted output budget before returning the schema."""
+
+    code = "output_truncated"
+
+    def __init__(self) -> None:
+        super().__init__("模型输出在结构化结果完成前被截断")
+
+
 @dataclass(frozen=True, slots=True)
 class QuestionCurationAgents:
     discovery: AgentRunnable
@@ -192,9 +201,32 @@ class QuestionCurationAgents:
 
 
 def _structured(result: object) -> object:
-    if not isinstance(result, dict) or "structured_response" not in result:
+    if not isinstance(result, dict):
         raise ValueError("模型未生成结构化题目候选")
-    return result["structured_response"]
+    structured = result.get("structured_response")
+    if structured is not None:
+        return structured
+    if _result_stop_reason(result) in {"max_tokens", "length", "max_output_tokens"}:
+        raise ModelOutputTruncatedError()
+    raise ValueError("模型未生成结构化题目候选")
+
+
+def _result_stop_reason(result: Mapping[str, object]) -> str | None:
+    candidates: list[object] = []
+    for key in ("result", "messages", "output"):
+        value = result.get(key)
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            candidates.extend(value)
+        elif value is not None:
+            candidates.append(value)
+    for candidate in reversed(candidates):
+        metadata = getattr(candidate, "response_metadata", None)
+        if not isinstance(metadata, Mapping):
+            continue
+        raw = metadata.get("stop_reason") or metadata.get("finish_reason")
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip().casefold()
+    return None
 
 
 def _heading_only(text: str) -> bool:

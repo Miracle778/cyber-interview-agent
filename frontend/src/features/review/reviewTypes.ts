@@ -197,6 +197,8 @@ export interface CurationSession {
     total: number;
     generatedCandidateCount: number;
     activeWorkers: number;
+    retryableUnits?: number;
+    pendingUnits?: number;
   };
   timing: { currentElapsedMs: number; cumulativeElapsedMs: number };
   controls: { canPause: boolean; canResume: boolean; canTerminate: boolean };

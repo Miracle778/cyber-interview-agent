@@ -7,7 +7,11 @@ from app.review.curation_planner import (
     CurationPlanningError,
     plan_curation_discovery,
 )
-from app.review.curation_sections import SourceSection, section_sources
+from app.review.curation_sections import (
+    MAX_DISCOVERY_SECTIONS,
+    SourceSection,
+    section_sources,
+)
 from app.review.repository import ReviewRepository
 
 
@@ -138,6 +142,27 @@ def test_plain_40k_source_uses_large_ordered_model_windows() -> None:
     assert [unit.input_digest for unit in plan.model_units] == [
         unit.input_digest for unit in plan_curation_discovery(sections).model_units
     ]
+
+
+def test_dense_short_sections_respect_the_discovery_section_limit() -> None:
+    sections = tuple(
+        SourceSection(
+            source_id="s1",
+            ref=f"s1#section-{index:04d}",
+            ordinal=index,
+            text=f"第 {index} 条随手记录，没有明确的问题结构。",
+            digest=f"{index:064x}",
+        )
+        for index in range(1, 16)
+    )
+
+    plan = plan_curation_discovery(sections)
+
+    assert [len(unit.sections) for unit in plan.model_units] == [6, 6, 3]
+    assert all(
+        len(unit.sections) <= MAX_DISCOVERY_SECTIONS
+        for unit in plan.model_units
+    )
 
 
 def test_planner_never_combines_different_sources_in_one_unit() -> None:

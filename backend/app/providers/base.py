@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Protocol
 
@@ -33,6 +33,8 @@ class ProviderTestResult:
     status: ProviderErrorCode
     latency_ms: int
     message: str
+    resolved_model_id: str | None = None
+    capabilities: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not isinstance(self.status, ProviderErrorCode):

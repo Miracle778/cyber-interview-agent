@@ -100,6 +100,43 @@ async def test_model_test_records_auth_failure(provider_service, fake_adapter, a
 
 
 @pytest.mark.asyncio
+async def test_model_test_persists_observed_capabilities_without_user_fields(
+    provider_service, fake_adapter, app_connection
+):
+    provider = provider_service.create_provider(CreateProviderCommand(
+        name="P",
+        api_format="anthropic-compatible",
+        base_url="https://example.test/v1",
+        api_key="sk-secret",
+    ))
+    _seed_model(
+        app_connection,
+        provider.id,
+        model_id="claude-opus-compatible-alias",
+    )
+    fake_adapter.next_result = ProviderTestResult(
+        status="ok",
+        latency_ms=9,
+        message="连接成功",
+        resolved_model_id="glm-5.2",
+        capabilities={
+            "probeVersion": 1,
+            "reasoningControl": "glm_thinking_switch",
+            "structuredOutput": "unknown",
+        },
+    )
+
+    resource = await provider_service.test_model("model-1")
+    stored = provider_service.providers.get_model("model-1")
+
+    assert resource.connectivity_status == "ok"
+    assert not hasattr(resource, "capability_profile")
+    assert stored.resolved_model_id == "glm-5.2"
+    assert stored.capability_profile["reasoningControl"] == "glm_thinking_switch"
+    assert stored.capabilities_tested_at is not None
+
+
+@pytest.mark.asyncio
 async def test_test_model_records_secret_missing_when_no_key(provider_service, app_connection):
     provider = provider_service.create_provider(CreateProviderCommand(name="P", api_format="openai-compatible", base_url="https://example.test/v1", api_key="sk-secret"))
     _seed_model(app_connection, provider.id)

@@ -107,6 +107,12 @@ class QuestionSeedChunk(_StrictQuestionCurationOutput):
     seeds: list[QuestionSeed] = Field(default_factory=list, max_length=20)
 
 
+class QuestionSeedBatch(_StrictQuestionCurationOutput):
+    """Durable aggregate for one work item that needed bounded sub-invocations."""
+
+    seeds: list[QuestionSeed] = Field(default_factory=list, max_length=200)
+
+
 def normalize_provider_seed_chunk(value: object) -> QuestionSeedChunk:
     if isinstance(value, BaseModel):
         value = value.model_dump()

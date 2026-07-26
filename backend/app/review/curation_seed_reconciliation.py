@@ -8,7 +8,7 @@ from hashlib import sha256
 from app.agents.question_curation_contracts import (
     QuestionCandidate,
     QuestionCandidateChunk,
-    QuestionSeedChunk,
+    QuestionSeedBatch,
 )
 from app.review.models import CurationSeedTaskRecord
 from app.review.repository import ReviewRepository
@@ -33,7 +33,7 @@ def reconcile_curation_seed_tasks(
     for item in repository.list_curation_work_items(batch_id, stage="discovery"):
         if item.status != "completed" or item.output is None:
             continue
-        seeds = QuestionSeedChunk.model_validate(item.output).seeds
+        seeds = QuestionSeedBatch.model_validate(item.output).seeds
         for local_ordinal, seed in enumerate(seeds):
             ordinal = item.unit_index * 20 + local_ordinal
             encoded = json.dumps(

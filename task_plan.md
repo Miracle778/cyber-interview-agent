@@ -29,6 +29,19 @@
 
 下一步：用户用一条测试 JD 和一轮测试回答确认真实 Provider 输出与运行中停止/重试；通过后再恢复阶段收口结论。
 
+## 后续产品待办：Agent 模型调用记录查看器
+
+状态：已记录，暂不进入当前题目整理故障修复。
+
+- 在 Agent 页“运行详情”中提供仅开发/诊断模式可见的“模型调用记录”入口。
+- 按 Session → Execution → Invocation 展示 `model.request`、`model.response`、`model.error` 及 Tool 调用时间线。
+- 单次调用可查看系统提示词、消息输入、响应 Schema、模型参数、原始响应、结构化结果、耗时和安全错误信息。
+- 数据继续以 Workspace 内 per-Execution JSONL Agent Trace 为权威来源；通过受 Workspace/path policy 约束的只读 API 查询，不让前端直接拼接本机文件路径。
+- 默认折叠正文并明确提示其中可能包含简历、JD、复习材料等敏感内容；沿用 secret 过滤，不把完整正文发送到远程 observability。
+- 提供 Agent、事件类型、成功/失败筛选和一键复制；复制成功/失败必须有明确反馈。
+
+验收边界：普通用户模式不展示原始 Prompt/正文；关闭诊断模式不影响 Agent 执行；Trace 缺失、损坏或读取失败必须 fail-open，只影响诊断视图。
+
 ---
 
 ## 前一任务：画像助手会话工作台统一与实页验收

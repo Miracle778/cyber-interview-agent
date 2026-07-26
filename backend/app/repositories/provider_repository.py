@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import uuid
 from dataclasses import dataclass
@@ -15,6 +16,9 @@ class ProviderModelRecord:
     last_tested_at: str | None
     last_error_code: str | None
     last_latency_ms: int | None
+    resolved_model_id: str | None
+    capability_profile: dict[str, object]
+    capabilities_tested_at: str | None
     created_at: str
     updated_at: str
 
@@ -39,7 +43,8 @@ _PROVIDER_COLUMNS = (
 )
 _MODEL_COLUMNS = (
     "id, provider_id, model_id, display_name, enabled, max_input_tokens, connectivity_status, "
-    "last_tested_at, last_error_code, last_latency_ms, created_at, updated_at"
+    "last_tested_at, last_error_code, last_latency_ms, resolved_model_id, "
+    "capability_profile_json, capabilities_tested_at, created_at, updated_at"
 )
 
 
@@ -131,13 +136,33 @@ class ProviderRepository:
         connectivity_status: str,
         latency_ms: int | None,
         error_code: str | None,
+        resolved_model_id: str | None = None,
+        capability_profile: dict[str, object] | None = None,
     ) -> ProviderModelRecord:
+        encoded_profile = json.dumps(
+            capability_profile or {}, ensure_ascii=False, sort_keys=True
+        )
         self._connection.execute(
             "UPDATE provider_models SET connectivity_status = ?, "
             "last_latency_ms = ?, last_error_code = ?, "
+            "resolved_model_id = CASE WHEN ? = 'ok' THEN ? ELSE resolved_model_id END, "
+            "capability_profile_json = CASE WHEN ? = 'ok' THEN ? "
+            "ELSE capability_profile_json END, "
+            "capabilities_tested_at = CASE WHEN ? = 'ok' THEN CURRENT_TIMESTAMP "
+            "ELSE capabilities_tested_at END, "
             "last_tested_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP "
             "WHERE id = ?",
-            (connectivity_status, latency_ms, error_code, model_id),
+            (
+                connectivity_status,
+                latency_ms,
+                error_code,
+                connectivity_status,
+                resolved_model_id,
+                connectivity_status,
+                encoded_profile,
+                connectivity_status,
+                model_id,
+            ),
         )
         return self._require_model(model_id)
 
@@ -184,6 +209,8 @@ class ProviderRepository:
         self._connection.execute(
             "UPDATE provider_models SET connectivity_status = 'unknown', "
             "last_tested_at = NULL, last_error_code = NULL, last_latency_ms = NULL, "
+            "resolved_model_id = NULL, capability_profile_json = '{}', "
+            "capabilities_tested_at = NULL, "
             "updated_at = CURRENT_TIMESTAMP WHERE provider_id = ?",
             (provider_id,),
         )
@@ -192,6 +219,8 @@ class ProviderRepository:
         self._connection.execute(
             "UPDATE provider_models SET connectivity_status = 'unknown', "
             "last_tested_at = NULL, last_error_code = NULL, last_latency_ms = NULL, "
+            "resolved_model_id = NULL, capability_profile_json = '{}', "
+            "capabilities_tested_at = NULL, "
             "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (model_id,),
         )
@@ -297,6 +326,9 @@ class ProviderRepository:
             last_tested_at=row["last_tested_at"],
             last_error_code=row["last_error_code"],
             last_latency_ms=row["last_latency_ms"],
+            resolved_model_id=row["resolved_model_id"],
+            capability_profile=json.loads(row["capability_profile_json"]),
+            capabilities_tested_at=row["capabilities_tested_at"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
