@@ -11,6 +11,12 @@ export function ReviewResults({ round, onDiscuss, discussingOrdinal = null }: { 
   const [view, setView] = useState<"report" | "replay">("report");
   const [filter, setFilter] = useState<"all" | "completed" | "good" | "skipped">("all");
   const scoreText = { good: "掌握良好", partial: "部分掌握", poor: "需要加强" } as const;
+  const resultText = {
+    independent_mastery: "独立掌握",
+    assisted_mastery: "提示后掌握",
+    revealed: "查看答案",
+    skipped: "已跳过",
+  } as const;
   const publicationText: Record<string, string> = { published: "已发布", review_pending: "待确认", index_stale: "索引待更新", failed: "发布失败" };
   const skipped = round.attempts.filter((item) => item.skipped).length;
   const visibleAttempts = round.attempts.filter((attempt) => filter === "all" || (filter === "completed" && attempt.status === "completed") || (filter === "good" && attempt.evaluation?.score === "good") || (filter === "skipped" && attempt.skipped));
@@ -25,7 +31,7 @@ export function ReviewResults({ round, onDiscuss, discussingOrdinal = null }: { 
       {view === "replay" ? <div className="review-result-replay review-conversation--chat"><div className="review-chat-log" role="log" aria-label="复习会话回放">{!round.messages.length && round.attempts.length ? <p className="status-note">此历史轮次没有消息投影，以下内容由已保存的作答记录还原。</p> : null}{replayMessages.length ? replayMessages.map((message) => <ReviewChatMessage key={message.id} message={message} />) : <p className="status-note">本轮没有可回放的对话记录。</p>}</div></div> : <>
       <div className="review-result-metrics">{([{ key: "completed", value: completed, label: "已完成" }, { key: "good", value: good, label: "掌握良好" }, { key: "skipped", value: skipped, label: "跳过" }] as const).map((metric) => <button type="button" key={metric.key} aria-pressed={filter === metric.key} aria-label={`${metric.label} ${metric.value}，点击筛选`} onClick={() => setFilter((current) => current === metric.key ? "all" : metric.key)}><strong>{metric.value}</strong><span>{metric.label}</span></button>)}</div>
       <div className="review-result-filter-meta"><span>{filter === "all" ? "全部题目" : `已筛选：${filter === "completed" ? "已完成" : filter === "good" ? "掌握良好" : "跳过"}`}</span><strong>{visibleAttempts.length} 道</strong></div>
-      <div className="review-result-list">{visibleAttempts.map((attempt) => <details key={attempt.id}><summary><strong>{attempt.ordinal}. {attempt.questionSnapshot.title}</strong><span>{attempt.skipped ? "已跳过" : attempt.evaluation ? scoreText[attempt.evaluation.score] : "未评价"}</span></summary><div>{attempt.evaluation ? <p>{attempt.evaluation.evidence}</p> : <p className="status-note">本题没有评价结果。</p>}<Button size="sm" variant="ghost" loading={discussingOrdinal === attempt.ordinal} disabled={discussingOrdinal !== null} onClick={() => onDiscuss(attempt.ordinal)}><MessageCircle size={14} />{attempt.discussionSessionId ? "继续讨论" : "深入讨论"}</Button></div></details>)}</div>
+      <div className="review-result-list">{visibleAttempts.map((attempt) => <details key={attempt.id}><summary><strong>{attempt.ordinal}. {attempt.questionSnapshot.title}</strong><span>{attempt.resultKind ? resultText[attempt.resultKind] : attempt.skipped ? "已跳过" : attempt.evaluation ? scoreText[attempt.evaluation.score] : "未评价"}</span></summary><div>{attempt.evaluation ? <p>{attempt.evaluation.evidence}</p> : <p className="status-note">本题没有评价结果。</p>}<Button size="sm" variant="ghost" loading={discussingOrdinal === attempt.ordinal} disabled={discussingOrdinal !== null} onClick={() => onDiscuss(attempt.ordinal)}><MessageCircle size={14} />{attempt.discussionSessionId ? "继续讨论" : "深入讨论"}</Button></div></details>)}</div>
       {round.reports.map((report) => <details className="review-report-artifact" key={report.id}><summary><strong>{report.title}</strong><span>{publicationText[report.publication?.state ?? report.status] ?? "报告草稿"}</span></summary>{report.publication ? <div><span>发布状态：{publicationText[report.publication.state] ?? report.publication.state}</span><code>{report.publication.target_path}</code>{report.publication.state === "index_stale" ? <span role="alert">索引待重新扫描</span> : null}</div> : null}</details>)}
       {round.executionStatus === "waiting_for_approval" ? <p className="status-note">报告与掌握度草稿已生成，人工确认只会在右侧待确认区域出现。</p> : null}
       </>}

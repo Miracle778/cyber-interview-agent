@@ -37,6 +37,8 @@ class ReviewQuestion(ReviewModel):
     topics: list[str]
     difficulty: Difficulty
     key_points: list[str]
+    required_key_points: list[str] = Field(default_factory=list)
+    bonus_key_points: list[str] = Field(default_factory=list)
     follow_ups: list[str]
     mastery: MasteryState = "unknown"
 
@@ -99,6 +101,8 @@ class UpdateQuestionCandidateCommand(ReviewModel):
     topics: list[str] | None = None
     difficulty: Difficulty | None = None
     key_points: list[str] | None = None
+    required_key_points: list[str] | None = None
+    bonus_key_points: list[str] | None = None
     follow_ups: list[str] | None = None
 
 
@@ -122,6 +126,12 @@ class BulkDeleteQuestionCandidatesCommand(ReviewModel):
     idempotency_key: str = Field(min_length=8, max_length=200)
     items: list[BulkDeleteQuestionCandidateItem] = Field(min_length=1, max_length=200)
     reason: str = Field(default="", max_length=1000)
+
+
+class BulkConfirmQuestionCandidatesCommand(ReviewModel):
+    workspace_id: str = Field(min_length=1)
+    idempotency_key: str = Field(min_length=8, max_length=200)
+    candidate_ids: list[str] = Field(min_length=1, max_length=200)
 
 
 class UpdateQuestionCandidateNoteCommand(ReviewModel):
@@ -177,6 +187,8 @@ class QuestionSnapshotResource(ReviewModel):
     topics: list[str]
     difficulty: Difficulty
     key_points: list[str]
+    required_key_points: list[str] = Field(default_factory=list)
+    bonus_key_points: list[str] = Field(default_factory=list)
     follow_ups: list[str]
 
 
@@ -213,6 +225,9 @@ class QuestionCandidateResource(ReviewModel):
     ] = "unknown"
     needs_review: bool = True
     normalization_issues: list[str] = Field(default_factory=list)
+    confirmation_status: Literal["pending", "confirmed"] = "pending"
+    confirmation_version: int = Field(default=0, ge=0)
+    confirmed_at: str | None = None
     is_active_version: bool
     status: str
     deleted_at: str | None
@@ -261,10 +276,16 @@ class ActiveQuestionResource(ReviewModel):
 
 class CurrentQuestionResource(ReviewModel):
     id: str
+    document_id: str
     title: str
     question_text: str
     topics: list[str]
     difficulty: Difficulty
+    required_key_point_count: int = Field(ge=1)
+    covered_key_point_count: int = Field(ge=0)
+    missing_directions: list[str] = Field(default_factory=list)
+    has_answer: bool = False
+    hint_level: int = Field(default=0, ge=0)
 
 
 class ReviewInputResource(ReviewModel):
@@ -298,9 +319,24 @@ class ReviewAttemptResource(ReviewModel):
     evaluation_error_code: str | None
     evaluation_started_at: str | None
     evaluation_completed_at: str | None
+    coverage: list["KeyPointCoverageResource"] = Field(default_factory=list)
+    result_kind: Literal[
+        "independent_mastery",
+        "assisted_mastery",
+        "revealed",
+        "skipped",
+    ] | None = None
+    hint_level: int = Field(default=0, ge=0)
+    answer_revisions: list[str] = Field(default_factory=list)
     discussion_session_id: str | None = None
     created_at: str
     updated_at: str
+
+
+class KeyPointCoverageResource(ReviewModel):
+    point: str
+    status: Literal["uncovered", "partial", "covered"]
+    evidence: list[str] = Field(default_factory=list)
 
 
 class ReviewReportResource(ReviewModel):
@@ -334,6 +370,24 @@ class ReviewAnswerReceiptResource(ReviewModel):
     status: Literal["evaluating"]
     accepted_at: str
     version: int
+
+
+class ReviewTurnReceiptResource(ReviewModel):
+    kind: Literal["answer", "auxiliary", "skipped"]
+    intent: Literal[
+        "answer",
+        "show_question",
+        "request_hint",
+        "reveal_answer",
+        "explain",
+        "skip",
+        "unrelated",
+    ]
+    round_id: str
+    input_request_id: str
+    attempt_id: str | None = None
+    receipt_id: str
+    status: str
 
 
 class CurationSourceResource(ReviewModel):
@@ -484,6 +538,18 @@ class QuestionDeletionItemResource(ReviewModel):
 
 class QuestionDeletionResultResource(ReviewModel):
     items: list[QuestionDeletionItemResource]
+
+
+class QuestionConfirmationItemResource(ReviewModel):
+    candidate_id: str
+    status: Literal[
+        "confirmed", "already_confirmed", "blocked", "failed"
+    ]
+    reason: str | None
+
+
+class QuestionConfirmationResultResource(ReviewModel):
+    items: list[QuestionConfirmationItemResource]
 
 
 class CurationCommandReceiptResource(ReviewModel):

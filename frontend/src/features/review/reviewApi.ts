@@ -12,8 +12,10 @@ import type {
   QuestionBatch,
   QuestionCandidate,
   QuestionDeletionResult,
+  QuestionConfirmationResult,
   ReviewAnswerReceipt,
   ReviewRound,
+  ReviewTurnReceipt,
 } from "./reviewTypes";
 import type { AgentExecution, AgentSession } from "../agent/agentTypes";
 
@@ -158,6 +160,10 @@ export function getBulkPublication(operationId: string): Promise<BulkPublication
   return apiGet(`/api/review/bulk-publications/${operationId}`);
 }
 
+export function getLatestBulkPublication(sessionId: string): Promise<BulkPublication | null> {
+  return apiGet(`/api/review/bulk-publications/latest?${new URLSearchParams({ sessionId })}`);
+}
+
 export function listQuestionBatches(workspaceId: string): Promise<QuestionBatch[]> {
   return apiGet(`/api/review/question-batches?${new URLSearchParams({ workspaceId })}`);
 }
@@ -194,9 +200,20 @@ export function getQuestionCandidate(id: string): Promise<QuestionCandidate> {
 
 export function updateQuestionCandidate(
   id: string,
-  command: { version: number; title?: string; questionText?: string; referenceAnswer?: string; topics?: string[]; difficulty?: string; keyPoints?: string[]; followUps?: string[] },
+  command: { version: number; title?: string; questionText?: string; referenceAnswer?: string; topics?: string[]; difficulty?: string; keyPoints?: string[]; requiredKeyPoints?: string[]; bonusKeyPoints?: string[]; followUps?: string[] },
 ): Promise<QuestionCandidate> {
   return apiPatch(`/api/review/question-candidates/${id}`, command);
+}
+
+export function bulkConfirmQuestionCandidates(
+  workspaceId: string,
+  candidateIds: string[],
+): Promise<QuestionConfirmationResult> {
+  return apiPost("/api/review/question-candidates/bulk-confirm", {
+    workspaceId,
+    candidateIds,
+    idempotencyKey: crypto.randomUUID(),
+  });
 }
 
 export function rewriteQuestionCandidate(id: string, feedback: string): Promise<CurationSession> {
@@ -248,9 +265,9 @@ export function createReviewRound(command: CreateReviewRoundRequest): Promise<Re
   return apiPost("/api/review/rounds", command);
 }
 
-export function submitReviewAnswer(round: ReviewRound, value: string, idempotencyKey: string, providerModelId?: string, reasoningEffort?: "none" | "low" | "medium" | "high"): Promise<ReviewAnswerReceipt> {
+export function submitReviewAnswer(round: ReviewRound, value: string, idempotencyKey: string, providerModelId?: string, reasoningEffort?: "none" | "low" | "medium" | "high"): Promise<ReviewTurnReceipt> {
   if (!round.currentInput) throw new Error("当前轮次没有待回答输入");
-  return apiPost(`/api/review/rounds/${round.id}/answers`, {
+  return apiPost(`/api/review/rounds/${round.id}/turns`, {
     inputRequestId: round.currentInput.id,
     version: round.currentInput.version,
     idempotencyKey,

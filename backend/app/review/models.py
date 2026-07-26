@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
+from app.review.coverage import KeyPointCoverage
+
 
 Difficulty: TypeAlias = Literal["easy", "medium", "hard"]
 ReviewMode: TypeAlias = Literal[
@@ -38,6 +40,9 @@ CurationStage: TypeAlias = Literal[
 ]
 AttemptStatus: TypeAlias = Literal[
     "evaluating", "waiting_for_follow_up", "completed", "evaluation_failed"
+]
+ReviewResultKind: TypeAlias = Literal[
+    "independent_mastery", "assisted_mastery", "revealed", "skipped"
 ]
 CurationWorkStage: TypeAlias = Literal["discovery", "enrichment"]
 CurationProcessorKind: TypeAlias = Literal["deterministic", "model"]
@@ -92,6 +97,8 @@ class QuestionSnapshot:
     difficulty: Difficulty
     key_points: tuple[str, ...]
     follow_ups: tuple[str, ...]
+    required_key_points: tuple[str, ...] = ()
+    bonus_key_points: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for name in (
@@ -110,10 +117,17 @@ class QuestionSnapshot:
             raise ValueError("unsupported difficulty")
         if not self.topics or any(not topic.strip() for topic in self.topics):
             raise ValueError("topics must not be empty")
-        if not self.key_points or any(
-            not point.strip() for point in self.key_points
-        ):
-            raise ValueError("key_points must not be empty")
+        required = self.required_key_points or self.key_points
+        if not required or any(not point.strip() for point in required):
+            raise ValueError("required_key_points must not be empty")
+        if any(not point.strip() for point in self.bonus_key_points):
+            raise ValueError("bonus_key_points must not contain empty values")
+        if not self.required_key_points:
+            object.__setattr__(self, "required_key_points", required)
+        if not self.key_points:
+            object.__setattr__(
+                self, "key_points", (*required, *self.bonus_key_points)
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,6 +318,9 @@ class QuestionCandidateRecord:
     material_support: MaterialSupport
     needs_review: bool
     normalization_issues: tuple[str, ...]
+    confirmation_status: Literal["pending", "confirmed"]
+    confirmation_version: int
+    confirmed_at: str | None
     status: str
     deleted_at: str | None
     deletion_reason: str
@@ -473,6 +490,10 @@ class ReviewAttemptRecord:
     evaluation_error_code: str | None = None
     evaluation_started_at: str | None = None
     evaluation_completed_at: str | None = None
+    coverage: tuple[KeyPointCoverage, ...] = ()
+    result_kind: ReviewResultKind | None = None
+    hint_level: int = 0
+    answer_revisions: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

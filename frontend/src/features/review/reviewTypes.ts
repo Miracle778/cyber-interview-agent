@@ -10,6 +10,8 @@ export interface ReviewQuestion {
   topics: string[];
   difficulty: Difficulty;
   keyPoints: string[];
+  requiredKeyPoints?: string[];
+  bonusKeyPoints?: string[];
   followUps: string[];
   mastery: MasteryState;
 }
@@ -34,6 +36,8 @@ export interface CandidateQuestion {
   topics: string[];
   difficulty: Difficulty;
   keyPoints: string[];
+  requiredKeyPoints?: string[];
+  bonusKeyPoints?: string[];
   followUps: string[];
 }
 
@@ -68,6 +72,9 @@ export interface QuestionCandidate {
   materialSupport?: CurationMaterialSupport;
   needsReview?: boolean;
   normalizationIssues?: string[];
+  confirmationStatus?: "pending" | "confirmed";
+  confirmationVersion?: number;
+  confirmedAt?: string | null;
   isActiveVersion?: boolean;
   status: "draft" | "review_pending" | "rejected" | "published";
   deletedAt?: string | null;
@@ -89,6 +96,14 @@ export interface CandidateOriginSession {
 
 export interface QuestionDeletionResult {
   items: { candidateId: string; status: "deleted" | "already_deleted" | "blocked" | "failed"; reason: string | null }[];
+}
+
+export interface QuestionConfirmationResult {
+  items: {
+    candidateId: string;
+    status: "confirmed" | "already_confirmed" | "blocked" | "failed";
+    reason: string | null;
+  }[];
 }
 
 export interface QuestionBatch {
@@ -318,6 +333,14 @@ export interface ReviewAttempt {
   evaluationErrorCode: string | null;
   evaluationStartedAt: string | null;
   evaluationCompletedAt: string | null;
+  coverage?: {
+    point: string;
+    status: "uncovered" | "partial" | "covered";
+    evidence: string[];
+  }[];
+  resultKind?: "independent_mastery" | "assisted_mastery" | "revealed" | "skipped" | null;
+  hintLevel?: number;
+  answerRevisions?: string[];
   discussionSessionId?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -343,6 +366,16 @@ export interface ReviewAnswerReceipt {
   version: number;
 }
 
+export interface ReviewTurnReceipt {
+  kind: "answer" | "auxiliary" | "skipped";
+  intent: "answer" | "show_question" | "request_hint" | "reveal_answer" | "explain" | "skip" | "unrelated";
+  roundId: string;
+  inputRequestId: string;
+  attemptId: string | null;
+  receiptId: string;
+  status: string;
+}
+
 export interface ReviewRound {
   id: string;
   workspaceId: string;
@@ -364,10 +397,16 @@ export interface ReviewRound {
   questionCount: number;
   currentQuestion: {
     id: string;
+    documentId?: string;
     title: string;
     questionText: string;
     topics: string[];
     difficulty: Difficulty;
+    requiredKeyPointCount?: number;
+    coveredKeyPointCount?: number;
+    missingDirections?: string[];
+    hasAnswer?: boolean;
+    hintLevel?: number;
   } | null;
   currentInput: ReviewInput | null;
   attempts: ReviewAttempt[];

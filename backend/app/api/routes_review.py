@@ -27,6 +27,7 @@ from app.schemas.review import (
     QuestionBatchResource,
     QuestionCandidateResource,
     ReviewRoundResource,
+    ReviewTurnReceiptResource,
     ReviewAnswerReceiptResource,
     RewriteQuestionCandidateCommand,
     SkipReviewInputCommand,
@@ -42,7 +43,9 @@ from app.schemas.review import (
     UpdateActiveQuestionVersionCommand,
     DeleteQuestionCandidateCommand,
     BulkDeleteQuestionCandidatesCommand,
+    BulkConfirmQuestionCandidatesCommand,
     QuestionDeletionResultResource,
+    QuestionConfirmationResultResource,
 )
 from app.schemas.agent import ExecutionResource
 
@@ -287,6 +290,18 @@ async def retry_bulk_publication(
 
 
 @router.get(
+    "/bulk-publications/latest",
+    response_model=BulkPublicationResource | None,
+)
+async def get_latest_bulk_publication(
+    session_id: Annotated[str, Query(alias="sessionId")],
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_review_session(session_id)
+    return review.latest_bulk_publication_resource(session_id)
+
+
+@router.get(
     "/bulk-publications/{operation_id}",
     response_model=BulkPublicationResource,
 )
@@ -419,6 +434,20 @@ async def bulk_delete_question_candidates(
         tuple((item.candidate_id, item.expected_version) for item in command.items),
         idempotency_key=command.idempotency_key,
         reason=command.reason,
+    )
+
+
+@router.post(
+    "/question-candidates/bulk-confirm",
+    response_model=QuestionConfirmationResultResource,
+)
+async def bulk_confirm_question_candidates(
+    command: BulkConfirmQuestionCandidatesCommand,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    return application.review(command.workspace_id).confirm_candidates(
+        tuple(command.candidate_ids),
+        idempotency_key=command.idempotency_key,
     )
 
 
@@ -612,6 +641,28 @@ async def submit_review_answer(
         reasoning_effort=command.reasoning_effort,
     )
     return review.answer_receipt_resource(receipt)
+
+
+@router.post(
+    "/rounds/{round_id}/turns",
+    response_model=ReviewTurnReceiptResource,
+    status_code=202,
+)
+async def submit_review_turn(
+    round_id: str,
+    command: SubmitReviewInputCommand,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_review_round(round_id)
+    return await review.submit_turn(
+        round_id,
+        request_id=command.input_request_id,
+        version=command.version,
+        idempotency_key=command.idempotency_key,
+        value=command.value,
+        provider_model_id=command.provider_model_id,
+        reasoning_effort=command.reasoning_effort,
+    )
 
 
 @router.post(

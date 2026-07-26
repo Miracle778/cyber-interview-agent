@@ -148,7 +148,7 @@ describe("QuestionCatalog", () => {
     });
     render(<QuestionCatalog workspace={workspace} />, { wrapper });
     await screen.findByRole("tab", { name: "整理会话" });
-    fireEvent.click(screen.getByRole("button", { name: /已发布/ }));
+    fireEvent.click(screen.getByRole("button", { name: /已入库题目/ }));
     expect(await screen.findByRole("region", { name: "题目库浏览器" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "已入库 0" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByLabelText("搜索候选题")).toBeInTheDocument();
@@ -245,14 +245,14 @@ describe("QuestionCatalog", () => {
     });
 
     render(<QuestionCatalog workspace={workspace} />, { wrapper });
-    const totalSummary = await screen.findByRole("button", { name: /题目总数/ });
+    const totalSummary = await screen.findByRole("button", { name: /题库题目/ });
     await waitFor(() => expect(totalSummary).toHaveTextContent("2"));
-    const publishedSummary = await screen.findByRole("button", { name: /已发布/ });
+    const publishedSummary = await screen.findByRole("button", { name: /已入库题目/ });
     await waitFor(() => expect(publishedSummary).toHaveTextContent("1"));
     fireEvent.click(totalSummary);
     await waitFor(() => expect(screen.getByRole("region", { name: "题目结果" })).toHaveTextContent("2 道逻辑题目"));
     fireEvent.click(screen.getByRole("button", { name: "返回整理会话" }));
-    fireEvent.click(screen.getByRole("button", { name: /已发布/ }));
+    fireEvent.click(screen.getByRole("button", { name: /已入库题目/ }));
     expect(await screen.findByRole("button", { name: "已入库 1" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("region", { name: "题目结果" })).toHaveTextContent("1 道逻辑题目");
     fireEvent.change(screen.getByRole("combobox", { name: "主题筛选" }), {
@@ -293,7 +293,7 @@ describe("QuestionCatalog", () => {
   });
 
   it("opens publication approval in the current viewport instead of below the library", async () => {
-    const pendingCandidate = { id: "c1", batchId: "b1", curationSessionId: "cs1", sourceRefs: ["s1"], correctionNote: "", reviewNote: "", reviewNoteUpdatedAt: null, duplicateOfQuestionId: null, duplicateQuestion: null, status: "review_pending", draft: { id: "d1", title: "缓存雪崩", markdown: "# 缓存雪崩\n\n## 题目\n\n什么是缓存雪崩？\n\n## 参考答案\n\n大量缓存同时失效。", status: "review_pending", version: 1, contentHash: "h1", documentType: "question" }, createdAt: "now", updatedAt: "now", question: { questionId: "q1", documentId: "d1", contentHash: "h1", title: "缓存雪崩", questionText: "什么是缓存雪崩？", referenceAnswer: "大量缓存同时失效。", topics: ["Redis"], difficulty: "medium", keyPoints: [], followUps: [] } };
+    const pendingCandidate = { id: "c1", batchId: "b1", curationSessionId: "cs1", sourceRefs: ["s1"], correctionNote: "", reviewNote: "", reviewNoteUpdatedAt: null, duplicateOfQuestionId: null, duplicateQuestion: null, status: "review_pending", confirmationStatus: "confirmed", draft: { id: "d1", title: "缓存雪崩", markdown: "# 缓存雪崩\n\n## 题目\n\n什么是缓存雪崩？\n\n## 参考答案\n\n大量缓存同时失效。", status: "review_pending", version: 1, contentHash: "h1", documentType: "question" }, createdAt: "now", updatedAt: "now", question: { questionId: "q1", documentId: "d1", contentHash: "h1", title: "缓存雪崩", questionText: "什么是缓存雪崩？", referenceAnswer: "大量缓存同时失效。", topics: ["Redis"], difficulty: "medium", keyPoints: [], followUps: [] } };
     const existingAction = { id: "action-existing", workspaceId: "w1", sessionId: "existing-session", executionId: "existing-run", actionType: "knowledge.publish", preview: { title: "TCP 慢启动", markdown: "# TCP 慢启动" }, editableFields: ["title", "markdown"], status: "pending", version: 1, createdAt: "now", resolvedAt: null };
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
@@ -310,7 +310,7 @@ describe("QuestionCatalog", () => {
     render(<QuestionCatalog workspace={workspace} />, { wrapper });
     await screen.findByRole("tab", { name: "题目库" });
     fireEvent.click(screen.getByRole("tab", { name: "题目库" }));
-    fireEvent.click(await screen.findByRole("button", { name: "确认入库" }));
+    fireEvent.click(await screen.findByRole("button", { name: "发布入库" }));
 
     const dialog = await screen.findByRole("dialog", { name: "题目发布审批" });
     expect(dialog.parentElement).toHaveClass("dialog-backdrop");
@@ -333,6 +333,86 @@ describe("QuestionCatalog", () => {
     fireEvent.click(within(queueDialog).getByRole("button", { name: /TCP 慢启动/ }));
     expect(await within(queueDialog).findByRole("button", { name: "批准并入库" })).toBeInTheDocument();
     expect(within(queueDialog).getAllByText("TCP 慢启动").length).toBeGreaterThan(0);
+  });
+
+  it("selects the filtered pending questions and confirms them without publishing", async () => {
+    const candidates = ["缓存雪崩", "缓存击穿"].map((title, index) => ({
+      id: `c${index + 1}`, batchId: "b1", curationSessionId: "cs1", sourceRefs: ["s1"],
+      correctionNote: "", reviewNote: "", reviewNoteUpdatedAt: null, duplicateOfQuestionId: null,
+      duplicateQuestion: null, status: "review_pending", confirmationStatus: "pending",
+      draft: { id: `d${index + 1}`, title, markdown: `# ${title}`, status: "review_pending", version: 1, contentHash: `h${index + 1}`, documentType: "question" },
+      createdAt: "now", updatedAt: "now",
+      question: { questionId: `q${index + 1}`, documentId: `d${index + 1}`, contentHash: `h${index + 1}`, title, questionText: `${title}是什么？`, referenceAnswer: "参考答案", topics: ["Redis"], difficulty: "medium", keyPoints: ["成因"], followUps: [] },
+    }));
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/review/question-candidates/bulk-confirm") && init?.method === "POST") {
+        return Response.json({ items: candidates.map((item) => ({ candidateId: item.id, status: "confirmed", reason: null })) });
+      }
+      if (url.includes("/api/knowledge/sources")) return Response.json([]);
+      if (url.includes("/api/review/curation-sessions") || url.includes("/api/review/question-batches")) return Response.json([]);
+      if (url.includes("/api/review/question-candidates")) return Response.json(candidates);
+      if (url.includes("/api/agent/actions?")) return Response.json([]);
+      throw new Error(`unexpected ${url}`);
+    });
+
+    render(<QuestionCatalog workspace={workspace} />, { wrapper });
+    fireEvent.click(await screen.findByRole("tab", { name: "题目库" }));
+    await waitFor(() => expect(screen.getByRole("region", { name: "题目结果" })).toHaveTextContent("2 道逻辑题目"));
+    fireEvent.click(screen.getByRole("checkbox", { name: "全选当前筛选结果" }));
+    expect(screen.getByText("已选 2 道")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "批量确认" }));
+    const confirmation = screen.getByRole("dialog", { name: "确认批量确认" });
+    expect(confirmation).toHaveTextContent("这一步不会发布入库");
+    fireEvent.click(within(confirmation).getByRole("button", { name: "确认所选内容" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/review/question-candidates/bulk-confirm",
+      expect.objectContaining({ method: "POST", body: expect.stringContaining('"candidateIds":["c1","c2"]') }),
+    ));
+    expect(await screen.findByText("已确认 2 道题；尚未发布入库。")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining("publish"), expect.anything());
+  });
+
+  it("keeps published questions selectable for bulk deletion", async () => {
+    const publishedCandidate = (id: string, title: string) => ({
+      id, batchId: "b1", curationSessionId: "cs1", sourceRefs: ["s1"],
+      correctionNote: "", reviewNote: "", reviewNoteUpdatedAt: null, duplicateOfQuestionId: null,
+      duplicateQuestion: null, status: "published", confirmationStatus: "confirmed",
+      draft: { id: `d-${id}`, title, markdown: `# ${title}`, status: "published", version: 1, contentHash: `hash-${id}`, documentType: "question" },
+      createdAt: "now", updatedAt: "now",
+      question: { questionId: `q-${id}`, documentId: `d-${id}`, contentHash: `hash-${id}`, title, questionText: `${title}如何工作？`, referenceAnswer: "参考答案", topics: ["MyBatis"], difficulty: "medium", keyPoints: ["插件链"], followUps: [] },
+    });
+    const candidates = [
+      publishedCandidate("c-published-1", "MyBatis 拦截器"),
+      publishedCandidate("c-published-2", "MyBatis 插件链"),
+    ];
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/review/question-candidates/bulk-delete") && init?.method === "POST") {
+        return Response.json({ items: candidates.map((candidate) => ({ candidateId: candidate.id, status: "deleted", reason: null })) });
+      }
+      if (url.includes("/api/knowledge/sources")) return Response.json([]);
+      if (url.includes("/api/review/curation-sessions") || url.includes("/api/review/question-batches")) return Response.json([]);
+      if (url.includes("/api/review/question-candidates")) return Response.json(candidates);
+      if (url.includes("/api/agent/actions?")) return Response.json([]);
+      throw new Error(`unexpected ${url}`);
+    });
+    vi.spyOn(globalThis, "confirm").mockReturnValue(true);
+
+    render(<QuestionCatalog workspace={workspace} />, { wrapper });
+    fireEvent.click(await screen.findByRole("tab", { name: "题目库" }));
+    const selectAll = await screen.findByRole("checkbox", { name: "全选当前筛选结果" });
+    await waitFor(() => expect(selectAll).toBeEnabled());
+    fireEvent.click(selectAll);
+    expect(screen.getByText("已选 2 道")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "批量确认" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "批量删除" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/review/question-candidates/bulk-delete",
+      expect.objectContaining({ method: "POST", body: expect.stringContaining('"candidateId":"c-published-1"') }),
+    ));
   });
 
   it("hydrates a failed Batch and resumes it through the domain control endpoint", async () => {

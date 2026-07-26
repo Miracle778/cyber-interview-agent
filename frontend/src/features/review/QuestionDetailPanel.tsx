@@ -25,22 +25,49 @@ function markdownSection(markdown: string, heading: string) {
   return undefined;
 }
 
-export function QuestionDetailPanel({ candidate, sourceLabels, busy, approvalPending = false, publicationBlockedReason, onSave, onRewrite, onConfirm, onDelete, onOpenSession }: { candidate: QuestionCandidate | null; sourceLabels: Record<string, string>; busy: boolean; approvalPending?: boolean; publicationBlockedReason?: string; onSave: (values: { version: number; title: string; questionText: string; referenceAnswer: string; keyPoints: string[] }) => void; onRewrite: (feedback: string) => void; onConfirm: () => void; onDelete?: () => void; onOpenSession: (candidateId: string) => void }) {
+function markdownList(markdown: string, heading: string) {
+  return markdownSection(markdown, heading)
+    ?.split("\n")
+    .map((line) => line.replace(/^\s*[-*+]\s+/, "").trim())
+    .filter((line) => Boolean(line) && line !== "暂无");
+}
+
+function candidateMarkdown(candidate: QuestionCandidate) {
+  const required = candidate.question.requiredKeyPoints ?? candidate.question.keyPoints;
+  const bonus = candidate.question.bonusKeyPoints ?? [];
+  return `# ${candidate.question.title}\n\n## 题目\n\n${candidate.question.questionText}\n\n## 参考答案\n\n${candidate.question.referenceAnswer}\n\n## 必答点\n\n${required.map((point) => `- ${point}`).join("\n")}\n\n## 加分点\n\n${bonus.length ? bonus.map((point) => `- ${point}`).join("\n") : "- 暂无"}`;
+}
+
+type QuestionSaveValues = {
+  version: number;
+  title: string;
+  questionText: string;
+  referenceAnswer: string;
+  keyPoints: string[];
+  requiredKeyPoints: string[];
+  bonusKeyPoints: string[];
+};
+
+export function QuestionDetailPanel({ candidate, sourceLabels, busy, approvalPending = false, publicationBlockedReason, onSave, onRewrite, onConfirm, onPublish, onDelete, onOpenSession }: { candidate: QuestionCandidate | null; sourceLabels: Record<string, string>; busy: boolean; approvalPending?: boolean; publicationBlockedReason?: string; onSave: (values: QuestionSaveValues) => void; onRewrite: (feedback: string) => void; onConfirm: () => void; onPublish?: () => void; onDelete?: () => void; onOpenSession: (candidateId: string) => void }) {
   const [mode, setMode] = useState<"preview" | "source">("preview");
   const [feedback, setFeedback] = useState(candidate?.rejectionReason ?? "");
-  const [source, setSource] = useState(candidate?.draft?.markdown ?? (candidate ? `# ${candidate.question.title}\n\n## 题目\n\n${candidate.question.questionText}\n\n## 参考答案\n\n${candidate.question.referenceAnswer}\n\n## 关键点\n\n${candidate.question.keyPoints.map((point) => `- ${point}`).join("\n")}` : ""));
+  const [source, setSource] = useState(candidate?.draft?.markdown ?? (candidate ? candidateMarkdown(candidate) : ""));
   if (!candidate) return <div className="question-detail-empty"><Eye size={22} /><p>选择一道候选题查看详情</p></div>;
   const draft = candidate.draft;
-  const markdown = (draft?.markdown ?? `## 题目\n\n${candidate.question.questionText}\n\n## 参考答案\n\n${candidate.question.referenceAnswer}\n\n## 关键点\n\n${candidate.question.keyPoints.map((point) => `- ${point}`).join("\n")}`).replace(/^# [^\n]+\n+/, "");
+  const markdown = (draft?.markdown ?? candidateMarkdown(candidate)).replace(/^# [^\n]+\n+/, "");
   const saveSource = () => {
     const title = source.match(/^#\s+(.+)$/m)?.[1].trim() || candidate.question.title;
     const questionText = markdownSection(source, "题目") || candidate.question.questionText;
     const referenceAnswer = markdownSection(source, "参考答案") || candidate.question.referenceAnswer;
-    const keyPointsSection = markdownSection(source, "关键点");
-    const keyPoints = keyPointsSection
-      ? keyPointsSection.split("\n").map((line) => line.replace(/^\s*[-*+]\s+/, "").trim()).filter(Boolean)
-      : candidate.question.keyPoints;
-    onSave({ version: draft?.version ?? 1, title, questionText, referenceAnswer, keyPoints });
+    const requiredKeyPoints = markdownList(source, "必答点")
+      ?? markdownList(source, "关键点")
+      ?? candidate.question.requiredKeyPoints
+      ?? candidate.question.keyPoints;
+    const bonusKeyPoints = markdownList(source, "加分点")
+      ?? candidate.question.bonusKeyPoints
+      ?? [];
+    const keyPoints = [...new Set([...requiredKeyPoints, ...bonusKeyPoints])];
+    onSave({ version: draft?.version ?? 1, title, questionText, referenceAnswer, keyPoints, requiredKeyPoints, bonusKeyPoints });
   };
   return (
     <section className="question-detail" aria-label="题目详情" key={candidate.id}>
@@ -62,7 +89,7 @@ export function QuestionDetailPanel({ candidate, sourceLabels, busy, approvalPen
         {candidate.duplicateOfQuestionId ? <aside className="duplicate-warning"><AlertTriangle size={18} /><div><strong>发现相似已发布题目</strong>{candidate.duplicateQuestion ? <><p><b>{candidate.duplicateQuestion.title}</b></p><p>{candidate.duplicateQuestion.questionText}</p></> : <p>题目 ID：{candidate.duplicateOfQuestionId}</p>}<small>确认前请比较题目与答案差异。</small></div></aside> : null}
         <div className="rewrite-row"><label className="field"><span className="field__label">{candidate.status === "rejected" ? "按退回原因让 AI 在原会话中重写" : "让 AI 重新整理"}</span><input className="field__input" value={feedback} onChange={(event) => setFeedback(event.target.value)} placeholder="例如：增加故障排查场景" /></label><Button variant="secondary" disabled={!feedback.trim() || busy} onClick={() => onRewrite(feedback.trim())}><RefreshCw size={15} />重新整理</Button><button type="button" className="text-link" onClick={() => onOpenSession(candidate.id)}>查看生成会话</button>{onDelete ? <Button variant="danger" disabled={busy} onClick={onDelete}><Trash2 size={15} />删除题目</Button> : null}</div>
       </div>
-      {candidate.status === "review_pending" ? <section className="candidate-confirm"><CheckCircle2 size={18} /><div><strong>{publicationBlockedReason ? "已归入现有逻辑题目" : approvalPending ? "发布审批已发起" : "确认后进入发布审批"}</strong><p>{publicationBlockedReason ?? (approvalPending ? "可通过页面右下角的待处理入口继续审批。" : (["mixed", "model", "unknown"].includes(candidate.answerBasis ?? "source") ? "该题含 AI 补全或主要由 AI 生成，下一步会要求明确确认后才可入库。" : "批准之前不会进入可复习题库。"))}</p></div>{!approvalPending && !publicationBlockedReason ? <Button loading={busy} onClick={onConfirm}>确认入库</Button> : null}</section> : null}
+      {candidate.status === "review_pending" ? <section className="candidate-confirm"><CheckCircle2 size={18} /><div><strong>{publicationBlockedReason ? "已归入现有逻辑题目" : approvalPending ? "发布审批已发起" : candidate.confirmationStatus === "confirmed" ? "内容已确认，可以发布" : "先确认内容，再决定是否发布"}</strong><p>{publicationBlockedReason ?? (approvalPending ? "可通过页面右下角的待处理入口继续审批。" : candidate.confirmationStatus === "confirmed" ? "确认只代表内容审核通过；发布后才会进入可复习题库。" : "核对题目、答案和必答点。确认不会自动发布。")}</p></div>{!approvalPending && !publicationBlockedReason ? candidate.confirmationStatus === "confirmed" ? <Button loading={busy} onClick={onPublish}>发布入库</Button> : <Button loading={busy} onClick={onConfirm}>确认内容</Button> : null}</section> : null}
       {candidate.status === "rejected" ? <section className="candidate-confirm candidate-confirm--revision"><RefreshCw size={18} /><div><strong>修改后可重新提交审批</strong><p>可手动编辑原文，或按退回原因让 AI 在原整理会话中重写。</p></div><Button variant="secondary" disabled={busy} onClick={() => setMode("source")}>手动修改</Button></section> : null}
     </section>
   );

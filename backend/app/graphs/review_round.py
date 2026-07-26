@@ -15,6 +15,11 @@ from app.agents.review_round_contracts import (
     RoundAnswerEvaluation,
 )
 from app.review.models import ReviewAttemptRecord
+from app.review.coverage import (
+    KeyPointCoverage,
+    ReviewCompletionPolicy,
+    merge_key_point_coverage,
+)
 from app.review.repository import ReviewRepository
 
 
@@ -68,6 +73,8 @@ def _attempt_payload(attempt: ReviewAttemptRecord) -> dict[str, Any]:
         "evaluation": attempt.evaluation,
         "masterySuggestion": attempt.mastery_suggestion,
         "skipped": attempt.skipped,
+        "coverage": [asdict(item) for item in attempt.coverage],
+        "resultKind": attempt.result_kind,
     }
 
 
@@ -163,12 +170,24 @@ def create_review_round_graph(
         evaluation = RoundAnswerEvaluation.model_validate(
             state["current_evaluation"]
         )
+        attempt = next(
+            item
+            for item in repository.list_attempts(state["round_id"])
+            if item.ordinal == state["current_index"] + 1
+        )
+        missing = [
+            item.point for item in attempt.coverage if item.status != "covered"
+        ]
+        prompt = evaluation.follow_up_prompt or (
+            f"请继续补充：{'、'.join(missing)}" if missing else "请继续补充回答"
+        )
+        version = int(state.get("current_input_request", {}).get("version", 0)) + 1
         request = repository.ensure_input_request(
             round_id=state["round_id"],
             ordinal=state["current_index"] + 1,
             kind="follow_up",
-            prompt=evaluation.follow_up_prompt or "请补充回答",
-            version=state["current_index"] * 2 + 2,
+            prompt=prompt,
+            version=version,
         )
         value = interrupt(
             {
@@ -224,7 +243,7 @@ def create_review_round_graph(
                 for item in repository.list_attempts(round_record.id)
                 if item.ordinal == ordinal
             )
-            completed = repository.complete_attempt_without_follow_up(attempt.id)
+            completed = repository.skip_attempt(attempt.id)
             attempt_id = completed.id
             attempt_status = completed.status
         else:
@@ -233,15 +252,37 @@ def create_review_round_graph(
                 for item in repository.list_attempts(round_record.id)
                 if item.ordinal == ordinal
             )
+            question = attempt.question_snapshot
+            coverage = merge_key_point_coverage(
+                question.required_key_points,
+                attempt.coverage,
+                _coverage_decisions(question.required_key_points, evaluation),
+            )
+            can_advance = ReviewCompletionPolicy.can_advance(
+                coverage, skipped=False
+            )
+            hint_level, revealed = repository.question_assistance(
+                round_record.id, ordinal
+            )
+            result_kind = (
+                (
+                    "revealed"
+                    if revealed
+                    else "assisted_mastery"
+                    if hint_level > 0
+                    else "independent_mastery"
+                )
+                if can_advance
+                else None
+            )
             completed = repository.complete_attempt_evaluation(
                 attempt.id,
                 evaluation=evaluation.model_dump(),
                 mastery_suggestion=evaluation.mastery_suggestion,
-                needs_follow_up=(
-                    round_record.settings.allow_follow_up
-                    and evaluation.follow_up_required
-                    and not state.get("current_follow_up")
-                ),
+                needs_follow_up=not can_advance,
+                coverage=coverage,
+                result_kind=result_kind,
+                hint_level=hint_level,
             )
             attempt_id = completed.id
             attempt_status = completed.status
@@ -389,3 +430,73 @@ def create_review_round_graph(
     graph.add_conditional_edges("await_publication", after_publication)
     graph.add_edge("finish", END)
     return graph.compile(checkpointer=checkpointer)
+
+
+def _coverage_decisions(
+    required_points: tuple[str, ...],
+    evaluation: RoundAnswerEvaluation,
+) -> tuple[KeyPointCoverage, ...]:
+    required = set(required_points)
+    explicit = bool(
+        evaluation.covered_key_points or evaluation.partial_key_points
+    )
+    if explicit:
+        reported = (
+            *evaluation.covered_key_points,
+            *evaluation.partial_key_points,
+            *evaluation.missing_key_points,
+        )
+        unknown = [point for point in reported if point not in required]
+        if unknown:
+            raise ValueError(f"unknown key point in evaluation: {unknown[0]}")
+        overlap = (
+            set(evaluation.covered_key_points)
+            & set(evaluation.partial_key_points)
+        ) | (
+            set(evaluation.covered_key_points)
+            & set(evaluation.missing_key_points)
+        ) | (
+            set(evaluation.partial_key_points)
+            & set(evaluation.missing_key_points)
+        )
+        if overlap:
+            raise ValueError("evaluation returned contradictory key point status")
+        status_by_point = {
+            **{point: "covered" for point in evaluation.covered_key_points},
+            **{point: "partial" for point in evaluation.partial_key_points},
+            **{point: "uncovered" for point in evaluation.missing_key_points},
+        }
+    elif evaluation.score == "good":
+        status_by_point = {point: "covered" for point in required_points}
+    else:
+        matched_missing = {
+            point for point in evaluation.missing_key_points if point in required
+        }
+        status_by_point = {
+            point: (
+                "uncovered"
+                if point in matched_missing
+                else "covered" if matched_missing else "partial"
+            )
+            for point in required_points
+        }
+    return tuple(
+        KeyPointCoverage(
+            point=point,
+            status=status_by_point.get(point, "uncovered"),  # type: ignore[arg-type]
+            evidence=tuple(
+                filter(
+                    None,
+                    (
+                        evaluation.evidence_by_point.get(point),
+                        (
+                            evaluation.evidence
+                            if status_by_point.get(point) == "covered"
+                            else None
+                        ),
+                    ),
+                )
+            ),
+        )
+        for point in required_points
+    )

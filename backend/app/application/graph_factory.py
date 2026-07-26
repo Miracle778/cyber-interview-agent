@@ -142,6 +142,53 @@ class ProductionGraphFactory:
             model_override=interaction_override,
         )
 
+    def create_review_round_agents(
+        self,
+        *,
+        model_bindings,
+        projection,
+        audit,
+        observability,
+        publish_event=None,
+        interaction_override: ModelOverride | None = None,
+    ) -> ReviewRoundAgents:
+        roles = ("answer_evaluation", "report_summarization", "agent_chat")
+        context_limit_tokens = min(
+            self._agents.resolve_context_limit(
+                role,
+                model_bindings=model_bindings,
+                model_override=(
+                    interaction_override
+                    if role == "answer_evaluation"
+                    else None
+                ),
+            )
+            for role in roles
+        )
+        middleware = build_default_middleware(
+            summary_model=self._agents.resolve_model(
+                "report_summarization", model_bindings=model_bindings
+            ),
+            summary_provider_model_id=model_bindings["report_summarization"],
+            trace_writer=self.trace_writer,
+            projection=projection,
+            policy=ToolPolicyMiddleware(
+                audit=audit,
+                required_scopes={},
+                publish_event=publish_event,
+            ),
+            observability=observability,
+            interrupt_on={},
+            budget_profile=REVIEW_ROUND_BUDGET,
+            context_limit_tokens=context_limit_tokens,
+        )
+        return ReviewRoundAgents.create(
+            self._agents,
+            model_bindings=model_bindings,
+            middleware=middleware,
+            answer_model_override=interaction_override,
+        )
+
     def __call__(self, kind: str, **dependencies):
         if kind in {"profile.ingest", "profile.assess", "profile.manage"}:
             bindings = dependencies["model_bindings"]

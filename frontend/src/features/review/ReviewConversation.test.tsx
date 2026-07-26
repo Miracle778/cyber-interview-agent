@@ -32,7 +32,7 @@ describe("ReviewConversation", () => {
     expect(log).toHaveTextContent("正在评价回答");
     expect(log).not.toHaveTextContent("思维链");
     expect(screen.getByText("multiple versions").closest("article")).toHaveClass("review-chat-message--user");
-    expect(screen.getByText("Explain MVCC").closest("article")).toHaveClass("review-chat-message--agent");
+    expect(within(log).getByText("Explain MVCC").closest("article")).toHaveClass("review-chat-message--agent");
   });
 
   it("shows the real per-attempt processing duration beside an evaluation reply", () => {

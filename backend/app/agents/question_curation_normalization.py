@@ -196,7 +196,14 @@ def _normalize_one(
     elif raw_difficulty != difficulty:
         issues.append("difficulty_mapped")
 
+    required_key_points, required_changed = _strings(item.required_key_points)
+    bonus_key_points, bonus_changed = _strings(item.bonus_key_points)
     key_points, key_points_changed = _strings(item.key_points)
+    if required_key_points:
+        key_points = list(dict.fromkeys((*required_key_points, *bonus_key_points)))
+        key_points_changed = key_points_changed or required_changed or bonus_changed
+    else:
+        required_key_points = key_points
     if not key_points:
         return _retryable(task, "missing_key_points", (*issues, "missing_key_points"))
     if key_points_changed:
@@ -220,6 +227,8 @@ def _normalize_one(
         topics=topics,
         difficulty=difficulty,
         key_points=key_points,
+        required_key_points=required_key_points,
+        bonus_key_points=bonus_key_points,
         follow_ups=follow_ups,
         source_refs=expected_refs,
         correction_note=correction_note,

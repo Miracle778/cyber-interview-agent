@@ -22,10 +22,10 @@ describe("QuestionDetailPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "原文" }));
     const source = screen.getByRole("textbox", { name: "Markdown 原文" });
     expect((source as HTMLTextAreaElement).value).toContain("# MVCC");
-    fireEvent.change(source, { target: { value: "# MVCC 新标题\n\n## 题目\n\n新的问题\n\n## 参考答案\n\n新的答案\n\n## 关键点\n\n- 快照\n- 版本链" } });
+    fireEvent.change(source, { target: { value: "# MVCC 新标题\n\n## 题目\n\n新的问题\n\n## 参考答案\n\n新的答案\n\n## 必答点\n\n- 快照\n- 版本链\n\n## 加分点\n\n- ReadView" } });
     fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
-    expect(onSave).toHaveBeenCalledWith({ version: 1, title: "MVCC 新标题", questionText: "新的问题", referenceAnswer: "新的答案", keyPoints: ["快照", "版本链"] });
-    expect(screen.getByText("确认后进入发布审批")).toBeInTheDocument();
+    expect(onSave).toHaveBeenCalledWith({ version: 1, title: "MVCC 新标题", questionText: "新的问题", referenceAnswer: "新的答案", keyPoints: ["快照", "版本链", "ReadView"], requiredKeyPoints: ["快照", "版本链"], bonusKeyPoints: ["ReadView"] });
+    expect(screen.getByText("先确认内容，再决定是否发布")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "来源证据" })).toHaveTextContent("mysql.md");
   });
 
@@ -53,7 +53,7 @@ describe("QuestionDetailPanel", () => {
     render(<QuestionDetailPanel candidate={{ ...candidate, answerBasis: "model", materialSupport: "minimal", needsReview: true, normalizationIssues: ["repaired_title"] }} sourceLabels={{}} busy={false} onSave={vi.fn()} onRewrite={vi.fn()} onConfirm={vi.fn()} onOpenSession={vi.fn()} />);
     expect(screen.getByRole("note")).toHaveTextContent("主要由 AI 生成");
     expect(screen.getByRole("note")).toHaveTextContent("原资料提供的支撑很少");
-    expect(screen.getByText(/下一步会要求明确确认/)).toBeInTheDocument();
+    expect(screen.getByText(/发布时会要求你明确确认/)).toBeInTheDocument();
   });
 
   it("shows the rejection reason and carries it into the next revision", () => {

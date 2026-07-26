@@ -19,6 +19,7 @@ from app.knowledge.drafts import (
 )
 from app.knowledge.publication import PublicationService
 from app.review.errors import InputAlreadyResolvedError, ReviewConflictError
+from app.review.coverage import KeyPointCoverage
 from app.review.models import (
     CurationSummary,
     MasteryEntry,
@@ -581,6 +582,52 @@ def test_bulk_publication_persists_item_progress_and_retries_only_failures(
     connection.close()
 
 
+def test_latest_bulk_publication_is_scoped_to_the_curation_session(
+    tmp_path: Path,
+) -> None:
+    connection = _connection(tmp_path)
+    repository = ReviewRepository(connection)
+    connection.execute(
+        "INSERT INTO agent_sessions "
+        "(id, workspace_id, graph_id, graph_version, title) "
+        "VALUES ('s2', 'w1', 'question.curation', 1, 'Other')"
+    )
+    connection.commit()
+    repository.create_curation_session(
+        workspace_id="w1",
+        session_id="s1",
+        source_refs=("source-1",),
+    )
+    repository.create_curation_session(
+        workspace_id="w1",
+        session_id="s2",
+        source_refs=("source-2",),
+    )
+    first, _ = repository.create_bulk_publication(
+        session_id="s1",
+        summary_version=1,
+        idempotency_key="bulk-1",
+        candidate_ids=(),
+    )
+    second, _ = repository.create_bulk_publication(
+        session_id="s1",
+        summary_version=2,
+        idempotency_key="bulk-2",
+        candidate_ids=(),
+    )
+    repository.create_bulk_publication(
+        session_id="s2",
+        summary_version=1,
+        idempotency_key="bulk-other",
+        candidate_ids=(),
+    )
+
+    assert repository.get_latest_bulk_publication("s1").id == second.id
+    assert repository.get_latest_bulk_publication("missing") is None
+    assert first.id != second.id
+    connection.close()
+
+
 def test_bulk_publication_reconciliation_requeues_terminal_running_item(
     tmp_path: Path,
 ) -> None:
@@ -687,7 +734,11 @@ def test_batch_candidate_and_catalog_activation_are_idempotent(
 
     assert first == second
     assert first.snapshot.question_id == "a"
-    assert repository.get_candidate(candidate.id).status == "published"
+    published_candidate = repository.get_candidate(candidate.id)
+    assert published_candidate.status == "published"
+    assert published_candidate.confirmation_status == "confirmed"
+    assert published_candidate.confirmation_version == 1
+    assert published_candidate.confirmed_at is not None
     assert repository.list_active_questions("w1") == (first,)
     assert repository.get_batch(batch.id).status == "completed"
     assert repository.get_batch(batch.id).version == batch.version + 1
@@ -2284,6 +2335,61 @@ def test_attempt_evaluation_transitions_store_validated_result(
     }
     assert completed.mastery_suggestion == "partial"
     assert completed.evaluation_completed_at is not None
+    connection.close()
+
+
+def test_attempt_evaluation_persists_coverage_and_answer_revisions(
+    tmp_path: Path,
+) -> None:
+    connection = _connection(tmp_path)
+    repository = ReviewRepository(connection)
+    repository.create_round(
+        workspace_id="w1",
+        session_id="s1",
+        execution_id="r1",
+        settings=_settings(),
+        question_snapshots=(_snapshot(),),
+        mastery_before=_mastery(),
+        round_id="round-coverage",
+    )
+    request = repository.create_input_request(
+        round_id="round-coverage",
+        ordinal=1,
+        kind="answer",
+        prompt="Explain a",
+        request_id="input-coverage",
+    )
+    connection.execute(
+        "UPDATE agent_runs SET status = 'waiting_for_input' WHERE id = 'r1'"
+    )
+    connection.commit()
+    receipt = repository.accept_review_answer(
+        request_id=request.id,
+        expected_version=request.version,
+        idempotency_key="coverage-answer-key",
+        value="My first answer",
+        attempt_id="attempt-coverage",
+    )
+
+    completed = repository.complete_attempt_evaluation(
+        receipt.attempt_id,
+        evaluation={"score": "good"},
+        mastery_suggestion="stable",
+        needs_follow_up=False,
+        coverage=(
+            KeyPointCoverage(
+                point="point",
+                status="covered",
+                evidence=("My first answer",),
+            ),
+        ),
+        result_kind="independent_mastery",
+        hint_level=0,
+    )
+
+    assert completed.coverage[0].status == "covered"
+    assert completed.result_kind == "independent_mastery"
+    assert completed.answer_revisions == ("My first answer",)
     connection.close()
 
 

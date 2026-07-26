@@ -9,9 +9,24 @@ class _StrictReviewRoundOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ReviewTurnClassification(_StrictReviewRoundOutput):
+    intent: Literal[
+        "answer",
+        "show_question",
+        "request_hint",
+        "reveal_answer",
+        "explain",
+        "skip",
+        "unrelated",
+    ]
+
+
 class RoundAnswerEvaluation(_StrictReviewRoundOutput):
     score: Literal["poor", "partial", "good"]
+    covered_key_points: list[str] = Field(default_factory=list)
+    partial_key_points: list[str] = Field(default_factory=list)
     missing_key_points: list[str]
+    evidence_by_point: dict[str, str] = Field(default_factory=dict)
     evidence: str = Field(min_length=1)
     follow_up_required: bool
     follow_up_prompt: str | None

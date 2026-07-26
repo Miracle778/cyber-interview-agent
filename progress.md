@@ -1044,3 +1044,48 @@
 - 模型设置改为全局服务单项展开、工作区任务模型分组和固定保存栏；未保存时拦截设置分组、工作区及主导航切换，并注册浏览器离开提醒。
 - 定向验证：后端 `9 passed`、前端设置组件 `8 passed`、Python compileall、TypeScript、production build 与 `git diff --check` 通过。浏览器实页验证覆盖 1280px 桌面切换菜单和约 688px 响应式页面，均满足 `scrollWidth == clientWidth`。
 - 启动级 `test_health.py` 在当前系统 Python 因缺少 `langchain_anthropic` 无法收集；运行中的 8000 服务已热更新并通过 5174 实页读取新的工作区 API，未为该环境问题安装依赖或扩大测试范围。
+
+## 2026-07-26：本地复习与开发环境隔离
+
+- 本地主工作区固定使用 `8000/5173` 和默认历史数据；开发 worktree 固定使用 `8001/5174`、独立 `CYBER_INTERVIEW_AGENT_DATA_DIR` 与测试 Workspace。
+- 完整启动命令和防串库检查记录在主工作区本地文件 `/Users/miracle778/Project/cyber-interview-agent-new/docs/verification/local-dual-environment-runbook.md`；后续启动服务前先读取该文件。
+
+## 2026-07-26：题目整理输出截断与旧批次恢复
+
+- 根因确认：新 planner 只按 6,000 字符打包，漏掉既有“最多 6 个 section”限制；当前失败单元分别含 47/42 个短 section。模型在 Anthropic-compatible 别名下实际返回 GLM-5.2，2,048 输出 Token 全被默认 Thinking 消耗，`stop_reason=max_tokens` 且没有结构化结果。
+- discovery 同时限制 section 数和字符数；旧批次不重新规划 unit index，而是按已持久化 Work Item 的 source refs 原地拆成最多 6 段的子调用。结构化输出被截断时只递归拆小当前子调用，父 Work Item 继续作为持久恢复边界，completed Work Item 不重放。
+- Provider 测试会自动保存实际模型 ID、推理控制能力和探测时间；页面没有新增用户能力字段。真实轻量探测确认配置别名 `claude-opus-4-8` 实际为 `glm-5.2`，观察到默认 Thinking，并使 Anthropic-compatible 标准整理显式关闭推理。
+- 进度显示不再用已发现 seed 的下一阶段状态覆盖 discovery Work Item：真实失败会话显示 77/80 已完成识别、80 个已发现题目、2 个可继续处理、1 个等待处理，旧进度和原 Batch 均保留。
+- 自动证据：后端定向 169 项通过，两个新增 API 字段断言修正后失败项 2/2 通过；前端 `CurationRuntimePanel` 16 项与 TypeScript 通过；compileall、`git diff --check` 通过。5174 实页显示真实进度且 console warning/error 为 0。
+- 开发 app/runtime SQLite 已备份到 `/private/tmp/cyber-interview-agent-dev-*-before-adaptive-curation-20260726.sqlite`。真实恢复会发送剩余材料片段，因缺少独立 payload 授权未由 Codex 自动触发；用户可在页面点击“继续整理”完成最终 Provider 验收。
+
+### 2026-07-26 第二次真实恢复失败
+
+- 恢复已完成全部 80 个 discovery Work Item，并进入 166 道 Seed 的 enrichment；95 道已经持久化为候选，旧完成项未重放。
+- 失败不再是 Thinking 或 `max_tokens`。GLM 返回了一次畸形 tool payload，LangChain 将其包装为 `StructuredOutputValidationError`；原 Seed 级容错只捕获 Pydantic `ValidationError/ValueError`，包装异常越过边界并使整波 Execution 失败。
+- enrichment 现把该包装异常按 `invalid_provider_response` 进入既有两次 Seed 级重试/跳过机制，不再击穿整批。进度阶段同时改为：全部 discovery 完成且 Seed 已建立后，以 Seed 状态显示 enrichment，不再退回“80/80 已识别”。
+- TDD RED 精确复现整波失败和阶段误报；GREEN 后两个回归通过。受影响 Graph/API 文件完整 `95 passed in 6.75s`，`git diff --check` 通过。
+- 8001 卡死的 reload 父子进程已停止并按隔离数据目录重启。真实会话现为 enrichment `95/166`、4 可继续、67 等待；尚未由 Codex 再次触发外部模型调用。
+
+### 后续诊断体验待办
+
+- 已在 `task_plan.md` 记录“Agent 模型调用记录查看器”：从运行详情按 Session/Execution/Invocation 查看本地 JSONL 中的模型输入、输出、错误和 Tool 调用。
+- 该入口仅在开发/诊断模式开放，默认折叠敏感正文，保持 Workspace 隔离、secret 过滤和 Trace 读取 fail-open；不纳入当前故障修复。
+
+## 2026-07-26：复习 Checklist、批量确认与发布进度
+
+- 复习题改为领域 Checklist：必答点累计覆盖，全部通过或显式跳过后才进入下一题；辅助意图不会关闭当前输入。提示、查看答案、跳过分别保留结果类型和援助痕迹，失败重试不重复写入回答。
+- 对话区新增冻结题目卡，展示题目原文、必答点覆盖数量、缺失方向，并提供查看来源、逐级提示、查看答案和跳过入口。
+- 整理、复习、深入讨论及共享 Composer 统一使用 IME 安全键盘 Hook；组合输入、组合结束同一事件与 `keyCode 229` 均不会误发送。
+- 候选题“确认内容”和“发布入库”拆为两个状态。题库支持当前筛选结果全选、推荐项选择、批量确认预检和逐项回执；确认不会创建发布任务。
+- 一键发布复用既有持久 Operation/Item，新增按整理会话查询最近批次；页面展示处理数、已入库数、失败数、当前题、耗时和逐题明细，可停止并只重试未完成项，刷新或重进会话后继续显示。
+- 自动证据：后端领域/仓储/图/API/Schema `75 passed`，迁移与批量发布 `30 passed`；前端核心交互 `41 passed`，补充题库批量预检 `22 passed`；TypeScript、production build、compileall 与 `git diff --check` 通过。构建仅保留既有大 chunk 提示。
+- 5174 最小验收：题目库 1280px 下页面与 340px 结果栏均无横向溢出，批量控件在栏内完整显示，浏览器 warning/error 为 0。当前开发数据为 164 道已发布、0 道待确认且无复习轮次，因此未触发真实批量确认、外部模型评价或发布写入。
+
+## 2026-07-27：题库选择与统计口径回归修复
+
+- 批量确认改造曾把题目复选框错误限制为仅未确认候选，导致已入库题无法全选或批量移入回收站；现恢复所有当前结果可选，批量确认只消费所选项中的可确认子集，批量删除继续消费完整选择。
+- 题目结果头部的宽泛 `span` 规则曾覆盖按钮标签颜色；现限定为直接子元素。纯已入库选择不再显示无意义的禁用“批量确认”，删除按钮恢复白字红底；5174 实页读取得到 `rgb(255,255,255)` / `rgb(180,35,24)` 且操作栏无横向溢出。
+- 整理首页明确区分工作区题库与单次会话：顶部展示去重后的“题库题目/已入库题目”，会话卡展示“本次候选/本次已入库/本次待确认”，不再把全局 163 道与单次 100 个候选表现成同一口径。
+- 新增 runtime migration 033：历史 `published` 候选确定性回填为已确认，保留题目、发布和复习数据；后续发布路径同步确认状态，重复激活不重复增加确认版本。
+- 定向验证：已入库题全选并批量删除、待确认题批量确认、会话统计跳转共 4 项通过；合并前最终回归为后端 `826 passed`、前端 `234 passed`，production build、compileall 与 `git diff --check` 通过。构建仅保留既有大 chunk 提示。

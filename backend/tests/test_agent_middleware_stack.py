@@ -119,7 +119,7 @@ def test_sqlite_title_projection_prefers_product_user_message(tmp_path):
     )
 
     assert changed is True
-    assert repository.get_session(session.id).title == "请帮我检查项目经历是否缺少量化结果"
+    assert repository.get_session(session.id).title == "整理项目经历"
 
 
 def test_default_stack_is_official_and_contains_only_four_project_middlewares():

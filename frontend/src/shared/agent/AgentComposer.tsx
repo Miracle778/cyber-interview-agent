@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { ChevronDown, Send, SlidersHorizontal, Square } from "lucide-react";
 import { Button } from "../ui/Button";
+import { useAgentComposerKeyboard } from "./useAgentComposerKeyboard";
 
 export type AgentReasoningEffort = "none" | "low" | "medium" | "high";
 
@@ -47,9 +48,6 @@ export function AgentComposer({
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const wasBusy = useRef(busy);
-  const composing = useRef(false);
-  const compositionJustEnded = useRef(false);
-  const compositionResetTimer = useRef<number | null>(null);
   useEffect(() => {
     if (promptToFill) {
       setText(promptToFill);
@@ -61,18 +59,17 @@ export function AgentComposer({
     if (wasBusy.current && !busy) textareaRef.current?.focus();
     wasBusy.current = busy;
   }, [busy]);
-  useEffect(() => () => {
-    if (compositionResetTimer.current !== null) {
-      window.clearTimeout(compositionResetTimer.current);
-    }
-  }, []);
-  function submit(event: FormEvent) {
-    event.preventDefault();
+  function send() {
     const value = text.trim();
     if (!value || busy || disabled) return;
     setText("");
     onSend(value);
   }
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    send();
+  }
+  const keyboard = useAgentComposerKeyboard(send);
   const selectedModel = models.find((model) => model.id === modelId)?.label ?? "工作区默认模型";
   return (
     <form className="agent-composer" onSubmit={submit}>
@@ -86,33 +83,7 @@ export function AgentComposer({
           disabled={busy || disabled}
           placeholder={placeholder}
           onChange={(event) => setText(event.target.value)}
-          onCompositionStart={() => {
-            composing.current = true;
-            compositionJustEnded.current = false;
-            if (compositionResetTimer.current !== null) {
-              window.clearTimeout(compositionResetTimer.current);
-              compositionResetTimer.current = null;
-            }
-          }}
-          onCompositionEnd={() => {
-            composing.current = false;
-            compositionJustEnded.current = true;
-            compositionResetTimer.current = window.setTimeout(() => {
-              compositionJustEnded.current = false;
-              compositionResetTimer.current = null;
-            }, 0);
-          }}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter" || event.shiftKey) return;
-            if (
-              composing.current
-              || compositionJustEnded.current
-              || event.nativeEvent.isComposing
-              || event.nativeEvent.keyCode === 229
-            ) return;
-            event.preventDefault();
-            event.currentTarget.form?.requestSubmit();
-          }}
+          {...keyboard}
         />
         <div className="agent-composer__toolbar">
           <details className="agent-composer__settings">

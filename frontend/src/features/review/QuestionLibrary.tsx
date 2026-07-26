@@ -8,7 +8,7 @@ import { requestPublication } from "../knowledge/draftApi";
 import { Button } from "../../shared/ui/Button";
 import type { KnowledgeSource } from "../knowledge/knowledgeTypes";
 import type { WorkspaceConfig } from "../settings/settingsApi";
-import { bulkDeleteQuestionCandidates, deleteQuestionCandidate, listAllQuestionCandidates, rewriteQuestionCandidate, updateActiveQuestionVersion, updateQuestionCandidate } from "./reviewApi";
+import { bulkConfirmQuestionCandidates, bulkDeleteQuestionCandidates, deleteQuestionCandidate, listAllQuestionCandidates, rewriteQuestionCandidate, updateActiveQuestionVersion, updateQuestionCandidate } from "./reviewApi";
 import { QuestionDetailPanel } from "./QuestionDetailPanel";
 import { groupLogicalQuestions } from "./questionGroups";
 import type { QuestionCandidate } from "./reviewTypes";
@@ -63,6 +63,8 @@ export function QuestionLibrary({ workspace, sources, initialCandidateId = null,
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deletionNotice, setDeletionNotice] = useState("");
   const [versionNotice, setVersionNotice] = useState("");
+  const [confirmationNotice, setConfirmationNotice] = useState("");
+  const [pendingConfirmationIds, setPendingConfirmationIds] = useState<string[] | null>(null);
   const [publicationRequest, setPublicationRequest] = useState<{ action: PendingAction; candidateId: string } | null>(null);
   const [approvalOpen, setApprovalOpen] = useState(false);
   const publicationActions = useQuery({ queryKey: ["pending-actions", workspace.id], queryFn: () => listActions(workspace.id, { status: "pending" }), refetchInterval: 5000 });
@@ -97,13 +99,24 @@ export function QuestionLibrary({ workspace, sources, initialCandidateId = null,
     client.invalidateQueries({ queryKey: ["review-candidates-overview", workspace.id] }),
     client.invalidateQueries({ queryKey: ["active-review-questions", workspace.id] }),
   ]);
-  const save = useMutation({ mutationFn: (values: { version: number; title: string; questionText: string; referenceAnswer: string; keyPoints: string[] }) => updateQuestionCandidate(selected!.id, values), onSuccess: invalidate });
+  const save = useMutation({ mutationFn: (values: { version: number; title: string; questionText: string; referenceAnswer: string; keyPoints: string[]; requiredKeyPoints: string[]; bonusKeyPoints: string[] }) => updateQuestionCandidate(selected!.id, values), onSuccess: invalidate });
   const rewrite = useMutation({ mutationFn: (feedback: string) => rewriteQuestionCandidate(selected!.id, feedback), onSuccess: async (session) => { await invalidate(); onOpenDirectSession(session); } });
-  const confirm = useMutation({ mutationFn: async () => { if (!selected?.draft) throw new Error("候选题没有草稿"); return requestPublication(selected.draft.id); }, onSuccess: (result) => {
+  const publish = useMutation({ mutationFn: async () => { if (!selected?.draft) throw new Error("候选题没有草稿"); return requestPublication(selected.draft.id); }, onSuccess: (result) => {
     client.setQueryData<PendingAction[]>(["pending-actions", workspace.id], (current = []) => [result.action, ...current.filter((action) => action.id !== result.action.id)]);
     setPublicationRequest({ action: result.action, candidateId: selected!.id });
     setApprovalOpen(true);
   } });
+  const confirmCandidates = useMutation({
+    mutationFn: (ids: string[]) => bulkConfirmQuestionCandidates(workspace.id, ids),
+    onSuccess: async (result) => {
+      const succeeded = new Set(result.items.filter((item) => ["confirmed", "already_confirmed"].includes(item.status)).map((item) => item.candidateId));
+      const failed = result.items.filter((item) => !succeeded.has(item.candidateId));
+      setSelectedIds((current) => new Set([...current].filter((id) => !succeeded.has(id))));
+      setConfirmationNotice(failed.length ? `已确认 ${succeeded.size} 道，${failed.length} 道需要单独处理。` : `已确认 ${succeeded.size} 道题；尚未发布入库。`);
+      await invalidate();
+    },
+    onError: () => setConfirmationNotice("批量确认未完成，请刷新后重试。"),
+  });
   const promote = useMutation({ mutationFn: async () => {
     if (!selected || !publishedSibling) throw new Error("没有可替换的当前入库版");
     return updateActiveQuestionVersion(selected.id, publishedSibling.question.questionId, publishedSibling.question.contentHash, crypto.randomUUID());
@@ -116,10 +129,16 @@ export function QuestionLibrary({ workspace, sources, initialCandidateId = null,
     setDeletionNotice(unresolved.length > 0 ? `已删除 ${removed.size} 道，${unresolved.length} 道因版本变化或不存在而未删除。` : `已将 ${removed.size} 道题移入题目回收站。`);
     await invalidate();
   }, onError: () => setDeletionNotice("删除未完成，请刷新题目状态后重试。") });
-  const busy = save.isPending || rewrite.isPending || confirm.isPending || promote.isPending || remove.isPending;
+  const busy = save.isPending || rewrite.isPending || publish.isPending || confirmCandidates.isPending || promote.isPending || remove.isPending;
   const publishedSibling = selectedGroup?.members.find((item) => item.status === "published" && item.id !== selected?.id) ?? null;
   const confirmDelete = (targets: QuestionCandidate[]) => { if (targets.length > 0 && globalThis.confirm(`将 ${targets.length} 道题移入题目回收站？已发布题会从可复习题库停用，但不会删除 Vault 文件。`)) remove.mutate(targets); };
   const resetFilters = () => { setQuery(""); setTopic(""); setDifficulty(""); setSourceId(""); setStatus(""); };
+  const visibleCandidates = resultGroups.map((group) => group.primary);
+  const confirmableCandidates = visibleCandidates.filter((candidate) => candidate.status === "review_pending" && candidate.confirmationStatus !== "confirmed");
+  const recommendedCandidates = confirmableCandidates.filter((candidate) => Boolean(candidate.draft && candidate.sourceRefs.length && candidate.question.keyPoints.length && !candidate.duplicateOfQuestionId && candidate.answerBasis === "source" && candidate.materialSupport === "sufficient" && !candidate.needsReview));
+  const selectedConfirmableIds = confirmableCandidates.filter((candidate) => selectedIds.has(candidate.id)).map((candidate) => candidate.id);
+  const allVisibleSelected = visibleCandidates.length > 0 && visibleCandidates.every((candidate) => selectedIds.has(candidate.id));
+  useEffect(() => { setSelectedIds(new Set()); }, [query, topic, difficulty, sourceId, status]);
 
   return <>
     <section className="question-library" aria-label="题目库浏览器">
@@ -138,9 +157,10 @@ export function QuestionLibrary({ workspace, sources, initialCandidateId = null,
 
       <div className="question-library__workspace">
         <section className="question-library__results" aria-label="题目结果">
-          <header><strong>{resultGroups.length} 道逻辑题目</strong><span>{resultScope}</span>{selectedIds.size > 0 ? <div className="question-library__bulk"><span>已选 {selectedIds.size} 道</span><Button size="sm" variant="danger" loading={remove.isPending} onClick={() => confirmDelete((catalog.data ?? []).filter((item) => selectedIds.has(item.id)))}><Trash2 size={14} />批量删除</Button></div> : null}</header>
+          <header><label className="question-library__select-all"><input type="checkbox" aria-label="全选当前筛选结果" disabled={!visibleCandidates.length} checked={allVisibleSelected} onChange={() => setSelectedIds(allVisibleSelected ? new Set() : new Set(visibleCandidates.map((candidate) => candidate.id)))} /><span>全选当前结果</span></label><strong>{resultGroups.length} 道逻辑题目</strong><span>{resultScope}</span><div className="question-library__bulk"><Button size="sm" variant="ghost" disabled={!recommendedCandidates.length} onClick={() => setSelectedIds(new Set(recommendedCandidates.map((candidate) => candidate.id)))}>选择推荐项</Button>{selectedIds.size > 0 ? <><span>已选 {selectedIds.size} 道</span>{selectedConfirmableIds.length > 0 ? <Button size="sm" loading={confirmCandidates.isPending} onClick={() => setPendingConfirmationIds(selectedConfirmableIds)}>批量确认</Button> : null}<Button size="sm" variant="danger" loading={remove.isPending} onClick={() => confirmDelete((catalog.data ?? []).filter((item) => selectedIds.has(item.id)))}><Trash2 size={14} />批量删除</Button></> : null}</div></header>
           {catalog.isLoading ? <p className="status-note">正在读取候选题…</p> : null}
           {deletionNotice ? <div className="question-library__notice" role="status"><span>{deletionNotice}</span><button type="button" aria-label="关闭删除结果" onClick={() => setDeletionNotice("")}><X size={14} /></button></div> : null}
+          {confirmationNotice ? <div className="question-library__notice" role="status"><span>{confirmationNotice}</span><button type="button" aria-label="关闭确认结果" onClick={() => setConfirmationNotice("")}><X size={14} /></button></div> : null}
           {!catalog.isLoading && resultGroups.length === 0 ? <div className="question-library__empty"><Search size={22} /><strong>{hasFilters ? "没有匹配的题目" : "题目库还是空的"}</strong><p>{hasFilters ? "尝试清除部分筛选条件。" : "返回整理会话，选择资料后使用 AI 整理。"}</p>{hasFilters ? <button type="button" onClick={resetFilters}>清除筛选</button> : <button type="button" onClick={onBackToSessions}>返回整理会话</button>}</div> : null}
           <div className="question-library__list" role="list">
             {resultGroups.map((group) => { const candidate = group.primary; return <div role="listitem" key={group.id} aria-current={group.id === selectedGroup?.id} className="question-library__row"><label className="question-library__select"><input type="checkbox" aria-label={`选择 ${candidate.question.title}`} checked={selectedIds.has(candidate.id)} onChange={(event) => setSelectedIds((current) => { const next = new Set(current); event.target.checked ? next.add(candidate.id) : next.delete(candidate.id); return next; })} /></label><button type="button" className="question-library__row-main" onClick={() => setSelectedId(candidate.id)}>
@@ -153,10 +173,11 @@ export function QuestionLibrary({ workspace, sources, initialCandidateId = null,
 
         <div className="question-library__detail-stack">
           {selectedGroup && selectedGroup.members.length > 1 ? <section className="question-versions" aria-label="同题版本"><div><strong>同一逻辑题目的 {selectedGroup.members.length} 个版本</strong><span>同一时间只有一个当前入库版；历史版本和候选版本不会参与新复习。</span></div><div className="question-versions__list">{selectedGroup.members.map((member, index) => <button type="button" key={member.id} aria-pressed={member.id === selected?.id} onClick={() => { setSelectedId(member.id); setVersionNotice(""); }}><span>{member.isActiveVersion ? "当前入库版" : member.status === "published" ? "历史入库版" : `候选版本 ${index + 1}`}</span><small>{member.isActiveVersion ? "新复习使用" : member.status === "published" ? "仅供历史追溯" : `${statusLabels[member.status]} · ${updatedLabel(member.updatedAt)}`}</small></button>)}</div>{publishedSibling && selected?.status === "review_pending" ? <div className="question-versions__update"><div><strong>将这个候选设为新的入库版</strong><span>当前入库版会转为历史版本；已开始的复习轮次仍使用原快照。</span></div><Button loading={promote.isPending} disabled={busy && !promote.isPending} onClick={() => { if (globalThis.confirm(`用「${selected.question.title}」更新当前入库版？旧版会保留为历史版本。`)) promote.mutate(); }}>更新入库版</Button></div> : null}{versionNotice ? <p className="question-versions__notice" role="status">{versionNotice}</p> : null}</section> : null}
-          <QuestionDetailPanel key={selected?.id ?? "empty"} candidate={selected} sourceLabels={sourceLabels} busy={busy} approvalPending={publicationRequest?.candidateId === selected?.id} publicationBlockedReason={publishedSibling ? `该候选属于「${publishedSibling.question.title}」。如内容更完整，请使用上方“更新入库版”；它不能作为第二道题重复发布。` : undefined} onSave={(values) => save.mutate(values)} onRewrite={(feedback) => rewrite.mutate(feedback)} onConfirm={() => confirm.mutate()} onDelete={() => selected && confirmDelete([selected])} onOpenSession={onOpenSession} />
+          <QuestionDetailPanel key={selected?.id ?? "empty"} candidate={selected} sourceLabels={sourceLabels} busy={busy} approvalPending={publicationRequest?.candidateId === selected?.id} publicationBlockedReason={publishedSibling ? `该候选属于「${publishedSibling.question.title}」。如内容更完整，请使用上方“更新入库版”；它不能作为第二道题重复发布。` : undefined} onSave={(values) => save.mutate(values)} onRewrite={(feedback) => rewrite.mutate(feedback)} onConfirm={() => selected && confirmCandidates.mutate([selected.id])} onPublish={() => publish.mutate()} onDelete={() => selected && confirmDelete([selected])} onOpenSession={onOpenSession} />
         </div>
       </div>
     </section>
+    {pendingConfirmationIds ? <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPendingConfirmationIds(null); }}><section className="bulk-publication-dialog" role="dialog" aria-modal="true" aria-label="确认批量确认"><h3>确认所选题目内容</h3><p>将把所选 {pendingConfirmationIds.length} 道题标记为“内容已确认”。这一步不会发布入库，你仍可逐题检查后再发布。</p><dl><div><dt>本次确认</dt><dd>{pendingConfirmationIds.length}</dd></div><div><dt>自动发布</dt><dd>0</dd></div><div><dt>选择范围</dt><dd>{resultScope}</dd></div></dl><footer><Button variant="ghost" onClick={() => setPendingConfirmationIds(null)}>返回检查</Button><Button loading={confirmCandidates.isPending} onClick={() => { const ids = pendingConfirmationIds; setPendingConfirmationIds(null); confirmCandidates.mutate(ids); }}>确认所选内容</Button></footer></section></div> : null}
     {approvalOpen && (publicationRequest || publicationPendingCount > 0) ? <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setApprovalOpen(false); }}><section className="publication-approval-dialog" role="dialog" aria-modal="true" aria-label="题目发布审批" onKeyDown={(event) => { if (event.key === "Escape") setApprovalOpen(false); }}><header><div className="publication-approval-dialog__icon"><ShieldCheck size={20} /></div><div><h2>发布审批</h2><p>{publicationRequest ? "确认题目内容无误后，将它加入可复习题库。" : "先选择一道待审批题目，再查看内容并决定是否入库。"}</p></div><button type="button" aria-label="关闭发布审批" autoFocus onClick={() => setApprovalOpen(false)}><X size={18} /></button></header><ActionCenter workspaceId={workspace.id} showDiagnostic={false} actionType="knowledge.publish" actionId={publicationRequest?.action.id} watchExecutionId={publicationRequest?.action.executionId} initialAction={publicationRequest?.action} requireSelection={!publicationRequest} presentation="publication" onResolved={() => { setPublicationRequest(null); setApprovalOpen(false); void invalidate(); }} /></section></div> : null}
   </>;
 }

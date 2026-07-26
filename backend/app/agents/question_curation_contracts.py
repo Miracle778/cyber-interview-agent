@@ -41,6 +41,8 @@ class ProviderQuestionCandidate(_ProviderQuestionCurationOutput):
     topics: ProviderStringList = None
     difficulty: str | None = None
     key_points: ProviderStringList = None
+    required_key_points: ProviderStringList = None
+    bonus_key_points: ProviderStringList = None
     follow_ups: ProviderStringList = None
     source_refs: ProviderStringList = None
     correction_note: str | None = None
@@ -57,9 +59,22 @@ class QuestionCandidate(_StrictQuestionCurationOutput):
     topics: list[str] = Field(min_length=1)
     difficulty: Literal["easy", "medium", "hard"]
     key_points: list[str] = Field(min_length=1)
+    required_key_points: list[str] = Field(default_factory=list)
+    bonus_key_points: list[str] = Field(default_factory=list)
     follow_ups: list[str]
     source_refs: list[str] = Field(min_length=1)
     correction_note: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def classify_key_points(self) -> "QuestionCandidate":
+        required = self.required_key_points or self.key_points
+        bonus = [
+            point for point in self.bonus_key_points if point not in required
+        ]
+        self.required_key_points = list(dict.fromkeys(required))
+        self.bonus_key_points = list(dict.fromkeys(bonus))
+        self.key_points = [*self.required_key_points, *self.bonus_key_points]
+        return self
 
 
 class QuestionSeed(_StrictQuestionCurationOutput):
@@ -175,7 +190,13 @@ def normalize_provider_candidate_chunk(
 
         question_text = (item.question_text or "").strip()
         reference_answer = (item.reference_answer or "").strip()
-        key_points = _non_blank_strings(item.key_points)
+        required_key_points = _non_blank_strings(item.required_key_points)
+        bonus_key_points = _non_blank_strings(item.bonus_key_points)
+        key_points = (
+            [*required_key_points, *bonus_key_points]
+            if required_key_points
+            else _non_blank_strings(item.key_points)
+        )
         if (
             not question_text
             or not reference_answer
@@ -192,6 +213,8 @@ def normalize_provider_candidate_chunk(
                 topics=_non_blank_strings(item.topics) or ["未分类"],
                 difficulty=item.difficulty,
                 key_points=key_points,
+                required_key_points=required_key_points or key_points,
+                bonus_key_points=bonus_key_points,
                 follow_ups=_non_blank_strings(item.follow_ups),
                 source_refs=list(expected_refs),
                 correction_note=(item.correction_note or "").strip()

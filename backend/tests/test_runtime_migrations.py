@@ -191,7 +191,7 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
+        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33]
     assert "agent_context_usage" in _tables(connection)
     assert "profile_deletion_plans" in _tables(connection)
     assert "deleted_at" in {
@@ -939,7 +939,57 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-            ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
+            ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33]
+    reopened.close()
+
+
+def test_published_candidates_are_backfilled_as_confirmed(
+    tmp_path: Path,
+) -> None:
+    connection = _create_runtime_at_version(tmp_path, 32)
+    connection.execute(
+        "INSERT INTO agent_sessions "
+        "(id, workspace_id, graph_id, graph_version, title) "
+        "VALUES ('legacy-session', 'w1', 'question.curate', 1, 'Legacy')"
+    )
+    connection.execute(
+        "INSERT INTO agent_runs (id, session_id, status) "
+        "VALUES ('legacy-run', 'legacy-session', 'completed')"
+    )
+    connection.execute(
+        "INSERT INTO review_question_batches "
+        "(id, workspace_id, session_id, origin_session_id, run_id, "
+        "source_refs_json, status) "
+        "VALUES ('legacy-batch', 'w1', 'legacy-session', 'legacy-session', 'legacy-run', "
+        "'[\"source-1\"]', 'completed')"
+    )
+    connection.executemany(
+        "INSERT INTO review_question_candidates "
+        "(id, batch_id, question_json, status) VALUES (?, 'legacy-batch', '{}', ?)",
+        (
+            ("published-candidate", "published"),
+            ("pending-candidate", "review_pending"),
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    reopened = connect_runtime_database(tmp_path)
+
+    published = reopened.execute(
+        "SELECT confirmation_status, confirmation_version, confirmed_at "
+        "FROM review_question_candidates WHERE id = 'published-candidate'"
+    ).fetchone()
+    pending = reopened.execute(
+        "SELECT confirmation_status, confirmation_version, confirmed_at "
+        "FROM review_question_candidates WHERE id = 'pending-candidate'"
+    ).fetchone()
+    assert tuple(published)[:2] == ("confirmed", 1)
+    assert published["confirmed_at"] is not None
+    assert tuple(pending) == ("pending", 0, None)
+    assert reopened.execute(
+        "SELECT COUNT(*) FROM review_question_candidates"
+    ).fetchone()[0] == 2
     reopened.close()
 
 
