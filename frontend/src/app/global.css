@@ -4097,6 +4097,7 @@ select:disabled {
 .curation-artifact-card.is-quality-warning { box-shadow: inset 3px 0 0 var(--warning); }
 .curation-quality-callout { grid-column: 1 / -1; display: flex; min-width: 0; align-items: center; gap: 5px; margin-top: 5px; color: color-mix(in srgb, var(--warning) 80%, var(--text)); font-size: .64rem; font-weight: 650; }
 .curation-quality-detail, .candidate-quality-warning { display: flex; align-items: flex-start; gap: var(--space-2); padding: var(--space-3); color: var(--warning); background: var(--warning-soft); border: 1px solid color-mix(in srgb, var(--warning) 28%, var(--border)); border-radius: var(--radius-md); }
+.curation-quality-detail.is-supported { color: var(--success); background: var(--success-soft); border-color: color-mix(in srgb, var(--success) 28%, var(--border)); }
 .curation-quality-detail div, .candidate-quality-warning div { display: grid; gap: 4px; color: var(--text-muted); font-size: .74rem; }
 .curation-quality-detail strong, .candidate-quality-warning strong { color: var(--text); }
 .curation-quality-detail p, .candidate-quality-warning p { margin: 0; }
