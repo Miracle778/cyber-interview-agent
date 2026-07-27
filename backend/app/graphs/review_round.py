@@ -7,7 +7,7 @@ from uuid import NAMESPACE_URL, uuid5
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
-from langgraph.types import interrupt
+from langgraph.types import StreamWriter, interrupt
 
 from app.agents.context import AgentContext
 from app.agents.review_round_contracts import (
@@ -144,6 +144,7 @@ def create_review_round_graph(
         state: ReviewRoundState,
         config: RunnableConfig,
         runtime: Runtime[AgentContext],
+        writer: StreamWriter,
     ) -> dict[str, Any]:
         if follow_up_was_skipped(state):
             return {
@@ -152,6 +153,21 @@ def create_review_round_graph(
             }
         round_record = repository.get_round(state["round_id"])
         question = round_record.question_snapshots[state["current_index"]]
+        attempt = next(
+            item
+            for item in repository.list_attempts(round_record.id)
+            if item.ordinal == state["current_index"] + 1
+        )
+        writer(
+            {
+                "type": "review.evaluation.checking_key_points",
+                "payload": {
+                    "roundId": round_record.id,
+                    "attemptId": attempt.id,
+                    "ordinal": state["current_index"] + 1,
+                },
+            }
+        )
         evaluation = await agents.evaluate(
             question=question,
             answer=state["current_answer"],
@@ -163,6 +179,16 @@ def create_review_round_graph(
                 str(state["current_index"] + 1),
                 str(state.get("current_input_request", {}).get("id", "")),
             ),
+        )
+        writer(
+            {
+                "type": "review.evaluation.deciding_follow_up",
+                "payload": {
+                    "roundId": round_record.id,
+                    "attemptId": attempt.id,
+                    "ordinal": state["current_index"] + 1,
+                },
+            }
         )
         return {"current_evaluation": evaluation.model_dump()}
 

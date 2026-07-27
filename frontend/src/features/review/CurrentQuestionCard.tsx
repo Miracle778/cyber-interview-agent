@@ -1,9 +1,24 @@
-import { BookOpen, Eye, FileSearch, Lightbulb, SkipForward } from "lucide-react";
+import { BookOpen, Eye, FileSearch, FileText, Lightbulb, SkipForward } from "lucide-react";
 import { useState } from "react";
 import { Button } from "../../shared/ui/Button";
 import type { ReviewRound } from "./reviewTypes";
 
 type CurrentQuestion = NonNullable<ReviewRound["currentQuestion"]>;
+
+function formatSectionNumbers(values: number[]) {
+  const sorted = [...new Set(values)].sort((left, right) => left - right);
+  const ranges: string[] = [];
+  for (let index = 0; index < sorted.length; index += 1) {
+    const start = sorted[index];
+    let end = start;
+    while (index + 1 < sorted.length && sorted[index + 1] === end + 1) {
+      end = sorted[index + 1];
+      index += 1;
+    }
+    ranges.push(start === end ? `${start}` : `${start}–${end}`);
+  }
+  return ranges.join("、");
+}
 
 export function CurrentQuestionCard({
   question,
@@ -22,6 +37,7 @@ export function CurrentQuestionCard({
   const requiredCount = question.requiredKeyPointCount ?? 0;
   const coveredCount = question.coveredKeyPointCount ?? 0;
   const missingDirections = question.missingDirections ?? [];
+  const sources = question.sources ?? [];
   return (
     <section className="current-question-card" aria-label="当前题目">
       <header>
@@ -40,9 +56,13 @@ export function CurrentQuestionCard({
             ? `已覆盖 ${coveredCount} / ${requiredCount}`
             : `${requiredCount} 个必答方向`}
         </strong>
-        {question.hasAnswer && missingDirections.length > 0
-          ? <ul>{missingDirections.map((item) => <li key={item}>{item}</li>)}</ul>
-          : <small>{question.hasAnswer ? "已覆盖全部必答方向" : "回答后会逐步显示仍需补充的方向"}</small>}
+        <small>
+          {question.hasAnswer
+            ? missingDirections.length > 0
+              ? `还有 ${missingDirections.length} 个方向待补充，详情见右侧`
+              : "已覆盖全部必答方向"
+            : "回答后在右侧显示待补充方向"}
+        </small>
       </div>
       <footer>
         <div className="current-question-card__help">
@@ -52,7 +72,20 @@ export function CurrentQuestionCard({
         </div>
         <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onSkip}><SkipForward size={15} />跳过此题</Button>
       </footer>
-      {sourceOpen ? <div className="current-question-card__source"><span>冻结来源</span><strong>{question.documentId ?? "来源信息暂不可用"}</strong></div> : null}
+      {sourceOpen ? <section className="current-question-card__source" aria-label="题目来源">
+        <header><FileText size={15} /><strong>题目来源</strong><span>{sources.length ? `${sources.length} 份文档` : "暂无可查看文档"}</span></header>
+        {sources.length ? <ul>{sources.map((source) => {
+          const location = source.sectionNumbers.length
+            ? `原文片段 ${formatSectionNumbers(source.sectionNumbers)}`
+            : source.evidenceCount > 1
+              ? `关联 ${source.evidenceCount} 处原文`
+              : "已关联原文依据";
+          return <li key={source.sourceId}>
+            <div><strong>{source.filename ?? "来源文档信息暂不可用"}</strong><small>{location}</small></div>
+            {source.availability === "deleted" ? <span>原资料已移入回收站</span> : source.availability === "missing" ? <span>原资料已不可用</span> : null}
+          </li>;
+        })}</ul> : <p>这道题暂未关联可查看的来源文档。</p>}
+      </section> : null}
     </section>
   );
 }

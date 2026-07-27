@@ -21,7 +21,10 @@ function renderConversation(props: Partial<React.ComponentProps<typeof ReviewCon
 }
 
 describe("ReviewConversation", () => {
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
   it("renders ordered messages and a named evaluation stage without chain of thought", () => {
     renderConversation();
     const log = screen.getByRole("log", { name: "复习对话" });
@@ -29,10 +32,32 @@ describe("ReviewConversation", () => {
     expect(log).toHaveTextContent("multiple versions");
     expect(log).toHaveTextContent("复习助手");
     expect(log).not.toHaveTextContent("面试官");
-    expect(log).toHaveTextContent("正在评价回答");
+    expect(log).toHaveTextContent("理解本次回答");
+    expect(log).toHaveTextContent("评价结果校验完成后会一次展示");
     expect(log).not.toHaveTextContent("思维链");
     expect(screen.getByText("multiple versions").closest("article")).toHaveClass("review-chat-message--user");
     expect(within(log).getByText("Explain MVCC").closest("article")).toHaveClass("review-chat-message--agent");
+  });
+
+  it("shows durable stage progress and a live processing duration beside the assistant", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-19T10:00:03Z"));
+    const evaluating = {
+      ...round,
+      attempts: [{ ...round.attempts[0], evaluationStartedAt: "2026-07-19T10:00:00Z" }],
+    } as ReviewRound;
+
+    renderConversation({ round: evaluating, evaluationStage: "checking_key_points" });
+
+    const progress = screen.getByRole("status", { name: "回答评价进度" });
+    expect(progress).toHaveTextContent("处理中 3 秒");
+    expect(progress).toHaveTextContent("对照必答方向");
+    expect(within(progress).getByText("回答已保存").closest("li")).toHaveAttribute("data-state", "completed");
+    const activeStep = within(progress).getAllByText("对照必答方向")
+      .map((item) => item.closest("li"))
+      .find(Boolean);
+    expect(activeStep).toHaveAttribute("data-state", "active");
+    expect(within(progress).getByText("生成反馈与下一步").closest("li")).toHaveAttribute("data-state", "pending");
   });
 
   it("shows the real per-attempt processing duration beside an evaluation reply", () => {

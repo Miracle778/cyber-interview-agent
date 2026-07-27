@@ -274,6 +274,14 @@ class ActiveQuestionResource(ReviewModel):
     source_job_target_id: str | None = None
 
 
+class CurrentQuestionSourceResource(ReviewModel):
+    source_id: str
+    filename: str | None
+    section_numbers: list[int] = Field(default_factory=list)
+    evidence_count: int = Field(ge=1)
+    availability: Literal["available", "deleted", "missing"]
+
+
 class CurrentQuestionResource(ReviewModel):
     id: str
     document_id: str
@@ -286,6 +294,7 @@ class CurrentQuestionResource(ReviewModel):
     missing_directions: list[str] = Field(default_factory=list)
     has_answer: bool = False
     hint_level: int = Field(default=0, ge=0)
+    sources: list[CurrentQuestionSourceResource] = Field(default_factory=list)
 
 
 class ReviewInputResource(ReviewModel):

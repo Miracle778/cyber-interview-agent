@@ -100,6 +100,68 @@ describe("R2 ReviewPage", () => {
     expect(screen.queryByText("待确认操作")).toBeNull();
   });
 
+  it("opens completed and skipped questions in read-only review mode and returns to the active question", async () => {
+    const roundWithHistory = {
+      ...waitingRound,
+      currentIndex: 2,
+      questionCount: 3,
+      currentQuestion: { ...waitingRound.currentQuestion!, id: "q3", title: "当前题目", questionText: "当前题目原文" },
+      currentInput: { ...waitingRound.currentInput!, ordinal: 3, prompt: "当前题目原文" },
+      attempts: [
+        {
+          id: "attempt-1",
+          roundId: "round-1",
+          ordinal: 1,
+          questionSnapshot: { questionId: "q1", documentId: "d1", contentHash: "h1", title: "已完成题目", questionText: "完成题原文", referenceAnswer: "完成题答案", topics: ["database"], difficulty: "medium", keyPoints: ["版本链"], followUps: [] },
+          answer: "我的完成题回答",
+          followUpAnswer: null,
+          evaluation: { score: "good", missing_key_points: [], evidence: "回答覆盖完整", mastery_suggestion: "strong" },
+          masterySuggestion: "strong",
+          skipped: false,
+          status: "completed",
+          evaluationErrorCode: null,
+          evaluationStartedAt: "now",
+          evaluationCompletedAt: "now",
+          resultKind: "independent_mastery",
+          createdAt: "now",
+          updatedAt: "now",
+        },
+        {
+          id: "attempt-2",
+          roundId: "round-1",
+          ordinal: 2,
+          questionSnapshot: { questionId: "q2", documentId: "d2", contentHash: "h2", title: "已跳过题目", questionText: "跳过题原文", referenceAnswer: "跳过题答案", topics: ["cache"], difficulty: "medium", keyPoints: ["缓存"], followUps: [] },
+          answer: null,
+          followUpAnswer: null,
+          evaluation: null,
+          masterySuggestion: null,
+          skipped: true,
+          status: "completed",
+          evaluationErrorCode: null,
+          evaluationStartedAt: null,
+          evaluationCompletedAt: null,
+          resultKind: "skipped",
+          createdAt: "now",
+          updatedAt: "now",
+        },
+      ],
+    } as ReviewRound;
+    mockApi([roundWithHistory]);
+    render(<ReviewPage workspace={workspace} />, { wrapper });
+
+    fireEvent.click(await screen.findByRole("button", { name: /3 题/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /回看第 1 题：已完成题目，已完成/ }));
+    expect(screen.getByRole("region", { name: "回看第 1 题" })).toHaveTextContent("我的完成题回答");
+    expect(screen.getByRole("region", { name: "回看第 1 题" })).toHaveTextContent("回答覆盖完整");
+
+    fireEvent.click(screen.getByRole("button", { name: "返回当前第 3 题" }));
+    expect(await screen.findByRole("region", { name: "当前题目" })).toHaveTextContent("当前题目原文");
+
+    fireEvent.click(screen.getByRole("button", { name: /回看第 2 题：已跳过题目，已跳过/ }));
+    expect(screen.getByRole("region", { name: "回看第 2 题" })).toHaveTextContent("主动跳过");
+    expect(screen.getByRole("region", { name: "回看第 2 题" })).toHaveTextContent("回看不会改变答题进度");
+  });
+
   it("shows completed results without reopening setup", async () => {
     mockApi([{ ...waitingRound, status: "completed", executionStatus: "completed", currentQuestion: null, currentInput: null, completedAt: "later" }]);
     render(<ReviewPage workspace={workspace} />, { wrapper });

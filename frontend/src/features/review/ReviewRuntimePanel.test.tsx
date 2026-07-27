@@ -1,10 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ReviewRuntimePanel } from "./ReviewRuntimePanel";
 import type { ReviewRound } from "./reviewTypes";
 
 describe("ReviewRuntimePanel", () => {
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
   it("shows the configured model name and every reported missing key point", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     client.setQueryData(["providers"], [{ id: "provider-1", name: "火山", enabled: true, models: [{ id: "model-1", displayName: "glm", enabled: true }] }]);
@@ -31,5 +36,26 @@ describe("ReviewRuntimePanel", () => {
     fireEvent.click(screen.getByText("运行详情"));
     expect(runtime).toHaveAttribute("open");
     expect(keyPoints).toHaveAttribute("open");
+  });
+
+  it("shows the current evaluation stage and live elapsed duration", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-19T10:00:03Z"));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(["providers"], []);
+    const round = {
+      settings: { answer_model_id: "model-1", reasoning_effort: "medium" },
+      status: "running",
+      executionStatus: "running",
+      attempts: [{ id: "attempt-1", status: "evaluating", evaluationStartedAt: "2026-07-19T10:00:00Z", evaluationCompletedAt: null }],
+      usage: { totalTokens: 0, callCount: 0 },
+      contextUsage: { currentTokens: 0, thresholdTokens: 0 },
+    } as ReviewRound;
+
+    render(<QueryClientProvider client={client}><ReviewRuntimePanel round={round} evaluationStage="checking_key_points" /></QueryClientProvider>);
+
+    const runtime = screen.getByText("运行详情").closest("details")!;
+    expect(within(runtime).getByText("对照必答方向")).toBeInTheDocument();
+    expect(within(runtime).getByText("3 秒")).toBeInTheDocument();
   });
 });

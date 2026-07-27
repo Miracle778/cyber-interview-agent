@@ -178,6 +178,12 @@ async def application(tmp_path: Path):
     )
     connection = product.connection
     connection.execute(
+        "INSERT INTO knowledge_sources "
+        "(id, workspace_id, original_filename, stored_path, content_type, size_bytes) "
+        "VALUES ('source-1', 'w1', '数据库事务笔记.md', "
+        "'artifacts/review/sources/source-1.md', 'text/markdown', 16)"
+    )
+    connection.execute(
         "INSERT INTO pending_actions "
         "(id, workspace_id, session_id, run_id, action_type, payload_json, "
         "preview_json, status, idempotency_key) VALUES "
@@ -202,6 +208,14 @@ async def application(tmp_path: Path):
         (snapshot.content_hash,),
     )
     connection.commit()
+    repository.upsert_question_source_link(
+        question_id="q1",
+        source_id="source-1",
+        batch_id="batch-1",
+        session_id="curation-session",
+        evidence_ref="source-1#section-0014",
+        merge_reason="generated_from_source",
+    )
     draft_path = workspace / "artifacts/review/drafts/draft-q1.md"
     draft_path.parent.mkdir(parents=True, exist_ok=True)
     draft_path.write_text("# MVCC\n", encoding="utf-8")
@@ -274,6 +288,15 @@ async def test_active_catalog_and_round_answer_are_resource_driven(
         assert round_value["status"] == "waiting_for_input"
         assert round_value["executionStatus"] == "waiting_for_input"
         assert round_value["currentQuestion"]["id"] == "q1"
+        assert round_value["currentQuestion"]["sources"] == [
+            {
+                "sourceId": "source-1",
+                "filename": "数据库事务笔记.md",
+                "sectionNumbers": [14],
+                "evidenceCount": 1,
+                "availability": "available",
+            }
+        ]
         input_value = round_value["currentInput"]
 
         answered = await client.post(

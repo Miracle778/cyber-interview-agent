@@ -3185,6 +3185,76 @@ class ReviewApplication:
             hint_level, _revealed = self.repository.question_assistance(
                 round_id, round_record.current_index + 1
             )
+            source_links = self.repository.list_question_source_links(
+                question.question_id
+            )
+            source_ids = tuple(
+                dict.fromkeys(link.source_id for link in source_links)
+            )
+            source_service = (
+                KnowledgeSourceService(
+                    self.workspace_root,
+                    workspace_id=self.workspace_id,
+                )
+                if source_ids
+                else None
+            )
+
+            async def load_source(source_id: str):
+                assert source_service is not None
+                try:
+                    return await source_service.get(source_id)
+                except LookupError:
+                    return None
+
+            source_records = (
+                await asyncio.gather(
+                    *(load_source(source_id) for source_id in source_ids),
+                )
+                if source_ids
+                else ()
+            )
+            sources_by_id = {
+                source_id: record
+                for source_id, record in zip(
+                    source_ids, source_records, strict=True
+                )
+                if record is not None
+            }
+            source_resources = []
+            for source_id in source_ids:
+                links = [
+                    link
+                    for link in source_links
+                    if link.source_id == source_id
+                ]
+                section_numbers = []
+                for link in links:
+                    suffix = link.evidence_ref.rpartition("#section-")[2]
+                    if suffix.isdigit():
+                        section_numbers.append(int(suffix))
+                source = sources_by_id.get(source_id)
+                source_resources.append(
+                    {
+                        "source_id": source_id,
+                        "filename": (
+                            None
+                            if source is None
+                            else source.original_filename
+                        ),
+                        "section_numbers": tuple(
+                            dict.fromkeys(section_numbers)
+                        ),
+                        "evidence_count": len(links),
+                        "availability": (
+                            "missing"
+                            if source is None
+                            else "deleted"
+                            if source.deleted_at is not None
+                            else "available"
+                        ),
+                    }
+                )
             current_question = {
                 "id": question.question_id,
                 "document_id": question.document_id,
@@ -3211,6 +3281,7 @@ class ReviewApplication:
                     attempt is not None and attempt.answer_revisions
                 ),
                 "hint_level": hint_level,
+                "sources": source_resources,
             }
         reports = []
         for report_kind in ("session_report", "mastery_report"):

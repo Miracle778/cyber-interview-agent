@@ -55,6 +55,8 @@ const EVENT_TYPES = [
   "review.turn.responded",
   "review.answer.accepted",
   "review.evaluation.started",
+  "review.evaluation.checking_key_points",
+  "review.evaluation.deciding_follow_up",
   "review.evaluation.completed",
   "review.evaluation.failed",
   "review.attempt.completed",

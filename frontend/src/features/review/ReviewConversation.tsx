@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Bot, ChevronDown, Send, SkipForward, SlidersHorizontal, RotateCcw, UserRound } from "lucide-react";
+import { Activity, AlertTriangle, Bot, Check, ChevronDown, Send, SkipForward, SlidersHorizontal, RotateCcw, UserRound } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -12,6 +12,47 @@ import { CurrentQuestionCard } from "./CurrentQuestionCard";
 
 type ReasoningEffort = "none" | "low" | "medium" | "high";
 type ReviewAnswerConfiguration = { providerModelId: string; reasoningEffort: ReasoningEffort };
+export type ReviewEvaluationStage = "preparing" | "checking_key_points" | "deciding_follow_up";
+
+const evaluationStages = [
+  { key: "saved", label: "回答已保存", detail: "刷新或评价失败后仍会保留" },
+  { key: "preparing", label: "理解本次回答", detail: "识别回答范围与当前题意" },
+  { key: "checking_key_points", label: "对照必答方向", detail: "核对已覆盖和仍需补充的内容" },
+  { key: "deciding_follow_up", label: "生成反馈与下一步", detail: "决定继续追问或进入下一题" },
+] as const;
+
+const evaluationStageOrder: Record<ReviewEvaluationStage, number> = {
+  preparing: 1,
+  checking_key_points: 2,
+  deciding_follow_up: 3,
+};
+
+function ReviewEvaluationProcess({ startedAt, stage }: { startedAt: string | null; stage: ReviewEvaluationStage }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    setNow(Date.now());
+    const timer = globalThis.setInterval(() => setNow(Date.now()), 1000);
+    return () => globalThis.clearInterval(timer);
+  }, [startedAt]);
+  const effectiveStartedAt = startedAt ?? new Date(now).toISOString();
+  const seconds = elapsedSeconds(effectiveStartedAt, new Date(now).toISOString()) ?? 0;
+  const activeIndex = evaluationStageOrder[stage];
+  const stageLabel = evaluationStages[activeIndex].label;
+  const time = formatMessageTime(effectiveStartedAt);
+  return <article className="review-chat-message review-chat-message--agent review-evaluation-process" role="status" aria-label="回答评价进度" aria-live="polite">
+    <span className="review-chat-message__avatar" aria-hidden="true"><Bot size={17} /></span>
+    <div className="review-chat-message__content">
+      <div className="review-chat-message__meta"><strong>复习助手</strong>{time ? <span className="review-chat-message__timing"><time dateTime={effectiveStartedAt}>{time}</time><span>· 处理中 {formatElapsedSeconds(seconds)}</span></span> : null}</div>
+      <div className="review-evaluation-process__card">
+        <header><Activity size={16} aria-hidden="true" /><div><strong>{stageLabel}</strong><small>评价结果校验完成后会一次展示</small></div></header>
+        <ol>{evaluationStages.map((item, index) => {
+          const state = index < activeIndex ? "completed" : index === activeIndex ? "active" : "pending";
+          return <li key={item.key} data-state={state}><span aria-hidden="true">{state === "completed" ? <Check size={12} /> : null}</span><div><strong>{item.label}</strong><small>{item.detail}</small></div></li>;
+        })}</ol>
+      </div>
+    </div>
+  </article>;
+}
 
 function formatMessageTime(value: string) {
   return formatBeijingTime(value, false);
@@ -43,7 +84,7 @@ export function ReviewChatMessage({ message, pending = false, processingSeconds 
   </article>;
 }
 
-export function ReviewConversation({ round, optimisticMessage, busy, onSubmit, onSkip, onRetry }: { round: ReviewRound; optimisticMessage: ReviewTimelineMessage | null; busy: boolean; onSubmit: (value: string, configuration: ReviewAnswerConfiguration) => Promise<unknown>; onSkip: () => void; onCancel?: () => void; onRetry: () => void }) {
+export function ReviewConversation({ round, optimisticMessage, busy, evaluationStage = "preparing", onSubmit, onSkip, onRetry }: { round: ReviewRound; optimisticMessage: ReviewTimelineMessage | null; busy: boolean; evaluationStage?: ReviewEvaluationStage; onSubmit: (value: string, configuration: ReviewAnswerConfiguration) => Promise<unknown>; onSkip: () => void; onCancel?: () => void; onRetry: () => void }) {
   const [answer, setAnswer] = useState("");
   const [selectedModel, setSelectedModel] = useState(round.settings.answer_model_id);
   const [reasoning, setReasoning] = useState<ReasoningEffort>(round.settings.reasoning_effort);
@@ -91,7 +132,7 @@ export function ReviewConversation({ round, optimisticMessage, busy, onSubmit, o
   return <section className="review-conversation review-conversation--chat" aria-label="当前复习轮次">
     <h2 className="review-conversation__sr-title">{round.currentQuestion?.title ?? "当前复习轮次"}</h2>
     {round.currentQuestion ? <CurrentQuestionCard question={round.currentQuestion} busy={busy} onHint={() => submitAuxiliary("给点提示")} onReveal={() => submitAuxiliary("查看答案")} onSkip={onSkip} /> : null}
-    <div ref={logRef} className="review-chat-log" role="log" aria-label="复习对话" aria-live="polite">{messages.map((message) => <ReviewChatMessage key={message.id} message={message} processingSeconds={processingSeconds(message)} />)}{optimisticMessage ? <ReviewChatMessage message={optimisticMessage} pending /> : null}{evaluating ? <div className="review-typing-row" role="status"><span className="review-chat-message__avatar" aria-hidden="true"><Bot size={17} /></span><div className="review-typing-indicator"><span className="status-pulse" />复习助手正在评价回答…</div></div> : null}{failed ? <div className="review-evaluation-error"><AlertTriangle size={17} /><div><strong>评价暂时失败</strong><p>你的回答已经保存，无需重新输入。</p></div><Button variant="secondary" size="sm" onClick={onRetry}><RotateCcw size={15} />重试评价</Button></div> : null}</div>
+    <div ref={logRef} className="review-chat-log" role="log" aria-label="复习对话" aria-live="polite">{messages.map((message) => <ReviewChatMessage key={message.id} message={message} processingSeconds={processingSeconds(message)} />)}{optimisticMessage ? <ReviewChatMessage message={optimisticMessage} pending /> : null}{evaluating ? <ReviewEvaluationProcess startedAt={latestAttempt?.evaluationStartedAt ?? null} stage={evaluationStage} /> : null}{failed ? <div className="review-evaluation-error"><AlertTriangle size={17} /><div><strong>评价暂时失败</strong><p>你的回答已经保存，无需重新输入。</p></div><Button variant="secondary" size="sm" onClick={onRetry}><RotateCcw size={15} />重试评价</Button></div> : null}</div>
     {round.currentInput ? <footer className="curation-composer review-chat-composer review-round-composer"><label className="review-conversation__sr-title" htmlFor="review-answer">{round.currentInput.kind === "follow_up" ? "补充回答" : "你的回答"}</label><div className="review-chat-composer__field"><textarea id="review-answer" rows={1} value={answer} disabled={busy} onChange={(event) => setAnswer(event.target.value)} {...keyboard} placeholder={round.currentInput.kind === "follow_up" ? "补充你的思路…" : "输入你的回答…"} /><div className="curation-composer__toolbar"><details className="curation-composer__settings"><summary aria-disabled={busy} onClick={(event) => { if (busy) event.preventDefault(); }}><SlidersHorizontal size={16} aria-hidden="true" /><span>{selectedModelLabel} · {reasoningLabel[reasoning]}</span><ChevronDown size={15} aria-hidden="true" /></summary><div className="curation-composer__settings-panel" aria-label="模型与思考强度"><label htmlFor="review-answer-model">本次评价模型</label><select id="review-answer-model" aria-label="评价模型" value={selectedModel} disabled={busy} onChange={(event) => setSelectedModel(event.target.value)}>{selectedModel && !models.some((model) => model.id === selectedModel) ? <option value={selectedModel}>{displayModel(selectedModel)}</option> : null}{models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select><label htmlFor="review-answer-reasoning">思考强度</label><select id="review-answer-reasoning" aria-label="评价思考强度" value={reasoning} disabled={busy} onChange={(event) => setReasoning(event.target.value as ReasoningEffort)}>{Object.entries(reasoningLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div></details><small>Shift+Enter 换行</small><div className="review-chat-composer__actions"><Button className="review-round-composer__skip" variant="ghost" disabled={busy} onClick={onSkip}><SkipForward size={16} />跳过</Button><Button className="curation-composer__send" aria-label="发送" title="发送" disabled={!answer.trim() || !selectedModel || busy} loading={busy} onClick={() => void submit().catch(() => undefined)}><Send size={18} /></Button></div></div></div></footer> : null}
   </section>;
 }

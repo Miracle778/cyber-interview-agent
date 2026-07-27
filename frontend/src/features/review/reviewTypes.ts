@@ -407,6 +407,13 @@ export interface ReviewRound {
     missingDirections?: string[];
     hasAnswer?: boolean;
     hintLevel?: number;
+    sources?: {
+      sourceId: string;
+      filename: string | null;
+      sectionNumbers: number[];
+      evidenceCount: number;
+      availability: "available" | "deleted" | "missing";
+    }[];
   } | null;
   currentInput: ReviewInput | null;
   attempts: ReviewAttempt[];
