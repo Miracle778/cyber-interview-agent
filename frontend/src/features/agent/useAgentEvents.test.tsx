@@ -111,8 +111,9 @@ describe("useAgentEvents", () => {
     act(() => {
       source.emit({ id: 9, type: "review.evaluation.started", sessionId: "s1", executionId: "r1", timestamp: "now", payload: { roundId: "round-1", attemptId: "a1" } });
       source.emit({ id: 10, type: "session.message.created", sessionId: "s1", executionId: "r1", timestamp: "now", payload: { messageId: "m1", messageKind: "evaluation_card" } });
+      source.emit({ id: 11, type: "review.turn.responded", sessionId: "s1", executionId: "r1", timestamp: "now", payload: { roundId: "round-1", intent: "reveal_answer" } });
     });
-    expect(result.current.events.map((event) => event.type)).toEqual(["review.evaluation.started", "session.message.created"]);
+    expect(result.current.events.map((event) => event.type)).toEqual(["review.evaluation.started", "session.message.created", "review.turn.responded"]);
   });
 
   it("collects curation control events and ignores an older event delivered out of order", () => {

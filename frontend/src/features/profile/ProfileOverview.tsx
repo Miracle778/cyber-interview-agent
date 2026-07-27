@@ -1,4 +1,5 @@
 import { ArrowRight, BriefcaseBusiness, Check, FileText, LockKeyhole, Upload } from "lucide-react";
+import { formatBeijingDate } from "../../shared/time";
 import { Button } from "../../shared/ui/Button";
 import { formatEvidencePosition, formatEvidenceTitle } from "./evidenceLocator";
 import { ProfileStatusBadge } from "./ProfileStatusBadge";
@@ -6,8 +7,7 @@ import { isUsefulResumeExcerpt, plainResumeExcerpt } from "./profilePresentation
 import type { ProfileMaterial, ProfileMaterialVersionDetail } from "./profileTypes";
 
 function formatDate(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+  return formatBeijingDate(value) ?? value;
 }
 
 export function ProfileOverview({ material, detail, onImport, onOpenVersions, onOpenClaims, onOpenEvidence }: { material: ProfileMaterial; detail: ProfileMaterialVersionDetail | null; onImport: () => void; onOpenVersions: () => void; onOpenClaims: () => void; onOpenEvidence: (evidenceId: string) => void }) {

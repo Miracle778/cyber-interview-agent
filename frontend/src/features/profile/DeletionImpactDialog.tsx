@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, ShieldAlert, X } from "lucide-react";
+import { formatBeijingTime } from "../../shared/time";
 import { Button } from "../../shared/ui/Button";
 import { permanentlyDeleteMaterial, previewMaterialDeletion } from "./profileApi";
 import type { MaterialDeletionPreview, PermanentMaterialDeletionResult, ProfileMaterial } from "./profileTypes";
@@ -70,7 +71,7 @@ export function DeletionImpactDialog({ open, workspaceId, material, onClose, onD
         <label className="profile-delete-dialog__confirm"><span>输入“{CONFIRM_TEXT}”确认</span><input value={confirmText} onChange={(event) => setConfirmText(event.target.value)} autoComplete="off" /></label>
       </div> : null}
       <footer><Button variant="ghost" onClick={onClose}>取消，保留材料</Button><Button variant="danger" disabled={!canDelete} loading={busy && Boolean(preview)} onClick={() => void remove()}>永久删除</Button></footer>
-      {preview && !error ? <span className="profile-delete-dialog__safe"><CheckCircle2 size={14} />预检有效至 {new Date(preview.expiresAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</span> : null}
+      {preview && !error ? <span className="profile-delete-dialog__safe"><CheckCircle2 size={14} />预检有效至 {formatBeijingTime(preview.expiresAt, false) ?? preview.expiresAt}</span> : null}
     </section>
   </div>;
 }

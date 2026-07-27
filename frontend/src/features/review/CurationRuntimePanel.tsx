@@ -1,5 +1,6 @@
 import { Activity, ArrowLeft, Ban, ChevronDown, CirclePause, Clock3, FileText, Pause, Play, ShieldAlert, TriangleAlert, WifiOff } from "lucide-react";
 import { type CSSProperties, useEffect, useRef, useState } from "react";
+import { parseApiTimestamp } from "../../shared/time";
 import { Button } from "../../shared/ui/Button";
 import { CurationArtifactCard } from "./CurationArtifactCard";
 import { CurationProvisionalList } from "./CurationProvisionalList";
@@ -104,7 +105,7 @@ export function CurationRuntimePanel({ session, candidates = null, activeModelLa
   const statusCounts = candidateItems.reduce((counts, candidate) => ({ ...counts, [candidate.status]: counts[candidate.status] + 1 }), { draft: 0, review_pending: 0, published: 0, rejected: 0 });
   const ordinalByCandidate = new Map(session?.summary.items.map((item) => [item.candidateId, item.ordinal]) ?? []);
   const summaryCandidateIds = new Set(session?.summary.items.map((item) => item.candidateId) ?? []);
-  const recentCandidate = [...candidateItems].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))[0] ?? null;
+  const recentCandidate = [...candidateItems].sort((left, right) => parseApiTimestamp(right.updatedAt).getTime() - parseApiTimestamp(left.updatedAt).getTime())[0] ?? null;
   const qualityMatches = (candidate: QuestionCandidate) => qualityFilter === "ai_primary"
     ? ["model", "unknown"].includes(candidate.answerBasis ?? "unknown")
     : qualityFilter === "insufficient_support"
@@ -114,7 +115,7 @@ export function CurationRuntimePanel({ session, candidates = null, activeModelLa
         : true;
   const filteredCandidates = statusFilter || qualityFilter ? candidateItems
     .filter((candidate) => (!statusFilter || candidate.status === statusFilter) && qualityMatches(candidate))
-    .sort((left, right) => (ordinalByCandidate.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (ordinalByCandidate.get(right.id) ?? Number.MAX_SAFE_INTEGER) || Date.parse(right.updatedAt) - Date.parse(left.updatedAt)) : [];
+    .sort((left, right) => (ordinalByCandidate.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (ordinalByCandidate.get(right.id) ?? Number.MAX_SAFE_INTEGER) || parseApiTimestamp(right.updatedAt).getTime() - parseApiTimestamp(left.updatedAt).getTime()) : [];
   const generationLabel = session?.progress?.phase === "discovery" ? "正在识别题目" : session?.progress?.phase === "enrichment" ? "正在补全候选" : null;
   const candidateLimitReached = session?.warnings?.some((warning) => warning.code === "candidate_limit_reached") ?? false;
   const activeFilterLabel = statusFilter ? candidateStatusLabels[statusFilter] : qualityFilter === "ai_primary" ? "主要由 AI 生成" : qualityFilter === "insufficient_support" ? "材料支持不足" : qualityFilter === "needs_review" ? "需要人工复核" : null;

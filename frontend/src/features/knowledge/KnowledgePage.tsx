@@ -5,6 +5,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
 import { toActionableError, type ActionableError } from "../../shared/api/errorAdvice";
+import { formatBeijingDateTime } from "../../shared/time";
 import { ActionCenter } from "../agent/ActionCenter";
 import type { ReviewQuestion } from "../review/reviewTypes";
 import type { WorkspaceConfig } from "../settings/settingsApi";
@@ -40,8 +41,7 @@ function formatBytes(size: number) {
 }
 
 function formatDate(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN");
+  return formatBeijingDateTime(value, true) ?? value;
 }
 
 function contentTypeLabel(value: string) {

@@ -1,7 +1,7 @@
 import { Archive, ArrowRight, BookOpenCheck, CalendarDays, Plus, RotateCcw, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { Button } from "../../shared/ui/Button";
-import { parseApiTimestamp } from "../../shared/time";
+import { formatBeijingTimestamp } from "../../shared/time";
 import type { ReviewRound } from "./reviewTypes";
 
 const statusText: Record<string, string> = { waiting_for_input: "等待回答", running: "进行中", report_pending: "报告待确认", completed: "已完成", failed: "失败", cancelled: "已结束" };
@@ -11,11 +11,14 @@ const difficultyText = { easy: "简单", medium: "中等", hard: "困难" } as c
 type HistoryFilter = "all" | "active" | "completed" | "ended" | "answered";
 
 function roundDate(value: string) {
-  const date = parseApiTimestamp(value);
-  if (Number.isNaN(date.getTime())) return "";
-  const parts = new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Shanghai" }).formatToParts(date);
-  const valueOf = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
-  return `${valueOf("month")}月${valueOf("day")}日 ${valueOf("hour")}:${valueOf("minute")}`;
+  const timestamp = formatBeijingTimestamp(value, {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  return timestamp?.replace(/^(\d+)\/(\d+)\s/, "$1月$2日 ") ?? "";
 }
 
 function RoundRow({ round, onOpen, onArchive, archived = false, onRestore }: { round: ReviewRound; onOpen: () => void; onArchive?: () => void; archived?: boolean; onRestore?: () => void }) {

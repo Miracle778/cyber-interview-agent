@@ -131,6 +131,28 @@ def connect_thread_local_runtime_database(
 
 
 def _apply_runtime_migrations(connection: sqlite3.Connection) -> None:
+    migrations = sorted(_MIGRATIONS_DIR.glob("[0-9][0-9][0-9]_*.sql"))
+    try:
+        applied = {
+            int(row[0])
+            for row in connection.execute(
+                "SELECT version FROM runtime_schema_migrations"
+            )
+        }
+    except sqlite3.OperationalError as error:
+        if "no such table" not in str(error).lower():
+            raise
+        applied = set()
+    required = {
+        _BASELINE_MIGRATION_VERSION,
+        *(
+            int(migration.name.split("_", 1)[0])
+            for migration in migrations
+        ),
+    }
+    if required.issubset(applied):
+        return
+
     connection.execute(
         "CREATE TABLE IF NOT EXISTS runtime_schema_migrations ("
         "version INTEGER PRIMARY KEY CHECK (version > 0), "
@@ -150,7 +172,7 @@ def _apply_runtime_migrations(connection: sqlite3.Connection) -> None:
             "SELECT version FROM runtime_schema_migrations"
         )
     }
-    for migration in sorted(_MIGRATIONS_DIR.glob("[0-9][0-9][0-9]_*.sql")):
+    for migration in migrations:
         version = int(migration.name.split("_", 1)[0])
         if version <= _BASELINE_MIGRATION_VERSION or version in applied:
             continue

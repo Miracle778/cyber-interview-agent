@@ -96,6 +96,20 @@ def _is_transient_sqlite_lock(error: BaseException) -> bool:
     )
 
 
+def _publication_error_code(error: BaseException) -> str:
+    if _is_transient_sqlite_lock(error):
+        return "database_locked"
+    if isinstance(error, ReviewConflictError):
+        return "publication_conflict"
+    stable_code = getattr(error, "code", None)
+    if isinstance(stable_code, str) and stable_code in {
+        "publication_failed",
+        "publication_index_failed",
+    }:
+        return stable_code
+    return "publication_failed"
+
+
 def _seed_progress_resource(seed_tasks) -> dict[str, int]:
     statuses = [item.status for item in seed_tasks]
     return {
@@ -385,11 +399,13 @@ class ReviewApplication:
             for batch in self.repository.list_batches(self.workspace_id)
             if batch.session_id == session_id
         ]
-        candidates = [
-            candidate
-            for candidate in self.repository.list_candidates(self.workspace_id)
-            if any(candidate.batch_id == batch.id for batch in batches)
-        ]
+        candidates = list(
+            self.repository.list_candidates(
+                self.workspace_id,
+                batch_ids=tuple(batch.id for batch in batches),
+                limit=None,
+            )
+        )
         latest_command = self.repository.latest_curation_command_receipt(
             session_id
         )
@@ -1135,9 +1151,7 @@ class ReviewApplication:
                             item.id,
                             expected=("running",),
                             target="failed",
-                            error_code=str(
-                                getattr(error, "code", "publication_failed")
-                            ),
+                            error_code=_publication_error_code(error),
                         )
                     await self.events.publish(
                         operation.session_id,
@@ -2390,8 +2404,11 @@ class ReviewApplication:
         batch = self.repository.get_batch(batch_id)
         if batch.workspace_id != self.workspace_id:
             raise LookupError(batch_id)
-        candidates = self.repository.list_candidates(self.workspace_id)
-        own = [item for item in candidates if item.batch_id == batch.id]
+        own = self.repository.list_candidates(
+            self.workspace_id,
+            batch_ids=(batch.id,),
+            limit=None,
+        )
         return {
             "id": batch.id,
             "workspace_id": batch.workspace_id,

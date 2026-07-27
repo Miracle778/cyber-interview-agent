@@ -19,6 +19,14 @@ function formatMessageTime(value: string) {
 
 export function ReviewChatMessage({ message, pending = false, processingSeconds = null }: { message: ReviewTimelineMessage; pending?: boolean; processingSeconds?: number | null }) {
   const user = message.role === "user";
+  const auxiliaryIntent = message.payload.auxiliary === true && typeof message.payload.intent === "string"
+    ? message.payload.intent
+    : null;
+  const localResponseLabel = !user && auxiliaryIntent === "reveal_answer"
+    ? "题库参考答案"
+    : !user && auxiliaryIntent === "request_hint"
+      ? "题库提示"
+      : null;
   const evaluation = message.messageKind === "evaluation_card" ? message.payload.evaluation as { score?: string; evidence?: string; missing_key_points?: string[] } | undefined : undefined;
   const score = evaluation?.score === "good" ? "掌握良好" : evaluation?.score === "partial" ? "部分掌握" : evaluation?.score === "poor" ? "需要补充" : "评价完成";
   const time = formatMessageTime(message.createdAt);
@@ -26,7 +34,7 @@ export function ReviewChatMessage({ message, pending = false, processingSeconds 
   return <article className={`review-chat-message review-chat-message--${user ? "user" : "agent"}${pending ? " is-pending" : ""}`}>
     <span className="review-chat-message__avatar" aria-hidden="true">{user ? <UserRound size={17} /> : <Bot size={17} />}</span>
     <div className="review-chat-message__content">
-      <div className="review-chat-message__meta"><strong>{user ? "你" : "复习助手"}</strong>{time ? <span className="review-chat-message__timing"><time dateTime={message.createdAt}>{time}</time>{!user && processingSeconds !== null ? <span>· {pending ? "已处理" : "耗时"} {formatElapsedSeconds(processingSeconds)}</span> : null}</span> : null}{pending && user ? <span>发送中…</span> : null}</div>
+      <div className="review-chat-message__meta"><strong>{user ? "你" : localResponseLabel ?? "复习助手"}</strong>{localResponseLabel ? <span className="review-chat-message__local-badge">本地读取 · 0 Token</span> : null}{time ? <span className="review-chat-message__timing"><time dateTime={message.createdAt}>{time}</time>{!user && processingSeconds !== null ? <span>· {pending ? "已处理" : "耗时"} {formatElapsedSeconds(processingSeconds)}</span> : null}</span> : null}{pending && user ? <span>发送中…</span> : null}</div>
       <div className="review-chat-message__bubble">
         {showContent ? user ? <p>{message.content}</p> : <div className="review-chat-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown></div> : null}
         {evaluation ? <section className="review-evaluation-card"><strong>{score}</strong>{evaluation.evidence ? <p>{evaluation.evidence}</p> : null}{evaluation.missing_key_points?.length ? <details><summary>查看 {evaluation.missing_key_points.length} 个待补充关键点</summary><ol>{evaluation.missing_key_points.map((point) => <li key={point}>{point}</li>)}</ol></details> : null}</section> : null}

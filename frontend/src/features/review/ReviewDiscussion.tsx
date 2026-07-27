@@ -5,7 +5,7 @@ import { cancelAgentExecution, getAgentSession, startAgentExecution } from "../a
 import { useAgentEvents } from "../agent/useAgentEvents";
 import { listProviders } from "../settings/settingsApi";
 import { Button } from "../../shared/ui/Button";
-import { elapsedSeconds } from "../../shared/time";
+import { elapsedSeconds, formatElapsedSeconds } from "../../shared/time";
 import { ReviewChatMessage } from "./ReviewConversation";
 import { retryReviewDiscussion } from "./reviewApi";
 import type { ReviewAttempt, ReviewTimelineMessage } from "./reviewTypes";
@@ -17,11 +17,8 @@ const reasoningLabels: Record<ReasoningEffort, string> = { none: "标准", low: 
 
 function formatDuration(startedAt?: string | null, finishedAt?: string | null, now = Date.now()) {
   if (!startedAt) return "尚未运行";
-  const start = Date.parse(startedAt);
-  const end = finishedAt ? Date.parse(finishedAt) : now;
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return "—";
-  const seconds = Math.max(0, Math.round((end - start) / 1000));
-  return seconds < 60 ? `${seconds} 秒` : `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
+  const seconds = elapsedSeconds(startedAt, finishedAt ?? new Date(now).toISOString());
+  return seconds === null ? "—" : formatElapsedSeconds(seconds);
 }
 
 function formatTokens(value: number) {

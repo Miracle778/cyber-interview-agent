@@ -70,6 +70,10 @@ def _canonical_json(value: object) -> str:
     )
 
 
+def _references_source(reference: str, source_id: str) -> bool:
+    return reference.partition("#")[0] == source_id
+
+
 class ReviewRepository:
     def __init__(
         self,
@@ -2854,8 +2858,9 @@ class ReviewRepository:
         difficulty: str | None = None,
         source_id: str | None = None,
         status: str | None = None,
+        batch_ids: tuple[str, ...] | None = None,
         deleted_only: bool = False,
-        limit: int = 100,
+        limit: int | None = 100,
         offset: int = 0,
     ) -> tuple[QuestionCandidateRecord, ...]:
         rows = self._connection.execute(
@@ -2867,6 +2872,11 @@ class ReviewRepository:
             (workspace_id,),
         ).fetchall()
         records = [self._candidate_record(row) for row in rows]
+        if batch_ids is not None:
+            allowed_batch_ids = set(batch_ids)
+            records = [
+                item for item in records if item.batch_id in allowed_batch_ids
+            ]
         if query:
             needle = query.casefold()
             records = [
@@ -2885,11 +2895,18 @@ class ReviewRepository:
             records = [
                 item
                 for item in records
-                if source_id in item.source_refs
+                if any(
+                    _references_source(reference, source_id)
+                    for reference in item.source_refs
+                )
             ]
         if status:
             records = [item for item in records if item.status == status]
-        return tuple(records[offset : offset + limit])
+        return tuple(
+            records[offset:]
+            if limit is None
+            else records[offset : offset + limit]
+        )
 
     def delete_candidates(
         self,

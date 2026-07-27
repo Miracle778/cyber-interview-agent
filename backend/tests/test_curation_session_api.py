@@ -32,7 +32,23 @@ from app.agents.question_curation_contracts import (
 )
 from tests.test_review_api_v2 import _graph_factory
 from app.review.curation_command_contracts import CurationCommandPlan
+from app.review.application import _publication_error_code
 from app.review.errors import ReviewConflictError
+from app.review.models import QuestionSnapshot
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (sqlite3.OperationalError("database is locked"), "database_locked"),
+        (ReviewConflictError("candidate changed"), "publication_conflict"),
+        (RuntimeError("private provider detail"), "publication_failed"),
+    ],
+)
+def test_bulk_publication_failure_uses_safe_specific_error_code(
+    error: BaseException, expected: str
+) -> None:
+    assert _publication_error_code(error) == expected
 
 
 def _session_graph_factory(kind, **dependencies):
@@ -2315,6 +2331,62 @@ async def test_curation_session_api_projects_progress_summary_and_timeline(
         )
         assert listed.status_code == 200
         assert [item["id"] for item in listed.json()] == [resource["id"]]
+
+
+@pytest.mark.asyncio
+async def test_curation_session_counts_all_candidates_beyond_repository_page_limit(
+    api, application
+) -> None:
+    app, source_ids = application
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = (
+            await client.post(
+                "/api/review/curation-sessions",
+                json={"workspaceId": "w1", "sourceRefs": list(source_ids)},
+            )
+        ).json()
+        await app.wait_execution(created["executionId"])
+        review = app.locate_review_session(created["id"])
+        batch_id = review.repository.get_curation_session(
+            created["id"]
+        ).active_batch_id
+        assert batch_id is not None
+        for ordinal in range(100):
+            review.repository.save_candidate(
+                batch_id=batch_id,
+                question=QuestionSnapshot(
+                    question_id=f"extra-{ordinal}",
+                    document_id=f"extra-doc-{ordinal}",
+                    content_hash=f"{ordinal:064x}",
+                    title=f"Extra question {ordinal}",
+                    question_text=f"Explain extra question {ordinal}",
+                    reference_answer=f"Answer {ordinal}",
+                    topics=("runtime",),
+                    difficulty="medium",
+                    key_points=("point",),
+                    follow_ups=(),
+                ),
+                draft_id=None,
+                source_refs=(source_ids[0],),
+                status="review_pending",
+            )
+
+        detail = (
+            await client.get(
+                f"/api/review/curation-sessions/{created['id']}"
+            )
+        ).json()
+
+        assert detail["candidateCount"] == 101
+        assert detail["pendingCount"] == 101
+        assert detail["publishedCount"] == 0
+        batch = (
+            await client.get(f"/api/review/question-batches/{batch_id}")
+        ).json()
+        assert batch["candidateCount"] == 101
+        assert batch["pendingCount"] == 101
 
 
 @pytest.mark.asyncio

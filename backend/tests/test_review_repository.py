@@ -1,7 +1,8 @@
 import asyncio
+import json
 import sqlite3
 import threading
-from dataclasses import replace
+from dataclasses import asdict, replace
 from hashlib import sha256
 from pathlib import Path
 
@@ -1145,6 +1146,38 @@ def test_curation_session_progress_summary_and_source_links_are_durable(
     assert first_link == second_link
     assert repository.list_question_source_links("a") == (first_link,)
     assert repository.list_curation_sessions("w1")[0].session_id == "s1"
+    connection.close()
+
+
+def test_candidate_source_filter_matches_section_references(tmp_path: Path) -> None:
+    connection = _connection(tmp_path)
+    repository = ReviewRepository(connection)
+    repository.create_curation_session(
+        workspace_id="w1", session_id="s1", source_refs=("source-1",)
+    )
+    batch = repository.create_batch(
+        workspace_id="w1",
+        session_id="s1",
+        run_id="r1",
+        source_refs=("source-1",),
+        batch_id="batch-source-filter",
+    )
+    connection.execute(
+        "INSERT INTO review_question_candidates "
+        "(id, batch_id, question_json, source_refs_json, status) "
+        "VALUES (?, ?, ?, ?, 'review_pending')",
+        (
+            "candidate-source-filter",
+            batch.id,
+            json.dumps(asdict(_snapshot("a"))),
+            json.dumps(["source-1#section-0001"]),
+        ),
+    )
+    connection.commit()
+
+    matches = repository.list_candidates("w1", source_id="source-1")
+    assert [item.id for item in matches] == ["candidate-source-filter"]
+    assert repository.list_candidates("w1", source_id="source-2") == ()
     connection.close()
 
 

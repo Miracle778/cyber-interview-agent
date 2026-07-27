@@ -50,8 +50,15 @@ function processElapsed(startedAt: string | null | undefined, createdAt: string)
 
 function CurationProcessMessage({ messages, startedAt, finishedAt, active, failed }: { messages: CurationMessage[]; startedAt: string | null; finishedAt: string | null; active: boolean; failed: boolean }) {
   const [expanded, setExpanded] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
   const timelineRef = useRef<HTMLOListElement>(null);
   const latest = messages.at(-1)!;
+  useEffect(() => {
+    if (!active) return;
+    setNow(Date.now());
+    const timer = globalThis.setInterval(() => setNow(Date.now()), 1000);
+    return () => globalThis.clearInterval(timer);
+  }, [active, startedAt]);
   useEffect(() => {
     if (!expanded || !timelineRef.current) return;
     const timeline = timelineRef.current;
@@ -60,7 +67,7 @@ function CurationProcessMessage({ messages, startedAt, finishedAt, active, faile
     const frame = globalThis.requestAnimationFrame?.(scrollToLatest);
     return () => { if (frame !== undefined) globalThis.cancelAnimationFrame?.(frame); };
   }, [expanded, messages.length]);
-  const processDuration = processElapsed(startedAt, finishedAt ?? latest.createdAt);
+  const processDuration = processElapsed(startedAt, finishedAt ?? (active ? new Date(now).toISOString() : latest.createdAt));
   const statusLabel = active ? "Agent 处理中" : failed ? "Agent 处理失败" : "Agent 处理完成";
   return <article className="review-chat-message review-chat-message--agent curation-process-message"><span className="review-chat-message__avatar" aria-hidden="true"><Bot size={17} /></span><div className="review-chat-message__content"><div className="review-chat-message__meta"><strong>题匠</strong>{timeLabel(latest.createdAt) ? <span className="review-chat-message__timing"><time dateTime={latest.createdAt}>{timeLabel(latest.createdAt)}</time>{processDuration ? <span>· 耗时 {processDuration.slice(1)}</span> : null}</span> : null}</div><details className="curation-process-card" open={expanded}><summary onClick={(event) => { event.preventDefault(); setExpanded((value) => !value); }}><span>{active ? <i className="status-pulse" /> : null}<strong>{statusLabel}</strong><small>{latest.content}</small></span><em>{messages.length} 条</em><ChevronDown size={16} /></summary><ol ref={timelineRef}>{messages.map((message) => <li key={message.id}><span /><div><p>{message.content}</p><small>{timeLabel(message.createdAt)}{processElapsed(startedAt, message.createdAt) ? ` · ${processElapsed(startedAt, message.createdAt)}` : ""}</small></div></li>)}</ol></details></div></article>;
 }
@@ -72,7 +79,7 @@ function CurationSummaryCard({ session, candidates, busyId, bulkOperation, bulkB
   return (
     <section className="curation-artifacts" aria-label="已生成文件">
       <header><div><FileText size={16} /><strong>已生成 {session.summary.items.length} 个 Markdown 文件</strong></div><div className="curation-artifacts__header-actions">{bulkDisabledReason ? <small>{bulkDisabledReason}</small> : <span>草稿 v{session.summaryVersion}</span>}<button type="button" title={bulkDisabledReason ?? undefined} disabled={Boolean(bulkDisabledReason) || bulkBusy || (!bulkRetryAvailable && session.pendingCount === 0)} onClick={onBulkPublish}><Rocket size={14} />{bulkRetryAvailable ? "仅重试失败项" : "一键发布"}</button></div></header>
-      {bulkOperation ? <BulkPublicationProgress operation={bulkOperation} candidates={candidates} stopping={bulkStopping} retrying={bulkRetrying} onStop={onBulkStop} onRetry={onBulkPublish} /> : null}
+      {bulkOperation ? <BulkPublicationProgress operation={bulkOperation} candidates={candidates} stopping={bulkStopping} retrying={bulkRetrying} onStop={onBulkStop} onRetry={onBulkPublish} onOpenCandidate={onOpenCandidate} /> : null}
       <div className={`curation-artifacts__list${expanded ? " is-expanded" : ""}`}>
         {visible.map((item) => candidates[item.candidateId] ? <CurationArtifactCard key={item.candidateId} candidate={candidates[item.candidateId]} title={item.title} description={recommendationText[item.recommendation] ?? item.recommendation} busy={busyId === item.candidateId} onOpen={onOpenCandidate} onPublish={onPublish} onSaveNote={onNote} /> : null)}
       </div>

@@ -5,6 +5,7 @@ import { ActionCenter } from "../agent/ActionCenter";
 import { listActions } from "../agent/hitlApi";
 import type { PendingAction } from "../agent/hitlTypes";
 import { requestPublication } from "../knowledge/draftApi";
+import { formatBeijingTimestamp } from "../../shared/time";
 import { Button } from "../../shared/ui/Button";
 import type { KnowledgeSource } from "../knowledge/knowledgeTypes";
 import type { WorkspaceConfig } from "../settings/settingsApi";
@@ -12,6 +13,7 @@ import { bulkConfirmQuestionCandidates, bulkDeleteQuestionCandidates, deleteQues
 import { QuestionDetailPanel } from "./QuestionDetailPanel";
 import { groupLogicalQuestions } from "./questionGroups";
 import type { QuestionCandidate } from "./reviewTypes";
+import { referencesSource } from "./sourceReferences";
 
 const statusLabels: Record<QuestionCandidate["status"], string> = {
   draft: "草稿",
@@ -27,9 +29,13 @@ const difficultyLabels: Record<QuestionCandidate["question"]["difficulty"], stri
 };
 
 function updatedLabel(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "刚刚更新";
-  return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Shanghai" }).format(date);
+  return formatBeijingTimestamp(value, {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }) ?? "刚刚更新";
 }
 
 function matchesCandidateFilters(candidate: QuestionCandidate, filters: { query: string; topic: string; difficulty: string; sourceId: string; status: string }, omit?: "topic" | "status") {
@@ -37,7 +43,7 @@ function matchesCandidateFilters(candidate: QuestionCandidate, filters: { query:
   if (needle && !candidate.question.title.toLocaleLowerCase().includes(needle) && !candidate.question.questionText.toLocaleLowerCase().includes(needle)) return false;
   if (omit !== "topic" && filters.topic && !candidate.question.topics.includes(filters.topic)) return false;
   if (filters.difficulty && candidate.question.difficulty !== filters.difficulty) return false;
-  if (filters.sourceId && !candidate.sourceRefs.includes(filters.sourceId)) return false;
+  if (filters.sourceId && !referencesSource(candidate.sourceRefs, filters.sourceId)) return false;
   if (omit !== "status" && filters.status && candidate.status !== filters.status) return false;
   return true;
 }
@@ -68,7 +74,7 @@ export function QuestionLibrary({ workspace, sources, initialCandidateId = null,
   const [publicationRequest, setPublicationRequest] = useState<{ action: PendingAction; candidateId: string } | null>(null);
   const [approvalOpen, setApprovalOpen] = useState(false);
   const publicationActions = useQuery({ queryKey: ["pending-actions", workspace.id], queryFn: () => listActions(workspace.id, { status: "pending" }), refetchInterval: 5000 });
-  const catalog = useQuery({ queryKey: ["review-candidates-overview", workspace.id], queryFn: () => listAllQuestionCandidates(workspace.id) });
+  const catalog = useQuery({ queryKey: ["review-question-candidates", workspace.id], queryFn: () => listAllQuestionCandidates(workspace.id) });
   const sourceLabels = useMemo(() => Object.fromEntries(sources.map((source) => [source.id, source.originalFilename])), [sources]);
   const facetFilters = useMemo(() => ({ query, topic, difficulty, sourceId, status }), [query, topic, difficulty, sourceId, status]);
   const allGroups = useMemo(() => groupLogicalQuestions(catalog.data ?? []), [catalog.data]);
@@ -96,7 +102,7 @@ export function QuestionLibrary({ workspace, sources, initialCandidateId = null,
   useEffect(() => { if (!selectedId && resultGroups[0]) setSelectedId(resultGroups[0].primary.id); }, [resultGroups, selectedId]);
   useEffect(() => { if (initialCandidateId) setSelectedId(initialCandidateId); }, [initialCandidateId]);
   const invalidate = async () => Promise.all([
-    client.invalidateQueries({ queryKey: ["review-candidates-overview", workspace.id] }),
+    client.invalidateQueries({ queryKey: ["review-question-candidates", workspace.id] }),
     client.invalidateQueries({ queryKey: ["active-review-questions", workspace.id] }),
   ]);
   const save = useMutation({ mutationFn: (values: { version: number; title: string; questionText: string; referenceAnswer: string; keyPoints: string[]; requiredKeyPoints: string[]; bonusKeyPoints: string[] }) => updateQuestionCandidate(selected!.id, values), onSuccess: invalidate });
@@ -157,7 +163,7 @@ export function QuestionLibrary({ workspace, sources, initialCandidateId = null,
 
       <div className="question-library__workspace">
         <section className="question-library__results" aria-label="题目结果">
-          <header><label className="question-library__select-all"><input type="checkbox" aria-label="全选当前筛选结果" disabled={!visibleCandidates.length} checked={allVisibleSelected} onChange={() => setSelectedIds(allVisibleSelected ? new Set() : new Set(visibleCandidates.map((candidate) => candidate.id)))} /><span>全选当前结果</span></label><strong>{resultGroups.length} 道逻辑题目</strong><span>{resultScope}</span><div className="question-library__bulk"><Button size="sm" variant="ghost" disabled={!recommendedCandidates.length} onClick={() => setSelectedIds(new Set(recommendedCandidates.map((candidate) => candidate.id)))}>选择推荐项</Button>{selectedIds.size > 0 ? <><span>已选 {selectedIds.size} 道</span>{selectedConfirmableIds.length > 0 ? <Button size="sm" loading={confirmCandidates.isPending} onClick={() => setPendingConfirmationIds(selectedConfirmableIds)}>批量确认</Button> : null}<Button size="sm" variant="danger" loading={remove.isPending} onClick={() => confirmDelete((catalog.data ?? []).filter((item) => selectedIds.has(item.id)))}><Trash2 size={14} />批量删除</Button></> : null}</div></header>
+          <header><label className="question-library__select-all"><input type="checkbox" aria-label="全选当前筛选结果" disabled={!visibleCandidates.length} checked={allVisibleSelected} onChange={() => setSelectedIds(allVisibleSelected ? new Set() : new Set(visibleCandidates.map((candidate) => candidate.id)))} /><span>全选当前结果</span></label><strong>{resultGroups.length} 道逻辑题目</strong><span>{resultScope}</span><div className="question-library__bulk"><Button size="sm" variant="ghost" disabled={!recommendedCandidates.length} onClick={() => setSelectedIds(new Set(recommendedCandidates.map((candidate) => candidate.id)))}>选择推荐项</Button>{selectedIds.size > 0 ? <><span>已选 {selectedIds.size} 道</span><div className="question-library__bulk-actions">{selectedConfirmableIds.length > 0 ? <Button size="sm" loading={confirmCandidates.isPending} onClick={() => setPendingConfirmationIds(selectedConfirmableIds)}>批量确认</Button> : null}<Button size="sm" variant="danger" loading={remove.isPending} onClick={() => confirmDelete((catalog.data ?? []).filter((item) => selectedIds.has(item.id)))}><Trash2 size={14} />批量删除</Button></div></> : null}</div></header>
           {catalog.isLoading ? <p className="status-note">正在读取候选题…</p> : null}
           {deletionNotice ? <div className="question-library__notice" role="status"><span>{deletionNotice}</span><button type="button" aria-label="关闭删除结果" onClick={() => setDeletionNotice("")}><X size={14} /></button></div> : null}
           {confirmationNotice ? <div className="question-library__notice" role="status"><span>{confirmationNotice}</span><button type="button" aria-label="关闭确认结果" onClick={() => setConfirmationNotice("")}><X size={14} /></button></div> : null}

@@ -27,6 +27,7 @@ describe("ReviewRuntimePanel", () => {
     expect(runtime).toHaveAttribute("open");
     expect(within(keyPoints).getAllByRole("listitem")).toHaveLength(4);
     expect(within(keyPoints).getByTitle("finalize 两次标记流程")).toBeInTheDocument();
+    expect(within(runtime).getByText(/查看提示和答案直接读取本轮题库/)).toBeInTheDocument();
     fireEvent.click(screen.getByText("运行详情"));
     expect(runtime).toHaveAttribute("open");
     expect(keyPoints).toHaveAttribute("open");

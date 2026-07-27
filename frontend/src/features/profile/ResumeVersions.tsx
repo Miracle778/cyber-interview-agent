@@ -1,4 +1,5 @@
 import { AlertTriangle, Archive, ArrowRight, Check, FilePlus2, FileText, MoreHorizontal, RotateCcw, Trash2, Upload } from "lucide-react";
+import { formatBeijingDateTime } from "../../shared/time";
 import { Button } from "../../shared/ui/Button";
 import { TaskWorkspace, TaskWorkspacePane } from "../../shared/ui/TaskWorkspace";
 import { ProfileStatusBadge } from "./ProfileStatusBadge";
@@ -15,8 +16,7 @@ const stageDefinitions = [
 ];
 
 function formatTime(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
+  return formatBeijingDateTime(value) ?? value;
 }
 
 function fileTypeLabel(value: string) {

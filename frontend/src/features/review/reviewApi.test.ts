@@ -12,6 +12,7 @@ import {
   terminateCurationSession,
   retryBulkPublication,
   retryCurationSeedTask,
+  listAllQuestionCandidates,
 } from "./reviewApi";
 import type { CurationSession, ReviewRound } from "./reviewTypes";
 
@@ -105,6 +106,18 @@ describe("reviewApi", () => {
         method: "POST",
         body: JSON.stringify({ idempotencyKey: "bulk-retry-1" }),
       }),
+    );
+  });
+
+  it("loads the candidate catalog in large pages instead of issuing one request per 50 items", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json([]));
+
+    await listAllQuestionCandidates("w1");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/review/question-candidates?workspaceId=w1&page=1&pageSize=500",
+      expect.objectContaining({ method: "GET" }),
     );
   });
 

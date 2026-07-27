@@ -6,12 +6,12 @@ import pytest
 from app.agents.context import AgentContext
 from app.application.session_service import ProductRepository
 from app.application.workspace_runtime import SqliteMiddlewareProjection
-from app.middleware.usage_projection_middleware import ContextUsageProjection
-
+from app.infrastructure import runtime_database
 from app.infrastructure.runtime_database import (
     connect_runtime_database,
     runtime_database_path,
 )
+from app.middleware.usage_projection_middleware import ContextUsageProjection
 
 
 R2_TABLES = {
@@ -24,6 +24,8 @@ R2_TABLES = {
     "review_input_requests",
     "review_input_receipts",
     "review_mastery_projection",
+    "review_question_assistance",
+    "review_auxiliary_turn_receipts",
 }
 
 R2_SESSION_EXPERIENCE_TABLES = {
@@ -191,13 +193,61 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33]
+        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34]
     assert "agent_context_usage" in _tables(connection)
     assert "profile_deletion_plans" in _tables(connection)
     assert "deleted_at" in {
         row[1] for row in connection.execute("PRAGMA table_info(profile_materials)")
     }
     connection.close()
+
+
+def test_migration_034_repairs_review_assistance_tables_missing_from_applied_031(
+    tmp_path: Path,
+) -> None:
+    legacy = _create_runtime_at_version(tmp_path, 33)
+    legacy.execute("DROP TABLE review_auxiliary_turn_receipts")
+    legacy.execute("DROP TABLE review_question_assistance")
+    legacy.commit()
+    legacy.close()
+
+    repaired = connect_runtime_database(tmp_path)
+
+    assert {
+        "review_question_assistance",
+        "review_auxiliary_turn_receipts",
+    } <= _tables(repaired)
+    assert repaired.execute(
+        "SELECT name FROM runtime_schema_migrations WHERE version = 34"
+    ).fetchone()[0] == "034_repair_review_assistance_tables.sql"
+    repaired.close()
+
+
+def test_current_runtime_schema_opens_while_another_writer_is_active(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initialized = connect_runtime_database(tmp_path)
+    initialized.close()
+    database_path = runtime_database_path(tmp_path)
+    writer = sqlite3.connect(database_path)
+    writer.execute("BEGIN IMMEDIATE")
+    original_open = runtime_database._open_connection
+
+    def open_with_short_timeout(path: Path) -> sqlite3.Connection:
+        connection = original_open(path)
+        connection.execute("PRAGMA busy_timeout = 1")
+        return connection
+
+    monkeypatch.setattr(
+        runtime_database, "_open_connection", open_with_short_timeout
+    )
+    try:
+        checked = connect_runtime_database(tmp_path)
+        assert checked.execute("SELECT 1").fetchone()[0] == 1
+        checked.close()
+    finally:
+        writer.rollback()
+        writer.close()
 
 
 def test_job_target_migration_adds_attempt_and_project_question_fields(

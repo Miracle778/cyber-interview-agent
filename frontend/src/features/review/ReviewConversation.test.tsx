@@ -45,6 +45,25 @@ describe("ReviewConversation", () => {
     expect(screen.getByRole("log", { name: "复习对话" })).toHaveTextContent("耗时 6 秒");
   });
 
+  it("labels a revealed answer as a local zero-token response", () => {
+    const revealed = {
+      ...round,
+      messages: [...round.messages, {
+        id: "m3",
+        executionId: "e1",
+        role: "assistant",
+        content: "参考答案：多个版本并发控制",
+        messageKind: "review_prompt",
+        payload: { auxiliary: true, intent: "reveal_answer" },
+        createdAt: "2026-07-19T10:00:06Z",
+      }],
+    } as ReviewRound;
+    renderConversation({ round: revealed });
+    const answer = screen.getByText("参考答案：多个版本并发控制").closest("article")!;
+    expect(within(answer).getByText("题库参考答案")).toBeInTheDocument();
+    expect(within(answer).getByText("本地读取 · 0 Token")).toBeInTheDocument();
+  });
+
   it("keeps the answer composer after the scrollable conversation", () => {
     const waiting = { ...round, currentInput: { id: "i1", roundId: "r1", ordinal: 1, kind: "follow_up", prompt: "补充一下", version: 1, status: "pending", createdAt: "now", resolvedAt: null } } as ReviewRound;
     const view = renderConversation({ round: waiting });

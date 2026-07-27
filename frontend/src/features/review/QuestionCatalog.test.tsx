@@ -61,6 +61,38 @@ describe("QuestionCatalog", () => {
     expect(screen.getByRole("region", { name: "历史整理会话" })).toBeInTheDocument();
   });
 
+  it("filters candidates by the source id inside section references", async () => {
+    const candidate = (id: string, sourceRef: string, title: string) => ({
+      id, batchId: "b1", curationSessionId: "cs1", sourceRefs: [sourceRef],
+      correctionNote: "", reviewNote: "", reviewNoteUpdatedAt: null,
+      duplicateOfQuestionId: null, duplicateQuestion: null, status: "published",
+      confirmationStatus: "confirmed", draft: null, createdAt: "now", updatedAt: "now",
+      question: { questionId: `q-${id}`, documentId: `d-${id}`, contentHash: `h-${id}`, title, questionText: `${title}是什么？`, referenceAnswer: "答案", topics: ["测试"], difficulty: "medium", keyPoints: ["要点"], followUps: [] },
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/api/knowledge/sources")) return Response.json([
+        { id: "s1", workspaceId: "w1", originalFilename: "mysql.md", storedPath: "sources/mysql.md", contentType: "text/markdown", sizeBytes: 20, createdAt: "now", draftId: null },
+        { id: "s2", workspaceId: "w1", originalFilename: "redis.md", storedPath: "sources/redis.md", contentType: "text/markdown", sizeBytes: 20, createdAt: "now", draftId: null },
+      ]);
+      if (url.includes("/api/review/question-candidates")) return Response.json([
+        candidate("c1", "s1#section-0001", "MySQL MVCC"),
+        candidate("c2", "s2#section-0003", "Redis 持久化"),
+      ]);
+      if (url.includes("/api/review/curation-sessions") || url.includes("/api/review/question-batches") || url.includes("/api/agent/actions?")) return Response.json([]);
+      throw new Error(`unexpected ${url}`);
+    });
+
+    render(<QuestionCatalog workspace={workspace} />, { wrapper });
+    fireEvent.click(await screen.findByRole("tab", { name: "题目库" }));
+    await waitFor(() => expect(screen.getByRole("region", { name: "题目结果" })).toHaveTextContent("2 道逻辑题目"));
+    fireEvent.change(screen.getByRole("combobox", { name: "来源筛选" }), { target: { value: "s1" } });
+
+    expect(screen.getByRole("region", { name: "题目结果" })).toHaveTextContent("1 道逻辑题目");
+    expect(screen.getByRole("region", { name: "题目结果" })).toHaveTextContent("MySQL MVCC");
+    expect(screen.getByRole("region", { name: "题目结果" })).not.toHaveTextContent("Redis 持久化");
+  });
+
   it("requires explicit confirmation before publishing an AI-supplemented candidate", async () => {
     const candidate = { id: "c-ai", batchId: "b1", curationSessionId: "cs-ai", sourceRefs: ["s1"], correctionNote: "", reviewNote: "", reviewNoteUpdatedAt: null, duplicateOfQuestionId: null, duplicateQuestion: null, status: "review_pending", draft: null, answerBasis: "model", materialSupport: "minimal", needsReview: true, normalizationIssues: [], createdAt: "now", updatedAt: "now", question: { questionId: "q-ai", documentId: "d-ai", contentHash: "h-ai", title: "Redis 恢复", questionText: "Redis 如何恢复？", referenceAnswer: "核对持久化文件。", topics: ["redis"], difficulty: "medium", keyPoints: [], followUps: [] } };
     const curation = controlSession({ id: "cs-ai", title: "随手记.md", batchStatus: "review_pending", stage: "waiting_for_command", controls: { canPause: false, canResume: false, canTerminate: false }, progress: { phase: "enrichment", completed: 1, total: 1, generatedCandidateCount: 1, activeWorkers: 0 }, summary: { items: [{ ordinal: 1, candidateId: "c-ai", title: "Redis 恢复", topics: ["redis"], difficulty: "medium", sourceCount: 1, recommendation: "recommend_confirm" }] }, candidateCount: 1, pendingCount: 1 });

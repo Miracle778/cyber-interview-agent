@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileText, MessagesSquare, RotateCcw, Trash2, X } from "lucide-react";
+import { formatBeijingDate } from "../../shared/time";
 import { Button } from "../../shared/ui/Button";
 import { toActionableError } from "../../shared/api/errorAdvice";
 import { deleteSource, listSources, restoreSource } from "../knowledge/knowledgeApi";
@@ -16,8 +17,7 @@ export function CurationRecycleBin({ open, workspaceId, onClose }: { open: boole
     client.invalidateQueries({ queryKey: ["review-curation-sessions", workspaceId] }),
     client.invalidateQueries({ queryKey: ["knowledge-sources", workspaceId] }),
     client.invalidateQueries({ queryKey: ["review-question-trash", workspaceId] }),
-    client.invalidateQueries({ queryKey: ["review-candidates", workspaceId] }),
-    client.invalidateQueries({ queryKey: ["review-candidates-overview", workspaceId] }),
+    client.invalidateQueries({ queryKey: ["review-question-candidates", workspaceId] }),
   ]);
   const restore = useMutation({
     mutationFn: async ({ kind, id }: { kind: "session" | "source" | "question"; id: string }) => kind === "session" ? restoreCurationSession(id) : kind === "question" ? restoreQuestionCandidate(id) : restoreSource(workspaceId, id),
@@ -45,7 +45,7 @@ export function CurationRecycleBin({ open, workspaceId, onClose }: { open: boole
         {empty ? <div className="curation-recycle-bin__empty"><Trash2 size={28} /><strong>回收站是空的</strong><p>软删除的内容会显示在这里，永久删除不会进入回收站。</p></div> : null}
         {(sessions.data?.length ?? 0) > 0 ? <section aria-labelledby="deleted-session-title"><div className="review-pane-title"><MessagesSquare size={17} /><strong id="deleted-session-title">已归档会话</strong><span>{sessions.data?.length}</span></div>{sessions.data?.map((session) => <article key={session.id}><div><strong>{session.title}</strong><small>{session.sources.length} 份资料 · 永久删除会话不会删除题目</small></div><div><Button size="sm" variant="secondary" loading={restore.isPending} onClick={() => restore.mutate({ kind: "session", id: session.id })}><RotateCcw size={15} />恢复</Button><Button size="sm" variant="danger" loading={remove.isPending} onClick={() => permanentlyDelete("session", session.id)}>永久删除</Button></div></article>)}</section> : null}
         {(questions.data?.length ?? 0) > 0 ? <section aria-labelledby="deleted-question-title"><div className="review-pane-title"><Trash2 size={17} /><strong id="deleted-question-title">已删除题目</strong><span>{questions.data?.length}</span></div>{questions.data?.map((candidate) => <article key={candidate.id}><div><strong>{candidate.question.title}</strong><small>{candidate.status === "published" ? "已入库 · 恢复后重新启用" : "未入库"}{candidate.deletionReason ? ` · ${candidate.deletionReason}` : ""}</small></div><div><Button size="sm" variant="secondary" loading={restore.isPending} onClick={() => restore.mutate({ kind: "question", id: candidate.id })}><RotateCcw size={15} />恢复题目</Button></div></article>)}</section> : null}
-        {(sources.data?.length ?? 0) > 0 ? <section aria-labelledby="deleted-source-title"><div className="review-pane-title"><FileText size={17} /><strong id="deleted-source-title">原材料</strong><span>{sources.data?.length}</span></div>{sources.data?.map((source) => <article key={source.id}><div><strong>{source.originalFilename}</strong><small>{new Date(source.createdAt).toLocaleDateString("zh-CN")}</small></div><div><Button size="sm" variant="secondary" loading={restore.isPending} onClick={() => restore.mutate({ kind: "source", id: source.id })}><RotateCcw size={15} />恢复</Button><Button size="sm" variant="danger" loading={remove.isPending} onClick={() => permanentlyDelete("source", source.id)}>永久删除</Button></div></article>)}</section> : null}
+        {(sources.data?.length ?? 0) > 0 ? <section aria-labelledby="deleted-source-title"><div className="review-pane-title"><FileText size={17} /><strong id="deleted-source-title">原材料</strong><span>{sources.data?.length}</span></div>{sources.data?.map((source) => <article key={source.id}><div><strong>{source.originalFilename}</strong><small>{formatBeijingDate(source.createdAt) ?? source.createdAt}</small></div><div><Button size="sm" variant="secondary" loading={restore.isPending} onClick={() => restore.mutate({ kind: "source", id: source.id })}><RotateCcw size={15} />恢复</Button><Button size="sm" variant="danger" loading={remove.isPending} onClick={() => permanentlyDelete("source", source.id)}>永久删除</Button></div></article>)}</section> : null}
       </div>
     </section>
   </div>;

@@ -29,8 +29,15 @@ describe("BulkPublicationProgress", () => {
 
   it("offers retry only for unfinished items after a partial failure", () => {
     const onRetry = vi.fn();
-    render(<BulkPublicationProgress operation={{ ...operation, status: "partial_failure", completedAt: "2026-07-26T00:00:10Z", items: operation.items.map((item) => item.id === "i2" ? { ...item, status: "failed" } : item) }} candidates={candidates} stopping={false} retrying={false} onStop={vi.fn()} onRetry={onRetry} />);
+    const onOpenCandidate = vi.fn();
+    render(<BulkPublicationProgress operation={{ ...operation, status: "partial_failure", completedAt: "2026-07-26T00:00:10Z", items: operation.items.map((item) => item.id === "i2" ? { ...item, status: "failed", errorCode: "publication_failed" } : item) }} candidates={candidates} stopping={false} retrying={false} onStop={vi.fn()} onRetry={onRetry} onOpenCandidate={onOpenCandidate} />);
     expect(screen.getByText("部分未完成")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "只看失败 1" }));
+    expect(screen.queryByText("缓存雪崩")).toBeNull();
+    expect(screen.getByText("缓存击穿")).toBeInTheDocument();
+    expect(screen.getByText("写入题库时失败，题目仍保留，可以重试发布。")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看失败题目：缓存击穿" }));
+    expect(onOpenCandidate).toHaveBeenCalledWith("c2");
     fireEvent.click(screen.getByRole("button", { name: "重试未完成项" }));
     expect(onRetry).toHaveBeenCalledOnce();
   });

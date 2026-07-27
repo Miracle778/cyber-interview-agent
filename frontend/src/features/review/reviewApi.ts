@@ -174,7 +174,7 @@ export function createQuestionBatch(workspaceId: string, sourceRefs: string[]): 
 
 export function listQuestionCandidates(
   workspaceId: string,
-  filters: { query?: string; topic?: string; difficulty?: string; sourceId?: string; status?: string; page?: number; deletedOnly?: boolean } = {},
+  filters: { query?: string; topic?: string; difficulty?: string; sourceId?: string; status?: string; page?: number; pageSize?: number; deletedOnly?: boolean } = {},
 ): Promise<QuestionCandidate[]> {
   const query = new URLSearchParams({ workspaceId });
   Object.entries(filters).forEach(([key, value]) => value && query.set(key, String(value)));
@@ -185,11 +185,12 @@ export async function listAllQuestionCandidates(
   workspaceId: string,
   filters: { query?: string; topic?: string; difficulty?: string; sourceId?: string; status?: string; deletedOnly?: boolean } = {},
 ): Promise<QuestionCandidate[]> {
+  const pageSize = 500;
   const items: QuestionCandidate[] = [];
   for (let page = 1; page <= 20; page += 1) {
-    const batch = await listQuestionCandidates(workspaceId, { ...filters, page });
+    const batch = await listQuestionCandidates(workspaceId, { ...filters, page, pageSize });
     items.push(...batch);
-    if (batch.length < 50) break;
+    if (batch.length < pageSize) break;
   }
   return items;
 }

@@ -366,6 +366,7 @@ async def list_question_candidates(
     source_id: Annotated[str | None, Query(alias="sourceId")] = None,
     candidate_status: Annotated[str | None, Query(alias="status")] = None,
     page: int = Query(default=1, ge=1),
+    page_size: Annotated[int, Query(alias="pageSize", ge=1, le=500)] = 50,
     deleted_only: Annotated[bool, Query(alias="deletedOnly")] = False,
     application: AgentApplication = Depends(get_agent_application),
 ):
@@ -376,8 +377,8 @@ async def list_question_candidates(
         source_id=source_id,
         status=candidate_status,
         deleted_only=deleted_only,
-        limit=50,
-        offset=(page - 1) * 50,
+        limit=page_size,
+        offset=(page - 1) * page_size,
     )
 
 

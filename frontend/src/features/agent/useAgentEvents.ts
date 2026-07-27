@@ -52,6 +52,7 @@ const EVENT_TYPES = [
   "review.round.started",
   "review.input.required",
   "review.input.resolved",
+  "review.turn.responded",
   "review.answer.accepted",
   "review.evaluation.started",
   "review.evaluation.completed",

@@ -1,8 +1,10 @@
 import { AlertTriangle, Bot, CheckCircle2, Code2, Eye, FileText, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
+import { formatBeijingDateTime } from "../../shared/time";
 import { Button } from "../../shared/ui/Button";
 import { MarkdownView } from "../knowledge/MarkdownView";
 import type { QuestionCandidate } from "./reviewTypes";
+import { uniqueSourceCount } from "./sourceReferences";
 
 const statusLabels: Record<QuestionCandidate["status"], string> = {
   draft: "草稿",
@@ -75,7 +77,7 @@ export function QuestionDetailPanel({ candidate, sourceLabels, busy, approvalPen
         <header className="question-detail__header">
           <div className="question-detail__breadcrumb">{candidate.question.topics.join(" / ") || "未分类"}</div>
           <h3>{candidate.question.title}</h3>
-          <div className="question-detail__meta"><span className={`question-library__badge question-library__badge--${candidate.status}`}>{statusLabels[candidate.status]}</span><span>难度：{difficultyLabels[candidate.question.difficulty]}</span><span>来源：{candidate.sourceRefs.length} 份资料</span></div>
+          <div className="question-detail__meta"><span className={`question-library__badge question-library__badge--${candidate.status}`}>{statusLabels[candidate.status]}</span><span>难度：{difficultyLabels[candidate.question.difficulty]}</span><span>来源：{uniqueSourceCount(candidate.sourceRefs)} 份资料</span></div>
         </header>
         <div className="segmented-control" aria-label="详情显示模式"><button aria-pressed={mode === "preview"} onClick={() => setMode("preview")}><Eye size={14} />阅读</button><button aria-pressed={mode === "source"} onClick={() => setMode("source")}><Code2 size={14} />原文</button></div>
         <div className="question-detail__content">
@@ -84,7 +86,7 @@ export function QuestionDetailPanel({ candidate, sourceLabels, busy, approvalPen
         </div>
         <section className="source-evidence" aria-label="来源证据"><div><FileText size={16} /><strong>来源证据</strong><span>{candidate.sourceRefs.length}</span></div><ul>{candidate.sourceRefs.map((ref) => { const sourceId = Object.keys(sourceLabels).find((id) => ref === id || ref.startsWith(`${id}#`)); return <li key={ref}>{sourceId ? sourceLabels[sourceId] : ref}{ref.includes("#") ? ` · ${ref.slice(ref.indexOf("#") + 1)}` : ""}</li>; })}</ul></section>
         {(candidate.needsReview || candidate.answerBasis !== "source" || candidate.materialSupport !== "sufficient") ? <aside className="candidate-quality-warning" role="note"><AlertTriangle size={18} /><div><strong>{["model", "unknown"].includes(candidate.answerBasis ?? "unknown") ? "主要由 AI 生成" : candidate.answerBasis === "mixed" ? "答案含 AI 补全" : "材料依据需要复核"}</strong><p>{candidate.materialSupport === "partial" ? "原资料只能部分支撑答案。" : candidate.materialSupport === "minimal" ? "原资料提供的支撑很少。" : candidate.materialSupport === "sufficient" ? "材料支撑充分，但仍标记为需要复核。" : "材料支撑程度尚未确认。"} 发布时会要求你明确确认这项风险。</p>{(candidate.normalizationIssues?.length ?? 0) > 0 ? <small>整理过程中做过安全修复，请重点核对题目和答案。</small> : null}</div></aside> : null}
-        {candidate.status === "rejected" ? <aside className="candidate-rejection" role="note"><AlertTriangle size={18} /><div><strong>退回修改原因</strong><p>{candidate.rejectionReason || "未记录退回原因"}</p>{candidate.rejectedAt ? <small>{new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Shanghai" }).format(new Date(candidate.rejectedAt.includes("T") ? candidate.rejectedAt : `${candidate.rejectedAt.replace(" ", "T")}Z`))}</small> : null}</div></aside> : null}
+        {candidate.status === "rejected" ? <aside className="candidate-rejection" role="note"><AlertTriangle size={18} /><div><strong>退回修改原因</strong><p>{candidate.rejectionReason || "未记录退回原因"}</p>{candidate.rejectedAt ? <small>{formatBeijingDateTime(candidate.rejectedAt) ?? candidate.rejectedAt}</small> : null}</div></aside> : null}
         <aside className="ai-suggestion"><Bot size={18} /><div><strong>AI 整理建议</strong><p>{candidate.correctionNote || "题目结构完整，建议核对参考答案后入库。"}</p></div></aside>
         {candidate.duplicateOfQuestionId ? <aside className="duplicate-warning"><AlertTriangle size={18} /><div><strong>发现相似已发布题目</strong>{candidate.duplicateQuestion ? <><p><b>{candidate.duplicateQuestion.title}</b></p><p>{candidate.duplicateQuestion.questionText}</p></> : <p>题目 ID：{candidate.duplicateOfQuestionId}</p>}<small>确认前请比较题目与答案差异。</small></div></aside> : null}
         <div className="rewrite-row"><label className="field"><span className="field__label">{candidate.status === "rejected" ? "按退回原因让 AI 在原会话中重写" : "让 AI 重新整理"}</span><input className="field__input" value={feedback} onChange={(event) => setFeedback(event.target.value)} placeholder="例如：增加故障排查场景" /></label><Button variant="secondary" disabled={!feedback.trim() || busy} onClick={() => onRewrite(feedback.trim())}><RefreshCw size={15} />重新整理</Button><button type="button" className="text-link" onClick={() => onOpenSession(candidate.id)}>查看生成会话</button>{onDelete ? <Button variant="danger" disabled={busy} onClick={onDelete}><Trash2 size={15} />删除题目</Button> : null}</div>

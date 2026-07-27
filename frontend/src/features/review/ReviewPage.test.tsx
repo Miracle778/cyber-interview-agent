@@ -140,4 +140,25 @@ describe("R2 ReviewPage", () => {
     expect(await screen.findByRole("heading", { name: "复习历史" })).toBeInTheDocument();
     expect(screen.queryByText("创建复习轮次")).toBeNull();
   });
+
+  it("keeps a large topic catalog compact until the user expands or searches it", async () => {
+    const questions = activeQuestions(24).map((question, index) => ({
+      ...question,
+      topics: [`主题 ${String(index + 1).padStart(2, "0")}`],
+    }));
+    mockApi([], questions);
+    render(<ReviewPage workspace={workspace} />, { wrapper });
+
+    const createButton = await screen.findByRole("button", { name: "创建复习" });
+    await waitFor(() => expect(createButton).toBeEnabled());
+    fireEvent.click(createButton);
+
+    expect(await screen.findByRole("button", { name: "展开全部（24）" })).toBeInTheDocument();
+    expect(screen.getAllByRole("checkbox")).toHaveLength(18);
+    expect(screen.queryByRole("checkbox", { name: "主题 24" })).toBeNull();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索复习主题" }), { target: { value: "主题 24" } });
+    expect(screen.getByRole("checkbox", { name: "主题 24" })).toBeInTheDocument();
+    expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+  });
 });

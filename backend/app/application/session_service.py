@@ -707,6 +707,7 @@ class ProductEventStream:
             "approval.resolved",
             "review.input.required",
             "review.input.resolved",
+            "review.turn.responded",
             "review.answer.accepted",
             "review.evaluation.started",
             "review.evaluation.completed",

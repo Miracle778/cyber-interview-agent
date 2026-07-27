@@ -119,6 +119,11 @@ export function QuestionCatalog({ workspace }: { workspace: WorkspaceConfig }) {
     refetchInterval: (query) => ["accepted", "running"].includes(query.state.data?.status ?? "") ? 1000 : false,
   });
   const bulkOperation = latestBulkPublication.data ?? null;
+  const bulkPublicationRunning = ["accepted", "running"].includes(bulkOperation?.status ?? "");
+  const bulkCatalogRefreshActive = bulkPublicationRunning || (
+    activeInteraction?.kind === "bulk"
+    && activeInteraction.operationId !== bulkOperation?.id
+  );
   useEffect(() => {
     if (!controlNotice || !selected || selected.id !== controlNotice.sessionId) return;
     const versionAdvanced = (selected.batchVersion ?? 0) > controlNotice.batchVersion;
@@ -132,7 +137,7 @@ export function QuestionCatalog({ workspace }: { workspace: WorkspaceConfig }) {
   const candidates = useQuery({
     queryKey: ["review-question-candidates", workspace.id],
     queryFn: () => listAllQuestionCandidates(workspace.id),
-    refetchInterval: selected && curationIsRunning(selected) ? 1200 : false,
+    refetchInterval: bulkCatalogRefreshActive ? 3000 : selected && curationIsRunning(selected) ? 1200 : false,
   });
   const providers = useQuery({ queryKey: ["settings-providers"], queryFn: listProviders, enabled: Boolean(selectedId) });
   const modelOptions = useMemo(() => (providers.data ?? []).flatMap((provider) => provider.enabled ? provider.models.filter((model) => model.enabled && model.connectivityStatus === "ok").map((model) => ({ id: model.id, label: `${provider.name} / ${model.displayName}` })) : []), [providers.data]);
@@ -173,9 +178,14 @@ export function QuestionCatalog({ workspace }: { workspace: WorkspaceConfig }) {
   const refresh = () => client.invalidateQueries({ queryKey: ["review-curation-sessions", workspace.id] });
   const refreshCandidates = () => Promise.all([
     client.invalidateQueries({ queryKey: ["review-question-candidates", workspace.id] }),
-    client.invalidateQueries({ queryKey: ["review-candidates-overview", workspace.id] }),
     client.invalidateQueries({ queryKey: ["active-review-questions", workspace.id] }),
   ]);
+  const finalizedBulkRefresh = useRef<string | null>(null);
+  useEffect(() => {
+    if (!bulkOperation?.completedAt || finalizedBulkRefresh.current === bulkOperation.id) return;
+    finalizedBulkRefresh.current = bulkOperation.id;
+    void refreshCandidates();
+  }, [bulkOperation?.id, bulkOperation?.completedAt]);
   useEffect(() => {
     const unhandled = agentEvents.events.filter((event) => event.id > lastHandledEventId.current);
     if (unhandled.length === 0) return;
@@ -184,14 +194,15 @@ export function QuestionCatalog({ workspace }: { workspace: WorkspaceConfig }) {
     if (["curation.stage.changed", "curation.progress.changed", "curation.control.changed", "curation.seed.changed", "curation.summary.ready", "session.message.created", "curation.command.resolved", "publication.changed", "execution.completed", "execution.cancelled", "execution.failed", "execution.interrupted"].some((type) => eventTypes.has(type))) {
       void refresh();
     }
-    if (["curation.summary.ready", "curation.command.resolved", "publication.changed", "execution.completed"].some((type) => eventTypes.has(type))) {
+    const shouldRefreshForPublication = eventTypes.has("publication.changed") && !bulkCatalogRefreshActive;
+    if (shouldRefreshForPublication || ["curation.summary.ready", "curation.command.resolved", "execution.completed"].some((type) => eventTypes.has(type))) {
       void refreshCandidates();
     }
     const terminal = [...unhandled].reverse().find((event) => ["execution.completed", "execution.cancelled", "execution.failed", "execution.interrupted"].includes(event.type) && event.executionId === activeInteraction?.executionId);
     if (activeInteraction?.kind === "bulk" && activeInteraction.operationId && terminal) {
       void client.invalidateQueries({ queryKey: ["review-bulk-publication", selectedId] });
     }
-  }, [agentEvents.events, activeInteraction, client, selectedId]);
+  }, [agentEvents.events, activeInteraction, bulkCatalogRefreshActive, client, selectedId]);
   const create = useMutation({
     mutationFn: (sourceRefs: string[]) => createCurationSession(workspace.id, sourceRefs),
     onSuccess: async (session) => { setSelectedId(session.id); setDialogOpen(false); await refresh(); },
