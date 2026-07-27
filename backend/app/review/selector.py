@@ -22,6 +22,13 @@ _MASTERY_PRIORITY = {
 
 
 class QuestionSelector:
+    def eligible_count(
+        self,
+        catalog: tuple[QuestionCatalogRecord, ...],
+        settings: ReviewRoundSettings,
+    ) -> int:
+        return len(self._eligible(catalog, settings))
+
     def select(
         self,
         catalog: tuple[QuestionCatalogRecord, ...],
@@ -41,7 +48,7 @@ class QuestionSelector:
         }
         entries = {entry.subject_id: entry for entry in mastery.entries}
 
-        if settings.mode in {"random-mixed", "topic-focused"}:
+        if settings.mode in {"random-mixed", "topic-focused", "source-file"}:
             ordered = list(eligible)
             rng.shuffle(ordered)
         elif settings.mode == "weak-point":
@@ -80,6 +87,11 @@ class QuestionSelector:
             if not record.active or snapshot.question_id in seen:
                 continue
             if snapshot.difficulty not in difficulty_filter:
+                continue
+            if (
+                settings.source_id is not None
+                and settings.source_id not in record.source_ids
+            ):
                 continue
             if topic_filter and topic_filter.isdisjoint(snapshot.topics):
                 continue

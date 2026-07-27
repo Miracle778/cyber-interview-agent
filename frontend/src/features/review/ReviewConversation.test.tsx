@@ -17,7 +17,7 @@ const round = {
 function renderConversation(props: Partial<React.ComponentProps<typeof ReviewConversation>> = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(["providers"], [{ id: "p1", name: "火山", enabled: true, models: [{ id: "m1", displayName: "GLM", enabled: true }, { id: "m2", displayName: "Doubao", enabled: true }] }]);
-  return render(<QueryClientProvider client={client}><ReviewConversation round={round} optimisticMessage={null} busy={false} onSubmit={vi.fn()} onSkip={vi.fn()} onCancel={vi.fn()} onRetry={vi.fn()} {...props} /></QueryClientProvider>);
+  return render(<QueryClientProvider client={client}><ReviewConversation round={round} optimisticMessage={null} busy={false} onSubmit={vi.fn()} onSkip={vi.fn()} onInterrupt={vi.fn()} onRetry={vi.fn()} {...props} /></QueryClientProvider>);
 }
 
 describe("ReviewConversation", () => {
@@ -60,6 +60,18 @@ describe("ReviewConversation", () => {
     expect(within(progress).getByText("生成反馈与下一步").closest("li")).toHaveAttribute("data-state", "pending");
   });
 
+  it("allows the running evaluation to be stopped without discarding the answer", () => {
+    const interrupt = vi.fn();
+    renderConversation({ onInterrupt: interrupt });
+
+    fireEvent.click(screen.getByRole("button", { name: "停止评价" }));
+
+    expect(interrupt).toHaveBeenCalledOnce();
+    expect(screen.getByRole("status", { name: "回答评价进度" })).toHaveTextContent(
+      "回答已保存",
+    );
+  });
+
   it("shows the real per-attempt processing duration beside an evaluation reply", () => {
     const evaluated = {
       ...round,
@@ -87,6 +99,30 @@ describe("ReviewConversation", () => {
     const answer = screen.getByText("参考答案：多个版本并发控制").closest("article")!;
     expect(within(answer).getByText("题库参考答案")).toBeInTheDocument();
     expect(within(answer).getByText("本地读取 · 0 Token")).toBeInTheDocument();
+  });
+
+  it("labels the automatic post-answer reference without treating it as mastery assistance", () => {
+    const answered = {
+      ...round,
+      messages: [...round.messages, {
+        id: "m3",
+        executionId: "e1",
+        role: "assistant",
+        content: "参考答案：多个版本并发控制",
+        messageKind: "review_prompt",
+        payload: {
+          auxiliary: true,
+          intent: "post_answer_reference",
+          automaticReference: true,
+          affectsMastery: false,
+        },
+        createdAt: "2026-07-19T10:00:06Z",
+      }],
+    } as ReviewRound;
+    renderConversation({ round: answered });
+    const answer = screen.getByText("参考答案：多个版本并发控制").closest("article")!;
+    expect(within(answer).getByText("题库参考答案")).toBeInTheDocument();
+    expect(within(answer).getByText("答后对照 · 不影响本次掌握度")).toBeInTheDocument();
   });
 
   it("keeps the answer composer after the scrollable conversation", () => {
@@ -123,5 +159,23 @@ describe("ReviewConversation", () => {
     fireEvent.click(screen.getByRole("button", { name: "重试评价" }));
     expect(retry).toHaveBeenCalledOnce();
     expect(screen.queryByLabelText("你的回答")).toBeNull();
+  });
+
+  it("explains that an interrupted evaluation can continue or skip", () => {
+    const retry = vi.fn();
+    const interrupted = {
+      ...round,
+      attempts: [{
+        ...round.attempts[0],
+        status: "evaluation_failed",
+        evaluationErrorCode: "evaluation_interrupted",
+      }],
+    } as ReviewRound;
+    renderConversation({ round: interrupted, onRetry: retry });
+
+    expect(screen.getByText("评价已停止")).toBeInTheDocument();
+    expect(screen.getByText("回答已经保存，可以继续评价或跳过本题。")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "继续评价" }));
+    expect(retry).toHaveBeenCalledOnce();
   });
 });

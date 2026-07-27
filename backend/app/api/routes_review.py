@@ -574,6 +574,7 @@ async def list_active_questions(
             "project_claim_id": item.project_claim_id,
             "project_dimension": item.project_dimension,
             "source_job_target_id": item.source_job_target_id,
+            "source_ids": item.source_ids,
         }
         for item in records
     ]
@@ -599,6 +600,7 @@ async def create_review_round(
             seed=command.seed if command.seed is not None else randbits(63),
             answer_model_id=command.answer_model_id,
             reasoning_effort=command.reasoning_effort,
+            source_id=command.source_id,
         )
     )
     return await review.round_resource(round_record.id)
@@ -709,6 +711,22 @@ async def skip_review_question(
         request_id=command.input_request_id,
         version=command.version,
         idempotency_key=command.idempotency_key,
+    )
+    return await review.round_resource(round_id)
+
+
+@router.post(
+    "/rounds/{round_id}/interrupt-evaluation",
+    response_model=ReviewRoundResource,
+)
+async def interrupt_review_evaluation(
+    round_id: str,
+    command: RetryReviewEvaluationCommand,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_review_round(round_id)
+    await review.interrupt_evaluation(
+        round_id, idempotency_key=command.idempotency_key
     )
     return await review.round_resource(round_id)
 

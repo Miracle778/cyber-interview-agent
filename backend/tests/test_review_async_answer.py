@@ -73,6 +73,62 @@ def _question(identifier: str) -> QuestionSnapshot:
     )
 
 
+async def _blocking_review_application(
+    tmp_path: Path,
+    agents: BlockingRoundAgents,
+    *,
+    round_id: str,
+) -> tuple[AgentApplication, FastAPI, str]:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    def graph_factory(kind, **dependencies):
+        if kind != "review.round":
+            raise AssertionError(kind)
+        return create_review_round_graph(
+            agents,
+            repository=dependencies["review_repository"],
+            create_report_drafts=dependencies["create_report_drafts"],
+            request_publication_action=dependencies["request_publication_action"],
+            checkpointer=dependencies["checkpointer"],
+        )
+
+    application = AgentApplication(
+        workspace_resolver=lambda _workspace_id: workspace,
+        workspace_ids=lambda: ("w1",),
+        model_bindings=lambda _workspace_id: {},
+        graph_factory=graph_factory,
+    )
+    review = application.review("w1")
+    session = await review.sessions.create(
+        workspace_id="w1", kind="review.round", title="Interruptible round"
+    )
+    execution = await review.executions.prepare(
+        session, input={"roundId": round_id}
+    )
+    review.repository.create_round(
+        workspace_id="w1",
+        session_id=session.id,
+        execution_id=execution.id,
+        settings=ReviewRoundSettings(
+            topics=(), difficulties=("medium",), mode="random-mixed",
+            question_count=2, allow_follow_up=False, seed=1,
+            answer_model_id="model-1", reasoning_effort="none",
+        ),
+        question_snapshots=(_question("q1"), _question("q2")),
+        mastery_before=MasteryProjection("w1", 0, (), ()),
+        round_id=round_id,
+    )
+    review.executions.run_prepared(
+        execution, graph_input={"round_id": round_id}
+    )
+    await review.executions.wait(execution.id)
+    api = FastAPI()
+    api.include_router(review_router)
+    api.dependency_overrides[get_agent_application] = lambda: application
+    return application, api, execution.id
+
+
 @pytest.mark.asyncio
 async def test_answer_returns_202_before_evaluation_and_projects_safe_events(
     tmp_path: Path,
@@ -200,6 +256,132 @@ async def test_answer_returns_202_before_evaluation_and_projects_safe_events(
         )
         assert "my private answer" not in str([event.payload for event in events])
         assert "Reference q1" not in str([event.payload for event in events])
+    finally:
+        agents.release.set()
+        await application.close()
+
+
+@pytest.mark.asyncio
+async def test_running_evaluation_can_be_interrupted_and_retried(
+    tmp_path: Path,
+) -> None:
+    agents = BlockingRoundAgents()
+    application, api, execution_id = await _blocking_review_application(
+        tmp_path, agents, round_id="round-interrupt"
+    )
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=api), base_url="http://test"
+        ) as client:
+            current = (await client.get(
+                "/api/review/rounds/round-interrupt"
+            )).json()
+            answer = await client.post(
+                "/api/review/rounds/round-interrupt/answers",
+                json={
+                    "inputRequestId": current["currentInput"]["id"],
+                    "version": current["currentInput"]["version"],
+                    "idempotencyKey": "interrupt-answer-key-1",
+                    "value": "answer must survive interruption",
+                },
+            )
+            assert answer.status_code == 202
+            await asyncio.wait_for(agents.started.wait(), timeout=0.25)
+
+            interrupted = await client.post(
+                "/api/review/rounds/round-interrupt/interrupt-evaluation",
+                json={"idempotencyKey": "interrupt-evaluation-key-1"},
+            )
+
+            assert interrupted.status_code == 200, interrupted.text
+            resource = interrupted.json()
+            assert resource["executionStatus"] == "interrupted"
+            assert resource["attempts"][0]["status"] == "evaluation_failed"
+            assert (
+                resource["attempts"][0]["evaluationErrorCode"]
+                == "evaluation_interrupted"
+            )
+            assert (
+                resource["attempts"][0]["answer"]
+                == "answer must survive interruption"
+            )
+            assert (
+                application.review("w1").executions.execution(execution_id).status
+                == "interrupted"
+            )
+
+            agents.release.set()
+            retried = await client.post(
+                "/api/review/rounds/round-interrupt/retry-evaluation",
+                json={"idempotencyKey": "retry-interrupted-evaluation-key-1"},
+            )
+            assert retried.status_code == 202, retried.text
+            await application.wait_execution(execution_id)
+            completed = (await client.get(
+                "/api/review/rounds/round-interrupt"
+            )).json()
+            assert completed["attempts"][0]["status"] == "completed"
+            assert completed["attempts"][0]["answer"] == (
+                "answer must survive interruption"
+            )
+            assert completed["currentIndex"] == 1
+    finally:
+        agents.release.set()
+        await application.close()
+
+
+@pytest.mark.asyncio
+async def test_running_evaluation_can_be_skipped_without_late_model_write(
+    tmp_path: Path,
+) -> None:
+    agents = BlockingRoundAgents()
+    application, api, execution_id = await _blocking_review_application(
+        tmp_path, agents, round_id="round-skip-evaluation"
+    )
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=api), base_url="http://test"
+        ) as client:
+            current = (await client.get(
+                "/api/review/rounds/round-skip-evaluation"
+            )).json()
+            answer = await client.post(
+                "/api/review/rounds/round-skip-evaluation/answers",
+                json={
+                    "inputRequestId": current["currentInput"]["id"],
+                    "version": current["currentInput"]["version"],
+                    "idempotencyKey": "skip-evaluation-answer-key-1",
+                    "value": "partial answer before skip",
+                },
+            )
+            assert answer.status_code == 202
+            await asyncio.wait_for(agents.started.wait(), timeout=0.25)
+
+            skipped = await client.post(
+                "/api/review/rounds/round-skip-evaluation/skip",
+                json={"idempotencyKey": "skip-evaluation-key-1"},
+            )
+
+            assert skipped.status_code == 200, skipped.text
+            resource = skipped.json()
+            assert resource["currentIndex"] == 1
+            assert resource["currentInput"]["ordinal"] == 2
+            assert resource["attempts"][0]["skipped"] is True
+            assert resource["attempts"][0]["status"] == "completed"
+            assert resource["attempts"][0]["answer"] == "partial answer before skip"
+            assert resource["executionStatus"] == "waiting_for_input"
+
+            agents.release.set()
+            await asyncio.sleep(0)
+            stable = (await client.get(
+                "/api/review/rounds/round-skip-evaluation"
+            )).json()
+            assert stable["attempts"][0]["skipped"] is True
+            assert stable["attempts"][0]["evaluation"] is None
+            assert (
+                application.review("w1").executions.execution(execution_id).status
+                == "waiting_for_input"
+            )
     finally:
         agents.release.set()
         await application.close()

@@ -173,6 +173,8 @@ load frozen question
 
 用户消息在接口返回前持久化，前端立即显示用户气泡和“正在评价回答…”状态，不等待 LLM 完成。SSE 推送 `answer.accepted`、`evaluation.started`、`evaluation.checking_key_points`、`evaluation.deciding_follow_up`、`evaluation.completed` 和 `session.message.created` 等安全阶段；事件只含 ID、阶段和资源版本，页面再读取完整资源。
 
+首次正式回答与参考答案在同一事务中落库：页面在回答提交成功后立即展示参考答案，供用户在异步评价期间进行答后对照。评价只读取提交时已经冻结的回答，自动展示不写入 `review_question_assistance`，不改变本次结果类型或掌握度建议。回答前由用户主动请求提示或完整答案时，仍记录为辅助行为，并按 `assisted_mastery` 或 `answer_revealed` 计算。
+
 复习评价、追问决策和报告生成使用“阶段 SSE + 校验后的完整卡片”，不逐字输出半截结构化 JSON。派生 discussion 可以使用 `assistant.delta` 流式展示最终可见文本。任何场景都不传输或持久化模型内部 Chain of Thought；“正在对照关键点”等文案是系统定义的可观察阶段。
 
 覆盖判断由模型返回结构化 decision，确定性的 `KeyPointCoverageReducer` 累计状态，
@@ -180,10 +182,13 @@ load frozen question
 注入当前题和未覆盖点、校验模型输出以及阻止非法转移，不持有 Checklist 领域真相，
 也不使用通用 Agent Todo 作为持久状态源。
 
-模型失败或用户停止时，attempt 进入 `evaluation_failed` 或 `cancelled`，不推进
-current index；用户原回答仍在会话中。用户可以“重新评价”同一回答，或“编辑后重试”
-并创建显式修订版；旧回答保留并标记为已替换。未完成 assistant 输出不进入正式上下文。
-重复提交同一 input request 返回同一 receipt，不重复评价或推进。
+模型失败或用户停止评价时，attempt 进入 `evaluation_failed`，不推进 current index，
+用户原回答仍在会话中。停止评价必须先取消当前 Provider 任务，再持久化
+`evaluation_interrupted`，用户可对同一回答继续评价或直接跳过本题。评估中跳过同样先
+取消 Provider 任务，再把当前 attempt 标记为 `skipped`，由原 checkpoint 的唯一推进路径
+进入下一题，禁止旧模型结果迟到回写或产生双重推进。用户也可“编辑后重试”并创建显式
+修订版；旧回答保留并标记为已替换。未完成 assistant 输出不进入正式上下文。重复提交同一
+控制命令返回已有状态，不重复评价或推进。
 
 ### 4.4 报告与掌握度
 
@@ -387,6 +392,7 @@ GET  /api/review/rounds
 GET  /api/review/rounds/{id}
 POST /api/review/rounds/{id}/answers
 POST /api/review/rounds/{id}/retry-evaluation
+POST /api/review/rounds/{id}/interrupt-evaluation
 POST /api/review/rounds/{id}/skip
 POST /api/review/rounds/{id}/cancel
 POST /api/review/rounds/{id}/discussions
@@ -398,7 +404,7 @@ POST /api/review/rounds/{id}/discussions
 
 `question-candidates` 是“题目库”资源，支持 `query`、`topic`、`difficulty`、`sourceId`、`status`、分页和排序；资源包含全部安全 source links、draft/publication state、duplicate/merge summary 和所在整理 session。`questions` 只返回已发布 active catalog，供轮次设置与 selector 使用，不能用未确认 candidate 伪装 active question。
 
-`answers` 请求必须包含 `inputRequestId`、`version` 和 `idempotencyKey`。服务端在同一数据库事务中解决 input、持久化用户 timeline message 与 `evaluating` attempt，并把 execution 转为可运行状态；提交事务后调度 Graph 恢复，然后立即返回 `202 Accepted` receipt，不得 `await` LLM 完成。若进程在事务提交后、调度前退出，启动恢复根据 execution/attempt 状态继续原 checkpoint。`retry-evaluation` 只允许当前 index 的 `evaluation_failed` attempt，复用原回答并生成独立幂等 receipt。
+`answers` 请求必须包含 `inputRequestId`、`version` 和 `idempotencyKey`。服务端在同一数据库事务中解决 input、持久化用户 timeline message 与 `evaluating` attempt，并把 execution 转为可运行状态；提交事务后调度 Graph 恢复，然后立即返回 `202 Accepted` receipt，不得 `await` LLM 完成。若进程在事务提交后、调度前退出，启动恢复根据 execution/attempt 状态继续原 checkpoint。`retry-evaluation` 只允许当前 index 的 `evaluation_failed` attempt，复用原回答并生成独立幂等 receipt。`interrupt-evaluation` 只停止当前评价，不丢弃回答；`skip` 在存在 pending input 时保留原显式输入契约，在评价中或评价失败后允许只携带幂等键跳过当前 attempt。
 
 产品事件至少包括：
 

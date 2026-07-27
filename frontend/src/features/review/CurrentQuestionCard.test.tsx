@@ -37,11 +37,13 @@ describe("CurrentQuestionCard", () => {
   });
 
   it("keeps cumulative coverage compact and leaves detailed directions to the side panel", () => {
-    render(<CurrentQuestionCard question={{ ...question, hasAnswer: true, coveredKeyPointCount: 1, missingDirections: ["补充失败重试的幂等键"] }} onHint={vi.fn()} onReveal={vi.fn()} onSkip={vi.fn()} />);
+    render(<CurrentQuestionCard question={{ ...question, hasAnswer: true, coveredKeyPointCount: 1, missingDirections: ["补充失败重试的幂等键"] }} referenceShown onHint={vi.fn()} onReveal={vi.fn()} onSkip={vi.fn()} />);
 
     expect(screen.getByText("已覆盖 1 / 2")).toBeInTheDocument();
     expect(screen.getByText("还有 1 个方向待补充，详情见右侧")).toBeInTheDocument();
     expect(screen.queryByText("补充失败重试的幂等键")).toBeNull();
+    expect(screen.getByRole("button", { name: "参考答案已展示" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "查看答案" })).toBeNull();
   });
 
   it("offers progressive help, source disclosure, and explicit skip", () => {

@@ -1,4 +1,4 @@
-export type ReviewMode = "weak-point" | "random-mixed" | "topic-focused" | "recent-mistake";
+export type ReviewMode = "weak-point" | "random-mixed" | "topic-focused" | "recent-mistake" | "source-file";
 export type MasteryState = "unknown" | "weak" | "partial" | "stable" | "strong";
 export type Difficulty = "easy" | "medium" | "hard";
 
@@ -24,6 +24,7 @@ export interface ActiveQuestion extends Omit<ReviewQuestion, "mastery"> {
   projectClaimId?: string | null;
   projectDimension?: string | null;
   sourceJobTargetId?: string | null;
+  sourceIds?: string[];
 }
 
 export interface CandidateQuestion {
@@ -390,6 +391,7 @@ export interface ReviewRound {
     seed: number;
     answer_model_id: string;
     reasoning_effort: "none" | "low" | "medium" | "high";
+    source_id?: string | null;
   };
   status: "waiting_for_input" | "running" | "report_pending" | "completed" | "failed" | "cancelled";
   executionStatus: string | null;
@@ -418,7 +420,7 @@ export interface ReviewRound {
   currentInput: ReviewInput | null;
   attempts: ReviewAttempt[];
   messages: ReviewTimelineMessage[];
-  reports: { id: string; reportKind: "session_report" | "mastery_report"; title: string; status: string; version: number; publication: { state: string; target_path: string; error_code: string | null } | null }[];
+  reports: { id: string; reportKind: "session_report" | "mastery_report"; title: string; markdown: string; status: string; version: number; publication: { state: string; target_path: string; error_code: string | null } | null }[];
   usage: { inputTokens: number; outputTokens: number; totalTokens: number; callCount: number; estimatedCount: number };
   contextUsage?: { currentTokens: number; thresholdTokens: number; estimated: boolean };
   createdAt: string;
@@ -437,4 +439,5 @@ export interface CreateReviewRoundRequest {
   seed?: number;
   answerModelId: string;
   reasoningEffort: "none" | "low" | "medium" | "high";
+  sourceId?: string;
 }

@@ -9,7 +9,11 @@ from app.review.coverage import KeyPointCoverage
 
 Difficulty: TypeAlias = Literal["easy", "medium", "hard"]
 ReviewMode: TypeAlias = Literal[
-    "weak-point", "random-mixed", "topic-focused", "recent-mistake"
+    "weak-point",
+    "random-mixed",
+    "topic-focused",
+    "recent-mistake",
+    "source-file",
 ]
 RoundStatus: TypeAlias = Literal[
     "waiting_for_input",
@@ -79,7 +83,13 @@ MaterialSupport: TypeAlias = Literal[
 
 _DIFFICULTIES = frozenset({"easy", "medium", "hard"})
 _MODES = frozenset(
-    {"weak-point", "random-mixed", "topic-focused", "recent-mistake"}
+    {
+        "weak-point",
+        "random-mixed",
+        "topic-focused",
+        "recent-mistake",
+        "source-file",
+    }
 )
 _REASONING_EFFORTS = frozenset({"none", "low", "medium", "high"})
 _HASH_PATTERN = re.compile(r"[0-9a-f]{64}")
@@ -140,6 +150,7 @@ class ReviewRoundSettings:
     seed: int
     answer_model_id: str
     reasoning_effort: ReasoningEffort
+    source_id: str | None = None
 
     def __post_init__(self) -> None:
         if not 1 <= self.question_count <= 50:
@@ -148,6 +159,12 @@ class ReviewRoundSettings:
             raise ValueError("unsupported review mode")
         if self.mode == "topic-focused" and not self.topics:
             raise ValueError("topic-focused rounds require topics")
+        if self.mode == "source-file" and (
+            self.source_id is None or not self.source_id.strip()
+        ):
+            raise ValueError("source-file rounds require source_id")
+        if self.source_id is not None and not self.source_id.strip():
+            raise ValueError("source_id must not be empty")
         if any(not topic.strip() for topic in self.topics):
             raise ValueError("topics must not contain empty values")
         if not self.difficulties or any(
@@ -174,6 +191,7 @@ class QuestionCatalogRecord:
     project_dimension: str | None = None
     source_job_target_id: str | None = None
     source_deep_dive_id: str | None = None
+    source_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

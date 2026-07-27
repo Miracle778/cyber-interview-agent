@@ -2261,6 +2261,11 @@ def test_accept_review_answer_is_atomic_and_idempotent(tmp_path: Path) -> None:
         "SELECT role, content, message_kind, payload_json "
         "FROM agent_messages WHERE id = 'message-1'"
     ).fetchone()
+    reference_messages = connection.execute(
+        "SELECT role, content, message_kind, payload_json "
+        "FROM agent_messages WHERE session_id = 's1' "
+        "AND json_extract(payload_json, '$.intent') = 'post_answer_reference'"
+    ).fetchall()
     execution_status = connection.execute(
         "SELECT status FROM agent_runs WHERE id = 'r1'"
     ).fetchone()[0]
@@ -2272,6 +2277,19 @@ def test_accept_review_answer_is_atomic_and_idempotent(tmp_path: Path) -> None:
     assert attempt.answer == "My answer"
     assert tuple(message[:3]) == ("user", "My answer", "review_answer")
     assert "My answer" not in message[3]
+    assert len(reference_messages) == 1
+    reference = reference_messages[0]
+    reference_payload = json.loads(reference["payload_json"])
+    assert tuple(reference[:3]) == (
+        "assistant",
+        "参考答案：Answer a\n\n"
+        "这份答案在你提交后自动展示，仅用于答后对照，"
+        "不影响本次掌握度评价。",
+        "review_prompt",
+    )
+    assert reference_payload["automaticReference"] is True
+    assert reference_payload["affectsMastery"] is False
+    assert repository.question_assistance("round-1", 1) == (0, False)
     assert execution_status == "running"
     with pytest.raises(InputAlreadyResolvedError):
         repository.accept_review_answer(

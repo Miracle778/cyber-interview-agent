@@ -158,6 +158,8 @@ def create_review_round_graph(
             for item in repository.list_attempts(round_record.id)
             if item.ordinal == state["current_index"] + 1
         )
+        if attempt.skipped:
+            return {"current_evaluation": {}, "skipped": True}
         writer(
             {
                 "type": "review.evaluation.checking_key_points",
@@ -246,23 +248,40 @@ def create_review_round_graph(
             )
         )
         if skipped:
-            identifier = str(
-                uuid5(NAMESPACE_URL, f"review-attempt:{round_record.id}:{ordinal}")
+            existing = next(
+                (
+                    item
+                    for item in repository.list_attempts(round_record.id)
+                    if item.ordinal == ordinal
+                ),
+                None,
             )
-            attempt_id = repository.save_attempt(
-                round_id=round_record.id,
-                ordinal=ordinal,
-                question_snapshot=round_record.question_snapshots[
-                    state["current_index"]
-                ],
-                answer=state["current_answer"],
-                follow_up_answer=None,
-                evaluation=None,
-                mastery_suggestion=None,
-                skipped=True,
-                attempt_id=identifier,
-            )
-            attempt_status = "completed"
+            if existing is not None:
+                if not existing.skipped:
+                    raise ValueError("existing attempt was not marked skipped")
+                attempt_id = existing.id
+                attempt_status = existing.status
+            else:
+                identifier = str(
+                    uuid5(
+                        NAMESPACE_URL,
+                        f"review-attempt:{round_record.id}:{ordinal}",
+                    )
+                )
+                attempt_id = repository.save_attempt(
+                    round_id=round_record.id,
+                    ordinal=ordinal,
+                    question_snapshot=round_record.question_snapshots[
+                        state["current_index"]
+                    ],
+                    answer=state["current_answer"],
+                    follow_up_answer=None,
+                    evaluation=None,
+                    mastery_suggestion=None,
+                    skipped=True,
+                    attempt_id=identifier,
+                )
+                attempt_status = "completed"
         elif follow_up_was_skipped(state):
             attempt = next(
                 item

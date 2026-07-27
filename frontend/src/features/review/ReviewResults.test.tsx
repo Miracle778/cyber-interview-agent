@@ -38,4 +38,25 @@ describe("ReviewResults", () => {
     fireEvent.click(screen.getByRole("button", { name: "深入讨论" }));
     expect(discuss).toHaveBeenCalledWith(1);
   });
+
+  it("manages all per-question discussion sessions from one view", () => {
+    const discuss = vi.fn();
+    const round = {
+      id: "r1", executionId: "e1", status: "completed", executionStatus: "completed", currentIndex: 2, questionCount: 2, messages: [], reports: [],
+      attempts: [
+        { id: "a1", ordinal: 1, status: "completed", skipped: false, answer: "A", discussionSessionId: "discussion-1", questionSnapshot: { title: "题目 A", questionText: "A?" }, evaluation: { score: "good", evidence: "好" } },
+        { id: "a2", ordinal: 2, status: "completed", skipped: true, answer: null, discussionSessionId: null, questionSnapshot: { title: "题目 B", questionText: "B?" }, evaluation: null },
+      ],
+    } as unknown as ReviewRound;
+
+    render(<ReviewResults round={round} onDiscuss={discuss} />);
+    fireEvent.click(screen.getByRole("tab", { name: "深入讨论 1" }));
+
+    const manager = screen.getByRole("region", { name: "深入讨论会话管理" });
+    expect(manager).toHaveTextContent("1 / 2 已建立");
+    expect(manager).toHaveTextContent("已有讨论记录");
+    expect(manager).toHaveTextContent("尚未开始讨论");
+    fireEvent.click(screen.getByRole("button", { name: "继续讨论" }));
+    expect(discuss).toHaveBeenCalledWith(1);
+  });
 });

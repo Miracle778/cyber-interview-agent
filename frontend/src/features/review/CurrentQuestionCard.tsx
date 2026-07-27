@@ -23,12 +23,14 @@ function formatSectionNumbers(values: number[]) {
 export function CurrentQuestionCard({
   question,
   busy = false,
+  referenceShown = false,
   onHint,
   onReveal,
   onSkip,
 }: {
   question: CurrentQuestion;
   busy?: boolean;
+  referenceShown?: boolean;
   onHint: () => void;
   onReveal: () => void;
   onSkip: () => void;
@@ -67,7 +69,9 @@ export function CurrentQuestionCard({
       <footer>
         <div className="current-question-card__help">
           <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onHint}><Lightbulb size={15} />查看提示</Button>
-          <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onReveal}><Eye size={15} />查看答案</Button>
+          {referenceShown
+            ? <Button type="button" size="sm" variant="ghost" disabled><Eye size={15} />参考答案已展示</Button>
+            : <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onReveal}><Eye size={15} />查看答案</Button>}
           <Button type="button" size="sm" variant="ghost" aria-expanded={sourceOpen} onClick={() => setSourceOpen((value) => !value)}><FileSearch size={15} />查看来源</Button>
         </div>
         <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onSkip}><SkipForward size={15} />跳过此题</Button>

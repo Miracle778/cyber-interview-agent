@@ -251,6 +251,37 @@ def api(application):
 
 
 @pytest.mark.asyncio
+async def test_source_file_round_uses_only_that_source_and_clamps_count(
+    api,
+) -> None:
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = await client.post(
+            "/api/review/rounds",
+            json={
+                "workspaceId": "w1",
+                "selectedTopics": [],
+                "difficulties": ["medium"],
+                "mode": "source-file",
+                "sourceId": "source-1",
+                "questionCount": 10,
+                "allowFollowUp": True,
+                "seed": 7,
+                "answerModelId": "model-1",
+                "reasoningEffort": "none",
+            },
+        )
+
+    assert created.status_code == 201, created.text
+    value = created.json()
+    assert value["questionCount"] == 1
+    assert value["currentQuestion"]["id"] == "q1"
+    assert value["settings"]["source_id"] == "source-1"
+    assert value["settings"]["question_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_active_catalog_and_round_answer_are_resource_driven(
     api, application
 ) -> None:
@@ -262,6 +293,7 @@ async def test_active_catalog_and_round_answer_are_resource_driven(
         )
         assert questions.status_code == 200
         assert questions.json()[0]["id"] == "q1"
+        assert questions.json()[0]["sourceIds"] == ["source-1"]
         candidates = await client.get(
             "/api/review/question-candidates?workspaceId=w1&topic=database"
         )
@@ -323,6 +355,8 @@ async def test_active_catalog_and_round_answer_are_resource_driven(
         assert result["attempts"][0]["evaluation"]["score"] == "good"
         assert result["settings"]["answer_model_id"] == "model-1"
         assert result["settings"]["reasoning_effort"] == "high"
+        assert result["reports"]
+        assert all(report["markdown"].strip() for report in result["reports"])
 
         duplicate = await client.post(
             f"/api/review/rounds/{round_value['id']}/answers",

@@ -41,7 +41,7 @@ from app.hitl.service import HitlService
 from app.knowledge.drafts import KnowledgeDraftService, UpdateDraftCommand
 from app.knowledge.source_registry import KnowledgeSourceService
 from app.knowledge.publication import PublicationService
-from app.review.errors import ReviewConflictError
+from app.review.errors import InsufficientQuestionsError, ReviewConflictError
 from app.review.turn_intent import classify_review_turn
 from app.review.turn_intent import ReviewTurnIntent
 from app.review.curation_commands import CurationCommandService
@@ -2801,8 +2801,24 @@ class ReviewApplication:
     async def create_round(self, settings: ReviewRoundSettings):
         self.validate_model(settings.answer_model_id, settings.reasoning_effort)
         mastery = self.repository.get_mastery(self.workspace_id)
+        catalog = self.repository.list_active_questions(self.workspace_id)
+        if settings.mode == "source-file":
+            assert settings.source_id is not None
+            try:
+                await KnowledgeSourceService(
+                    self.workspace_root,
+                    workspace_id=self.workspace_id,
+                ).get(settings.source_id, include_deleted=False)
+            except LookupError as error:
+                raise InsufficientQuestionsError(
+                    available=0,
+                    requested=settings.question_count,
+                ) from error
+            available = self.selector.eligible_count(catalog, settings)
+            if available < settings.question_count and available > 0:
+                settings = replace(settings, question_count=available)
         snapshots = self.selector.select(
-            self.repository.list_active_questions(self.workspace_id),
+            catalog,
             mastery,
             settings,
             seed=settings.seed,
@@ -3062,20 +3078,114 @@ class ReviewApplication:
         return self.repository.get_round(round_id)
 
     async def skip(
-        self, round_id: str, *, request_id: str, version: int, idempotency_key: str
+        self,
+        round_id: str,
+        *,
+        request_id: str | None,
+        version: int | None,
+        idempotency_key: str,
     ):
         round_record = self.repository.get_round(round_id)
-        request = self.repository.get_input_request(request_id)
-        if request.round_id != round_id or request.version != version:
-            raise ReviewConflictError("input request changed")
         if round_record.execution_id is None:
             raise ReviewConflictError("round has no execution")
-        await self.executions.skip_input(
-            round_record.execution_id,
-            request_id=request_id,
-            receipt_id=idempotency_key,
+        pending = self.repository.pending_input(round_id)
+        if pending is not None:
+            if request_id is not None and request_id != pending.id:
+                raise ReviewConflictError("input request changed")
+            if version is not None and version != pending.version:
+                raise ReviewConflictError("input request changed")
+            await self.executions.skip_input(
+                round_record.execution_id,
+                request_id=pending.id,
+                receipt_id=idempotency_key,
+            )
+            await self.executions.wait(round_record.execution_id)
+            return self.repository.get_round(round_id)
+
+        if self.repository.has_round_control_receipt(
+            round_id,
+            operation="skip_current",
+            idempotency_key=idempotency_key,
+        ):
+            return self.repository.get_round(round_id)
+        attempt = next(
+            (
+                item
+                for item in reversed(self.repository.list_attempts(round_id))
+                if item.ordinal == round_record.current_index + 1
+                and item.status in {
+                    "evaluating",
+                    "evaluation_failed",
+                    "waiting_for_follow_up",
+                }
+            ),
+            None,
+        )
+        if attempt is None:
+            raise ReviewConflictError("current question cannot be skipped")
+        execution = self.executions.execution(round_record.execution_id)
+        if execution.status == "running":
+            await self.executions.interrupt_review_evaluation(execution.id)
+        elif execution.status != "interrupted":
+            raise ReviewConflictError("review evaluation cannot be skipped")
+        self.repository.skip_current_attempt(
+            round_id,
+            attempt_id=attempt.id,
+            idempotency_key=idempotency_key,
+        )
+        await self.executions.resume_review_after_skip(
+            execution.id,
+            round_id=round_id,
         )
         await self.executions.wait(round_record.execution_id)
+        return self.repository.get_round(round_id)
+
+    async def interrupt_evaluation(
+        self, round_id: str, *, idempotency_key: str
+    ):
+        round_record = self.repository.get_round(round_id)
+        if round_record.execution_id is None:
+            raise ReviewConflictError("round has no execution")
+        if self.repository.has_round_control_receipt(
+            round_id,
+            operation="interrupt_evaluation",
+            idempotency_key=idempotency_key,
+        ):
+            return self.repository.get_round(round_id)
+        attempt = next(
+            (
+                item
+                for item in reversed(self.repository.list_attempts(round_id))
+                if item.ordinal == round_record.current_index + 1
+                and item.status in {"evaluating", "evaluation_failed"}
+            ),
+            None,
+        )
+        if attempt is None:
+            raise ReviewConflictError("current evaluation is not interruptible")
+        execution = self.executions.execution(round_record.execution_id)
+        if execution.status == "running":
+            await self.executions.interrupt_review_evaluation(execution.id)
+        elif not (
+            execution.status == "interrupted"
+            and attempt.status == "evaluation_failed"
+            and attempt.evaluation_error_code == "evaluation_interrupted"
+        ):
+            raise ReviewConflictError("current evaluation is not interruptible")
+        self.repository.interrupt_attempt_evaluation(
+            attempt.id, idempotency_key=idempotency_key
+        )
+        await self.events.publish(
+            round_record.session_id,
+            execution.id,
+            "review.evaluation.failed",
+            {
+                "roundId": round_id,
+                "attemptId": attempt.id,
+                "code": "evaluation_interrupted",
+                "version": round_record.version,
+            },
+        )
         return self.repository.get_round(round_id)
 
     async def cancel(self, round_id: str):
@@ -3297,6 +3407,7 @@ class ReviewApplication:
                     "id": draft.id,
                     "report_kind": report_kind,
                     "title": draft.title,
+                    "markdown": draft.markdown,
                     "status": draft.status,
                     "version": draft.version,
                     "publication": (

@@ -507,6 +507,54 @@ class AgentExecutionService:
             return requested
         return await self._finish_cancel(execution_id)
 
+    async def interrupt_review_evaluation(
+        self, execution_id: str
+    ) -> ExecutionRecord:
+        current = self._repository.get_execution(execution_id)
+        if current.status == "interrupted":
+            return current
+        if current.status != "running":
+            raise ReviewConflictError("review evaluation is not running")
+        task = self._tasks.get(execution_id)
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        interrupted = self._repository.transition_execution(
+            execution_id,
+            expected=("running",),
+            target="interrupted",
+            error_code="evaluation_interrupted",
+            error_message="评价已停止，可继续评价或跳过本题",
+        )
+        await self._events.publish(
+            interrupted.session_id,
+            interrupted.id,
+            "execution.interrupted",
+            {
+                "executionId": interrupted.id,
+                "code": "evaluation_interrupted",
+            },
+        )
+        return interrupted
+
+    async def resume_review_after_skip(
+        self,
+        execution_id: str,
+        *,
+        round_id: str,
+    ) -> ExecutionRecord:
+        execution = await self.rearm_prepared(execution_id)
+        self.run_prepared(
+            execution,
+            graph_input=Command(
+                update={
+                    "round_id": round_id,
+                    "skipped": True,
+                },
+            ),
+        )
+        return execution
+
     async def wait(self, execution_id: str) -> ExecutionRecord:
         task = self._tasks.get(execution_id)
         if task is not None:

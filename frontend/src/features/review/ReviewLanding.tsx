@@ -6,7 +6,7 @@ import type { ReviewRound } from "./reviewTypes";
 
 const statusText: Record<string, string> = { waiting_for_input: "等待回答", running: "进行中", report_pending: "报告待确认", completed: "已完成", failed: "失败", cancelled: "已结束" };
 const RECOMMENDED_QUESTION_COUNT = 10;
-const modeText = { "random-mixed": "随机混合", "weak-point": "薄弱优先", "topic-focused": "专题复习", "recent-mistake": "近期错题" } as const;
+const modeText = { "random-mixed": "随机混合", "weak-point": "薄弱优先", "topic-focused": "专题复习", "recent-mistake": "近期错题", "source-file": "按资料复习" } as const;
 const difficultyText = { easy: "简单", medium: "中等", hard: "困难" } as const;
 type HistoryFilter = "all" | "active" | "completed" | "ended" | "answered";
 

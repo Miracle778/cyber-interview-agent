@@ -4,7 +4,9 @@ import {
   listCurationSessions,
   submitCurationCommand,
   submitReviewAnswer,
+  interruptReviewEvaluation,
   retryReviewEvaluation,
+  skipReviewQuestion,
   getBulkPublicationPreflight,
   pauseCurationSession,
   resumeCurationSession,
@@ -43,6 +45,37 @@ describe("reviewApi", () => {
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ idempotencyKey: "retry-evaluation-1" }),
+      }),
+    );
+  });
+
+  it("interrupts evaluation and skips without requiring a pending input", async () => {
+    const round = {
+      id: "round-1",
+      currentInput: null,
+      attempts: [{ status: "evaluating" }],
+    } as ReviewRound;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () => Response.json(round),
+    );
+
+    await interruptReviewEvaluation("round-1", "interrupt-evaluation-1");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/review/rounds/round-1/interrupt-evaluation",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          idempotencyKey: "interrupt-evaluation-1",
+        }),
+      }),
+    );
+
+    await skipReviewQuestion(round, "skip-evaluation-1");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/review/rounds/round-1/skip",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ idempotencyKey: "skip-evaluation-1" }),
       }),
     );
   });

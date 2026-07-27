@@ -282,16 +282,21 @@ export function retryReviewEvaluation(roundId: string, idempotencyKey: string): 
   return apiPost(`/api/review/rounds/${roundId}/retry-evaluation`, { idempotencyKey });
 }
 
+export function interruptReviewEvaluation(roundId: string, idempotencyKey: string): Promise<ReviewRound> {
+  return apiPost(`/api/review/rounds/${roundId}/interrupt-evaluation`, { idempotencyKey });
+}
+
 export function retryReviewRound(roundId: string): Promise<ReviewRound> {
   return apiPost(`/api/review/rounds/${roundId}/retry`, {});
 }
 
 export function skipReviewQuestion(round: ReviewRound, idempotencyKey: string): Promise<ReviewRound> {
-  if (!round.currentInput) throw new Error("当前轮次没有待跳过输入");
   return apiPost(`/api/review/rounds/${round.id}/skip`, {
-    inputRequestId: round.currentInput.id,
-    version: round.currentInput.version,
     idempotencyKey,
+    ...(round.currentInput ? {
+      inputRequestId: round.currentInput.id,
+      version: round.currentInput.version,
+    } : {}),
   });
 }
 

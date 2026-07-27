@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.agent import MessageResource
 
@@ -22,7 +22,11 @@ class ReviewModel(BaseModel):
 
 
 ReviewMode = Literal[
-    "weak-point", "random-mixed", "topic-focused", "recent-mistake"
+    "weak-point",
+    "random-mixed",
+    "topic-focused",
+    "recent-mistake",
+    "source-file",
 ]
 MasteryState = Literal["unknown", "weak", "partial", "stable", "strong"]
 Difficulty = Literal["easy", "medium", "hard"]
@@ -52,6 +56,15 @@ class ReviewRoundSettings(ReviewModel):
     seed: int | None = None
     answer_model_id: str = Field(min_length=1)
     reasoning_effort: Literal["none", "low", "medium", "high"] = "none"
+    source_id: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def validate_mode_filters(self) -> ReviewRoundSettings:
+        if self.mode == "topic-focused" and not self.selected_topics:
+            raise ValueError("专题复习需要至少选择一个主题")
+        if self.mode == "source-file" and self.source_id is None:
+            raise ValueError("按资料复习需要先选择一份资料")
+        return self
 
 
 class CreateQuestionBatchCommand(ReviewModel):
@@ -168,8 +181,8 @@ class RetryReviewEvaluationCommand(ReviewModel):
 
 
 class SkipReviewInputCommand(ReviewModel):
-    input_request_id: str
-    version: int = Field(ge=1)
+    input_request_id: str | None = None
+    version: int | None = Field(default=None, ge=1)
     idempotency_key: str = Field(min_length=8, max_length=200)
 
 
@@ -272,6 +285,7 @@ class ActiveQuestionResource(ReviewModel):
     project_claim_id: str | None = None
     project_dimension: str | None = None
     source_job_target_id: str | None = None
+    source_ids: list[str] = Field(default_factory=list)
 
 
 class CurrentQuestionSourceResource(ReviewModel):
@@ -352,6 +366,7 @@ class ReviewReportResource(ReviewModel):
     id: str
     report_kind: Literal["session_report", "mastery_report"]
     title: str
+    markdown: str
     status: str
     version: int
     publication: dict[str, Any] | None

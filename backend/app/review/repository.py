@@ -3390,7 +3390,30 @@ class ReviewRepository:
             "ORDER BY published_at, rowid",
             (workspace_id,),
         ).fetchall()
-        records = tuple(self._catalog_record(row) for row in rows) + self._confirmed_project_questions(workspace_id)
+        source_rows = self._connection.execute(
+            "SELECT links.question_id, links.source_id "
+            "FROM review_question_source_links links "
+            "JOIN review_question_catalog catalog "
+            "ON catalog.question_id = links.question_id "
+            "WHERE catalog.workspace_id = ? AND catalog.active = 1 "
+            "GROUP BY links.question_id, links.source_id "
+            "ORDER BY MIN(links.created_at), MIN(links.rowid)",
+            (workspace_id,),
+        ).fetchall()
+        source_ids_by_question: dict[str, list[str]] = {}
+        for source_row in source_rows:
+            source_ids_by_question.setdefault(
+                str(source_row["question_id"]), []
+            ).append(str(source_row["source_id"]))
+        records = tuple(
+            replace(
+                self._catalog_record(row),
+                source_ids=tuple(
+                    source_ids_by_question.get(str(row["question_id"]), ())
+                ),
+            )
+            for row in rows
+        ) + self._confirmed_project_questions(workspace_id)
         if topic is not None:
             records = tuple(
                 item for item in records if topic in item.snapshot.topics
@@ -3909,6 +3932,34 @@ class ReviewRepository:
                     _canonical_json(message_payload),
                 ),
             )
+            if request["kind"] == "answer":
+                reference_answer = str(
+                    snapshots[ordinal - 1].get("reference_answer") or ""
+                ).strip()
+                if reference_answer:
+                    reference_payload = {
+                        **message_payload,
+                        "auxiliary": True,
+                        "intent": "post_answer_reference",
+                        "automaticReference": True,
+                        "affectsMastery": False,
+                    }
+                    self._connection.execute(
+                        "INSERT INTO agent_messages "
+                        "(id, session_id, run_id, role, content, message_kind, "
+                        "payload_json) VALUES (?, ?, ?, 'assistant', ?, "
+                        "'review_prompt', ?)",
+                        (
+                            str(uuid4()),
+                            round_row["session_id"],
+                            execution_id,
+                            "参考答案："
+                            f"{reference_answer}\n\n"
+                            "这份答案在你提交后自动展示，仅用于答后对照，"
+                            "不影响本次掌握度评价。",
+                            _canonical_json(reference_payload),
+                        ),
+                    )
             resolved_receipt_id = receipt_id or str(uuid4())
             receipt_payload = {
                 "roundId": request["round_id"],
@@ -4097,6 +4148,113 @@ class ReviewRepository:
             if cursor.rowcount != 1:
                 raise ReviewConflictError("attempt is not awaiting evaluation")
         return self.get_attempt(attempt_id)
+
+    def has_round_control_receipt(
+        self,
+        round_id: str,
+        *,
+        operation: Literal["interrupt_evaluation", "skip_current"],
+        idempotency_key: str,
+    ) -> bool:
+        row = self._connection.execute(
+            "SELECT 1 FROM review_round_control_receipts "
+            "WHERE round_id = ? AND operation = ? AND idempotency_key = ?",
+            (round_id, operation, idempotency_key),
+        ).fetchone()
+        return row is not None
+
+    def interrupt_attempt_evaluation(
+        self,
+        attempt_id: str,
+        *,
+        idempotency_key: str,
+    ) -> ReviewAttemptRecord:
+        with self._transaction():
+            attempt = self._connection.execute(
+                "SELECT * FROM review_attempts WHERE id = ?", (attempt_id,)
+            ).fetchone()
+            if attempt is None:
+                raise LookupError(attempt_id)
+            existing = self._connection.execute(
+                "SELECT 1 FROM review_round_control_receipts "
+                "WHERE round_id = ? AND operation = 'interrupt_evaluation' "
+                "AND idempotency_key = ?",
+                (attempt["round_id"], idempotency_key),
+            ).fetchone()
+            if existing is not None:
+                return self.get_attempt(attempt_id)
+            if attempt["status"] == "evaluating":
+                self._connection.execute(
+                    "UPDATE review_attempts SET status = 'evaluation_failed', "
+                    "evaluation_error_code = 'evaluation_interrupted', "
+                    "evaluation_completed_at = CURRENT_TIMESTAMP, "
+                    "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (attempt_id,),
+                )
+            elif not (
+                attempt["status"] == "evaluation_failed"
+                and attempt["evaluation_error_code"] == "evaluation_interrupted"
+            ):
+                raise ReviewConflictError("attempt evaluation is not interruptible")
+            self._connection.execute(
+                "INSERT INTO review_round_control_receipts "
+                "(id, round_id, operation, idempotency_key) "
+                "VALUES (?, ?, 'interrupt_evaluation', ?)",
+                (str(uuid4()), attempt["round_id"], idempotency_key),
+            )
+        return self.get_attempt(attempt_id)
+
+    def skip_current_attempt(
+        self,
+        round_id: str,
+        *,
+        attempt_id: str,
+        idempotency_key: str,
+    ) -> ReviewRoundRecord:
+        with self._transaction():
+            existing = self._connection.execute(
+                "SELECT 1 FROM review_round_control_receipts "
+                "WHERE round_id = ? AND operation = 'skip_current' "
+                "AND idempotency_key = ?",
+                (round_id, idempotency_key),
+            ).fetchone()
+            if existing is not None:
+                return self.get_round(round_id)
+            round_row = self._connection.execute(
+                "SELECT * FROM review_rounds WHERE id = ?", (round_id,)
+            ).fetchone()
+            if round_row is None:
+                raise ReviewRoundNotFoundError(round_id)
+            attempt = self._connection.execute(
+                "SELECT * FROM review_attempts WHERE id = ? AND round_id = ?",
+                (attempt_id, round_id),
+            ).fetchone()
+            if (
+                attempt is None
+                or int(attempt["ordinal"]) != int(round_row["current_index"]) + 1
+            ):
+                raise ReviewConflictError("attempt is not the current question")
+            if attempt["status"] not in {
+                "evaluating",
+                "evaluation_failed",
+                "waiting_for_follow_up",
+            }:
+                raise ReviewConflictError("current attempt cannot be skipped")
+            self._connection.execute(
+                "UPDATE review_attempts SET skipped = 1, status = 'completed', "
+                "result_kind = 'skipped', evaluation_error_code = NULL, "
+                "evaluation_completed_at = COALESCE("
+                "evaluation_completed_at, CURRENT_TIMESTAMP), "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (attempt_id,),
+            )
+            self._connection.execute(
+                "INSERT INTO review_round_control_receipts "
+                "(id, round_id, operation, idempotency_key) "
+                "VALUES (?, ?, 'skip_current', ?)",
+                (str(uuid4()), round_id, idempotency_key),
+            )
+        return self.get_round(round_id)
 
     def complete_attempt_without_follow_up(
         self, attempt_id: str
@@ -4857,6 +5015,11 @@ class ReviewRepository:
             answer_model_id=str(data["answer_model_id"]),
             reasoning_effort=cast(
                 ReasoningEffort, data["reasoning_effort"]
+            ),
+            source_id=(
+                None
+                if data.get("source_id") is None
+                else str(data["source_id"])
             ),
         )
 
