@@ -286,6 +286,15 @@ class ProfileCardReferenceResource(AgentModel):
     title: str
 
 
+class ProfileSupportEvidenceResource(AgentModel):
+    evidence_id: str
+    material_title: str
+    version_number: int
+    section: str
+    excerpt: str
+    relation: str
+
+
 class UnifiedProfileCardResource(AgentModel):
     claim_id: str
     claim_version_id: str
@@ -296,6 +305,8 @@ class UnifiedProfileCardResource(AgentModel):
     subtitle: str | None
     value: dict[str, Any]
     sources: list[ProfileSourceSummaryResource]
+    support_summary: str
+    support_evidence: list[ProfileSupportEvidenceResource]
     linked_to: list[ProfileCardReferenceResource]
     used_in: list[ProfileCardReferenceResource]
 

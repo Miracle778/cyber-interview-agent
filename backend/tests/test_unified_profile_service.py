@@ -174,8 +174,8 @@ def test_projection_exposes_pending_count_source_state_and_manual_context(
     )
     profile = service.unified_profile()
     assert profile.certifications[0].support_status == "unsupported"
-    assert profile.certifications[0].sources[0].status == "source_deleted"
-    assert profile.certifications[0].sources[0].label == "原来源已删除，本人保留"
+    assert profile.certifications[0].sources[0].status == "active"
+    assert profile.certifications[0].sources[0].label == "简历提取"
 
     context = service.confirmed_profile_context(
         purpose="job_target_analysis",

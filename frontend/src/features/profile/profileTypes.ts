@@ -272,6 +272,15 @@ export interface ProfileCardReference {
   title: string;
 }
 
+export interface ProfileSupportEvidence {
+  evidenceId: string;
+  materialTitle: string;
+  versionNumber: number;
+  section: string;
+  excerpt: string;
+  relation: "direct" | "related";
+}
+
 export interface UnifiedProfileCard {
   claimId: string;
   claimVersionId: string;
@@ -282,6 +291,8 @@ export interface UnifiedProfileCard {
   subtitle: string | null;
   value: Record<string, unknown>;
   sources: ProfileSourceSummary[];
+  supportSummary?: string;
+  supportEvidence?: ProfileSupportEvidence[];
   linkedTo: ProfileCardReference[];
   usedIn: ProfileCardReference[];
 }

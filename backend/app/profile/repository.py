@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from hashlib import sha256
@@ -64,6 +65,7 @@ from app.profile.models import (
     ProfileMaterialVersionRecord,
     ProfilePresentationRecord,
     ProfileRelationSpec,
+    ProfileSupportEvidenceRecord,
     MaterialDeletionPlanRecord,
     PublicationSelectionRecord,
     SaveAssessmentCommand,
@@ -71,6 +73,7 @@ from app.profile.models import (
 )
 
 _TERMINAL_PROPOSAL_STATUSES = frozenset({"accepted", "rejected", "superseded"})
+_RELATED_TERM_SPLIT = re.compile(r"(?:[/、，,；;：:（）()【】\[\]\s·|+_\-]+|与|和|及)")
 
 
 def _canonical_json(value: object) -> str:
@@ -641,6 +644,10 @@ class ProfileRepository:
                 )
                 # An update against an already-confirmed claim records a conflict
                 # edge but never overwrites the confirmed version.
+                source_ref = dict(spec.source_ref)
+                if spec.source_kind == "resume_extraction":
+                    source_ref.setdefault("materialVersionId", version_id)
+                    source_ref.setdefault("evidenceIds", list(spec.evidence_ids))
                 proposal_id = _new_id()
                 self._connection.execute(
                     "INSERT INTO profile_claim_proposals "
@@ -660,7 +667,7 @@ class ProfileRepository:
                         _canonical_json(list(spec.evidence_ids)),
                         created_by_execution_id,
                         spec.source_kind,
-                        _canonical_json(spec.source_ref),
+                        _canonical_json(source_ref),
                     ),
                 )
                 if spec.target_claim_id is not None:
@@ -1387,6 +1394,259 @@ class ProfileRepository:
         ).fetchall()
         return tuple(self._claim_source_record(row) for row in rows)
 
+    def list_claim_sources_for_claim(
+        self, claim_id: str
+    ) -> tuple[ProfileClaimSourceRecord, ...]:
+        rows = self._connection.execute(
+            "SELECT s.* FROM profile_claim_sources s "
+            "JOIN profile_claim_versions v ON v.id = s.claim_version_id "
+            "WHERE v.claim_id = ? AND s.status <> 'superseded' "
+            "ORDER BY s.created_at, s.id",
+            (claim_id,),
+        ).fetchall()
+        return tuple(self._claim_source_record(row) for row in rows)
+
+    @staticmethod
+    def _source_evidence_ids(source_ref: dict[str, object]) -> tuple[str, ...]:
+        raw = source_ref.get("evidenceIds", ())
+        if not isinstance(raw, list):
+            return ()
+        return tuple(
+            dict.fromkeys(
+                item.strip()
+                for item in raw
+                if isinstance(item, str) and item.strip()
+            )
+        )
+
+    def _live_evidence_ids(
+        self, workspace_id: str, evidence_ids: Sequence[str]
+    ) -> tuple[str, ...]:
+        unique = tuple(dict.fromkeys(evidence_ids))
+        if not unique:
+            return ()
+        placeholders = ",".join("?" for _ in unique)
+        rows = self._connection.execute(
+            "SELECT e.id FROM profile_evidence e "
+            "JOIN profile_material_versions v ON v.id = e.material_version_id "
+            "JOIN profile_materials m ON m.id = v.material_id "
+            f"WHERE e.id IN ({placeholders}) AND m.workspace_id = ? "
+            "AND e.tombstoned_at IS NULL AND v.deleted_at IS NULL "
+            "AND m.deleted_at IS NULL ORDER BY e.id",
+            (*unique, workspace_id),
+        ).fetchall()
+        return tuple(row["id"] for row in rows)
+
+    def _effective_claim_evidence_ids(
+        self,
+        *,
+        workspace_id: str,
+        embedded_evidence_ids: Sequence[str],
+        sources: Sequence[ProfileClaimSourceRecord],
+    ) -> tuple[str, ...]:
+        candidates = list(embedded_evidence_ids)
+        for source in sources:
+            if source.status != "active":
+                continue
+            candidates.extend(self._source_evidence_ids(source.source_ref))
+        return self._live_evidence_ids(workspace_id, candidates)
+
+    @staticmethod
+    def _claim_match_text(claim_type: str, value: dict[str, object]) -> str:
+        key_by_type = {
+            "skill": "name",
+            "project": "name",
+            "experience": "organization",
+            "education": "school",
+            "certification": "name",
+            "achievement": "title",
+            "direction": "name",
+        }
+        key = key_by_type.get(claim_type)
+        candidate = value.get(key) if key else None
+        return str(candidate).strip() if candidate else ""
+
+    @staticmethod
+    def _normalized_match_text(value: str) -> str:
+        return "".join(character.casefold() for character in value if character.isalnum())
+
+    @classmethod
+    def _related_match_terms(cls, value: str) -> tuple[str, ...]:
+        normalized = cls._normalized_match_text(value)
+        terms = [normalized] if len(normalized) >= 4 else []
+        for item in _RELATED_TERM_SPLIT.split(value):
+            candidate = cls._normalized_match_text(item)
+            if len(candidate) >= 4:
+                terms.append(candidate)
+        return tuple(dict.fromkeys(terms))
+
+    def _support_evidence_records(
+        self,
+        evidence_ids: Sequence[str],
+        *,
+        relation: str,
+    ) -> tuple[ProfileSupportEvidenceRecord, ...]:
+        unique = tuple(dict.fromkeys(evidence_ids))
+        if not unique:
+            return ()
+        placeholders = ",".join("?" for _ in unique)
+        rows = self._connection.execute(
+            "SELECT e.id, e.section, e.sanitized_text, v.id AS version_id, "
+            "v.version_number, v.material_id, m.title AS material_title "
+            "FROM profile_evidence e "
+            "JOIN profile_material_versions v ON v.id = e.material_version_id "
+            "JOIN profile_materials m ON m.id = v.material_id "
+            f"WHERE e.id IN ({placeholders}) ORDER BY e.id",
+            unique,
+        ).fetchall()
+        return tuple(
+            ProfileSupportEvidenceRecord(
+                evidence_id=row["id"],
+                material_id=row["material_id"],
+                material_title=row["material_title"],
+                material_version_id=row["version_id"],
+                version_number=int(row["version_number"]),
+                section=row["section"],
+                excerpt=row["sanitized_text"][:240],
+                relation="direct" if relation == "direct" else "related",
+            )
+            for row in rows
+        )
+
+    def _related_claim_evidence(
+        self,
+        *,
+        workspace_id: str,
+        claim_type: str,
+        value: dict[str, object],
+        excluded_evidence_ids: Sequence[str],
+    ) -> tuple[ProfileSupportEvidenceRecord, ...]:
+        match_text = self._claim_match_text(claim_type, value)
+        terms = self._related_match_terms(match_text)
+        if not terms:
+            return ()
+        excluded = set(excluded_evidence_ids)
+        rows = self._connection.execute(
+            "SELECT e.id, e.sanitized_text FROM profile_evidence e "
+            "JOIN profile_material_versions v ON v.id = e.material_version_id "
+            "JOIN profile_materials m ON m.id = v.material_id "
+            "WHERE m.workspace_id = ? AND m.deleted_at IS NULL "
+            "AND v.deleted_at IS NULL AND e.tombstoned_at IS NULL "
+            "ORDER BY e.created_at DESC, e.id",
+            (workspace_id,),
+        ).fetchall()
+        related_ids: list[str] = []
+        for row in rows:
+            if row["id"] in excluded:
+                continue
+            normalized_evidence = self._normalized_match_text(row["sanitized_text"])
+            if any(term in normalized_evidence for term in terms):
+                related_ids.append(row["id"])
+                if len(related_ids) >= 5:
+                    break
+        return self._support_evidence_records(related_ids, relation="related")
+
+    def _mark_claim_sources_deleted(
+        self,
+        *,
+        version_ids: Sequence[str],
+        evidence_ids: Sequence[str],
+    ) -> None:
+        target_versions = set(version_ids)
+        target_evidence = set(evidence_ids)
+        rows = self._connection.execute(
+            "SELECT * FROM profile_claim_sources "
+            "WHERE source_kind = 'resume_extraction' AND status = 'active'"
+        ).fetchall()
+        for row in rows:
+            source_ref = json.loads(row["source_ref_json"])
+            if (
+                source_ref.get("materialVersionId") in target_versions
+                or set(self._source_evidence_ids(source_ref)) & target_evidence
+            ):
+                self._connection.execute(
+                    "UPDATE profile_claim_sources SET status = 'source_deleted' "
+                    "WHERE id = ?",
+                    (row["id"],),
+                )
+
+    def _repair_inactive_claim_sources(self, workspace_id: str) -> int:
+        rows = self._connection.execute(
+            "SELECT * FROM profile_claim_sources "
+            "WHERE workspace_id = ? AND source_kind = 'resume_extraction' "
+            "AND status = 'active'",
+            (workspace_id,),
+        ).fetchall()
+        repaired = 0
+        for row in rows:
+            source_ref = json.loads(row["source_ref_json"])
+            version_id = source_ref.get("materialVersionId")
+            evidence_ids = self._source_evidence_ids(source_ref)
+            version_is_live = True
+            if isinstance(version_id, str) and version_id:
+                version_is_live = (
+                    self._connection.execute(
+                        "SELECT 1 FROM profile_material_versions v "
+                        "JOIN profile_materials m ON m.id = v.material_id "
+                        "WHERE v.id = ? AND m.workspace_id = ? "
+                        "AND v.deleted_at IS NULL AND m.deleted_at IS NULL",
+                        (version_id, workspace_id),
+                    ).fetchone()
+                    is not None
+                )
+            evidence_is_live = (
+                not evidence_ids
+                or bool(self._live_evidence_ids(workspace_id, evidence_ids))
+            )
+            if version_is_live and evidence_is_live:
+                continue
+            self._connection.execute(
+                "UPDATE profile_claim_sources SET status = 'source_deleted' "
+                "WHERE id = ?",
+                (row["id"],),
+            )
+            repaired += 1
+        return repaired
+
+    def recompute_claim_support(self, workspace_id: str) -> dict[str, int]:
+        rows = self._connection.execute(
+            "SELECT c.id AS claim_id, c.current_confirmed_version_id, "
+            "v.evidence_ids_json, v.support_status "
+            "FROM profile_claims c "
+            "JOIN profile_claim_versions v ON v.id = c.current_confirmed_version_id "
+            "WHERE c.workspace_id = ? AND c.deleted_at IS NULL",
+            (workspace_id,),
+        ).fetchall()
+        counts = {"supported": 0, "unsupported": 0, "sources_repaired": 0}
+        with self._transaction():
+            counts["sources_repaired"] = self._repair_inactive_claim_sources(
+                workspace_id
+            )
+            for row in rows:
+                sources = self.list_claim_sources_for_claim(row["claim_id"])
+                effective = self._effective_claim_evidence_ids(
+                    workspace_id=workspace_id,
+                    embedded_evidence_ids=tuple(
+                        json.loads(row["evidence_ids_json"])
+                    ),
+                    sources=sources,
+                )
+                next_status = (
+                    "conflicted"
+                    if row["support_status"] == "conflicted"
+                    else ("supported" if effective else "unsupported")
+                )
+                if next_status != row["support_status"]:
+                    self._connection.execute(
+                        "UPDATE profile_claim_versions SET support_status = ? "
+                        "WHERE id = ?",
+                        (next_status, row["current_confirmed_version_id"]),
+                    )
+                counts[
+                    "supported" if next_status == "supported" else "unsupported"
+                ] += 1
+        return counts
+
     def attach_claim_source(
         self,
         *,
@@ -1743,24 +2003,64 @@ class ProfileRepository:
             "ORDER BY c.claim_type, c.id",
             (workspace_id,),
         ).fetchall()
-        entries = tuple(
-            ConfirmedClaimEntry(
-                claim_id=row["claim_id"],
-                claim_type=row["claim_type"],
-                claim_version_id=row["version_id"],
-                version_number=int(row["version"]),
-                value=json.loads(row["value_json"]),
-                support_status=row["support_status"],
-                evidence_ids=tuple(json.loads(row["evidence_ids_json"])),
-                sources=self.list_claim_sources(row["version_id"]),
+        entries: list[ConfirmedClaimEntry] = []
+        for row in rows:
+            value = json.loads(row["value_json"])
+            sources = self.list_claim_sources_for_claim(row["claim_id"])
+            effective_evidence_ids = self._effective_claim_evidence_ids(
+                workspace_id=workspace_id,
+                embedded_evidence_ids=tuple(
+                    json.loads(row["evidence_ids_json"])
+                ),
+                sources=sources,
             )
-            for row in rows
-        )
+            direct_evidence = self._support_evidence_records(
+                effective_evidence_ids, relation="direct"
+            )
+            related_evidence = (
+                ()
+                if effective_evidence_ids
+                else self._related_claim_evidence(
+                    workspace_id=workspace_id,
+                    claim_type=row["claim_type"],
+                    value=value,
+                    excluded_evidence_ids=effective_evidence_ids,
+                )
+            )
+            has_manual_source = any(
+                source.status == "active"
+                and source.source_kind
+                in {"user_input", "conversation", "agent_inference"}
+                for source in sources
+            )
+            if row["support_status"] == "conflicted":
+                support_status = "conflicted"
+            elif effective_evidence_ids:
+                support_status = "supported"
+            elif has_manual_source:
+                support_status = "manual"
+            elif related_evidence:
+                support_status = "related"
+            else:
+                support_status = "unsupported"
+            entries.append(
+                ConfirmedClaimEntry(
+                    claim_id=row["claim_id"],
+                    claim_type=row["claim_type"],
+                    claim_version_id=row["version_id"],
+                    version_number=int(row["version"]),
+                    value=value,
+                    support_status=support_status,
+                    evidence_ids=effective_evidence_ids,
+                    sources=sources,
+                    support_evidence=(*direct_evidence, *related_evidence),
+                )
+            )
         materials = self.list_materials(workspace_id)
         return ConfirmedProfileSnapshot(
             workspace_id=workspace_id,
-            profile_version=self._compute_profile_version(entries),
-            claims=entries,
+            profile_version=self._compute_profile_version(tuple(entries)),
+            claims=tuple(entries),
             materials=materials,
         )
 
@@ -2383,7 +2683,13 @@ class ProfileRepository:
             (workspace_id,),
         ).fetchall()
         for row in claim_rows:
-            claim_evidence = tuple(json.loads(row["evidence_ids_json"]))
+            claim_evidence = self._effective_claim_evidence_ids(
+                workspace_id=workspace_id,
+                embedded_evidence_ids=tuple(
+                    json.loads(row["evidence_ids_json"])
+                ),
+                sources=self.list_claim_sources_for_claim(row["claim_id"]),
+            )
             affected_for_claim = tuple(sorted(set(claim_evidence) & affected))
             if not affected_for_claim:
                 continue
@@ -2617,6 +2923,10 @@ class ProfileRepository:
                 )
 
             receipts: list[DeletionItemReceipt] = []
+            self._mark_claim_sources_deleted(
+                version_ids=tuple(impact.get("versionIds", [])),
+                evidence_ids=tuple(impact.get("evidenceIds", [])),
+            )
             for item in current_impact.get("claims", []):
                 claim_id = item["claimId"]
                 action = claim_choices[claim_id]
@@ -2627,9 +2937,14 @@ class ProfileRepository:
                     )
                 else:
                     self._connection.execute(
-                        "UPDATE profile_claim_versions SET support_status = 'unsupported' "
+                        "UPDATE profile_claim_versions SET support_status = ? "
                         "WHERE id = ?",
-                        (item["claimVersionId"],),
+                        (
+                            "supported"
+                            if item.get("remainingEvidenceIds")
+                            else "unsupported",
+                            item["claimVersionId"],
+                        ),
                     )
                 receipts.append(
                     DeletionItemReceipt(
@@ -2773,6 +3088,10 @@ class ProfileRepository:
                     )
 
             receipts: list[DeletionItemReceipt] = []
+            self._mark_claim_sources_deleted(
+                version_ids=(target_version_id,),
+                evidence_ids=tuple(impact.get("evidenceIds", [])),
+            )
             for item in current_impact.get("claims", []):
                 claim_id = item["claimId"]
                 action = claim_choices[claim_id]
@@ -2781,11 +3100,16 @@ class ProfileRepository:
                         "DELETE FROM profile_claims WHERE id = ? AND workspace_id = ?",
                         (claim_id, plan_row["workspace_id"]),
                     )
-                elif not item.get("remainingEvidenceIds"):
+                else:
                     self._connection.execute(
-                        "UPDATE profile_claim_versions SET support_status = 'unsupported' "
+                        "UPDATE profile_claim_versions SET support_status = ? "
                         "WHERE id = ?",
-                        (item["claimVersionId"],),
+                        (
+                            "supported"
+                            if item.get("remainingEvidenceIds")
+                            else "unsupported",
+                            item["claimVersionId"],
+                        ),
                     )
                 receipts.append(
                     DeletionItemReceipt(

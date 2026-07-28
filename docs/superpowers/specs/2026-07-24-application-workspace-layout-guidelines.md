@@ -20,6 +20,7 @@
 - 应用外壳、页面外壳、工作台和各 Grid/Flex 中间层必须形成连续的高度传递，并设置 `min-height: 0`。
 - 页面标题、一级页签和工作台工具栏不随内容滚出视口。
 - 工作台使用 `grid-template-rows: auto minmax(0, 1fr)` 或等价结构。
+- 新增工作台必须复用 `TaskWorkspace` 与 `TaskWorkspacePane`（或明确的共享等价物）；禁止依靠把新页面类名追加到父容器选择器来获得高度和滚动，否则新增子页会再次出现内容裁切。
 - 列表、详情正文和长文阅读器分别声明滚动所有权，使用 `overflow-y: auto`、`overscroll-behavior: contain` 和稳定滚动槽。
 - 桌面工作台不得把 `document.documentElement.scrollHeight` 撑出可用视口。
 - 同一层级最多存在两个并列滚动区；禁止无意义的滚动套滚动。

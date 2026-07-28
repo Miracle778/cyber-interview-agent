@@ -38,6 +38,8 @@
 - 清理目标版本的 `storage_ref`、`text_ref` 和文件名正文；
 - tombstone 目标版本的 Evidence 正文；
 - 不修改同材料其他版本及其 Evidence；
+- Claim 的有效 Evidence 必须汇总当前 ClaimVersion 和该 Claim 历史版本上的 active
+  Source，并排除已删除 Material/MaterialVersion 与 tombstoned Evidence；
 - 已确认 Claim 仍有其他有效 Evidence 时保持 `supported`；
 - 已确认 Claim 失去全部有效 Evidence 时，用户必须在预检中选择：
   - 保留，并标记为 `unsupported`；
@@ -45,6 +47,8 @@
 - 若目标版本是当前版本，在同一事务内把材料的 `current_version_id` 切换为用户选定的剩余版本；
 - 版本记录保留无敏感正文的 tombstone，用于审计和防止旧引用失真；
 - 材料的 `version_count`、当前版本和列表投影必须同步刷新。
+- 命中目标版本或 Evidence 的 Claim Source 必须标记为 `source_deleted`，不得只修改
+  Claim 的黄色状态。
 
 ## 4. API
 

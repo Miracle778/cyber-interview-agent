@@ -133,10 +133,19 @@ async def test_profile_execution_can_cancel_and_hidden_session_creation_is_rejec
             json={"input": {"message": "block"}},
         )
         await started.wait()
+        running_sessions = await client.get(
+            "/api/workspaces/w1/profile/sessions"
+        )
         cancelled = await client.post(
             f"/api/agent/executions/{execution.json()['id']}/cancel"
         )
+        cancelled_sessions = await client.get(
+            "/api/workspaces/w1/profile/sessions"
+        )
 
     assert hidden.status_code == 422
+    assert running_sessions.json()[0]["latestExecutionStatus"] == "running"
+    assert running_sessions.json()[0]["pendingActionCount"] == 0
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == "cancelled"
+    assert cancelled_sessions.json()[0]["latestExecutionStatus"] == "cancelled"

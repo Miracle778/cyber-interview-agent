@@ -35,13 +35,22 @@ function cardDetails(card: UnifiedProfileCard) {
   return [];
 }
 
+function supportLabel(card: UnifiedProfileCard) {
+  if (card.supportStatus === "related") return "相关内容待核对";
+  if (card.supportStatus === "manual") return "本人确认";
+  if (card.supportStatus === "conflicted") return "来源有冲突";
+  if (card.supportStatus === "unsupported") return "缺少直接依据";
+  return null;
+}
+
 function ProfileCard({ card, onEdit }: { card: UnifiedProfileCard; onEdit: (card: UnifiedProfileCard) => void }) {
   const details = cardDetails(card);
   const technologies = card.category === "project" ? textList(card.value.tech_stack) : [];
-  const unsupported = card.supportStatus === "unsupported";
-  return <article className="unified-profile-card" data-unsupported={unsupported || undefined}>
+  const support = supportLabel(card);
+  const needsReview = card.supportStatus === "unsupported" || card.supportStatus === "related" || card.supportStatus === "conflicted";
+  return <article className="unified-profile-card" data-support={needsReview ? card.supportStatus : undefined}>
     <header>
-      <div><h3>{card.title}</h3>{unsupported ? <span className="unified-profile-card__support"><AlertTriangle size={13} />依据不足</span> : null}{card.subtitle ? <p>{card.subtitle}</p> : null}</div>
+      <div><h3>{card.title}</h3>{support ? <span className="unified-profile-card__support" data-status={card.supportStatus}>{needsReview ? <AlertTriangle size={13} /> : <CheckCircle2 size={13} />}{support}</span> : null}{card.subtitle ? <p>{card.subtitle}</p> : null}</div>
       <button type="button" aria-label={`编辑${card.title}`} onClick={() => onEdit(card)}><Pencil size={16} /></button>
     </header>
     {typeof card.value.background === "string" ? <p className="unified-profile-card__intro">{card.value.background}</p> : null}
@@ -87,6 +96,7 @@ export function UnifiedProfileOverview({
   onCreate,
   onEdit,
   onOpenPending,
+  onOpenSupportReview,
   onSetPrimaryDirection,
 }: {
   profile: UnifiedProfile | null;
@@ -95,6 +105,7 @@ export function UnifiedProfileOverview({
   onCreate: (category?: ProfileCardCategory) => void;
   onEdit: (card: UnifiedProfileCard) => void;
   onOpenPending: () => void;
+  onOpenSupportReview: (filter: "related" | "unsupported") => void;
   onSetPrimaryDirection: (claimId: string) => void;
 }) {
   const [activeView, setActiveView] = useState<ProfileView>("overview");
@@ -117,6 +128,7 @@ export function UnifiedProfileOverview({
     ...profile.links,
   ];
   const unsupportedCount = allCards.filter((card) => card.supportStatus === "unsupported").length;
+  const relatedCount = allCards.filter((card) => card.supportStatus === "related" || card.supportStatus === "conflicted").length;
   const primaryDirection = profile.directions.find((item) => item.claimId === profile.primaryDirectionClaimId) ?? profile.directions[0] ?? null;
   const heroCard = primaryDirection ?? profile.summary;
   const views: Array<{ key: ProfileView; label: string; count: number }> = [
@@ -142,11 +154,12 @@ export function UnifiedProfileOverview({
       <div className="unified-profile-hero__content">
         <span>职业名片</span>
         <h2>{heroCard?.title ?? "尚未设置职业定位"}</h2>
-        {heroCard?.supportStatus === "unsupported" ? <span className="unified-profile-card__support"><AlertTriangle size={13} />依据不足</span> : null}
+        {heroCard && supportLabel(heroCard) ? <span className="unified-profile-card__support" data-status={heroCard.supportStatus}><AlertTriangle size={13} />{supportLabel(heroCard)}</span> : null}
         {primaryDirection && typeof primaryDirection.value.description === "string" ? <p>{primaryDirection.value.description}</p> : null}
         <div className="unified-profile-hero__meta">
           <span><CheckCircle2 size={15} />{cardCount} 条已确认资料</span>
-          {unsupportedCount ? <span className="unified-profile-hero__unsupported"><AlertTriangle size={15} />{unsupportedCount} 条内容缺少来源依据</span> : null}
+          {relatedCount ? <button type="button" className="unified-profile-hero__related" onClick={() => onOpenSupportReview("related")}><AlertTriangle size={15} />{relatedCount} 条相关内容待核对<ArrowRight size={14} /></button> : null}
+          {unsupportedCount ? <button type="button" className="unified-profile-hero__unsupported" onClick={() => onOpenSupportReview("unsupported")}><AlertTriangle size={15} />{unsupportedCount} 条内容缺少直接依据<ArrowRight size={14} /></button> : null}
           {profile.pendingCount ? <button type="button" onClick={onOpenPending}>{profile.pendingCount} 条内容等你确认<ArrowRight size={14} /></button> : <span>当前没有待确认内容</span>}
         </div>
       </div>
@@ -173,8 +186,8 @@ export function UnifiedProfileOverview({
           <div className="unified-profile-overview-grid">
             <section className="unified-profile-directions">
               <header><div><Target size={18} /><h2>求职方向</h2></div><button type="button" onClick={() => onCreate("direction")}><Plus size={15} />添加</button></header>
-              {profile.directions.length ? profile.directions.map((card) => <article key={card.claimId} data-primary={card.claimId === profile.primaryDirectionClaimId || undefined} data-unsupported={card.supportStatus === "unsupported" || undefined}>
-                <button type="button" className="unified-profile-directions__body" onClick={() => onEdit(card)}><strong>{card.title}</strong>{card.supportStatus === "unsupported" ? <small>依据不足</small> : null}{typeof card.value.description === "string" ? <span>{card.value.description}</span> : null}</button>
+              {profile.directions.length ? profile.directions.map((card) => <article key={card.claimId} data-primary={card.claimId === profile.primaryDirectionClaimId || undefined} data-support={card.supportStatus !== "supported" && card.supportStatus !== "manual" ? card.supportStatus : undefined}>
+                <button type="button" className="unified-profile-directions__body" onClick={() => onEdit(card)}><strong>{card.title}</strong>{supportLabel(card) ? <small>{supportLabel(card)}</small> : null}{typeof card.value.description === "string" ? <span>{card.value.description}</span> : null}</button>
                 {card.claimId === profile.primaryDirectionClaimId ? <small>当前方向</small> : <button type="button" onClick={() => onSetPrimaryDirection(card.claimId)}>设为当前方向</button>}
               </article>) : <button className="unified-profile-directions__empty" type="button" onClick={() => onCreate("direction")}><Plus size={16} />设置职业定位</button>}
             </section>
@@ -182,10 +195,10 @@ export function UnifiedProfileOverview({
             <section className="unified-profile-skills">
               <header><div><BriefcaseBusiness size={18} /><h2>核心技能</h2></div><button type="button" onClick={() => onCreate("skill")}><Plus size={15} />添加</button></header>
               {profile.skills.length ? skillsExpanded ? <div className="unified-profile-skills__tags">
-                {profile.skills.map((card) => <button key={card.claimId} type="button" data-unsupported={card.supportStatus === "unsupported" || undefined} aria-label={`${card.title}${card.supportStatus === "unsupported" ? "，依据不足" : ""}`} onClick={() => onEdit(card)}>{card.title}{card.supportStatus === "unsupported" ? <small>依据不足</small> : null}</button>)}
+                {profile.skills.map((card) => <button key={card.claimId} type="button" data-support={card.supportStatus !== "supported" && card.supportStatus !== "manual" ? card.supportStatus : undefined} aria-label={`${card.title}${supportLabel(card) ? `，${supportLabel(card)}` : ""}`} onClick={() => onEdit(card)}>{card.title}{supportLabel(card) ? <small>{supportLabel(card)}</small> : null}</button>)}
                 <button className="unified-profile-skills__more" type="button" onClick={() => setSkillsExpanded(false)}>收起</button>
               </div> : <div className="unified-profile-skills__summary">
-                <div>{profile.skills.slice(0, 4).map((card) => <button key={card.claimId} type="button" data-unsupported={card.supportStatus === "unsupported" || undefined} aria-label={`${card.title}${card.supportStatus === "unsupported" ? "，依据不足" : ""}`} onClick={() => onEdit(card)}>{card.title}{card.supportStatus === "unsupported" ? <small>依据不足</small> : null}</button>)}</div>
+                <div>{profile.skills.slice(0, 4).map((card) => <button key={card.claimId} type="button" data-support={card.supportStatus !== "supported" && card.supportStatus !== "manual" ? card.supportStatus : undefined} aria-label={`${card.title}${supportLabel(card) ? `，${supportLabel(card)}` : ""}`} onClick={() => onEdit(card)}>{card.title}{supportLabel(card) ? <small>{supportLabel(card)}</small> : null}</button>)}</div>
                 <button type="button" onClick={() => setSkillsExpanded(true)}>查看全部 {profile.skills.length} 项</button>
               </div> : <button className="unified-profile-skills__empty" type="button" onClick={() => onCreate("skill")}>添加掌握的技能</button>}
             </section>
@@ -199,7 +212,7 @@ export function UnifiedProfileOverview({
 
           {profile.highlights.length ? <section className="unified-profile-highlights" aria-labelledby="profile-highlights-title">
             <header><div><Sparkles size={18} /><h2 id="profile-highlights-title">我的亮点</h2></div><button type="button" onClick={() => onCreate("highlight")}><Plus size={15} />添加</button></header>
-            <div>{profile.highlights.map((card) => <button key={card.claimId} type="button" data-unsupported={card.supportStatus === "unsupported" || undefined} onClick={() => onEdit(card)}><span>{card.title}{card.supportStatus === "unsupported" ? <small>依据不足</small> : null}</span><Pencil size={14} /></button>)}</div>
+            <div>{profile.highlights.map((card) => <button key={card.claimId} type="button" data-support={card.supportStatus !== "supported" && card.supportStatus !== "manual" ? card.supportStatus : undefined} onClick={() => onEdit(card)}><span>{card.title}{supportLabel(card) ? <small>{supportLabel(card)}</small> : null}</span><Pencil size={14} /></button>)}</div>
           </section> : null}
           {profile.experiences.length ? <ProfileSection category="experience" cards={profile.experiences.slice(0, 1)} onCreate={onCreate} onEdit={onEdit} onShowAll={profile.experiences.length > 1 ? () => setActiveView("experience") : undefined} /> : null}
           {profile.projects.length ? <ProfileSection category="project" cards={profile.projects.slice(0, 1)} onCreate={onCreate} onEdit={onEdit} onShowAll={profile.projects.length > 1 ? () => setActiveView("project") : undefined} /> : null}

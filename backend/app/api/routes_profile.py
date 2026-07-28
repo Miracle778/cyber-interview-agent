@@ -88,6 +88,7 @@ from app.schemas.profile import (
     ProfilePresentationResource,
     ProfileSourceResource,
     ProfileSourceSummaryResource,
+    ProfileSupportEvidenceResource,
     UnifiedProfileCardResource,
     UnifiedProfileResource,
     ProposalCountsResource,
@@ -1185,6 +1186,18 @@ def _unified_card_resource(card) -> UnifiedProfileCardResource:
                 status=item.status,
             )
             for item in card.sources
+        ],
+        support_summary=card.support_summary,
+        support_evidence=[
+            ProfileSupportEvidenceResource(
+                evidence_id=item.evidence_id,
+                material_title=item.material_title,
+                version_number=item.version_number,
+                section=item.section,
+                excerpt=item.excerpt,
+                relation=item.relation,
+            )
+            for item in card.support_evidence
         ],
         linked_to=[
             ProfileCardReferenceResource(

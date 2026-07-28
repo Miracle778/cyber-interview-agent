@@ -17,6 +17,8 @@ export interface AgentSession {
   createdAt: string;
   updatedAt: string;
   latestExecutionId: string | null;
+  latestExecutionStatus?: AgentExecutionStatus | null;
+  pendingActionCount?: number;
   deletedAt?: string | null;
   lastMessagePreview?: string | null;
 }

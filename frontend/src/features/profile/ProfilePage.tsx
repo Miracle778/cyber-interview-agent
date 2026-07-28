@@ -11,6 +11,8 @@ import { ProfileBackgroundTask } from "./ProfileBackgroundTask";
 import { ProfileCardEditor } from "./ProfileCardEditor";
 import { ProfileDocumentReader } from "./ProfileDocumentReader";
 import { ProfilePendingReview } from "./ProfilePendingReview";
+import { ProfileSupportReview } from "./ProfileSupportReview";
+import type { ProfileSupportFilter } from "./ProfileSupportReview";
 import { ResumeVersions } from "./ResumeVersions";
 import { UnifiedProfileOverview } from "./UnifiedProfileOverview";
 import { VersionDeletionImpactDialog } from "./VersionDeletionImpactDialog";
@@ -22,7 +24,7 @@ const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const SUPPORTED_EXTENSIONS = [".pdf", ".docx", ".md", ".markdown", ".txt"];
 const ACTIVE_STATUSES = new Set(["uploaded", "parsing", "parsed", "extracting"]);
 
-type ProfileTab = "profile" | "pending" | "sources" | "agent";
+type ProfileTab = "profile" | "pending" | "support" | "sources" | "agent";
 
 function idempotencyKey(prefix: string) {
   return `${prefix}-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
@@ -53,6 +55,7 @@ export function ProfilePage({ workspace }: { workspace: WorkspaceConfig | null }
   const headingRef = useRef<HTMLHeadingElement>(null);
   const workspaceId = workspace?.id ?? "";
   const [tab, setTab] = useState<ProfileTab>("profile");
+  const [supportFilter, setSupportFilter] = useState<ProfileSupportFilter>("all");
   const [selectedMaterialId, setSelectedMaterialId] = useState<string | null>(null);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [selectedEvidence, setSelectedEvidence] = useState<ProfileEvidence | null>(null);
@@ -202,7 +205,19 @@ export function ProfilePage({ workspace }: { workspace: WorkspaceConfig | null }
   const mutationError = upload.error ?? retry.error ?? archive.error ?? restore.error ?? primary.error ?? presentation.error;
   const busy = upload.isPending || retry.isPending || archive.isPending || restore.isPending || primary.isPending || stopProcessing.isPending;
   const detail = detailQuery.data ?? null;
-  const workbenchMode = Boolean(documentView) || tab === "sources" || tab === "pending" || tab === "agent";
+  const workbenchMode = Boolean(documentView) || tab === "sources" || tab === "pending" || tab === "support" || tab === "agent";
+  const supportReviewCount = unifiedQuery.data ? [
+    ...(unifiedQuery.data.summary ? [unifiedQuery.data.summary] : []),
+    ...unifiedQuery.data.directions,
+    ...unifiedQuery.data.highlights,
+    ...unifiedQuery.data.experiences,
+    ...unifiedQuery.data.projects,
+    ...unifiedQuery.data.skills,
+    ...unifiedQuery.data.education,
+    ...unifiedQuery.data.certifications,
+    ...unifiedQuery.data.achievements,
+    ...unifiedQuery.data.links,
+  ].filter((card) => ["related", "conflicted", "unsupported"].includes(card.supportStatus)).length : 0;
   const confirmedProfileCount = unifiedQuery.data ? (
     unifiedQuery.data.experiences.length
     + unifiedQuery.data.projects.length
@@ -220,6 +235,7 @@ export function ProfilePage({ workspace }: { workspace: WorkspaceConfig | null }
     <nav className="profile-tabs" aria-label="个人画像页面">
       <button type="button" aria-current={tab === "profile" && !documentView ? "page" : undefined} onClick={() => { setSelectedEvidence(null); setDocumentView(null); setTab("profile"); }}>我的画像</button>
       <button type="button" aria-current={tab === "pending" && !documentView ? "page" : undefined} onClick={() => { setSelectedEvidence(null); setDocumentView(null); setTab("pending"); }}>待确认{unifiedQuery.data?.pendingCount ? ` ${unifiedQuery.data.pendingCount}` : ""}</button>
+      <button type="button" aria-current={tab === "support" && !documentView ? "page" : undefined} onClick={() => { setSelectedEvidence(null); setDocumentView(null); setSupportFilter("all"); setTab("support"); }}>来源核对{supportReviewCount ? ` ${supportReviewCount}` : ""}</button>
       <button type="button" aria-current={tab === "sources" && !documentView ? "page" : undefined} onClick={() => { setSelectedEvidence(null); setDocumentView(null); setTab("sources"); }}>简历与来源</button>
       <button type="button" aria-current={tab === "agent" && !documentView ? "page" : undefined} onClick={() => { setSelectedEvidence(null); setDocumentView(null); setTab("agent"); }}>画像助手</button>
     </nav>
@@ -277,7 +293,8 @@ export function ProfilePage({ workspace }: { workspace: WorkspaceConfig | null }
     {documentView && documentQuery.isLoading ? <div className="profile-loading" role="status"><p>正在打开完整简历…</p></div> : null}
     {documentView && documentQuery.isError ? <div className="profile-page-error" role="alert"><AlertCircle size={21} /><div><strong>完整简历暂时无法打开</strong><p>{errorMessage(documentQuery.error)}</p></div><Button variant="secondary" onClick={() => void documentQuery.refetch()}>重新读取</Button></div> : null}
     {documentView && documentQuery.data ? <ProfileDocumentReader document={documentQuery.data} focusEvidenceId={documentView.evidenceId} downloadUrl={materialFileDownloadUrl(workspaceId, documentView.versionId)} onBack={() => { setDocumentView(null); setSelectedEvidence(null); }} /> : null}
-    {!documentView && tab === "profile" ? <UnifiedProfileOverview profile={unifiedQuery.data ?? null} loading={unifiedQuery.isLoading} onUpload={chooseFile} onCreate={(category = "project") => { setEditorError(null); setCreatingCategory(category); setEditingCard(null); }} onEdit={(card) => { setEditorError(null); setEditingCard(card); setCreatingCategory(null); }} onOpenPending={() => setTab("pending")} onSetPrimaryDirection={(claimId) => presentation.mutate(claimId)} /> : null}
+    {!documentView && tab === "profile" ? <UnifiedProfileOverview profile={unifiedQuery.data ?? null} loading={unifiedQuery.isLoading} onUpload={chooseFile} onCreate={(category = "project") => { setEditorError(null); setCreatingCategory(category); setEditingCard(null); }} onEdit={(card) => { setEditorError(null); setEditingCard(card); setCreatingCategory(null); }} onOpenPending={() => setTab("pending")} onOpenSupportReview={(filter) => { setSupportFilter(filter); setTab("support"); }} onSetPrimaryDirection={(claimId) => presentation.mutate(claimId)} /> : null}
+    {!documentView && tab === "support" ? <ProfileSupportReview profile={unifiedQuery.data ?? null} loading={unifiedQuery.isLoading} initialFilter={supportFilter} onEdit={(card) => { setEditorError(null); setEditingCard(card); setCreatingCategory(null); }} /> : null}
     {activeMaterial && !documentView && tab === "sources" ? <ResumeVersions materials={materials} versions={versions} selectedMaterialId={activeMaterial.id} selectedVersionId={selectedVersionId} detail={detail} pendingProposalCount={unifiedQuery.data?.pendingCount ?? null} busy={busy} onSelectMaterial={(id) => { setSelectedMaterialId(id); setSelectedVersionId(null); }} onSelectVersion={setSelectedVersionId} onRetry={(id) => retry.mutate(id)} onArchive={(item) => archive.mutate(item)} onRestore={(item) => restore.mutate(item)} onSetPrimary={(item, versionId) => primary.mutate({ material: item, versionId })} onPermanentDelete={() => setDeletionOpen(true)} onPermanentDeleteVersion={(item, version) => setVersionDeletionTarget({ material: item, version })} onOpenDocument={(evidenceId) => { if (selectedVersionId) setDocumentView({ versionId: selectedVersionId, ...(evidenceId ? { evidenceId } : {}) }); }} onAddVersion={chooseFile} processFocusRequest={processFocusRequest} /> : null}
     {!documentView && tab === "pending" ? <ProfilePendingReview workspaceId={workspaceId} snapshot={claimsQuery.data ?? null} loading={claimsQuery.isLoading} onRefresh={async () => { await Promise.all([claimsQuery.refetch(), refreshProfile()]); }} onOpenEvidence={(evidence) => { setSelectedEvidence(evidence); setDocumentView({ versionId: evidence.materialVersionId, evidenceId: evidence.id }); }} /> : null}
     {activeMaterial ? <DeletionImpactDialog open={deletionOpen} workspaceId={workspaceId} material={activeMaterial} onClose={() => setDeletionOpen(false)} onDeleted={() => { setDeletionOpen(false); setTab("profile"); void refreshProfile(activeMaterial.id, selectedVersionId); void claimsQuery.refetch(); }} /> : null}

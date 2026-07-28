@@ -48,6 +48,17 @@ interface ProfileSessionListProps {
   onDeletePermanently: (id: string, title: string) => void;
 }
 
+function isSessionRunning(session: AgentSession) {
+  return ["running", "cancelling", "waiting_for_input", "waiting_for_approval"].includes(
+    session.latestExecutionStatus ?? "",
+  );
+}
+
+function sessionNeedsAttention(session: AgentSession) {
+  return (session.pendingActionCount ?? 0) > 0
+    || ["failed", "interrupted", "cancelled"].includes(session.latestExecutionStatus ?? "");
+}
+
 export function ProfileSessionList({
   sessions,
   archived,
@@ -66,10 +77,12 @@ export function ProfileSessionList({
   const [filter, setFilter] = useState<"all" | "running" | "attention">("all");
   const source = showRecycleBin ? archived : sessions;
   const hasActiveFilter = !showRecycleBin && filter !== "all";
+  const runningCount = sessions.filter(isSessionRunning).length;
+  const attentionCount = sessions.filter(sessionNeedsAttention).length;
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filtered = source.filter((session) => {
-    const running = ["running", "cancelling", "waiting_for_input", "waiting_for_approval"].includes(session.status);
-    const attention = ["failed", "interrupted"].includes(session.status);
+    const running = isSessionRunning(session);
+    const attention = sessionNeedsAttention(session);
     const matchesFilter = showRecycleBin || filter === "all" || (filter === "running" && running) || (filter === "attention" && attention);
     const searchable = `${readableTitle(session.title)} ${session.lastMessagePreview ?? ""}`.toLocaleLowerCase();
     return matchesFilter && searchable.includes(normalizedQuery);
@@ -88,8 +101,8 @@ export function ProfileSessionList({
         <label><Search size={16} /><span className="sr-only">搜索会话</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索标题或最近消息" /></label>
         {!showRecycleBin ? <div className="profile-session-list__filters" aria-label="筛选会话">
           <button type="button" aria-pressed={filter === "all"} onClick={() => setFilter("all")}>全部</button>
-          <button type="button" aria-pressed={filter === "running"} onClick={() => setFilter("running")}>正在运行</button>
-          <button type="button" aria-pressed={filter === "attention"} onClick={() => setFilter("attention")}>需要处理</button>
+          <button type="button" aria-pressed={filter === "running"} onClick={() => setFilter("running")}>正在运行 {runningCount}</button>
+          <button type="button" aria-pressed={filter === "attention"} onClick={() => setFilter("attention")}>需要处理 {attentionCount}</button>
         </div> : null}
         <button type="button" aria-pressed={showRecycleBin} onClick={() => onShowRecycleBin(!showRecycleBin)}>
           {showRecycleBin ? <MessagesSquare size={16} /> : <Trash2 size={16} />}
@@ -100,14 +113,14 @@ export function ProfileSessionList({
       {!loading && !filtered.length ? (
         <div className="profile-session-list__empty">
           <MessagesSquare size={28} />
-          <h3>{query || hasActiveFilter ? "没有匹配的会话" : showRecycleBin ? "回收站是空的" : "开始第一次画像对话"}</h3>
+          <h3>{query ? "没有匹配的会话" : filter === "running" ? "当前没有正在运行的会话" : filter === "attention" ? "当前没有需要处理的会话" : showRecycleBin ? "回收站是空的" : "开始第一次画像对话"}</h3>
           {!query && !hasActiveFilter && !showRecycleBin ? <><p>你可以让画像助手检查资料完整性、梳理经历或准备自我介绍。</p><Button onClick={onCreate}>开始新对话</Button></> : null}
         </div>
       ) : null}
       <div className="profile-session-list__grid">
         {filtered.map((session) => {
-          const running = ["running", "cancelling", "waiting_for_input", "waiting_for_approval"].includes(session.status);
-          const needsAttention = ["failed", "interrupted"].includes(session.status);
+          const running = isSessionRunning(session);
+          const needsAttention = sessionNeedsAttention(session);
           const preview = readablePreview(session.lastMessagePreview);
           return <article key={session.id}>
             <button className="profile-session-list__open" type="button" onClick={() => onOpen(session.id)}>

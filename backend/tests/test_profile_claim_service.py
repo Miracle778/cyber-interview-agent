@@ -600,6 +600,122 @@ def test_material_version_deletion_preview_exposes_affected_claim_content(
     }
 
 
+def test_material_version_deletion_preserves_claim_supported_by_another_version(
+    service: ProfileService,
+) -> None:
+    material, first, second, first_evidence, second_evidence = (
+        _material_with_two_versions(service)
+    )
+    proposal = service.repository.create_claim_proposals(
+        first.id,
+        (
+            CreateClaimProposalSpec(
+                proposal_type="create",
+                proposed_value={"category": "skill", "name": "Python"},
+                reason="第一版列出 Python",
+                evidence_ids=(first_evidence.id,),
+            ),
+        ),
+    )[0]
+    accepted = service.decide_claim_proposal(
+        proposal.id,
+        decision="accepted",
+        expected_version=0,
+        idempotency_key="accept-multi-source-claim",
+    )
+    service.repository.attach_claim_source(
+        workspace_id="w1",
+        claim_version_id=accepted.claim_version_id,
+        source_kind="resume_extraction",
+        source_ref={
+            "materialVersionId": second.id,
+            "evidenceIds": [second_evidence.id],
+        },
+    )
+
+    preview = service.preview_material_version_deletion(
+        first.id,
+        expected_version=material.version,
+        idempotency_key="preview-multi-source-version-delete",
+    )
+
+    affected = preview.impact["claims"][0]
+    assert affected["affectedEvidenceIds"] == [first_evidence.id]
+    assert affected["remainingEvidenceIds"] == [second_evidence.id]
+
+    service.permanently_delete_material_version(
+        first.id,
+        deletion_plan_id=preview.id,
+        expected_version=material.version,
+        replacement_version_id=None,
+        claim_choices={accepted.claim_id: "retain_unsupported"},
+        active_publication_action="not_applicable",
+        idempotency_key="delete-one-of-two-claim-sources",
+    )
+
+    claim = service.repository.profile_snapshot("w1").claims[0]
+    assert claim.support_status == "supported"
+    assert claim.evidence_ids == (second_evidence.id,)
+    assert {source.status for source in claim.sources} == {"active", "source_deleted"}
+
+
+def test_unified_profile_marks_semantically_related_resume_text_for_review(
+    service: ProfileService,
+) -> None:
+    material, first, second, first_evidence, second_evidence = (
+        _material_with_two_versions(service)
+    )
+    service.repository.connection.execute(
+        "UPDATE profile_evidence SET sanitized_text = ?, section = ? WHERE id = ?",
+        (
+            "负责限流熔断、灰度发布和故障演练",
+            '{"block":"可信软件供应链安全平台","lineEnd":46,'
+            '"lineStart":39,"section":"项目经历"}',
+            second_evidence.id,
+        ),
+    )
+    service.repository.connection.commit()
+    proposal = service.repository.create_claim_proposals(
+        first.id,
+        (
+            CreateClaimProposalSpec(
+                proposal_type="create",
+                proposed_value={"category": "skill", "name": "Nginx 灰度发布"},
+                reason="旧版明确写出 Nginx 灰度发布",
+                evidence_ids=(first_evidence.id,),
+            ),
+        ),
+    )[0]
+    accepted = service.decide_claim_proposal(
+        proposal.id,
+        decision="accepted",
+        expected_version=0,
+        idempotency_key="accept-related-source-claim",
+    )
+    preview = service.preview_material_version_deletion(
+        first.id,
+        expected_version=material.version,
+        idempotency_key="preview-related-source-delete",
+    )
+    service.permanently_delete_material_version(
+        first.id,
+        deletion_plan_id=preview.id,
+        expected_version=material.version,
+        replacement_version_id=None,
+        claim_choices={accepted.claim_id: "retain_unsupported"},
+        active_publication_action="not_applicable",
+        idempotency_key="delete-direct-but-keep-related-source",
+    )
+
+    card = service.unified_profile().skills[0]
+    assert card.support_status == "related"
+    assert card.support_summary == "剩余简历中发现相关描述，需要你核对是否能作为这条资料的依据"
+    assert len(card.support_evidence) == 1
+    assert card.support_evidence[0].evidence_id == second_evidence.id
+    assert card.support_evidence[0].section == "项目经历 · 第 39–46 行"
+    assert "灰度发布" in card.support_evidence[0].excerpt
+
+
 def test_material_version_deletion_blocks_when_any_version_has_pending_proposals(
     service: ProfileService,
 ) -> None:

@@ -207,6 +207,17 @@ async def test_confirmed_context_reflects_support_and_enforces_workspace_scope(
         first = await _prepare_workspace(client, application, "w1")
         second = await _prepare_workspace(client, application, "w2")
         service = application.profile("w1")
+        service.repository.connection.execute(
+            "UPDATE profile_evidence SET sanitized_text = '', "
+            "tombstoned_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (first["normal_evidence_id"],),
+        )
+        service.repository.connection.execute(
+            "UPDATE profile_claim_sources SET status = 'source_deleted' "
+            "WHERE claim_version_id = ?",
+            (first["project_version_id"],),
+        )
+        service.repository.connection.commit()
         service.repository.mark_claim_unsupported(
             first["project_claim_id"], reason="source deleted"
         )

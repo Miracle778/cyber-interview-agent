@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { AlertCircle, Trash2, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, FileText, Trash2, X } from "lucide-react";
 import { Button } from "../../shared/ui/Button";
 import type { ProfileCardCategory, ProfileCardCommand, UnifiedProfileCard } from "./profileTypes";
 
@@ -87,6 +87,15 @@ export function ProfileCardEditor({
   const [draft, setDraft] = useState<Record<string, string>>(() => initialDraft(card, card?.category ?? initialCategory));
   const [validation, setValidation] = useState<string | null>(null);
   const specs = useMemo(() => fields[category], [category]);
+  const supportLabel = card?.supportStatus === "related"
+    ? "相关内容待核对"
+    : card?.supportStatus === "manual"
+      ? "本人确认"
+      : card?.supportStatus === "conflicted"
+        ? "来源有冲突"
+        : card?.supportStatus === "unsupported"
+          ? "缺少直接依据"
+          : null;
 
   function changeCategory(next: ProfileCardCategory) {
     setCategory(next);
@@ -123,6 +132,15 @@ export function ProfileCardEditor({
       </header>
       <form onSubmit={(event) => void submit(event)}>
         <div className="profile-card-editor__body">
+          {card && supportLabel ? <section className="profile-card-editor__support" data-status={card.supportStatus}>
+            <header>{card.supportStatus === "manual" ? <CheckCircle2 size={17} /> : <AlertTriangle size={17} />}<div><strong>{supportLabel}</strong><p>{card.supportSummary}</p></div></header>
+            {card.supportEvidence?.length ? <div className="profile-card-editor__evidence">
+              {card.supportEvidence.map((evidence) => <article key={evidence.evidenceId}>
+                <span><FileText size={14} />{evidence.materialTitle} v{evidence.versionNumber} · {evidence.section}</span>
+                <p>{evidence.excerpt}</p>
+              </article>)}
+            </div> : <small>当前没有可用于核对的简历原文。你可以保留为本人确认，或修改、删除这条资料。</small>}
+          </section> : null}
           {!card ? <label className="profile-card-editor__category">添加什么
             <select value={category} onChange={(event) => changeCategory(event.target.value as ProfileCardCategory)}>
               {(["project", "experience", "skill", "education", "certification", "achievement", "direction", "highlight", "summary", "link"] as ProfileCardCategory[]).map((item) => <option key={item} value={item}>{categoryLabels[item]}</option>)}
