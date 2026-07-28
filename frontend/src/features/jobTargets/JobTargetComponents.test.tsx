@@ -5,8 +5,9 @@ import { DeepDiveWorkspace } from "./DeepDiveWorkspace";
 import { JobAnalysisStatus } from "./JobAnalysisStatus";
 import { RequirementWorkbench } from "./RequirementWorkbench";
 import { ProjectQuestionCandidates } from "./ProjectQuestionCandidates";
-import { getTargetIdentity } from "./JobTargetWorkspace";
+import { getTargetIdentity, JobTargetWorkspace } from "./JobTargetWorkspace";
 import { JobTargetList } from "./JobTargetList";
+import { ProjectPriorityPanel } from "./ProjectPriorityPanel";
 import type { DeepDiveResource, JobAnalysis, JobRequirement } from "./jobTargetTypes";
 
 describe("job target workspace", () => {
@@ -21,6 +22,22 @@ describe("job target workspace", () => {
     expect(onSelect).toHaveBeenCalledWith("two");
     expect(screen.getByRole("option", { name: "岗位信息待补充" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "岗位信息待补充 已保存岗位描述" })).toBeInTheDocument();
+  });
+
+  it("lets the desktop target list collapse into a compact rail", () => {
+    const onToggleCollapsed = vi.fn();
+    const target = {
+      id: "one", workspaceId: "w", companyName: "示例公司", roleName: "后端工程师", seniority: "3 年",
+      sourceUrl: null, lifecycleStatus: "active", currentDocumentVersionId: "d", version: 1, createdAt: "", updatedAt: "",
+    } satisfies import("./jobTargetTypes").JobTarget;
+    const { container, rerender } = render(<JobTargetList targets={[target]} selectedId="one" onSelect={vi.fn()} onCreate={vi.fn()} collapsed={false} onToggleCollapsed={onToggleCollapsed} />);
+
+    fireEvent.click(within(container).getByRole("button", { name: "收起求职目标列表" }));
+    expect(onToggleCollapsed).toHaveBeenCalledOnce();
+
+    rerender(<JobTargetList targets={[target]} selectedId="one" onSelect={vi.fn()} onCreate={vi.fn()} collapsed onToggleCollapsed={onToggleCollapsed} />);
+    expect(within(container).getByRole("button", { name: "展开求职目标列表" })).toBeVisible();
+    expect(within(container).getByRole("button", { name: "后端工程师 示例公司 · 3 年" })).toBeVisible();
   });
 
   it("keeps inferred requirements out of safe select-all", () => {
@@ -130,6 +147,10 @@ describe("job target workspace", () => {
     expect(screen.getByText("正在分析项目相关性")).toBeVisible();
     expect(screen.getByText(/已完成 4 \/ 7/)).toBeVisible();
     expect(screen.getByText("12 条已保存")).toBeVisible();
+    expect(screen.getByRole("list", { name: "岗位分析步骤" })).toBeVisible();
+    expect(screen.getByText("读取岗位内容")).toBeVisible();
+    expect(screen.getByText("分析项目相关性")).toBeVisible();
+    expect(screen.getByText("18 秒")).toBeVisible();
   });
 
   it("does not present a completed analysis as still identifying the role", () => {
@@ -144,6 +165,43 @@ describe("job target workspace", () => {
     });
     expect(identity.title).toBe("岗位信息待补充");
     expect(identity.badge).toBe("待补充");
+    expect(identity.description).toContain("岗位名称和经验或职级范围");
+  });
+
+  it("turns the incomplete status into an explicit completion entry", () => {
+    const onCompleteInfo = vi.fn();
+    const target = {
+      id: "t", workspaceId: "w", companyName: "示例公司", roleName: "", seniority: "3-5 年", sourceUrl: null,
+      lifecycleStatus: "active", currentDocumentVersionId: "d", version: 1, createdAt: "", updatedAt: "",
+    } satisfies import("./jobTargetTypes").JobTarget;
+    const analysis = {
+      id: "a", jobTargetId: "t", status: "review_pending", stage: "waiting_for_review", version: 1,
+      progress: { completed: 5, total: 5, activeWorkers: 0 }, timing: { currentElapsedMs: 0, cumulativeElapsedMs: 0 }, latestProgressAt: null,
+      savedOutputs: { requirements: 4, projectMappings: 1 }, controls: { canPause: false, canResume: false, canTerminate: false },
+    } satisfies JobAnalysis;
+
+    render(<JobTargetWorkspace target={target} analysis={analysis} tab="deep-dive" onTab={vi.fn()} onCompleteInfo={onCompleteInfo}><div>项目内容</div></JobTargetWorkspace>);
+
+    expect(screen.getByText(/还缺岗位名称/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "待补充 补充岗位名称" }));
+    expect(onCompleteInfo).toHaveBeenCalledOnce();
+  });
+
+  it("restores saved project priorities and makes save feedback visible", () => {
+    const onSave = vi.fn();
+    const { container } = render(<ProjectPriorityPanel
+      projects={[{ id: "p1", title: "核心项目" }, { id: "p2", title: "补充项目" }]}
+      initialCoreProjectId="p1"
+      initialSupplementaryProjectIds={["p2"]}
+      onSave={onSave}
+      onStart={vi.fn()}
+    />);
+
+    expect(within(container).getByText("项目重点已保存")).toBeVisible();
+    expect(within(container).getByRole("button", { name: "已保存" })).toBeDisabled();
+    fireEvent.click(within(container).getByRole("checkbox", { name: "设为补充项目：补充项目" }));
+    fireEvent.click(within(container).getByRole("button", { name: "保存项目重点" }));
+    expect(onSave).toHaveBeenCalledWith("p1", []);
   });
 
   it("does not send while the IME is composing", () => {
@@ -152,10 +210,11 @@ describe("job target workspace", () => {
       id: "d", jobTargetId: "t", projectClaimId: "p", sessionId: "s", status: "active",
       currentStage: "background", completedStageIds: [], waitingForInput: true, version: 1,
       messages: [], executions: [], artifacts: [], gaps: [], questionCandidates: [],
-      runtime: { modelRole: "project_deep_dive", calls: 0, inputTokens: 0, outputTokens: 0, contextTokens: 0, contextThreshold: 0, estimated: true, compacted: false },
+      runtime: { modelRole: "project_deep_dive", calls: 0, inputTokens: 0, outputTokens: 0, contextTokens: 885, contextThreshold: 89_600, estimated: true, compacted: false },
     } satisfies DeepDiveResource;
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><DeepDiveWorkspace resource={resource} onSend={onSend} onStop={vi.fn()} onControl={vi.fn()} onRestart={vi.fn()} onChooseProject={vi.fn()} onRetry={vi.fn()} onResolve={vi.fn()} onDispatchGap={vi.fn()} onOpenProfile={vi.fn()} /></QueryClientProvider>);
+    expect(screen.getByText("0.9k / 89.6k")).toBeInTheDocument();
     const textbox = screen.getByRole("textbox");
     fireEvent.change(textbox, { target: { value: "你好" } });
     fireEvent.compositionStart(textbox);

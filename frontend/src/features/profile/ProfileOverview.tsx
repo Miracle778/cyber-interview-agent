@@ -18,7 +18,7 @@ export function ProfileOverview({ material, detail, onImport, onOpenVersions, on
   return <div className="profile-overview">
     <section className="profile-current-material" aria-labelledby="current-material-title">
       <div><span>当前使用的简历</span><h2 id="current-material-title">{material.title} v{detail?.versionNumber ?? material.versionCount}</h2><p>最后更新时间：{formatDate(material.updatedAt)}</p></div>
-      <div className="profile-current-material__actions"><ProfileStatusBadge status={detail?.processingStatus ?? material.latestProcessingStatus} lifecycle={material.lifecycleStatus} /><Button onClick={onImport}><Upload size={16} />导入新版本简历</Button></div>
+      <div className="profile-current-material__actions"><ProfileStatusBadge status={detail?.processingStatus ?? material.latestProcessingStatus} lifecycle={material.lifecycleStatus} pendingCount={detail?.proposalCounts.pending} /><Button onClick={onImport}><Upload size={16} />导入新版本简历</Button></div>
     </section>
 
     <div className="profile-overview-grid">

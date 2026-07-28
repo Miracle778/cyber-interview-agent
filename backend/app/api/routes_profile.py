@@ -58,8 +58,12 @@ from app.schemas.profile import (
     MaterialActionCommand,
     MaterialDeletionPreviewCommand,
     MaterialDeletionPreviewResource,
+    MaterialVersionDeletionPreviewCommand,
+    MaterialVersionDeletionPreviewResource,
+    MaterialVersionReplacementResource,
     MaterialProcessingStageResource,
     PermanentMaterialDeletionCommand,
+    PermanentMaterialVersionDeletionCommand,
     PermanentMaterialDeletionResource,
     ProfileEvidenceResource,
     ProfileExecutionSummaryResource,
@@ -972,6 +976,51 @@ def preview_profile_material_deletion(
 
 
 @router.post(
+    "/api/profile/material-versions/{version_id}/deletion-preview",
+    response_model=MaterialVersionDeletionPreviewResource,
+)
+def preview_profile_material_version_deletion(
+    version_id: str,
+    command: MaterialVersionDeletionPreviewCommand,
+    idempotency_key: Annotated[
+        str, Header(alias="Idempotency-Key", min_length=8, max_length=200)
+    ],
+    application: AgentApplication = Depends(get_agent_application),
+) -> MaterialVersionDeletionPreviewResource:
+    plan = application.profile(
+        command.workspace_id
+    ).preview_material_version_deletion(
+        version_id,
+        expected_version=command.expected_version,
+        idempotency_key=idempotency_key,
+    )
+    claims = [
+        AffectedClaimResource(**item) for item in plan.impact.get("claims", [])
+    ]
+    return MaterialVersionDeletionPreviewResource(
+        deletion_plan_id=plan.id,
+        material_id=plan.material_id,
+        material_version=plan.material_version,
+        version_id=version_id,
+        version_number=int(plan.impact.get("targetVersionNumber", 0)),
+        is_current_version=bool(plan.impact.get("isCurrentVersion")),
+        expires_at=plan.expires_at,
+        affected_evidence_count=len(plan.affected_evidence_ids),
+        affected_claims=claims,
+        unsupported_claim_ids=[
+            item.claim_id for item in claims if not item.remaining_evidence_ids
+        ],
+        publication_selection_ids=list(plan.publication_selection_ids),
+        active_publication_ids=list(plan.active_publication_ids),
+        pending_proposal_count=len(plan.impact.get("pendingProposalIds", [])),
+        replacement_versions=[
+            MaterialVersionReplacementResource(**item)
+            for item in plan.impact.get("replacementVersions", [])
+        ],
+    )
+
+
+@router.post(
     "/api/profile/materials/{material_id}/permanent-delete",
     response_model=PermanentMaterialDeletionResource,
 )
@@ -990,6 +1039,48 @@ def permanently_delete_profile_material(
         material_id,
         deletion_plan_id=command.deletion_plan_id,
         expected_version=command.expected_version,
+        claim_choices=choices,
+        active_publication_action=command.active_publication_action,
+        idempotency_key=idempotency_key,
+    )
+    return PermanentMaterialDeletionResource(
+        plan_id=result.plan_id,
+        status=result.status,
+        items=[
+            DeletionItemReceiptResource(
+                kind=item.kind,
+                target_id=item.target_id,
+                status=item.status,
+                action=item.action,
+                error_code=item.error_code,
+            )
+            for item in result.items
+        ],
+    )
+
+
+@router.post(
+    "/api/profile/material-versions/{version_id}/permanent-delete",
+    response_model=PermanentMaterialDeletionResource,
+)
+def permanently_delete_profile_material_version(
+    version_id: str,
+    command: PermanentMaterialVersionDeletionCommand,
+    idempotency_key: Annotated[
+        str, Header(alias="Idempotency-Key", min_length=8, max_length=200)
+    ],
+    application: AgentApplication = Depends(get_agent_application),
+) -> PermanentMaterialDeletionResource:
+    choices = {item.claim_id: item.action for item in command.claim_choices}
+    if len(choices) != len(command.claim_choices):
+        raise ProfileDeletionPlanConflict("duplicate claim deletion choice")
+    result = application.profile(
+        command.workspace_id
+    ).permanently_delete_material_version(
+        version_id,
+        deletion_plan_id=command.deletion_plan_id,
+        expected_version=command.expected_version,
+        replacement_version_id=command.replacement_version_id,
         claim_choices=choices,
         active_publication_action=command.active_publication_action,
         idempotency_key=idempotency_key,
@@ -1083,6 +1174,7 @@ def _unified_card_resource(card) -> UnifiedProfileCardResource:
         claim_version_id=card.claim_version_id,
         category=card.claim_type,
         version=card.version,
+        support_status=card.support_status,
         title=card.title,
         subtitle=card.subtitle,
         value=card.value,

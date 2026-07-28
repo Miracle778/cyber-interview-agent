@@ -43,6 +43,42 @@ describe("DeletionImpactDialog", () => {
     expect(screen.queryByRole("checkbox")).toBeNull();
   });
 
+  it("applies one handling choice to all eligible claims while preserving protected claims", async () => {
+    const protectedClaim = {
+      ...preview.affectedClaims[0],
+      claimId: "c2",
+      claimType: "skill",
+      claimVersionId: "cv2",
+      selectionIds: ["selection-1"],
+    };
+    const batchPreview = {
+      ...preview,
+      affectedClaims: [...preview.affectedClaims, protectedClaim],
+      unsupportedClaimIds: ["c1", "c2"],
+    };
+    api.previewMaterialDeletion.mockResolvedValueOnce(batchPreview);
+    render(<DeletionImpactDialog open workspaceId="w1" material={material} onClose={vi.fn()} onDeleted={vi.fn()} />);
+
+    const bulk = await screen.findByLabelText("批量更改处理方式");
+    fireEvent.change(bulk, { target: { value: "delete" } });
+    expect(screen.getByLabelText("项目经历 的处理方式")).toHaveValue("delete");
+    expect(screen.getByLabelText("技能 的处理方式")).toHaveValue("retain_unsupported");
+    expect(screen.getByText(/1 条仍被其他功能使用/)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("输入“永久删除”确认"), { target: { value: "永久删除" } });
+    fireEvent.click(screen.getByRole("button", { name: "永久删除" }));
+    await waitFor(() => expect(api.permanentlyDeleteMaterial).toHaveBeenCalledWith(
+      "w1",
+      material,
+      batchPreview,
+      [
+        { claimId: "c1", action: "delete" },
+        { claimId: "c2", action: "retain_unsupported" },
+      ],
+      "not_applicable",
+    ));
+  });
+
   it("traps keyboard focus, closes with Escape and returns focus", async () => {
     function Harness() {
       const [open, setOpen] = useState(false);

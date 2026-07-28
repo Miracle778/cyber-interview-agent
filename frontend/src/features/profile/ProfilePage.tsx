@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, ArrowLeft, FileUp, FolderLock, Upload, UserRound } from "lucide-react";
+import { AlertCircle, ArrowLeft, CheckCircle2, FileUp, FolderLock, Upload, UserRound, X } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "../../shared/ui/Button";
 import { cancelAgentExecution } from "../agent/agentApi";
@@ -13,8 +13,10 @@ import { ProfileDocumentReader } from "./ProfileDocumentReader";
 import { ProfilePendingReview } from "./ProfilePendingReview";
 import { ResumeVersions } from "./ResumeVersions";
 import { UnifiedProfileOverview } from "./UnifiedProfileOverview";
+import { VersionDeletionImpactDialog } from "./VersionDeletionImpactDialog";
+import type { VersionDeletionSummary } from "./VersionDeletionImpactDialog";
 import { addMaterialVersion, archiveMaterial, createProfileCard, deleteProfileCard, getMaterialDocument, getMaterialVersion, getUnifiedProfile, listMaterialVersions, listProfileClaims, listProfileMaterials, materialFileDownloadUrl, restoreMaterial, retryMaterialVersion, setPrimaryVersion, updateProfileCard, updateProfilePresentation, uploadProfileMaterial } from "./profileApi";
-import type { ProfileCardCategory, ProfileCardCommand, ProfileEvidence, ProfileMaterial, UnifiedProfileCard } from "./profileTypes";
+import type { ProfileCardCategory, ProfileCardCommand, ProfileEvidence, ProfileMaterial, ProfileMaterialVersionDetail, UnifiedProfileCard } from "./profileTypes";
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const SUPPORTED_EXTENSIONS = [".pdf", ".docx", ".md", ".markdown", ".txt"];
@@ -55,7 +57,10 @@ export function ProfilePage({ workspace }: { workspace: WorkspaceConfig | null }
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [selectedEvidence, setSelectedEvidence] = useState<ProfileEvidence | null>(null);
   const [documentView, setDocumentView] = useState<{ versionId: string; evidenceId?: string } | null>(null);
+  const [processFocusRequest, setProcessFocusRequest] = useState(0);
   const [deletionOpen, setDeletionOpen] = useState(false);
+  const [versionDeletionTarget, setVersionDeletionTarget] = useState<{ material: ProfileMaterial; version: ProfileMaterialVersionDetail } | null>(null);
+  const [versionDeletionSummary, setVersionDeletionSummary] = useState<VersionDeletionSummary | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [editingCard, setEditingCard] = useState<UnifiedProfileCard | null>(null);
   const [creatingCategory, setCreatingCategory] = useState<ProfileCardCategory | null>(null);
@@ -225,7 +230,12 @@ export function ProfilePage({ workspace }: { workspace: WorkspaceConfig | null }
       detail={detail}
       stopping={stopProcessing.isPending}
       continuing={retry.isPending}
-      onOpen={() => { setSelectedEvidence(null); setDocumentView(null); setTab("sources"); }}
+      onOpen={() => {
+        setSelectedEvidence(null);
+        setDocumentView(null);
+        setTab("sources");
+        setProcessFocusRequest((value) => value + 1);
+      }}
       onStop={() => { if (detail?.execution?.id) stopProcessing.mutate(detail.execution.id); }}
       onContinue={() => { if (detail) retry.mutate(detail.id); }}
       onOpenPending={() => { setSelectedEvidence(null); setDocumentView(null); setTab("pending"); }}
@@ -234,6 +244,31 @@ export function ProfilePage({ workspace }: { workspace: WorkspaceConfig | null }
     <div className="profile-page-content">
       {queryError && (unifiedQuery.isError || materialsQuery.isError) ? <div className="profile-page-error" role="alert"><AlertCircle size={21} /><div><strong>个人资料读取失败</strong><p>{errorMessage(queryError)}</p></div><Button variant="secondary" onClick={() => { void unifiedQuery.refetch(); void materialsQuery.refetch(); }}>重新读取</Button></div> : null}
       {mutationError || fileError ? <div className="profile-page-error" role="alert"><AlertCircle size={21} /><div><strong>{fileError ? "无法上传这个文件" : "操作没有完成"}</strong><p>{fileError ?? errorMessage(mutationError)}</p></div></div> : null}
+      {!documentView && versionDeletionSummary ? <section className="profile-version-deletion-result" role="status">
+        <CheckCircle2 size={22} />
+        <div>
+          <strong>已删除 v{versionDeletionSummary.versionNumber}“{versionDeletionSummary.fileName}”</strong>
+          <p>
+            画像移除 {versionDeletionSummary.deletedClaimTitles.length} 条；
+            保留但缺少来源依据 {versionDeletionSummary.retainedUnsupportedClaimTitles.length} 条；
+            仍有其他来源支持 {versionDeletionSummary.retainedSupportedClaimTitles.length} 条。
+          </p>
+          {versionDeletionSummary.deletedClaimTitles.length
+            || versionDeletionSummary.retainedUnsupportedClaimTitles.length
+            || versionDeletionSummary.retainedSupportedClaimTitles.length
+            ? <details>
+              <summary>查看具体变化</summary>
+              {versionDeletionSummary.deletedClaimTitles.length ? <div><b>已从画像移除</b><span>{versionDeletionSummary.deletedClaimTitles.join("、")}</span></div> : null}
+              {versionDeletionSummary.retainedUnsupportedClaimTitles.length ? <div><b>保留，但需要补充来源</b><span>{versionDeletionSummary.retainedUnsupportedClaimTitles.join("、")}</span></div> : null}
+              {versionDeletionSummary.retainedSupportedClaimTitles.length ? <div><b>内容不变，仍有其他来源</b><span>{versionDeletionSummary.retainedSupportedClaimTitles.join("、")}</span></div> : null}
+            </details>
+            : null}
+        </div>
+        <div className="profile-version-deletion-result__actions">
+          <Button variant="secondary" size="sm" onClick={() => { setSelectedEvidence(null); setDocumentView(null); setTab("profile"); }}>查看我的画像</Button>
+          <button type="button" aria-label="关闭版本删除结果" onClick={() => setVersionDeletionSummary(null)}><X size={17} /></button>
+        </div>
+      </section> : null}
 
     {!materialsQuery.isLoading && !materialsQuery.isError && !activeMaterial && tab === "sources" ? <section className="profile-empty" data-testid="profile-dropzone" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void acceptFile(event.dataTransfer.files[0]); }}>
       <span><FileUp size={28} /></span><h2>还没有简历</h2><p>拖入简历，或从电脑选择 PDF、DOCX、Markdown、TXT 文件。上传后会依次完成文本提取、隐私处理和简历要点整理。</p><Button loading={upload.isPending} onClick={chooseFile}><Upload size={16} />选择简历文件</Button><small>单个文件不超过 10 MB；原文件默认仅自己可见。</small>
@@ -243,9 +278,29 @@ export function ProfilePage({ workspace }: { workspace: WorkspaceConfig | null }
     {documentView && documentQuery.isError ? <div className="profile-page-error" role="alert"><AlertCircle size={21} /><div><strong>完整简历暂时无法打开</strong><p>{errorMessage(documentQuery.error)}</p></div><Button variant="secondary" onClick={() => void documentQuery.refetch()}>重新读取</Button></div> : null}
     {documentView && documentQuery.data ? <ProfileDocumentReader document={documentQuery.data} focusEvidenceId={documentView.evidenceId} downloadUrl={materialFileDownloadUrl(workspaceId, documentView.versionId)} onBack={() => { setDocumentView(null); setSelectedEvidence(null); }} /> : null}
     {!documentView && tab === "profile" ? <UnifiedProfileOverview profile={unifiedQuery.data ?? null} loading={unifiedQuery.isLoading} onUpload={chooseFile} onCreate={(category = "project") => { setEditorError(null); setCreatingCategory(category); setEditingCard(null); }} onEdit={(card) => { setEditorError(null); setEditingCard(card); setCreatingCategory(null); }} onOpenPending={() => setTab("pending")} onSetPrimaryDirection={(claimId) => presentation.mutate(claimId)} /> : null}
-    {activeMaterial && !documentView && tab === "sources" ? <ResumeVersions materials={materials} versions={versions} selectedMaterialId={activeMaterial.id} selectedVersionId={selectedVersionId} detail={detail} busy={busy} onSelectMaterial={(id) => { setSelectedMaterialId(id); setSelectedVersionId(null); }} onSelectVersion={setSelectedVersionId} onRetry={(id) => retry.mutate(id)} onArchive={(item) => archive.mutate(item)} onRestore={(item) => restore.mutate(item)} onSetPrimary={(item, versionId) => primary.mutate({ material: item, versionId })} onPermanentDelete={() => setDeletionOpen(true)} onOpenDocument={(evidenceId) => { if (selectedVersionId) setDocumentView({ versionId: selectedVersionId, ...(evidenceId ? { evidenceId } : {}) }); }} onAddVersion={chooseFile} /> : null}
+    {activeMaterial && !documentView && tab === "sources" ? <ResumeVersions materials={materials} versions={versions} selectedMaterialId={activeMaterial.id} selectedVersionId={selectedVersionId} detail={detail} pendingProposalCount={unifiedQuery.data?.pendingCount ?? null} busy={busy} onSelectMaterial={(id) => { setSelectedMaterialId(id); setSelectedVersionId(null); }} onSelectVersion={setSelectedVersionId} onRetry={(id) => retry.mutate(id)} onArchive={(item) => archive.mutate(item)} onRestore={(item) => restore.mutate(item)} onSetPrimary={(item, versionId) => primary.mutate({ material: item, versionId })} onPermanentDelete={() => setDeletionOpen(true)} onPermanentDeleteVersion={(item, version) => setVersionDeletionTarget({ material: item, version })} onOpenDocument={(evidenceId) => { if (selectedVersionId) setDocumentView({ versionId: selectedVersionId, ...(evidenceId ? { evidenceId } : {}) }); }} onAddVersion={chooseFile} processFocusRequest={processFocusRequest} /> : null}
     {!documentView && tab === "pending" ? <ProfilePendingReview workspaceId={workspaceId} snapshot={claimsQuery.data ?? null} loading={claimsQuery.isLoading} onRefresh={async () => { await Promise.all([claimsQuery.refetch(), refreshProfile()]); }} onOpenEvidence={(evidence) => { setSelectedEvidence(evidence); setDocumentView({ versionId: evidence.materialVersionId, evidenceId: evidence.id }); }} /> : null}
     {activeMaterial ? <DeletionImpactDialog open={deletionOpen} workspaceId={workspaceId} material={activeMaterial} onClose={() => setDeletionOpen(false)} onDeleted={() => { setDeletionOpen(false); setTab("profile"); void refreshProfile(activeMaterial.id, selectedVersionId); void claimsQuery.refetch(); }} /> : null}
+    {versionDeletionTarget ? <VersionDeletionImpactDialog
+      open
+      workspaceId={workspaceId}
+      material={versionDeletionTarget.material}
+      version={versionDeletionTarget.version}
+      onClose={() => setVersionDeletionTarget(null)}
+      onDeleted={(_result, replacementVersionId, summary) => {
+        const deletedVersionId = versionDeletionTarget.version.id;
+        const nextVersionId = replacementVersionId
+          ?? (versionDeletionTarget.material.currentVersionId !== deletedVersionId ? versionDeletionTarget.material.currentVersionId : null)
+          ?? versions.find((item) => item.id !== deletedVersionId)?.id
+          ?? null;
+        setVersionDeletionTarget(null);
+        setVersionDeletionSummary(summary);
+        setSelectedVersionId(nextVersionId);
+        client.removeQueries({ queryKey: ["profile-material-version", workspaceId, deletedVersionId] });
+        void refreshProfile(versionDeletionTarget.material.id, nextVersionId);
+        void claimsQuery.refetch();
+      }}
+    /> : null}
     {!documentView && tab === "agent" ? <ProfileAgentWorkspace workspaceId={workspaceId} focus={{ ...(activeMaterial ? { materialId: activeMaterial.id } : {}), ...(selectedVersionId ? { materialVersionId: selectedVersionId } : {}) }} onOpenPending={() => setTab("pending")} /> : null}
       {editingCard || creatingCategory ? <ProfileCardEditor card={editingCard} initialCategory={creatingCategory ?? editingCard?.category ?? "project"} busy={cardWrite.isPending || cardDelete.isPending} error={editorError} onSave={async (command) => { await cardWrite.mutateAsync({ card: editingCard, command }).catch(() => undefined); }} onDelete={editingCard ? async () => { await cardDelete.mutateAsync(editingCard).catch(() => undefined); } : undefined} onCancel={() => { if (!cardWrite.isPending && !cardDelete.isPending) { setEditingCard(null); setCreatingCategory(null); setEditorError(null); } }} /> : null}
     </div>

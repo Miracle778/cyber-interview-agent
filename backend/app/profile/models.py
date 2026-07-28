@@ -483,6 +483,8 @@ class MaterialDeletionPlanRecord:
     workspace_id: str
     material_id: str
     material_version: int
+    target_kind: str
+    target_version_id: str | None
     status: str
     impact: dict[str, object]
     result: dict[str, object]

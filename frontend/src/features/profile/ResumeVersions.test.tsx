@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ResumeVersions } from "./ResumeVersions";
 import type { ProfileMaterial, ProfileMaterialVersion, ProfileMaterialVersionDetail } from "./profileTypes";
@@ -24,10 +24,11 @@ describe("ResumeVersions", () => {
     const onRestore = vi.fn();
     const onSetPrimary = vi.fn();
     const onPermanentDelete = vi.fn();
-    const view = render(<ResumeVersions materials={[material]} versions={versions} selectedMaterialId="m1" selectedVersionId="v2" detail={detail} busy={false} onSelectMaterial={vi.fn()} onSelectVersion={onSelectVersion} onRetry={onRetry} onArchive={onArchive} onRestore={onRestore} onSetPrimary={onSetPrimary} onPermanentDelete={onPermanentDelete} onOpenEvidence={vi.fn()} onAddVersion={vi.fn()} />);
+    const onPermanentDeleteVersion = vi.fn();
+    const view = render(<ResumeVersions materials={[material]} versions={versions} selectedMaterialId="m1" selectedVersionId="v2" detail={detail} busy={false} onSelectMaterial={vi.fn()} onSelectVersion={onSelectVersion} onRetry={onRetry} onArchive={onArchive} onRestore={onRestore} onSetPrimary={onSetPrimary} onPermanentDelete={onPermanentDelete} onPermanentDeleteVersion={onPermanentDeleteVersion} onOpenEvidence={vi.fn()} onAddVersion={vi.fn()} />);
 
     expect(screen.getByLabelText("简历处理进度")).toHaveTextContent("上传");
-    expect(screen.getByLabelText("简历处理进度")).toHaveTextContent("等待确认");
+    expect(screen.getByLabelText("简历处理进度")).toHaveTextContent("生成确认清单");
     expect(screen.getByRole("alert")).toHaveTextContent("文本提取失败");
     fireEvent.click(screen.getByRole("button", { name: "继续提取文本" }));
     expect(onRetry).toHaveBeenCalledWith("v2");
@@ -37,12 +38,16 @@ describe("ResumeVersions", () => {
     expect(onSetPrimary).toHaveBeenCalledWith(material, "v2");
     fireEvent.click(screen.getByRole("button", { name: "归档简历" }));
     expect(onArchive).toHaveBeenCalledWith(material);
-    fireEvent.click(screen.getByRole("button", { name: "永久删除简历" }));
+    expect(screen.getByRole("button", { name: "删除当前版本 v2" })).toBeDisabled();
+    expect(screen.getByText("请先处理全部 2 条待确认信息，再删除任一简历版本")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "永久删除整份简历（含 2 个版本）" }));
     expect(onPermanentDelete).toHaveBeenCalledWith(material);
     const archived = { ...material, lifecycleStatus: "archived" } satisfies ProfileMaterial;
-    view.rerender(<ResumeVersions materials={[archived]} versions={versions} selectedMaterialId="m1" selectedVersionId="v2" detail={detail} busy={false} onSelectMaterial={vi.fn()} onSelectVersion={onSelectVersion} onRetry={onRetry} onArchive={onArchive} onRestore={onRestore} onSetPrimary={onSetPrimary} onPermanentDelete={onPermanentDelete} onOpenEvidence={vi.fn()} onAddVersion={vi.fn()} />);
+    view.rerender(<ResumeVersions materials={[archived]} versions={versions} selectedMaterialId="m1" selectedVersionId="v2" detail={{ ...detail, proposalCounts: { ...detail.proposalCounts, pending: 0 } }} busy={false} onSelectMaterial={vi.fn()} onSelectVersion={onSelectVersion} onRetry={onRetry} onArchive={onArchive} onRestore={onRestore} onSetPrimary={onSetPrimary} onPermanentDelete={onPermanentDelete} onPermanentDeleteVersion={onPermanentDeleteVersion} onOpenEvidence={vi.fn()} onAddVersion={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "恢复简历" }));
     expect(onRestore).toHaveBeenCalledWith(archived);
+    fireEvent.click(screen.getByRole("button", { name: "删除当前版本 v2" }));
+    expect(onPermanentDeleteVersion).toHaveBeenCalledWith(archived, expect.objectContaining({ id: "v2" }));
   });
 
   it("explains what happens while profile suggestions are generated", () => {
@@ -60,10 +65,43 @@ describe("ResumeVersions", () => {
       execution: { ...detail.execution, status: "running", errorCode: null },
     } satisfies ProfileMaterialVersionDetail;
 
-    render(<ResumeVersions materials={[material]} versions={versions} selectedMaterialId="m1" selectedVersionId="v2" detail={extracting} busy={false} onSelectMaterial={vi.fn()} onSelectVersion={vi.fn()} onRetry={vi.fn()} onArchive={vi.fn()} onRestore={vi.fn()} onSetPrimary={vi.fn()} onPermanentDelete={vi.fn()} onOpenEvidence={vi.fn()} onAddVersion={vi.fn()} />);
+    render(<ResumeVersions materials={[material]} versions={versions} selectedMaterialId="m1" selectedVersionId="v2" detail={extracting} busy={false} onSelectMaterial={vi.fn()} onSelectVersion={vi.fn()} onRetry={vi.fn()} onArchive={vi.fn()} onRestore={vi.fn()} onSetPrimary={vi.fn()} onPermanentDelete={vi.fn()} onPermanentDeleteVersion={vi.fn()} onOpenEvidence={vi.fn()} onAddVersion={vi.fn()} />);
 
     expect(screen.getByRole("status")).toHaveTextContent("正在根据 12 个内容区块整理画像建议");
     expect(screen.getByRole("status")).toHaveTextContent("技能、项目、工作经历、教育经历和成果");
     expect(screen.getByRole("status")).toHaveTextContent("停止后会保留文件、文本和已完成步骤");
+  });
+
+  it("focuses and highlights the processing panel when the background entry requests it", async () => {
+    const view = render(<ResumeVersions materials={[material]} versions={versions} selectedMaterialId="m1" selectedVersionId="v2" detail={detail} busy={false} onSelectMaterial={vi.fn()} onSelectVersion={vi.fn()} onRetry={vi.fn()} onArchive={vi.fn()} onRestore={vi.fn()} onSetPrimary={vi.fn()} onPermanentDelete={vi.fn()} onPermanentDeleteVersion={vi.fn()} onOpenEvidence={vi.fn()} onAddVersion={vi.fn()} />);
+
+    view.rerender(<ResumeVersions materials={[material]} versions={versions} selectedMaterialId="m1" selectedVersionId="v2" detail={detail} busy={false} onSelectMaterial={vi.fn()} onSelectVersion={vi.fn()} onRetry={vi.fn()} onArchive={vi.fn()} onRestore={vi.fn()} onSetPrimary={vi.fn()} onPermanentDelete={vi.fn()} onPermanentDeleteVersion={vi.fn()} onOpenEvidence={vi.fn()} onAddVersion={vi.fn()} processFocusRequest={1} />);
+
+    const panel = screen.getByRole("region", { name: "简历处理过程" });
+    await waitFor(() => {
+      expect(panel).toHaveFocus();
+      expect(panel).toHaveAttribute("data-highlighted", "true");
+    });
+  });
+
+  it("explains that the only version must be removed through whole-resume deletion", () => {
+    render(<ResumeVersions materials={[{ ...material, versionCount: 1 }]} versions={[versions[1]]} selectedMaterialId="m1" selectedVersionId="v1" detail={{ ...detail, ...versions[1], proposalCounts: { ...detail.proposalCounts, pending: 0 } }} busy={false} onSelectMaterial={vi.fn()} onSelectVersion={vi.fn()} onRetry={vi.fn()} onArchive={vi.fn()} onRestore={vi.fn()} onSetPrimary={vi.fn()} onPermanentDelete={vi.fn()} onPermanentDeleteVersion={vi.fn()} onOpenEvidence={vi.fn()} onAddVersion={vi.fn()} />);
+
+    expect(screen.getByText("简历处理完成")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "删除当前版本 v1" })).toBeDisabled();
+    expect(screen.getByText("这是唯一版本，如需清除请删除整份简历")).toBeInTheDocument();
+  });
+
+  it("shows the real number of profile items waiting for confirmation", () => {
+    render(<ResumeVersions materials={[material]} versions={[versions[1]]} selectedMaterialId="m1" selectedVersionId="v1" detail={{ ...detail, ...versions[1] }} busy={false} onSelectMaterial={vi.fn()} onSelectVersion={vi.fn()} onRetry={vi.fn()} onArchive={vi.fn()} onRestore={vi.fn()} onSetPrimary={vi.fn()} onPermanentDelete={vi.fn()} onPermanentDeleteVersion={vi.fn()} onOpenEvidence={vi.fn()} onAddVersion={vi.fn()} />);
+
+    expect(screen.getByText("2 条简历要点待确认")).toBeInTheDocument();
+  });
+
+  it("blocks every version deletion while the workspace still has pending profile information", () => {
+    render(<ResumeVersions materials={[material]} versions={versions} selectedMaterialId="m1" selectedVersionId="v2" detail={{ ...detail, proposalCounts: { ...detail.proposalCounts, pending: 0 } }} pendingProposalCount={7} busy={false} onSelectMaterial={vi.fn()} onSelectVersion={vi.fn()} onRetry={vi.fn()} onArchive={vi.fn()} onRestore={vi.fn()} onSetPrimary={vi.fn()} onPermanentDelete={vi.fn()} onPermanentDeleteVersion={vi.fn()} onOpenEvidence={vi.fn()} onAddVersion={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: "删除当前版本 v2" })).toBeDisabled();
+    expect(screen.getByText("请先处理全部 7 条待确认信息，再删除任一简历版本")).toBeInTheDocument();
   });
 });

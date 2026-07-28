@@ -194,7 +194,7 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35]
+        ] == list(range(1, 37))
     assert "agent_context_usage" in _tables(connection)
     assert "profile_deletion_plans" in _tables(connection)
     assert "deleted_at" in {
@@ -990,7 +990,7 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-            ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33]
+            ] == list(range(1, 37))
     reopened.close()
 
 
@@ -1214,6 +1214,23 @@ def test_r3_migration_creates_profile_tables(tmp_path: Path) -> None:
     connection = connect_runtime_database(tmp_path)
 
     assert R3_TABLES <= _tables(connection)
+    connection.close()
+
+
+def test_profile_material_version_deletion_migration_extends_deletion_plans(
+    tmp_path: Path,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+
+    columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(profile_deletion_plans)")
+    }
+    assert {"target_kind", "target_version_id"} <= columns
+    version_columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(profile_material_versions)")
+    }
+    assert "deleted_at" in version_columns
     connection.close()
 
 

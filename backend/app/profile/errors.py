@@ -80,6 +80,10 @@ class ProfileDeletionPlanConflict(ProfileClaimVersionConflict):
     code = "profile_deletion_plan_conflict"
 
 
+class ProfileMaterialVersionHasPendingProposals(ProfileDeletionPlanConflict):
+    code = "profile_material_version_has_pending_proposals"
+
+
 class ProfileDeletionPlanNotFound(ProfileDomainError):
     code = "profile_deletion_plan_not_found"
 

@@ -20,6 +20,7 @@ from app.profile.errors import (
     ProfileIdempotencyConflict,
     ProfileMaterialNotFound,
     ProfileMaterialRoleConflict,
+    ProfileMaterialVersionHasPendingProposals,
     ProfileMaterialVersionNotFound,
     ProfileProposalAlreadyDecided,
     ProfileProposalNotFound,
@@ -262,7 +263,7 @@ class ProfileRepository:
             self._require_material(material_id)
             version = self._connection.execute(
                 "SELECT id FROM profile_material_versions "
-                "WHERE id = ? AND material_id = ?",
+                "WHERE id = ? AND material_id = ? AND deleted_at IS NULL",
                 (version_id, material_id),
             ).fetchone()
             if version is None:
@@ -343,6 +344,18 @@ class ProfileRepository:
         self, version_id: str
     ) -> ProfileMaterialVersionRecord:
         row = self._connection.execute(
+            "SELECT * FROM profile_material_versions "
+            "WHERE id = ? AND deleted_at IS NULL",
+            (version_id,),
+        ).fetchone()
+        if row is None:
+            raise ProfileMaterialVersionNotFound(version_id)
+        return self._version_record(row)
+
+    def get_material_version_for_audit(
+        self, version_id: str
+    ) -> ProfileMaterialVersionRecord:
+        row = self._connection.execute(
             "SELECT * FROM profile_material_versions WHERE id = ?", (version_id,)
         ).fetchone()
         if row is None:
@@ -354,7 +367,8 @@ class ProfileRepository:
     ) -> tuple[ProfileMaterialVersionRecord, ...]:
         rows = self._connection.execute(
             "SELECT * FROM profile_material_versions "
-            "WHERE material_id = ? ORDER BY version_number DESC, id",
+            "WHERE material_id = ? AND deleted_at IS NULL "
+            "ORDER BY version_number DESC, id",
             (material_id,),
         ).fetchall()
         return tuple(self._version_record(row) for row in rows)
@@ -364,14 +378,16 @@ class ProfileRepository:
     ) -> ProfileMaterialVersionRecord | None:
         row = self._connection.execute(
             "SELECT * FROM profile_material_versions "
-            "WHERE material_id = ? AND created_by = ? ORDER BY version_number, id LIMIT 1",
+            "WHERE material_id = ? AND created_by = ? AND deleted_at IS NULL "
+            "ORDER BY version_number, id LIMIT 1",
             (material_id, created_by),
         ).fetchone()
         return None if row is None else self._version_record(row)
 
     def count_material_versions(self, material_id: str) -> int:
         row = self._connection.execute(
-            "SELECT COUNT(*) AS total FROM profile_material_versions WHERE material_id = ?",
+            "SELECT COUNT(*) AS total FROM profile_material_versions "
+            "WHERE material_id = ? AND deleted_at IS NULL",
             (material_id,),
         ).fetchone()
         return int(row["total"])
@@ -2267,10 +2283,82 @@ class ProfileRepository:
         if material is None:
             raise ProfileMaterialNotFound(material_id, workspace_id=workspace_id)
         versions = self._connection.execute(
-            "SELECT id, storage_ref, text_ref FROM profile_material_versions "
-            "WHERE material_id = ? ORDER BY version_number, id",
+            "SELECT id, version_number, file_name, storage_ref, text_ref "
+            "FROM profile_material_versions "
+            "WHERE material_id = ? AND deleted_at IS NULL ORDER BY version_number, id",
             (material_id,),
         ).fetchall()
+        impact = self._build_deletion_impact(
+            material_id=material_id,
+            workspace_id=workspace_id,
+            versions=versions,
+        )
+        impact["targetKind"] = "material"
+        impact["targetVersionId"] = None
+        return impact
+
+    def build_material_version_deletion_impact(
+        self, version_id: str, *, workspace_id: str
+    ) -> dict[str, object]:
+        version = self._connection.execute(
+            "SELECT v.id, v.material_id, v.version_number, v.file_name, "
+            "v.storage_ref, v.text_ref, m.current_version_id "
+            "FROM profile_material_versions v "
+            "JOIN profile_materials m ON m.id = v.material_id "
+            "WHERE v.id = ? AND v.deleted_at IS NULL "
+            "AND m.workspace_id = ? AND m.deleted_at IS NULL",
+            (version_id, workspace_id),
+        ).fetchone()
+        if version is None:
+            raise ProfileMaterialVersionNotFound(version_id)
+        replacements = self._connection.execute(
+            "SELECT id, version_number, file_name FROM profile_material_versions "
+            "WHERE material_id = ? AND id != ? AND deleted_at IS NULL "
+            "ORDER BY version_number DESC, id",
+            (version["material_id"], version_id),
+        ).fetchall()
+        impact = self._build_deletion_impact(
+            material_id=version["material_id"],
+            workspace_id=workspace_id,
+            versions=(version,),
+        )
+        # Version deletion is intentionally more conservative than whole-material
+        # deletion. Pending profile information can still reference historical
+        # resume evidence indirectly, so no version may be removed until the
+        # workspace pending queue has been cleared.
+        impact["pendingProposalIds"] = [
+            row["id"]
+            for row in self._connection.execute(
+                "SELECT id FROM profile_claim_proposals "
+                "WHERE workspace_id = ? AND status = 'pending' ORDER BY id",
+                (workspace_id,),
+            ).fetchall()
+        ]
+        impact.update(
+            {
+                "targetKind": "material_version",
+                "targetVersionId": version_id,
+                "targetVersionNumber": int(version["version_number"]),
+                "isCurrentVersion": version["current_version_id"] == version_id,
+                "replacementVersions": [
+                    {
+                        "id": row["id"],
+                        "versionNumber": int(row["version_number"]),
+                        "fileName": row["file_name"],
+                    }
+                    for row in replacements
+                ],
+            }
+        )
+        return impact
+
+    def _build_deletion_impact(
+        self,
+        *,
+        material_id: str,
+        workspace_id: str,
+        versions: Sequence[sqlite3.Row],
+    ) -> dict[str, object]:
         version_ids = [row["id"] for row in versions]
         evidence_rows = []
         if version_ids:
@@ -2287,7 +2375,8 @@ class ProfileRepository:
         selection_ids: set[str] = set()
         claim_rows = self._connection.execute(
             "SELECT c.id AS claim_id, c.claim_type, c.version AS claim_version, "
-            "v.id AS claim_version_id, v.support_status, v.evidence_ids_json "
+            "v.id AS claim_version_id, v.value_json, v.support_status, "
+            "v.evidence_ids_json "
             "FROM profile_claims c JOIN profile_claim_versions v "
             "ON v.id = c.current_confirmed_version_id "
             "WHERE c.workspace_id = ? ORDER BY c.claim_type, c.id",
@@ -2313,6 +2402,7 @@ class ProfileRepository:
                     "claimType": row["claim_type"],
                     "claimVersion": int(row["claim_version"]),
                     "claimVersionId": row["claim_version_id"],
+                    "value": json.loads(row["value_json"]),
                     "supportStatus": row["support_status"],
                     "affectedEvidenceIds": list(affected_for_claim),
                     "remainingEvidenceIds": sorted(set(claim_evidence) - affected),
@@ -2365,14 +2455,22 @@ class ProfileRepository:
         material_version: int,
         impact: dict[str, object],
         expires_at: str,
+        target_kind: str = "material",
+        target_version_id: str | None = None,
         idempotency_key: str | None = None,
     ) -> MaterialDeletionPlanRecord:
         request = {
             "materialId": material_id,
             "materialVersion": material_version,
+            "targetKind": target_kind,
+            "targetVersionId": target_version_id,
         }
         request_hash = self._request_hash(request)
-        operation = f"material.deletion.preview:{material_id}"
+        operation = (
+            f"material.deletion.preview:{material_id}"
+            if target_kind == "material"
+            else f"material.version.deletion.preview:{target_version_id}"
+        )
         with self._transaction():
             if idempotency_key is not None:
                 existing = self._load_idempotency_receipt(
@@ -2383,13 +2481,16 @@ class ProfileRepository:
             plan_id = _new_id()
             self._connection.execute(
                 "INSERT INTO profile_deletion_plans "
-                "(id, workspace_id, material_id, material_version, impact_json, expires_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "(id, workspace_id, material_id, material_version, target_kind, "
+                "target_version_id, impact_json, expires_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     plan_id,
                     workspace_id,
                     material_id,
                     material_version,
+                    target_kind,
+                    target_version_id,
                     _canonical_json(impact),
                     expires_at,
                 ),
@@ -2570,6 +2671,173 @@ class ProfileRepository:
             )
         return tuple(receipts)
 
+    def apply_material_version_deletion(
+        self,
+        *,
+        plan_id: str,
+        expected_material_version: int,
+        replacement_version_id: str | None,
+        claim_choices: dict[str, str],
+    ) -> tuple[DeletionItemReceipt, ...]:
+        with self._transaction():
+            plan_row = self._connection.execute(
+                "SELECT * FROM profile_deletion_plans WHERE id = ?", (plan_id,)
+            ).fetchone()
+            if plan_row is None:
+                raise ProfileDeletionPlanNotFound(plan_id)
+            if (
+                plan_row["target_kind"] != "material_version"
+                or not plan_row["target_version_id"]
+            ):
+                raise ProfileDeletionPlanConflict("deletion plan target mismatch")
+            impact = json.loads(plan_row["impact_json"])
+            material = self._connection.execute(
+                "SELECT * FROM profile_materials WHERE id = ? AND workspace_id = ? "
+                "AND deleted_at IS NULL",
+                (plan_row["material_id"], plan_row["workspace_id"]),
+            ).fetchone()
+            if material is None:
+                raise ProfileMaterialNotFound(
+                    plan_row["material_id"], workspace_id=plan_row["workspace_id"]
+                )
+            if (
+                int(material["version"]) != expected_material_version
+                or int(plan_row["material_version"]) != expected_material_version
+            ):
+                raise ProfileDeletionPlanConflict("material changed after deletion preview")
+
+            target_version_id = str(plan_row["target_version_id"])
+            current_impact = self.build_material_version_deletion_impact(
+                target_version_id, workspace_id=plan_row["workspace_id"]
+            )
+            expected_claim_versions = {
+                (item["claimId"], item["claimVersionId"])
+                for item in impact.get("claims", [])
+            }
+            current_claim_versions = {
+                (item["claimId"], item["claimVersionId"])
+                for item in current_impact.get("claims", [])
+            }
+            expected_replacements = {
+                item["id"] for item in impact.get("replacementVersions", [])
+            }
+            current_replacements = {
+                item["id"] for item in current_impact.get("replacementVersions", [])
+            }
+            if current_impact.get("pendingProposalIds"):
+                raise ProfileMaterialVersionHasPendingProposals(
+                    "workspace has pending profile proposals"
+                )
+            if (
+                set(impact.get("evidenceIds", []))
+                != set(current_impact.get("evidenceIds", []))
+                or expected_claim_versions != current_claim_versions
+                or set(impact.get("selectionIds", []))
+                != set(current_impact.get("selectionIds", []))
+                or set(impact.get("publicationIds", []))
+                != set(current_impact.get("publicationIds", []))
+                or set(impact.get("pendingProposalIds", []))
+                != set(current_impact.get("pendingProposalIds", []))
+                or expected_replacements != current_replacements
+                or bool(impact.get("isCurrentVersion"))
+                != bool(current_impact.get("isCurrentVersion"))
+            ):
+                raise ProfileDeletionPlanConflict("deletion impact changed")
+            if not current_replacements:
+                raise ProfileDeletionPlanConflict(
+                    "cannot delete the only material version"
+                )
+            is_current = bool(current_impact.get("isCurrentVersion"))
+            if is_current:
+                if replacement_version_id not in current_replacements:
+                    raise ProfileDeletionPlanConflict(
+                        "valid replacement version is required"
+                    )
+            elif replacement_version_id is not None:
+                raise ProfileDeletionPlanConflict(
+                    "replacement version is only valid for current version deletion"
+                )
+
+            expected_claim_ids = {item[0] for item in expected_claim_versions}
+            if set(claim_choices) != expected_claim_ids:
+                raise ProfileDeletionPlanConflict("claim choices do not match preview")
+            for item in current_impact.get("claims", []):
+                action = claim_choices[item["claimId"]]
+                if action not in {"delete", "retain_unsupported"}:
+                    raise ProfileDeletionPlanConflict(
+                        "unsupported claim deletion choice"
+                    )
+                if action == "delete" and item.get("selectionIds"):
+                    raise ProfileClaimSelectedForPublication(
+                        "selected claim cannot be deleted before selection is superseded"
+                    )
+
+            receipts: list[DeletionItemReceipt] = []
+            for item in current_impact.get("claims", []):
+                claim_id = item["claimId"]
+                action = claim_choices[claim_id]
+                if action == "delete":
+                    self._connection.execute(
+                        "DELETE FROM profile_claims WHERE id = ? AND workspace_id = ?",
+                        (claim_id, plan_row["workspace_id"]),
+                    )
+                elif not item.get("remainingEvidenceIds"):
+                    self._connection.execute(
+                        "UPDATE profile_claim_versions SET support_status = 'unsupported' "
+                        "WHERE id = ?",
+                        (item["claimVersionId"],),
+                    )
+                receipts.append(
+                    DeletionItemReceipt(
+                        kind="claim",
+                        target_id=claim_id,
+                        status="completed",
+                        action=action,
+                    )
+                )
+            for evidence_id in impact.get("evidenceIds", []):
+                self._connection.execute(
+                    "UPDATE profile_evidence SET sanitized_text = '', "
+                    "tombstoned_at = COALESCE(tombstoned_at, CURRENT_TIMESTAMP) "
+                    "WHERE id = ?",
+                    (evidence_id,),
+                )
+                receipts.append(
+                    DeletionItemReceipt(
+                        kind="evidence",
+                        target_id=evidence_id,
+                        status="completed",
+                        action="tombstone",
+                    )
+                )
+            self._connection.execute(
+                "UPDATE profile_material_versions SET storage_ref = '', text_ref = '', "
+                "file_name = '[deleted]', deleted_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND material_id = ? AND deleted_at IS NULL",
+                (target_version_id, plan_row["material_id"]),
+            )
+            if is_current:
+                self._connection.execute(
+                    "UPDATE profile_materials SET current_version_id = ?, "
+                    "version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (replacement_version_id, plan_row["material_id"]),
+                )
+            else:
+                self._connection.execute(
+                    "UPDATE profile_materials SET version = version + 1, "
+                    "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (plan_row["material_id"],),
+                )
+            receipts.append(
+                DeletionItemReceipt(
+                    kind="material_version",
+                    target_id=target_version_id,
+                    status="completed",
+                    action="purge",
+                )
+            )
+        return tuple(receipts)
+
     def artifact_reference_count(self, ref: str) -> int:
         row = self._connection.execute(
             "SELECT COUNT(*) AS total FROM profile_material_versions "
@@ -2587,6 +2855,8 @@ class ProfileRepository:
             workspace_id=row["workspace_id"],
             material_id=row["material_id"],
             material_version=int(row["material_version"]),
+            target_kind=row["target_kind"],
+            target_version_id=row["target_version_id"],
             status=row["status"],
             impact=json.loads(row["impact_json"]),
             result=json.loads(row["result_json"]),

@@ -78,6 +78,7 @@ from app.profile.errors import (
     ProfileMaterialNotFound,
     ProfileMaterialRoleConflict,
     ProfileMaterialVersionConflict,
+    ProfileMaterialVersionHasPendingProposals,
     ProfileMaterialVersionNotFound,
     ProfileNoExtractableText,
     ProfileParseError,
@@ -295,6 +296,9 @@ async def profile_domain_error(
             "profile_claim_selected_for_publication": "该画像仍在发布选择中，请先调整发布范围",
             "profile_deletion_plan_conflict": "删除影响已变化，请重新预检",
             "profile_deletion_plan_expired": "删除预检已过期，请重新预检",
+            "profile_material_version_has_pending_proposals": (
+                "这个版本仍有待确认信息，请先处理后再删除"
+            ),
             "profile_publication_revocation_required": "必须先确认撤销受影响的已发布知识",
             "profile_idempotency_conflict": "重复请求的内容不一致",
             "profile_ingest_busy": "该材料版本仍在处理中",
@@ -308,6 +312,7 @@ async def profile_domain_error(
                 "profile_material_version_conflict",
                 "profile_claim_version_conflict",
                 "profile_ingest_busy",
+                "profile_material_version_has_pending_proposals",
             },
         )
     if isinstance(error, ProfileActionPlanInvalid):

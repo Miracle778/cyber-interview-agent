@@ -129,6 +129,7 @@ class UnifiedProfileCard:
     claim_version_id: str
     claim_type: str
     version: int
+    support_status: str
     title: str
     subtitle: str | None
     value: dict[str, object]
@@ -219,6 +220,7 @@ def project_unified_profile(
             claim_version_id=card.claim_version_id,
             claim_type=card.claim_type,
             version=card.version,
+            support_status=card.support_status,
             title=card.title,
             subtitle=card.subtitle,
             value=card.value,
@@ -275,28 +277,36 @@ def _project_card(claim: ConfirmedClaimEntry) -> UnifiedProfileCard:
     normalized = _normalize_existing_value(claim.claim_type, claim.value)
     title = _title_for(claim.claim_type, normalized)
     subtitle = _subtitle_for(claim.claim_type, normalized)
-    sources = tuple(
-        ProfileSourceView(
-            source_kind=source.source_kind,
-            label=(
-                "原来源已删除，本人保留"
-                if source.status == "source_deleted"
-                else _SOURCE_LABELS.get(source.source_kind, "其他来源")
-            ),
-            source_ref=source.source_ref,
-            status=source.status,
+    sources: list[ProfileSourceView] = []
+    for source in claim.sources:
+        projected_status = source.status
+        if (
+            claim.support_status == "unsupported"
+            and source.source_kind == "resume_extraction"
+        ):
+            projected_status = "source_deleted"
+        sources.append(
+            ProfileSourceView(
+                source_kind=source.source_kind,
+                label=(
+                    "原来源已删除，本人保留"
+                    if projected_status == "source_deleted"
+                    else _SOURCE_LABELS.get(source.source_kind, "其他来源")
+                ),
+                source_ref=source.source_ref,
+                status=projected_status,
+            )
         )
-        for source in claim.sources
-    )
     return UnifiedProfileCard(
         claim_id=claim.claim_id,
         claim_version_id=claim.claim_version_id,
         claim_type=claim.claim_type,
         version=claim.version_number,
+        support_status=claim.support_status,
         title=title,
         subtitle=subtitle,
         value=normalized,
-        sources=sources,
+        sources=tuple(sources),
     )
 
 

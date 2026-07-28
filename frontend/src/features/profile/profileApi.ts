@@ -1,6 +1,6 @@
 import { apiGet, apiPost, apiRequest, apiUpload } from "../../shared/api/client";
 import type { AgentSession } from "../agent/agentTypes";
-import type { AcceptedMaterialRetry, AcceptedMaterialUpload, BatchClaimDecisionResult, ClaimDecision, ClaimDecisionResult, DuplicateProposalConsolidationResult, DuplicateProposalPreview, MaterialDeletionPreview, PermanentMaterialDeletionResult, ProfileActionPlan, ProfileAssessment, ProfileCardCommand, ProfileCardWriteResult, ProfileClaimWorkspace, ProfileMaterial, ProfileMaterialDocument, ProfileMaterialVersion, ProfileMaterialVersionDetail, ProfilePresentation, UnifiedProfile } from "./profileTypes";
+import type { AcceptedMaterialRetry, AcceptedMaterialUpload, BatchClaimDecisionResult, ClaimDecision, ClaimDecisionResult, DuplicateProposalConsolidationResult, DuplicateProposalPreview, MaterialDeletionPreview, MaterialVersionDeletionPreview, PermanentMaterialDeletionResult, ProfileActionPlan, ProfileAssessment, ProfileCardCommand, ProfileCardWriteResult, ProfileClaimWorkspace, ProfileMaterial, ProfileMaterialDocument, ProfileMaterialVersion, ProfileMaterialVersionDetail, ProfilePresentation, UnifiedProfile } from "./profileTypes";
 
 function commandKey(prefix: string) {
   return `${prefix}-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
@@ -94,6 +94,14 @@ export function previewMaterialDeletion(workspaceId: string, material: ProfileMa
 
 export function permanentlyDeleteMaterial(workspaceId: string, material: ProfileMaterial, preview: MaterialDeletionPreview, claimChoices: { claimId: string; action: "delete" | "retain_unsupported" }[], activePublicationAction: "revoke" | "not_applicable", idempotencyKey = commandKey("profile-delete")) {
   return apiPost(`/api/profile/materials/${material.id}/permanent-delete`, { workspaceId, expectedVersion: material.version, deletionPlanId: preview.deletionPlanId, claimChoices, activePublicationAction }, commandOptions(idempotencyKey)) as Promise<PermanentMaterialDeletionResult>;
+}
+
+export function previewMaterialVersionDeletion(workspaceId: string, material: ProfileMaterial, versionId: string, idempotencyKey = commandKey("profile-version-delete-preview")) {
+  return apiPost(`/api/profile/material-versions/${versionId}/deletion-preview`, { workspaceId, expectedVersion: material.version }, commandOptions(idempotencyKey)) as Promise<MaterialVersionDeletionPreview>;
+}
+
+export function permanentlyDeleteMaterialVersion(workspaceId: string, material: ProfileMaterial, preview: MaterialVersionDeletionPreview, replacementVersionId: string | null, claimChoices: { claimId: string; action: "delete" | "retain_unsupported" }[], activePublicationAction: "revoke" | "not_applicable", idempotencyKey = commandKey("profile-version-delete")) {
+  return apiPost(`/api/profile/material-versions/${preview.versionId}/permanent-delete`, { workspaceId, expectedVersion: material.version, deletionPlanId: preview.deletionPlanId, replacementVersionId, claimChoices, activePublicationAction }, commandOptions(idempotencyKey)) as Promise<PermanentMaterialDeletionResult>;
 }
 
 export function createProfileSession(workspaceId: string, title?: string) {

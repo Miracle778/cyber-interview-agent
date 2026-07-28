@@ -162,6 +162,20 @@ def test_projection_exposes_pending_count_source_state_and_manual_context(
     profile = service.unified_profile()
     assert profile.pending_count == 1
     assert profile.certifications[0].sources[0].label == "原来源已删除，本人保留"
+    service.repository.connection.execute(
+        "UPDATE profile_claim_sources "
+        "SET status = 'active', source_kind = 'resume_extraction' "
+        "WHERE claim_version_id = ?",
+        (certification.id,),
+    )
+    service.repository.connection.commit()
+    service.repository.mark_claim_unsupported(
+        certification.claim_id, reason="resume version deleted"
+    )
+    profile = service.unified_profile()
+    assert profile.certifications[0].support_status == "unsupported"
+    assert profile.certifications[0].sources[0].status == "source_deleted"
+    assert profile.certifications[0].sources[0].label == "原来源已删除，本人保留"
 
     context = service.confirmed_profile_context(
         purpose="job_target_analysis",

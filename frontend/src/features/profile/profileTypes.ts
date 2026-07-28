@@ -184,10 +184,18 @@ export interface MaterialDeletionPreview {
   materialVersion: number;
   expiresAt: string;
   affectedEvidenceCount: number;
-  affectedClaims: { claimId: string; claimType: string; claimVersion: number; claimVersionId: string; supportStatus: string; affectedEvidenceIds: string[]; remainingEvidenceIds: string[]; selectionIds: string[] }[];
+  affectedClaims: { claimId: string; claimType: string; claimVersion: number; claimVersionId: string; value?: Record<string, unknown>; supportStatus: string; affectedEvidenceIds: string[]; remainingEvidenceIds: string[]; selectionIds: string[] }[];
   unsupportedClaimIds: string[];
   publicationSelectionIds: string[];
   activePublicationIds: string[];
+}
+
+export interface MaterialVersionDeletionPreview extends MaterialDeletionPreview {
+  versionId: string;
+  versionNumber: number;
+  isCurrentVersion: boolean;
+  pendingProposalCount: number;
+  replacementVersions: { id: string; versionNumber: number; fileName: string }[];
 }
 
 export interface PermanentMaterialDeletionResult {
@@ -269,6 +277,7 @@ export interface UnifiedProfileCard {
   claimVersionId: string;
   category: ProfileCardCategory;
   version: number;
+  supportStatus: string;
   title: string;
   subtitle: string | null;
   value: Record<string, unknown>;

@@ -212,6 +212,9 @@ async def test_analysis_deep_dive_and_project_question_library(tmp_path: Path):
             expected_version=target.version,
             idempotency_key="priorities-workflow-1",
         )
+        readiness = training.readiness(target.id)
+        assert readiness["coreProjectId"] == project.claim_id
+        assert readiness["supplementaryProjectIds"] == []
         dive = await training.create_deep_dive(target.id, project.claim_id)
         original = training.product_repository.append_user_message(
             dive["sessionId"],
