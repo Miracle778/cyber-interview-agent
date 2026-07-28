@@ -122,3 +122,43 @@ def test_curation_seed_event_drops_content_and_provider_details():
         "answerBasis": "mixed",
         "needsReview": True,
     }
+
+
+def test_review_evaluation_progress_exposes_only_public_stage_context():
+    projector = AgentEventProjector()
+
+    checking, deciding = (
+        projector.project(
+            {
+                "type": "custom",
+                "ns": (),
+                "data": {
+                    "type": event_type,
+                    "payload": {
+                        "roundId": "round-1",
+                        "attemptId": "attempt-1",
+                        "ordinal": 2,
+                        "answer": "private answer",
+                        "keyPoints": ["private point"],
+                    },
+                },
+            }
+        )[0]
+        for event_type in (
+            "review.evaluation.checking_key_points",
+            "review.evaluation.deciding_follow_up",
+        )
+    )
+
+    assert checking.type == "review.evaluation.checking_key_points"
+    assert checking.payload == {
+        "roundId": "round-1",
+        "attemptId": "attempt-1",
+        "ordinal": 2,
+    }
+    assert deciding.type == "review.evaluation.deciding_follow_up"
+    assert deciding.payload == {
+        "roundId": "round-1",
+        "attemptId": "attempt-1",
+        "ordinal": 2,
+    }

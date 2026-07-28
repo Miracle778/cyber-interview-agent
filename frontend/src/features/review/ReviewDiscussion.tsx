@@ -5,10 +5,11 @@ import { cancelAgentExecution, getAgentSession, startAgentExecution } from "../a
 import { useAgentEvents } from "../agent/useAgentEvents";
 import { listProviders } from "../settings/settingsApi";
 import { Button } from "../../shared/ui/Button";
-import { elapsedSeconds } from "../../shared/time";
+import { elapsedSeconds, formatElapsedSeconds } from "../../shared/time";
 import { ReviewChatMessage } from "./ReviewConversation";
 import { retryReviewDiscussion } from "./reviewApi";
 import type { ReviewAttempt, ReviewTimelineMessage } from "./reviewTypes";
+import { useAgentComposerKeyboard } from "../../shared/agent/useAgentComposerKeyboard";
 
 const suggestions = ["解释我遗漏的关键点", "结合我的回答给一个实际案例", "换一种更容易记住的方式说明"];
 type ReasoningEffort = "none" | "low" | "medium" | "high";
@@ -16,11 +17,8 @@ const reasoningLabels: Record<ReasoningEffort, string> = { none: "标准", low: 
 
 function formatDuration(startedAt?: string | null, finishedAt?: string | null, now = Date.now()) {
   if (!startedAt) return "尚未运行";
-  const start = Date.parse(startedAt);
-  const end = finishedAt ? Date.parse(finishedAt) : now;
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return "—";
-  const seconds = Math.max(0, Math.round((end - start) / 1000));
-  return seconds < 60 ? `${seconds} 秒` : `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
+  const seconds = elapsedSeconds(startedAt, finishedAt ?? new Date(now).toISOString());
+  return seconds === null ? "—" : formatElapsedSeconds(seconds);
 }
 
 function formatTokens(value: number) {
@@ -85,6 +83,9 @@ export function ReviewDiscussion({ roundId, sessionId, attempt, defaultModelId, 
     setPendingUserMessage(value);
     await send.mutateAsync(value);
   }
+  const keyboard = useAgentComposerKeyboard(() => {
+    void submit().catch(() => undefined);
+  });
 
   async function copyMessage(item: ReviewTimelineMessage) {
     await navigator.clipboard.writeText(item.content);
@@ -113,7 +114,7 @@ export function ReviewDiscussion({ roundId, sessionId, attempt, defaultModelId, 
         <form className="curation-composer review-chat-composer review-discussion__composer" onSubmit={(event) => { event.preventDefault(); void submit().catch(() => undefined); }}>
           <div className="review-discussion__suggestions" aria-label="建议问题">{suggestions.map((item) => <button key={item} type="button" disabled={running} onClick={() => setMessage(item)}>{item}</button>)}</div>
           <label className="review-conversation__sr-title" htmlFor="review-discussion-message">继续追问</label>
-          <div className="review-chat-composer__field"><textarea id="review-discussion-message" rows={1} value={message} disabled={running} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder="继续追问遗漏点、案例或换一种解释方式…" /><div className="curation-composer__toolbar"><details className="curation-composer__settings"><summary aria-disabled={running} onClick={(event) => { if (running) event.preventDefault(); }}><SlidersHorizontal size={17} aria-hidden="true" /><span>{selectedModelLabel} · {reasoningLabels[effectiveReasoning]}</span><ChevronDown size={15} aria-hidden="true" /></summary><div className="curation-composer__settings-panel" aria-label="模型与思考强度"><label htmlFor="review-discussion-model">本次执行模型</label><select id="review-discussion-model" aria-label="讨论模型" value={effectiveModel} disabled={running} onChange={(event) => setSelectedModel(event.target.value)}>{!effectiveModel ? <option value="">请选择模型</option> : null}{effectiveModel && !models.some((model) => model.id === effectiveModel) ? <option value={effectiveModel}>当前绑定模型</option> : null}{models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select><label htmlFor="review-discussion-reasoning">思考强度</label><select id="review-discussion-reasoning" aria-label="思考强度" value={effectiveReasoning} disabled={running} onChange={(event) => setReasoning(event.target.value as ReasoningEffort)}>{Object.entries(reasoningLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div></details><small>Shift+Enter 换行</small><div className="review-chat-composer__actions">{running && executionId ? <Button type="button" variant="danger" disabled={stop.isPending} onClick={() => stop.mutate(executionId)}><Square size={15} />{stop.isPending ? "正在停止…" : "停止"}</Button> : <Button className="curation-composer__send" type="submit" aria-label="发送" title="发送" disabled={!message.trim() || !effectiveModel} loading={send.isPending}><Send size={18} /></Button>}</div></div></div>
+          <div className="review-chat-composer__field"><textarea id="review-discussion-message" rows={1} value={message} disabled={running} onChange={(event) => setMessage(event.target.value)} {...keyboard} placeholder="继续追问遗漏点、案例或换一种解释方式…" /><div className="curation-composer__toolbar"><details className="curation-composer__settings"><summary aria-disabled={running} onClick={(event) => { if (running) event.preventDefault(); }}><SlidersHorizontal size={17} aria-hidden="true" /><span>{selectedModelLabel} · {reasoningLabels[effectiveReasoning]}</span><ChevronDown size={15} aria-hidden="true" /></summary><div className="curation-composer__settings-panel" aria-label="模型与思考强度"><label htmlFor="review-discussion-model">本次执行模型</label><select id="review-discussion-model" aria-label="讨论模型" value={effectiveModel} disabled={running} onChange={(event) => setSelectedModel(event.target.value)}>{!effectiveModel ? <option value="">请选择模型</option> : null}{effectiveModel && !models.some((model) => model.id === effectiveModel) ? <option value={effectiveModel}>当前绑定模型</option> : null}{models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select><label htmlFor="review-discussion-reasoning">思考强度</label><select id="review-discussion-reasoning" aria-label="思考强度" value={effectiveReasoning} disabled={running} onChange={(event) => setReasoning(event.target.value as ReasoningEffort)}>{Object.entries(reasoningLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div></details><small>Shift+Enter 换行</small><div className="review-chat-composer__actions">{running && executionId ? <Button type="button" variant="danger" disabled={stop.isPending} onClick={() => stop.mutate(executionId)}><Square size={15} />{stop.isPending ? "正在停止…" : "停止"}</Button> : <Button className="curation-composer__send" type="submit" aria-label="发送" title="发送" disabled={!message.trim() || !effectiveModel} loading={send.isPending}><Send size={18} /></Button>}</div></div></div>
         </form>
       </div>
       <aside className="review-discussion__aside" aria-label="本题讨论上下文">

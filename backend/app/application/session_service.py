@@ -91,6 +91,8 @@ class SessionRecord:
     parent_session_id: str | None = None
     visibility: str = "user"
     last_message_preview: str | None = None
+    latest_execution_status: str | None = None
+    pending_action_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,7 +205,13 @@ class ProductRepository:
             "SELECT agent_sessions.*, "
             "(SELECT content FROM agent_messages "
             "WHERE agent_messages.session_id = agent_sessions.id "
-            "ORDER BY agent_messages.rowid DESC LIMIT 1) AS last_message_preview "
+            "ORDER BY agent_messages.rowid DESC LIMIT 1) AS last_message_preview, "
+            "(SELECT status FROM agent_runs "
+            "WHERE agent_runs.id = agent_sessions.last_run_id) "
+            "AS latest_execution_status, "
+            "(SELECT COUNT(*) FROM pending_actions "
+            "WHERE pending_actions.session_id = agent_sessions.id "
+            "AND pending_actions.status = 'pending') AS pending_action_count "
             "FROM agent_sessions WHERE agent_sessions.workspace_id = ? "
         )
         if include_system:
@@ -707,8 +715,11 @@ class ProductEventStream:
             "approval.resolved",
             "review.input.required",
             "review.input.resolved",
+            "review.turn.responded",
             "review.answer.accepted",
             "review.evaluation.started",
+            "review.evaluation.checking_key_points",
+            "review.evaluation.deciding_follow_up",
             "review.evaluation.completed",
             "review.evaluation.failed",
             "review.attempt.completed",
@@ -882,6 +893,16 @@ def _session(row) -> SessionRecord:
         visibility=row["visibility"],
         last_message_preview=(
             row["last_message_preview"] if "last_message_preview" in row_keys else None
+        ),
+        latest_execution_status=(
+            row["latest_execution_status"]
+            if "latest_execution_status" in row_keys
+            else None
+        ),
+        pending_action_count=(
+            int(row["pending_action_count"])
+            if "pending_action_count" in row_keys
+            else 0
         ),
     )
 

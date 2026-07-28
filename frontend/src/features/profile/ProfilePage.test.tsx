@@ -99,7 +99,7 @@ describe("ProfilePage", () => {
     await waitFor(() => expect(api.uploadProfileMaterial).toHaveBeenCalledWith("w1", expect.any(File), expect.objectContaining({ title: "resume" }), expect.any(String)));
   });
 
-  it("uses the unified four-screen contract", async () => {
+  it("uses the unified profile screens and provides one source-review entrance", async () => {
     const material = {
       id: "m1", workspaceId: "w1", type: "resume", title: "后端工程师简历",
       primaryRole: "resume", currentVersionId: "v1", lifecycleStatus: "active",
@@ -125,9 +125,12 @@ describe("ProfilePage", () => {
       profileVersion: "pv1",
       isUsable: true,
       pendingCount: 1,
-      directions: [{ claimId: "d1", claimVersionId: "dv1", category: "direction", version: 1, title: "后端工程师", subtitle: null, value: { name: "后端工程师" }, sources: [{ sourceKind: "user_input", label: "本人补充", status: "active" }], linkedTo: [], usedIn: [] }],
+      directions: [{ claimId: "d1", claimVersionId: "dv1", category: "direction", version: 1, title: "后端工程师", subtitle: null, value: { name: "后端工程师" }, supportStatus: "manual", supportSummary: "本人确认", supportEvidence: [], sources: [{ sourceKind: "user_input", label: "本人补充", status: "active" }], linkedTo: [], usedIn: [] }],
       primaryDirectionClaimId: "d1",
-      skills: [{ claimId: "s1", claimVersionId: "sv1", category: "skill", version: 1, title: "FastAPI", subtitle: null, value: { name: "FastAPI" }, sources: [{ sourceKind: "resume_extraction", label: "简历提取", status: "active" }], linkedTo: [], usedIn: [] }],
+      skills: [
+        { claimId: "s1", claimVersionId: "sv1", category: "skill", version: 1, title: "FastAPI", subtitle: null, value: { name: "FastAPI" }, supportStatus: "unsupported", supportSummary: "当前简历中没有找到可以直接或相关核对的内容", supportEvidence: [], sources: [{ sourceKind: "resume_extraction", label: "简历提取", status: "active" }], linkedTo: [], usedIn: [] },
+        { claimId: "s2", claimVersionId: "sv2", category: "skill", version: 1, title: "灰度发布", subtitle: null, value: { name: "灰度发布" }, supportStatus: "related", supportSummary: "剩余简历中发现相关描述，需要你核对", supportEvidence: [{ evidenceId: "e1", materialTitle: "主投版", versionNumber: 1, section: "项目经历", excerpt: "负责灰度发布", relation: "related" }], sources: [{ sourceKind: "resume_extraction", label: "简历提取", status: "active" }], linkedTo: [], usedIn: [] },
+      ],
     });
 
     renderPage();
@@ -135,9 +138,16 @@ describe("ProfilePage", () => {
     expect(await screen.findByRole("heading", { name: "后端工程师" })).toBeInTheDocument();
     expect(screen.getByText("FastAPI")).toBeInTheDocument();
     const navigation = screen.getByRole("navigation", { name: "个人画像页面" });
-    for (const name of ["我的画像", "待确认", "简历与来源", "画像助手"]) {
+    for (const name of ["我的画像", "待确认", "来源核对 2", "简历与来源", "画像助手"]) {
       expect(navigation).toHaveTextContent(name);
     }
+
+    fireEvent.click(screen.getByRole("button", { name: "来源核对 2" }));
+    expect(await screen.findByRole("heading", { name: "来源核对" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "来源核对" }).closest(".profile-shell")).toHaveClass("profile-shell--workbench");
+    expect(document.querySelector(".profile-support-review__list")).toBeInTheDocument();
+    expect(screen.getByText("FastAPI")).toBeInTheDocument();
+    expect(screen.getByText("灰度发布")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "简历与来源" }));
     expect(await screen.findByRole("region", { name: "简历与来源" })).toBeInTheDocument();

@@ -4,7 +4,9 @@ import {
   listCurationSessions,
   submitCurationCommand,
   submitReviewAnswer,
+  interruptReviewEvaluation,
   retryReviewEvaluation,
+  skipReviewQuestion,
   getBulkPublicationPreflight,
   pauseCurationSession,
   resumeCurationSession,
@@ -12,6 +14,7 @@ import {
   terminateCurationSession,
   retryBulkPublication,
   retryCurationSeedTask,
+  listAllQuestionCandidates,
 } from "./reviewApi";
 import type { CurationSession, ReviewRound } from "./reviewTypes";
 
@@ -42,6 +45,37 @@ describe("reviewApi", () => {
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ idempotencyKey: "retry-evaluation-1" }),
+      }),
+    );
+  });
+
+  it("interrupts evaluation and skips without requiring a pending input", async () => {
+    const round = {
+      id: "round-1",
+      currentInput: null,
+      attempts: [{ status: "evaluating" }],
+    } as ReviewRound;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () => Response.json(round),
+    );
+
+    await interruptReviewEvaluation("round-1", "interrupt-evaluation-1");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/review/rounds/round-1/interrupt-evaluation",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          idempotencyKey: "interrupt-evaluation-1",
+        }),
+      }),
+    );
+
+    await skipReviewQuestion(round, "skip-evaluation-1");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/review/rounds/round-1/skip",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ idempotencyKey: "skip-evaluation-1" }),
       }),
     );
   });
@@ -105,6 +139,18 @@ describe("reviewApi", () => {
         method: "POST",
         body: JSON.stringify({ idempotencyKey: "bulk-retry-1" }),
       }),
+    );
+  });
+
+  it("loads the candidate catalog in large pages instead of issuing one request per 50 items", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json([]));
+
+    await listAllQuestionCandidates("w1");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/review/question-candidates?workspaceId=w1&page=1&pageSize=500",
+      expect.objectContaining({ method: "GET" }),
     );
   });
 

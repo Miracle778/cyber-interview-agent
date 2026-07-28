@@ -287,6 +287,8 @@ class ProviderService:
                 connectivity_status=result.status.value,
                 latency_ms=result.latency_ms,
                 error_code=error_code,
+                resolved_model_id=result.resolved_model_id,
+                capability_profile=result.capabilities,
             )
             self.providers.record_test_run(
                 model.id,

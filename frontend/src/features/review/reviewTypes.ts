@@ -1,4 +1,4 @@
-export type ReviewMode = "weak-point" | "random-mixed" | "topic-focused" | "recent-mistake";
+export type ReviewMode = "weak-point" | "random-mixed" | "topic-focused" | "recent-mistake" | "source-file";
 export type MasteryState = "unknown" | "weak" | "partial" | "stable" | "strong";
 export type Difficulty = "easy" | "medium" | "hard";
 
@@ -10,6 +10,8 @@ export interface ReviewQuestion {
   topics: string[];
   difficulty: Difficulty;
   keyPoints: string[];
+  requiredKeyPoints?: string[];
+  bonusKeyPoints?: string[];
   followUps: string[];
   mastery: MasteryState;
 }
@@ -22,6 +24,7 @@ export interface ActiveQuestion extends Omit<ReviewQuestion, "mastery"> {
   projectClaimId?: string | null;
   projectDimension?: string | null;
   sourceJobTargetId?: string | null;
+  sourceIds?: string[];
 }
 
 export interface CandidateQuestion {
@@ -34,6 +37,8 @@ export interface CandidateQuestion {
   topics: string[];
   difficulty: Difficulty;
   keyPoints: string[];
+  requiredKeyPoints?: string[];
+  bonusKeyPoints?: string[];
   followUps: string[];
 }
 
@@ -68,6 +73,9 @@ export interface QuestionCandidate {
   materialSupport?: CurationMaterialSupport;
   needsReview?: boolean;
   normalizationIssues?: string[];
+  confirmationStatus?: "pending" | "confirmed";
+  confirmationVersion?: number;
+  confirmedAt?: string | null;
   isActiveVersion?: boolean;
   status: "draft" | "review_pending" | "rejected" | "published";
   deletedAt?: string | null;
@@ -89,6 +97,14 @@ export interface CandidateOriginSession {
 
 export interface QuestionDeletionResult {
   items: { candidateId: string; status: "deleted" | "already_deleted" | "blocked" | "failed"; reason: string | null }[];
+}
+
+export interface QuestionConfirmationResult {
+  items: {
+    candidateId: string;
+    status: "confirmed" | "already_confirmed" | "blocked" | "failed";
+    reason: string | null;
+  }[];
 }
 
 export interface QuestionBatch {
@@ -197,6 +213,8 @@ export interface CurationSession {
     total: number;
     generatedCandidateCount: number;
     activeWorkers: number;
+    retryableUnits?: number;
+    pendingUnits?: number;
   };
   timing: { currentElapsedMs: number; cumulativeElapsedMs: number };
   controls: { canPause: boolean; canResume: boolean; canTerminate: boolean };
@@ -316,6 +334,14 @@ export interface ReviewAttempt {
   evaluationErrorCode: string | null;
   evaluationStartedAt: string | null;
   evaluationCompletedAt: string | null;
+  coverage?: {
+    point: string;
+    status: "uncovered" | "partial" | "covered";
+    evidence: string[];
+  }[];
+  resultKind?: "independent_mastery" | "assisted_mastery" | "revealed" | "skipped" | null;
+  hintLevel?: number;
+  answerRevisions?: string[];
   discussionSessionId?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -341,6 +367,16 @@ export interface ReviewAnswerReceipt {
   version: number;
 }
 
+export interface ReviewTurnReceipt {
+  kind: "answer" | "auxiliary" | "skipped";
+  intent: "answer" | "show_question" | "request_hint" | "reveal_answer" | "explain" | "skip" | "unrelated";
+  roundId: string;
+  inputRequestId: string;
+  attemptId: string | null;
+  receiptId: string;
+  status: string;
+}
+
 export interface ReviewRound {
   id: string;
   workspaceId: string;
@@ -355,6 +391,7 @@ export interface ReviewRound {
     seed: number;
     answer_model_id: string;
     reasoning_effort: "none" | "low" | "medium" | "high";
+    source_id?: string | null;
   };
   status: "waiting_for_input" | "running" | "report_pending" | "completed" | "failed" | "cancelled";
   executionStatus: string | null;
@@ -362,15 +399,28 @@ export interface ReviewRound {
   questionCount: number;
   currentQuestion: {
     id: string;
+    documentId?: string;
     title: string;
     questionText: string;
     topics: string[];
     difficulty: Difficulty;
+    requiredKeyPointCount?: number;
+    coveredKeyPointCount?: number;
+    missingDirections?: string[];
+    hasAnswer?: boolean;
+    hintLevel?: number;
+    sources?: {
+      sourceId: string;
+      filename: string | null;
+      sectionNumbers: number[];
+      evidenceCount: number;
+      availability: "available" | "deleted" | "missing";
+    }[];
   } | null;
   currentInput: ReviewInput | null;
   attempts: ReviewAttempt[];
   messages: ReviewTimelineMessage[];
-  reports: { id: string; reportKind: "session_report" | "mastery_report"; title: string; status: string; version: number; publication: { state: string; target_path: string; error_code: string | null } | null }[];
+  reports: { id: string; reportKind: "session_report" | "mastery_report"; title: string; markdown: string; status: string; version: number; publication: { state: string; target_path: string; error_code: string | null } | null }[];
   usage: { inputTokens: number; outputTokens: number; totalTokens: number; callCount: number; estimatedCount: number };
   contextUsage?: { currentTokens: number; thresholdTokens: number; estimated: boolean };
   createdAt: string;
@@ -389,4 +439,5 @@ export interface CreateReviewRoundRequest {
   seed?: number;
   answerModelId: string;
   reasoningEffort: "none" | "low" | "medium" | "high";
+  sourceId?: string;
 }

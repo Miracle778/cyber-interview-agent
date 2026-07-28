@@ -33,7 +33,9 @@ ClaimType: TypeAlias = Literal[
 ClaimVersionStatus: TypeAlias = Literal[
     "proposed", "confirmed", "rejected", "superseded"
 ]
-ClaimSupportStatus: TypeAlias = Literal["supported", "conflicted", "unsupported"]
+ClaimSupportStatus: TypeAlias = Literal[
+    "supported", "conflicted", "related", "manual", "unsupported"
+]
 ProfileSourceKind: TypeAlias = Literal[
     "resume_extraction", "user_input", "conversation", "agent_inference"
 ]
@@ -182,6 +184,18 @@ class ProfileClaimSourceRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class ProfileSupportEvidenceRecord:
+    evidence_id: str
+    material_id: str
+    material_title: str
+    material_version_id: str
+    version_number: int
+    section: str
+    excerpt: str
+    relation: Literal["direct", "related"]
+
+
+@dataclass(frozen=True, slots=True)
 class ProfileClaimRelationRecord:
     id: str
     workspace_id: str
@@ -282,6 +296,7 @@ class ConfirmedClaimEntry:
     support_status: ClaimSupportStatus
     evidence_ids: tuple[str, ...]
     sources: tuple[ProfileClaimSourceRecord, ...] = ()
+    support_evidence: tuple[ProfileSupportEvidenceRecord, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -483,6 +498,8 @@ class MaterialDeletionPlanRecord:
     workspace_id: str
     material_id: str
     material_version: int
+    target_kind: str
+    target_version_id: str | None
     status: str
     impact: dict[str, object]
     result: dict[str, object]

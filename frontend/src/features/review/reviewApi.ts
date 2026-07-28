@@ -12,8 +12,10 @@ import type {
   QuestionBatch,
   QuestionCandidate,
   QuestionDeletionResult,
+  QuestionConfirmationResult,
   ReviewAnswerReceipt,
   ReviewRound,
+  ReviewTurnReceipt,
 } from "./reviewTypes";
 import type { AgentExecution, AgentSession } from "../agent/agentTypes";
 
@@ -158,6 +160,10 @@ export function getBulkPublication(operationId: string): Promise<BulkPublication
   return apiGet(`/api/review/bulk-publications/${operationId}`);
 }
 
+export function getLatestBulkPublication(sessionId: string): Promise<BulkPublication | null> {
+  return apiGet(`/api/review/bulk-publications/latest?${new URLSearchParams({ sessionId })}`);
+}
+
 export function listQuestionBatches(workspaceId: string): Promise<QuestionBatch[]> {
   return apiGet(`/api/review/question-batches?${new URLSearchParams({ workspaceId })}`);
 }
@@ -168,7 +174,7 @@ export function createQuestionBatch(workspaceId: string, sourceRefs: string[]): 
 
 export function listQuestionCandidates(
   workspaceId: string,
-  filters: { query?: string; topic?: string; difficulty?: string; sourceId?: string; status?: string; page?: number; deletedOnly?: boolean } = {},
+  filters: { query?: string; topic?: string; difficulty?: string; sourceId?: string; status?: string; page?: number; pageSize?: number; deletedOnly?: boolean } = {},
 ): Promise<QuestionCandidate[]> {
   const query = new URLSearchParams({ workspaceId });
   Object.entries(filters).forEach(([key, value]) => value && query.set(key, String(value)));
@@ -179,11 +185,12 @@ export async function listAllQuestionCandidates(
   workspaceId: string,
   filters: { query?: string; topic?: string; difficulty?: string; sourceId?: string; status?: string; deletedOnly?: boolean } = {},
 ): Promise<QuestionCandidate[]> {
+  const pageSize = 500;
   const items: QuestionCandidate[] = [];
   for (let page = 1; page <= 20; page += 1) {
-    const batch = await listQuestionCandidates(workspaceId, { ...filters, page });
+    const batch = await listQuestionCandidates(workspaceId, { ...filters, page, pageSize });
     items.push(...batch);
-    if (batch.length < 50) break;
+    if (batch.length < pageSize) break;
   }
   return items;
 }
@@ -194,9 +201,20 @@ export function getQuestionCandidate(id: string): Promise<QuestionCandidate> {
 
 export function updateQuestionCandidate(
   id: string,
-  command: { version: number; title?: string; questionText?: string; referenceAnswer?: string; topics?: string[]; difficulty?: string; keyPoints?: string[]; followUps?: string[] },
+  command: { version: number; title?: string; questionText?: string; referenceAnswer?: string; topics?: string[]; difficulty?: string; keyPoints?: string[]; requiredKeyPoints?: string[]; bonusKeyPoints?: string[]; followUps?: string[] },
 ): Promise<QuestionCandidate> {
   return apiPatch(`/api/review/question-candidates/${id}`, command);
+}
+
+export function bulkConfirmQuestionCandidates(
+  workspaceId: string,
+  candidateIds: string[],
+): Promise<QuestionConfirmationResult> {
+  return apiPost("/api/review/question-candidates/bulk-confirm", {
+    workspaceId,
+    candidateIds,
+    idempotencyKey: crypto.randomUUID(),
+  });
 }
 
 export function rewriteQuestionCandidate(id: string, feedback: string): Promise<CurationSession> {
@@ -248,9 +266,9 @@ export function createReviewRound(command: CreateReviewRoundRequest): Promise<Re
   return apiPost("/api/review/rounds", command);
 }
 
-export function submitReviewAnswer(round: ReviewRound, value: string, idempotencyKey: string, providerModelId?: string, reasoningEffort?: "none" | "low" | "medium" | "high"): Promise<ReviewAnswerReceipt> {
+export function submitReviewAnswer(round: ReviewRound, value: string, idempotencyKey: string, providerModelId?: string, reasoningEffort?: "none" | "low" | "medium" | "high"): Promise<ReviewTurnReceipt> {
   if (!round.currentInput) throw new Error("当前轮次没有待回答输入");
-  return apiPost(`/api/review/rounds/${round.id}/answers`, {
+  return apiPost(`/api/review/rounds/${round.id}/turns`, {
     inputRequestId: round.currentInput.id,
     version: round.currentInput.version,
     idempotencyKey,
@@ -264,16 +282,21 @@ export function retryReviewEvaluation(roundId: string, idempotencyKey: string): 
   return apiPost(`/api/review/rounds/${roundId}/retry-evaluation`, { idempotencyKey });
 }
 
+export function interruptReviewEvaluation(roundId: string, idempotencyKey: string): Promise<ReviewRound> {
+  return apiPost(`/api/review/rounds/${roundId}/interrupt-evaluation`, { idempotencyKey });
+}
+
 export function retryReviewRound(roundId: string): Promise<ReviewRound> {
   return apiPost(`/api/review/rounds/${roundId}/retry`, {});
 }
 
 export function skipReviewQuestion(round: ReviewRound, idempotencyKey: string): Promise<ReviewRound> {
-  if (!round.currentInput) throw new Error("当前轮次没有待跳过输入");
   return apiPost(`/api/review/rounds/${round.id}/skip`, {
-    inputRequestId: round.currentInput.id,
-    version: round.currentInput.version,
     idempotencyKey,
+    ...(round.currentInput ? {
+      inputRequestId: round.currentInput.id,
+      version: round.currentInput.version,
+    } : {}),
   });
 }
 

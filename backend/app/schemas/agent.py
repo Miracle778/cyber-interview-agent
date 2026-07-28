@@ -58,6 +58,8 @@ class SessionResource(AgentModel):
     latest_execution_id: str | None
     deleted_at: str | None = None
     last_message_preview: str | None = None
+    latest_execution_status: str | None = None
+    pending_action_count: int = 0
 
 
 class ExecutionResource(AgentModel):

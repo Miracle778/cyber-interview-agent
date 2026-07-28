@@ -327,6 +327,9 @@ class WorkspaceRuntime:
         job_agents_factory = getattr(
             graph_factory, "create_job_target_agents", None
         )
+        review_agents_factory = getattr(
+            graph_factory, "create_review_round_agents", None
+        )
         job_agents_available = (
             job_agents_factory is not None
             and {
@@ -379,6 +382,44 @@ class WorkspaceRuntime:
                 workspace_root=root,
                 **values,
             )
+
+        async def classify_review_turn_with_model(
+            *,
+            question,
+            message: str,
+            provider_model_id: str,
+            reasoning_effort: str,
+            session_id: str,
+            execution_id: str | None,
+        ):
+            if review_agents_factory is None:
+                return "answer"
+            agents = review_agents_factory(
+                model_bindings=configured_model_bindings,
+                projection=projection,
+                audit=audit,
+                observability=observability,
+                publish_event=events.publish,
+                interaction_override=ModelOverride(
+                    provider_model_id, reasoning_effort
+                ),
+            )
+            result = await agents.classify_turn(
+                question=question,
+                message=message,
+                context=AgentContext(
+                    workspace_id=workspace_id,
+                    workspace_root=root,
+                    session_id=session_id,
+                    run_id=execution_id or str(uuid4()),
+                    allowed_tools=frozenset(),
+                    allowed_scopes=frozenset(),
+                    progress_scope=("review_turn_classification",),
+                ),
+                config={"configurable": {"thread_id": session_id}},
+            )
+            return result.intent
+
         review = ReviewApplication(
             workspace_id=workspace_id,
             workspace_root=root,
@@ -400,6 +441,11 @@ class WorkspaceRuntime:
             ),
             curation_context_projection=projection,
             curation_context_factory=curation_context_factory,
+            review_turn_classifier=(
+                classify_review_turn_with_model
+                if review_agents_factory is not None
+                else None
+            ),
         )
         profile = ProfileService(
             workspace_id=workspace_id,

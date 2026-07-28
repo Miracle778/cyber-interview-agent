@@ -14,6 +14,16 @@ export const listJobTargets = (workspaceId: string, signal?: AbortSignal) =>
 export const createJobTarget = (workspaceId: string, input: { roleName: string; seniority: string; companyName?: string; sourceUrl?: string }) =>
   apiRequest<JobTarget>(`/api/workspaces/${workspaceId}/job-targets`, json("POST", input, "target"));
 
+export const updateJobTarget = (
+  workspaceId: string,
+  target: JobTarget,
+  input: { roleName: string; seniority: string; companyName?: string; sourceUrl?: string },
+) =>
+  apiRequest<JobTarget>(
+    `/api/job-targets/${target.id}`,
+    json("PATCH", { workspaceId, expectedVersion: target.version, ...input }, "target-update"),
+  );
+
 export const createDocumentVersion = (workspaceId: string, targetId: string, body: string) =>
   apiRequest<JobDocumentVersion>(`/api/job-targets/${targetId}/document-versions`, json("POST", { workspaceId, sourceKind: "jd_text", body }, "jd"));
 
@@ -42,7 +52,10 @@ export const getReadiness = (workspaceId: string, targetId: string, signal?: Abo
   apiGet<TargetReadiness>(`/api/job-targets/${targetId}/readiness?workspaceId=${workspaceId}`, { signal });
 
 export const setProjectPriorities = (workspaceId: string, target: JobTarget, coreProjectId: string, supplementaryProjectIds: string[]) =>
-  apiRequest(`/api/job-targets/${target.id}/project-priorities`, json("PUT", { workspaceId, expectedVersion: target.version, coreProjectId, supplementaryProjectIds }, "priorities"));
+  apiRequest<{ jobTargetId: string; coreProjectId: string; supplementaryProjectIds: string[]; version: number }>(
+    `/api/job-targets/${target.id}/project-priorities`,
+    json("PUT", { workspaceId, expectedVersion: target.version, coreProjectId, supplementaryProjectIds }, "priorities"),
+  );
 
 export const createDeepDive = (workspaceId: string, targetId: string, projectClaimId: string) =>
   apiRequest<DeepDiveResource>(`/api/job-targets/${targetId}/projects/${projectClaimId}/deep-dives`, json("POST", { workspaceId, projectClaimId }, "deep-dive"));

@@ -391,6 +391,45 @@ def test_glm_question_generation_disables_default_thinking_without_global_budget
     assert "reasoning_effort" not in captured
 
 
+def test_anthropic_alias_uses_observed_glm_capability_to_disable_thinking(
+    model_setup, monkeypatch
+):
+    repository, secrets = model_setup
+    model_record = _seed_model(
+        repository,
+        secrets,
+        api_format="anthropic-compatible",
+        model_id="claude-opus-compatible-alias",
+    )
+    repository.update_model_status(
+        model_record.id,
+        connectivity_status="ok",
+        latency_ms=10,
+        error_code=None,
+        resolved_model_id="glm-5.2",
+        capability_profile={
+            "probeVersion": 1,
+            "reasoningControl": "glm_thinking_switch",
+        },
+    )
+    captured = {}
+    monkeypatch.setattr(
+        "app.agents.agent_model_resolver.ChatAnthropic",
+        lambda **kwargs: captured.update(kwargs) or GenericFakeChatModel(
+            messages=iter([AIMessage(content="ok")])
+        ),
+    )
+
+    ChatModelResolver(repository, {"keyring": secrets}).resolve(
+        role="question_generation",
+        provider_model_id=model_record.id,
+        reasoning_effort="none",
+    )
+
+    assert captured["thinking"] == {"type": "disabled"}
+    assert captured["model"] == "claude-opus-compatible-alias"
+
+
 def test_glm_explicit_reasoning_enables_thinking(model_setup, monkeypatch):
     repository, secrets = model_setup
     model_record = _seed_model(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Annotated
 
@@ -117,6 +118,16 @@ class ProfileSourceView:
 
 
 @dataclass(frozen=True, slots=True)
+class ProfileSupportEvidenceView:
+    evidence_id: str
+    material_title: str
+    version_number: int
+    section: str
+    excerpt: str
+    relation: str
+
+
+@dataclass(frozen=True, slots=True)
 class ProfileCardReference:
     claim_id: str
     claim_type: str
@@ -129,10 +140,13 @@ class UnifiedProfileCard:
     claim_version_id: str
     claim_type: str
     version: int
+    support_status: str
     title: str
     subtitle: str | None
     value: dict[str, object]
     sources: tuple[ProfileSourceView, ...]
+    support_summary: str
+    support_evidence: tuple[ProfileSupportEvidenceView, ...]
     linked_to: tuple[ProfileCardReference, ...] = ()
     used_in: tuple[ProfileCardReference, ...] = ()
 
@@ -219,10 +233,13 @@ def project_unified_profile(
             claim_version_id=card.claim_version_id,
             claim_type=card.claim_type,
             version=card.version,
+            support_status=card.support_status,
             title=card.title,
             subtitle=card.subtitle,
             value=card.value,
             sources=card.sources,
+            support_summary=card.support_summary,
+            support_evidence=card.support_evidence,
             linked_to=tuple(linked),
             used_in=tuple(used_in),
         )
@@ -275,29 +292,75 @@ def _project_card(claim: ConfirmedClaimEntry) -> UnifiedProfileCard:
     normalized = _normalize_existing_value(claim.claim_type, claim.value)
     title = _title_for(claim.claim_type, normalized)
     subtitle = _subtitle_for(claim.claim_type, normalized)
-    sources = tuple(
-        ProfileSourceView(
-            source_kind=source.source_kind,
-            label=(
-                "原来源已删除，本人保留"
-                if source.status == "source_deleted"
-                else _SOURCE_LABELS.get(source.source_kind, "其他来源")
-            ),
-            source_ref=source.source_ref,
-            status=source.status,
+    sources: list[ProfileSourceView] = []
+    for source in claim.sources:
+        projected_status = source.status
+        sources.append(
+            ProfileSourceView(
+                source_kind=source.source_kind,
+                label=(
+                    "原来源已删除，本人保留"
+                    if projected_status == "source_deleted"
+                    else _SOURCE_LABELS.get(source.source_kind, "其他来源")
+                ),
+                source_ref=source.source_ref,
+                status=projected_status,
+            )
         )
-        for source in claim.sources
+    support_evidence = tuple(
+        ProfileSupportEvidenceView(
+            evidence_id=evidence.evidence_id,
+            material_title=evidence.material_title,
+            version_number=evidence.version_number,
+            section=_readable_evidence_section(evidence.section),
+            excerpt=evidence.excerpt,
+            relation=evidence.relation,
+        )
+        for evidence in claim.support_evidence
     )
+    support_summary = {
+        "supported": f"有 {len(support_evidence)} 处仍有效的简历原文依据",
+        "related": "剩余简历中发现相关描述，需要你核对是否能作为这条资料的依据",
+        "manual": "这条资料由你本人确认，不依赖简历原文",
+        "conflicted": "不同来源存在冲突，需要重新核对",
+        "unsupported": "当前简历中没有找到可以直接或相关核对的内容",
+    }.get(claim.support_status, "来源状态待核对")
     return UnifiedProfileCard(
         claim_id=claim.claim_id,
         claim_version_id=claim.claim_version_id,
         claim_type=claim.claim_type,
         version=claim.version_number,
+        support_status=claim.support_status,
         title=title,
         subtitle=subtitle,
         value=normalized,
-        sources=sources,
+        sources=tuple(sources),
+        support_summary=support_summary,
+        support_evidence=support_evidence,
     )
+
+
+def _readable_evidence_section(section: str) -> str:
+    value = section.strip()
+    if not value.startswith("{"):
+        return value
+    try:
+        locator = json.loads(value)
+    except json.JSONDecodeError:
+        return value
+    if not isinstance(locator, dict):
+        return value
+    label = str(locator.get("section") or "").strip()
+    line_start = locator.get("lineStart")
+    line_end = locator.get("lineEnd")
+    if isinstance(line_start, int):
+        location = (
+            f"第 {line_start} 行"
+            if not isinstance(line_end, int) or line_end == line_start
+            else f"第 {line_start}–{line_end} 行"
+        )
+        return f"{label} · {location}" if label else location
+    return label or "简历原文"
 
 
 def _normalize_existing_value(

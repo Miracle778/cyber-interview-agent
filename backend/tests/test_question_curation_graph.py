@@ -6,6 +6,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
+from langchain.agents.structured_output import StructuredOutputValidationError
+from langchain_core.messages import AIMessage
 from pydantic import ValidationError
 
 from app.agents import question_curation_contracts as curation_contracts
@@ -14,7 +16,10 @@ from app.agents.prompts.question_curation_prompts import (
     QUESTION_DISCOVERY_PROMPT,
     QUESTION_ENRICHMENT_PROMPT,
 )
-from app.agents.question_curation_agent import QuestionCurationAgents
+from app.agents.question_curation_agent import (
+    ModelOutputTruncatedError,
+    QuestionCurationAgents,
+)
 from app.agents.question_curation_contracts import (
     QuestionCandidate,
     QuestionCandidateBatch,
@@ -26,7 +31,7 @@ from app.agents.question_curation_contracts import (
 from app.graphs.question_curation import create_question_curation_graph
 from app.infrastructure.checkpoints import AgentCheckpointer
 from app.infrastructure.runtime_database import connect_runtime_database
-from app.review.curation_sections import SourceSection
+from app.review.curation_sections import SourceSection, section_sources
 from app.review.repository import ReviewRepository
 
 
@@ -511,6 +516,36 @@ async def test_concrete_agents_skip_heading_only_discovery_without_model_call(
     assert runnable.calls == 0
 
 
+@pytest.mark.asyncio
+async def test_concrete_agents_report_truncated_reasoning_as_recoverable(
+    tmp_path: Path,
+) -> None:
+    class Runnable:
+        async def ainvoke(self, _input, config=None, *, context=None):
+            return {
+                "result": [
+                    AIMessage(
+                        content=[{"type": "thinking", "thinking": "分析中"}],
+                        response_metadata={"stop_reason": "max_tokens"},
+                    )
+                ],
+                "structured_response": None,
+            }
+
+    runnable = Runnable()
+    agents = QuestionCurationAgents(runnable, runnable, runnable)
+    sections = (
+        SourceSection("s1", "s1#section-0001", 1, "正文", "a" * 64),
+    )
+
+    with pytest.raises(ModelOutputTruncatedError) as failure:
+        await agents.discover(
+            sections, context=context(tmp_path), config={}, unit_index=0
+        )
+
+    assert failure.value.code == "output_truncated"
+
+
 @pytest.mark.parametrize("_transport_failure", ["429", "5xx", "network"])
 def test_curation_transport_failures_have_at_most_one_retry(
     _transport_failure: str,
@@ -659,6 +694,35 @@ async def test_enrichment_commits_siblings_then_retries_only_missing_seed(
         item.status == "completed"
         for item in repository.list_curation_seed_tasks(batch.id)
     )
+
+
+@pytest.mark.asyncio
+async def test_enrichment_retries_malformed_tool_output_without_failing_wave(
+    repository: ReviewRepository, batch, tmp_path: Path
+):
+    malformed = StructuredOutputValidationError(
+        "ProviderQuestionCandidateChunk",
+        ValueError("candidates must contain objects"),
+        AIMessage(content="", tool_calls=[]),
+    )
+    agents = RecordingCurationAgents(
+        enrichment_outputs=[malformed, malformed],
+    )
+    graph = create_question_curation_graph(agents, repository=repository)
+
+    result = await graph.ainvoke(
+        persist_graph_input(
+            repository, curation_input(batch.id, section_count=1)
+        ),
+        context=context(tmp_path),
+    )
+
+    seed_tasks = repository.list_curation_seed_tasks(batch.id)
+    assert len(agents.enrichment_calls) == 2
+    assert len(seed_tasks) == 1
+    assert seed_tasks[0].status == "skipped"
+    assert seed_tasks[0].last_error_code == "invalid_provider_response"
+    assert result["candidates"] == []
 
 
 @pytest.mark.asyncio
@@ -1188,6 +1252,50 @@ async def test_retry_reuses_completed_discovery_item(
     assert repository.list_curation_work_items(
         batch.id, stage="discovery"
     )[0].attempt_count == 1
+
+
+@pytest.mark.asyncio
+async def test_legacy_dense_work_item_is_split_without_replanning_identity(
+    repository: ReviewRepository, batch, tmp_path: Path
+) -> None:
+    source_excerpt = "s1:notes.md\n" + "\n\n".join(
+        f"第 {index} 条没有明确题目结构的随手记录。"
+        for index in range(1, 9)
+    )
+    sections = section_sources((source_excerpt,))
+    legacy = repository.plan_curation_work_item(
+        batch_id=batch.id,
+        stage="discovery",
+        unit_index=0,
+        input_digest="f" * 64,
+        source_refs=tuple(section.ref for section in sections),
+        processor_kind="model",
+    )
+
+    class LegacyAgents(RecordingCurationAgents):
+        async def discover(self, sections, *, context, config, unit_index):
+            self.discovery_calls.append(DiscoveryCall(unit_index, tuple(sections)))
+            return QuestionSeedChunk(seeds=[QuestionSeed(
+                question_text=f"{sections[0].text} 可以追问什么？",
+                source_ref=sections[0].ref,
+                source_refs=[section.ref for section in sections],
+            )])
+
+    agents = LegacyAgents()
+    graph = create_question_curation_graph(agents, repository=repository)
+    await graph.ainvoke(
+        persist_graph_input(repository, {
+            **curation_input(batch.id),
+            "source_excerpts": [source_excerpt],
+        }),
+        context=context(tmp_path),
+    )
+
+    items = repository.list_curation_work_items(batch.id, stage="discovery")
+    assert [item.id for item in items] == [legacy.id]
+    assert items[0].status == "completed"
+    assert [len(call.sections) for call in agents.discovery_calls] == [6, 2]
+    assert len(items[0].output["seeds"]) == 2
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CurationConversation } from "./CurationConversation";
 import type { CurationSession, QuestionCandidate } from "./reviewTypes";
@@ -8,7 +8,10 @@ const session = { id: "s1", title: "整理", stage: "waiting_for_command", summa
 const candidate = (id: string): QuestionCandidate => ({ id, batchId: "b1", curationSessionId: "s1", sourceRefs: [], correctionNote: "建议核对答案", reviewNote: "", reviewNoteUpdatedAt: null, duplicateOfQuestionId: null, duplicateQuestion: null, status: "review_pending", createdAt: "now", updatedAt: "now", question: { questionId: `q-${id}`, documentId: `d-${id}`, contentHash: "hash", title: `题目 ${id.slice(1)}`, questionText: "问题", referenceAnswer: "答案", topics: ["backend"], difficulty: "medium", keyPoints: ["关键点"], followUps: [] }, draft: { id: `d-${id}`, title: `题目 ${id.slice(1)}`, markdown: `# 题目 ${id.slice(1)}`, status: "review_pending", version: 1, contentHash: "hash", documentType: "question" } });
 
 describe("CurationConversation artifacts", () => {
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
   it("shows three files by default, expands within the artifact list, and exposes file actions", () => {
     const onOpen = vi.fn(); const onPublish = vi.fn(); const onSaveNote = vi.fn();
     render(<CurationConversation session={session} candidates={Object.fromEntries(items.map((item) => [item.candidateId, candidate(item.candidateId)]))} optimisticMessage={null} busy={false} onSubmit={vi.fn()} onOpenCandidate={onOpen} onPublishCandidate={onPublish} onSaveNote={onSaveNote} />);
@@ -86,6 +89,27 @@ describe("CurationConversation artifacts", () => {
     expect(screen.getByLabelText("本次执行模型")).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "停止" }));
     expect(onStop).toHaveBeenCalledTimes(1);
+  });
+
+  it("updates the running process duration every second and freezes after completion", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-27T08:00:03Z"));
+    const runningSession = {
+      ...session,
+      stage: "generating",
+      messages: [{ id: "stage-1", executionId: "run-1", role: "assistant", content: "正在识别题目", messageKind: "stage", payload: {}, createdAt: "2026-07-27T08:00:00Z" }],
+      executionStartedAt: "2026-07-27T08:00:00Z",
+      executionFinishedAt: null,
+    } as CurationSession;
+    const { rerender } = render(<CurationConversation session={runningSession} optimisticMessage={null} busy onSubmit={vi.fn()} />);
+
+    expect(screen.getByText("· 耗时 3 秒")).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(2000));
+    expect(screen.getByText("· 耗时 5 秒")).toBeInTheDocument();
+
+    rerender(<CurationConversation session={{ ...runningSession, stage: "completed", executionFinishedAt: "2026-07-27T08:00:04Z" }} optimisticMessage={null} busy={false} onSubmit={vi.fn()} />);
+    act(() => vi.advanceTimersByTime(2000));
+    expect(screen.getByText("· 耗时 4 秒")).toBeInTheDocument();
   });
 
   it("offers one-click publication from the generated files header", () => {

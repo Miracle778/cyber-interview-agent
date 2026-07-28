@@ -13,15 +13,18 @@ from app.agents.agent_invocation import final_ai_text, isolated_thread_config
 from app.agents.agent_protocols import AgentRunnable
 from app.agents.prompts.review_round_prompts import (
     REVIEW_DISCUSSION_PROMPT,
+    REVIEW_TURN_CLASSIFICATION_PROMPT,
     PROJECT_ANSWER_EVALUATION_PROMPT,
     REVIEW_ROUND_EVALUATION_PROMPT,
     REVIEW_ROUND_REPORT_PROMPT,
     render_review_discussion_input,
+    render_review_turn_classification_input,
     render_round_evaluation_input,
     render_round_report_input,
 )
 from app.agents.review_round_contracts import (
     ReviewSessionReportOutput,
+    ReviewTurnClassification,
     RoundAnswerEvaluation,
 )
 from app.review.models import QuestionSnapshot
@@ -33,6 +36,7 @@ class ReviewRoundAgents:
     reporter: AgentRunnable
     discussion: AgentRunnable
     project_evaluator: AgentRunnable | None = None
+    turn_classifier: AgentRunnable | None = None
 
     @classmethod
     def create(
@@ -95,6 +99,48 @@ class ReviewRoundAgents:
                 model_override=answer_model_override,
                 checkpointer=checkpointer,
             ),
+            turn_classifier=factory.create(
+                AgentSpec(
+                    role="answer_evaluation",
+                    execution_name="review_turn_classifier",
+                    prompt=REVIEW_TURN_CLASSIFICATION_PROMPT,
+                    middleware=middleware,
+                    response_format=ReviewTurnClassification,
+                ),
+                model_bindings=model_bindings,
+                model_override=answer_model_override,
+                checkpointer=checkpointer,
+            ),
+        )
+
+    async def classify_turn(
+        self,
+        *,
+        question: QuestionSnapshot,
+        message: str,
+        context: AgentContext,
+        config: dict[str, Any],
+    ) -> ReviewTurnClassification:
+        if self.turn_classifier is None:
+            return ReviewTurnClassification(intent="answer")
+        result = await self.turn_classifier.ainvoke(
+            {
+                "messages": [
+                    HumanMessage(
+                        content=render_review_turn_classification_input(
+                            question=asdict(question),
+                            message=message,
+                        )
+                    )
+                ]
+            },
+            isolated_thread_config(config, context, "turn_classification"),
+            context=context,
+        )
+        if "structured_response" not in result:
+            raise ValueError("模型未生成结构化复习意图")
+        return ReviewTurnClassification.model_validate(
+            result["structured_response"]
         )
 
     async def evaluate(

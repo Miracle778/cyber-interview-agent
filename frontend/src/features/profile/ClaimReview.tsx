@@ -75,12 +75,13 @@ export function ClaimReview({ workspaceId, snapshot, loading = false, onRefresh,
     const claim = snapshot ? proposalClaim(snapshot, proposal) : null;
     return (status === "all" || proposal.status === status) && (category === "all" || proposalType(proposal, claim) === category);
   });
-  const selectable = filtered.filter((proposal) => proposal.status === "pending" && !hasConflict(snapshot, proposal));
+  const selectable = filtered.filter((proposal) => proposal.status === "pending");
   const safeFiltered = filtered.filter((proposal) => isSafeToAccept(snapshot, proposal));
   const selected = filtered.find((item) => item.id === selectedProposalId) ?? filtered[0] ?? null;
   const selectedClaim = selected && snapshot ? proposalClaim(snapshot, selected) : null;
   const conflict = Boolean(selected && hasConflict(snapshot, selected));
   const selectedCount = Object.keys(pending).length;
+  const selectedConflictCount = proposals.filter((proposal) => pending[proposal.id] && hasConflict(snapshot, proposal)).length;
   const allCurrentSelected = selectable.length > 0 && selectable.every((proposal) => pending[proposal.id]);
   const filteredCountLabel = status === "pending"
     ? "条待确认"
@@ -226,7 +227,6 @@ export function ClaimReview({ workspaceId, snapshot, loading = false, onRefresh,
               type="checkbox"
               aria-label={`选择 ${proposalTitle(proposal, claim)}`}
               checked={Boolean(pending[proposal.id])}
-              disabled={itemConflict}
               onChange={(event) => setSelected(proposal, event.target.checked)}
             /> : null}
             <button type="button" onClick={() => setSelectedProposalId(proposal.id)}>
@@ -262,7 +262,10 @@ export function ClaimReview({ workspaceId, snapshot, loading = false, onRefresh,
       </main>
     </div>
     {selectedCount ? <footer className="claim-review__batch">
-      <span>已选择 <strong>{selectedCount}</strong> 条，可统一确认或忽略。</span>
+      <span>
+        已选择 <strong>{selectedCount}</strong> 条，可统一确认或忽略。
+        {selectedConflictCount ? <small>其中 {selectedConflictCount} 条需要核对，请确认已查看右侧变化。</small> : null}
+      </span>
       <div><Button variant="ghost" onClick={() => setPending({})}>清空选择</Button><Button variant="secondary" loading={busy === "batch"} onClick={() => submitSelected("rejected")}>批量不保留</Button><Button loading={busy === "batch"} onClick={() => submitSelected("accepted")}>批量确认</Button></div>
     </footer> : null}
     {confirmSafeBatch ? <ProfileBatchConfirmDialog acceptedCount={safeFiltered.length} excludedCount={filtered.length - safeFiltered.length} busy={busy === "batch"} onCancel={() => setConfirmSafeBatch(false)} onConfirm={submitSafeFiltered} /> : null}

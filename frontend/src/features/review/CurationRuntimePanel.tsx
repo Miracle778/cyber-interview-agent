@@ -1,5 +1,6 @@
 import { Activity, ArrowLeft, Ban, ChevronDown, CirclePause, Clock3, FileText, Pause, Play, ShieldAlert, TriangleAlert, WifiOff } from "lucide-react";
 import { type CSSProperties, useEffect, useRef, useState } from "react";
+import { parseApiTimestamp } from "../../shared/time";
 import { Button } from "../../shared/ui/Button";
 import { CurationArtifactCard } from "./CurationArtifactCard";
 import { CurationProvisionalList } from "./CurationProvisionalList";
@@ -104,7 +105,7 @@ export function CurationRuntimePanel({ session, candidates = null, activeModelLa
   const statusCounts = candidateItems.reduce((counts, candidate) => ({ ...counts, [candidate.status]: counts[candidate.status] + 1 }), { draft: 0, review_pending: 0, published: 0, rejected: 0 });
   const ordinalByCandidate = new Map(session?.summary.items.map((item) => [item.candidateId, item.ordinal]) ?? []);
   const summaryCandidateIds = new Set(session?.summary.items.map((item) => item.candidateId) ?? []);
-  const recentCandidate = [...candidateItems].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))[0] ?? null;
+  const recentCandidate = [...candidateItems].sort((left, right) => parseApiTimestamp(right.updatedAt).getTime() - parseApiTimestamp(left.updatedAt).getTime())[0] ?? null;
   const qualityMatches = (candidate: QuestionCandidate) => qualityFilter === "ai_primary"
     ? ["model", "unknown"].includes(candidate.answerBasis ?? "unknown")
     : qualityFilter === "insufficient_support"
@@ -114,7 +115,7 @@ export function CurationRuntimePanel({ session, candidates = null, activeModelLa
         : true;
   const filteredCandidates = statusFilter || qualityFilter ? candidateItems
     .filter((candidate) => (!statusFilter || candidate.status === statusFilter) && qualityMatches(candidate))
-    .sort((left, right) => (ordinalByCandidate.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (ordinalByCandidate.get(right.id) ?? Number.MAX_SAFE_INTEGER) || Date.parse(right.updatedAt) - Date.parse(left.updatedAt)) : [];
+    .sort((left, right) => (ordinalByCandidate.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (ordinalByCandidate.get(right.id) ?? Number.MAX_SAFE_INTEGER) || parseApiTimestamp(right.updatedAt).getTime() - parseApiTimestamp(left.updatedAt).getTime()) : [];
   const generationLabel = session?.progress?.phase === "discovery" ? "正在识别题目" : session?.progress?.phase === "enrichment" ? "正在补全候选" : null;
   const candidateLimitReached = session?.warnings?.some((warning) => warning.code === "candidate_limit_reached") ?? false;
   const activeFilterLabel = statusFilter ? candidateStatusLabels[statusFilter] : qualityFilter === "ai_primary" ? "主要由 AI 生成" : qualityFilter === "insufficient_support" ? "材料支持不足" : qualityFilter === "needs_review" ? "需要人工复核" : null;
@@ -164,13 +165,27 @@ export function CurationRuntimePanel({ session, candidates = null, activeModelLa
   const cumulativeElapsed = activeClock.cumulativeBase + activeDelta;
   const controlState = session?.stage === "pausing" ? "pausing" : session?.batchStatus;
   const seedProgress = session?.seedProgress;
-  const processedSeedCount = seedProgress
-    ? seedProgress.completed + seedProgress.degraded + seedProgress.skipped
+  const activeSeedProgress = session?.progress?.phase === "discovery"
+    ? null
+    : seedProgress ?? null;
+  const processedSeedCount = activeSeedProgress
+    ? activeSeedProgress.completed + activeSeedProgress.degraded + activeSeedProgress.skipped
     : session?.progress?.completed ?? 0;
-  const generatedSeedCount = seedProgress
-    ? seedProgress.completed + seedProgress.degraded
+  const generatedSeedCount = session?.progress?.phase === "discovery"
+    ? seedProgress?.total ?? 0
+    : activeSeedProgress
+    ? activeSeedProgress.completed + activeSeedProgress.degraded
     : session?.progress?.generatedCandidateCount ?? 0;
-  const totalSeedCount = seedProgress?.total ?? session?.progress?.total ?? 0;
+  const totalSeedCount = activeSeedProgress
+    ? activeSeedProgress.total
+    : session?.progress?.total ?? 0;
+  const retryableCount = activeSeedProgress
+    ? activeSeedProgress.retrying
+    : session?.progress?.retryableUnits ?? session?.progress?.activeWorkers ?? 0;
+  const pendingCount = activeSeedProgress
+    ? activeSeedProgress.pending
+    : session?.progress?.pendingUnits ?? 0;
+  const skippedCount = activeSeedProgress ? activeSeedProgress.skipped : 0;
   const controlPresentation = controlState ? {
     generating: { label: generationLabel ?? "正在整理", detail: "已提交的处理单元会持续保存", icon: Activity },
     pausing: { label: "正在暂停…", detail: "正在安全停止活动工作单元", icon: Pause },
@@ -195,11 +210,11 @@ export function CurationRuntimePanel({ session, candidates = null, activeModelLa
             <div><strong>{controlPresentation.label}</strong><small>{controlPresentation.detail}</small></div>
           </div>
           <div className="curation-control-state__progress" role="status" aria-label="整理进度" aria-live="polite" aria-atomic="true">
-            <div><strong>{processedSeedCount} / {totalSeedCount}</strong><span>已处理</span></div>
-            <div><strong>{generatedSeedCount}</strong><span>已生成候选</span></div>
-            <div><strong>{session.seedProgress?.retrying ?? session.progress?.activeWorkers ?? 0}</strong><span>处理中或可重试</span></div>
-            <div><strong>{session.seedProgress?.skipped ?? 0}</strong><span>已跳过</span></div>
-            <div><strong>{session.seedProgress?.pending ?? 0}</strong><span>等待处理</span></div>
+            <div><strong>{processedSeedCount} / {totalSeedCount}</strong><span>{session.progress?.phase === "discovery" ? "已完成识别" : "已处理"}</span></div>
+            <div><strong>{generatedSeedCount}</strong><span>{session.progress?.phase === "discovery" ? "已发现题目" : "已生成候选"}</span></div>
+            <div><strong>{retryableCount}</strong><span>{session.progress?.activeWorkers ? "正在处理" : "可继续处理"}</span></div>
+            <div><strong>{skippedCount}</strong><span>已跳过</span></div>
+            <div><strong>{pendingCount}</strong><span>等待处理</span></div>
           </div>
           <div className="curation-control-state__activity"><span>{session.progress?.activeWorkers ?? 0} 个工作单元运行中</span><span>已生成 {session.progress?.generatedCandidateCount ?? 0} 道候选</span></div>
           <div className="curation-control-state__timing" aria-live="off">

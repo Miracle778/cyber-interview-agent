@@ -15,6 +15,7 @@ from app.review.errors import (
     ReviewConflictError,
     ReviewRoundNotFoundError,
 )
+from app.review.coverage import KeyPointCoverage
 from app.review.models import (
     AnswerBasis,
     AttemptStatus,
@@ -49,6 +50,7 @@ from app.review.models import (
     QuestionSnapshot,
     QuestionSourceLinkRecord,
     ReasoningEffort,
+    ReviewResultKind,
     ReportProposalRecord,
     ReviewAttemptRecord,
     ReviewAnswerReceipt,
@@ -66,6 +68,10 @@ def _canonical_json(value: object) -> str:
     return json.dumps(
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )
+
+
+def _references_source(reference: str, source_id: str) -> bool:
+    return reference.partition("#")[0] == source_id
 
 
 class ReviewRepository:
@@ -2506,6 +2512,16 @@ class ReviewRepository:
             raise LookupError(operation_id)
         return self._bulk_publication(row)
 
+    def get_latest_bulk_publication(
+        self, session_id: str
+    ) -> BulkPublicationRecord | None:
+        row = self._connection.execute(
+            "SELECT * FROM review_bulk_publications WHERE session_id = ? "
+            "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        return self._bulk_publication(row) if row is not None else None
+
     def reconcile_bulk_publication(
         self, operation_id: str
     ) -> BulkPublicationRecord:
@@ -2842,8 +2858,9 @@ class ReviewRepository:
         difficulty: str | None = None,
         source_id: str | None = None,
         status: str | None = None,
+        batch_ids: tuple[str, ...] | None = None,
         deleted_only: bool = False,
-        limit: int = 100,
+        limit: int | None = 100,
         offset: int = 0,
     ) -> tuple[QuestionCandidateRecord, ...]:
         rows = self._connection.execute(
@@ -2855,6 +2872,11 @@ class ReviewRepository:
             (workspace_id,),
         ).fetchall()
         records = [self._candidate_record(row) for row in rows]
+        if batch_ids is not None:
+            allowed_batch_ids = set(batch_ids)
+            records = [
+                item for item in records if item.batch_id in allowed_batch_ids
+            ]
         if query:
             needle = query.casefold()
             records = [
@@ -2873,11 +2895,18 @@ class ReviewRepository:
             records = [
                 item
                 for item in records
-                if source_id in item.source_refs
+                if any(
+                    _references_source(reference, source_id)
+                    for reference in item.source_refs
+                )
             ]
         if status:
             records = [item for item in records if item.status == status]
-        return tuple(records[offset : offset + limit])
+        return tuple(
+            records[offset:]
+            if limit is None
+            else records[offset : offset + limit]
+        )
 
     def delete_candidates(
         self,
@@ -2972,6 +3001,8 @@ class ReviewRepository:
             cursor = self._connection.execute(
                 "UPDATE review_question_candidates SET question_json = ?, "
                 "status = COALESCE(?, status), "
+                "confirmation_status = 'pending', confirmed_at = NULL, "
+                "confirmation_version = confirmation_version + 1, "
                 "rejection_reason = CASE WHEN ? = 'review_pending' "
                 "THEN NULL ELSE rejection_reason END, "
                 "rejected_at = CASE WHEN ? = 'review_pending' "
@@ -3004,7 +3035,9 @@ class ReviewRepository:
             cursor = self._connection.execute(
                 "UPDATE review_question_candidates SET draft_id = ?, question_json = ?, "
                 "status = 'review_pending', rejection_reason = NULL, rejected_at = NULL, "
-                "rejection_action_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                "rejection_action_id = NULL, confirmation_status = 'pending', "
+                "confirmed_at = NULL, confirmation_version = confirmation_version + 1, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (draft_id, _canonical_json(asdict(question)), candidate_id),
             )
             if cursor.rowcount != 1:
@@ -3080,6 +3113,111 @@ class ReviewRepository:
             if cursor.rowcount != 1:
                 raise LookupError(candidate_id)
         return self.get_candidate(candidate_id)
+
+    def confirm_candidates(
+        self,
+        workspace_id: str,
+        *,
+        candidate_ids: tuple[str, ...],
+        idempotency_key: str,
+    ) -> dict[str, object]:
+        normalized_ids = tuple(dict.fromkeys(candidate_ids))
+        request_hash = sha256(
+            _canonical_json({"candidateIds": normalized_ids}).encode()
+        ).hexdigest()
+        existing = self._connection.execute(
+            "SELECT request_hash, result_json "
+            "FROM review_candidate_confirmation_receipts "
+            "WHERE workspace_id = ? AND idempotency_key = ?",
+            (workspace_id, idempotency_key),
+        ).fetchone()
+        if existing is not None:
+            if existing["request_hash"] != request_hash:
+                raise ReviewConflictError(
+                    "candidate confirmation idempotency key changed"
+                )
+            return json.loads(existing["result_json"])
+        results: list[dict[str, object]] = []
+        with self._transaction():
+            for candidate_id in normalized_ids:
+                row = self._connection.execute(
+                    "SELECT c.* FROM review_question_candidates c "
+                    "JOIN review_question_batches b ON b.id = c.batch_id "
+                    "WHERE c.id = ? AND b.workspace_id = ?",
+                    (candidate_id, workspace_id),
+                ).fetchone()
+                if row is None:
+                    results.append(
+                        {
+                            "candidateId": candidate_id,
+                            "status": "failed",
+                            "reason": "not_found",
+                        }
+                    )
+                    continue
+                if row["confirmation_status"] == "confirmed":
+                    results.append(
+                        {
+                            "candidateId": candidate_id,
+                            "status": "already_confirmed",
+                            "reason": None,
+                        }
+                    )
+                    continue
+                question = self._snapshot(row["question_json"])
+                blocked_reason = None
+                if row["status"] != "review_pending":
+                    blocked_reason = "not_review_pending"
+                elif row["draft_id"] is None or not json.loads(
+                    row["source_refs_json"]
+                ):
+                    blocked_reason = "incomplete"
+                elif not question.required_key_points:
+                    blocked_reason = "missing_required_points"
+                elif (
+                    row["duplicate_of_question_id"] is not None
+                    and row["revision_of_question_id"]
+                    != row["duplicate_of_question_id"]
+                ):
+                    blocked_reason = "duplicate_conflict"
+                if blocked_reason is not None:
+                    results.append(
+                        {
+                            "candidateId": candidate_id,
+                            "status": "blocked",
+                            "reason": blocked_reason,
+                        }
+                    )
+                    continue
+                self._connection.execute(
+                    "UPDATE review_question_candidates "
+                    "SET confirmation_status = 'confirmed', "
+                    "confirmation_version = confirmation_version + 1, "
+                    "confirmed_at = CURRENT_TIMESTAMP, "
+                    "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (candidate_id,),
+                )
+                results.append(
+                    {
+                        "candidateId": candidate_id,
+                        "status": "confirmed",
+                        "reason": None,
+                    }
+                )
+            result: dict[str, object] = {"items": results}
+            self._connection.execute(
+                "INSERT INTO review_candidate_confirmation_receipts "
+                "(id, workspace_id, idempotency_key, request_hash, result_json) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    str(uuid4()),
+                    workspace_id,
+                    idempotency_key,
+                    request_hash,
+                    _canonical_json(result),
+                ),
+            )
+        return result
 
     def activate_question(
         self,
@@ -3173,7 +3311,14 @@ class ReviewRepository:
                     ),
                 )
             self._connection.execute(
-                "UPDATE review_question_candidates SET status = 'published', "
+                "UPDATE review_question_candidates "
+                "SET status = 'published', confirmation_status = 'confirmed', "
+                "confirmation_version = CASE "
+                "WHEN confirmation_version < 1 THEN 1 "
+                "WHEN confirmation_status <> 'confirmed' "
+                "THEN confirmation_version + 1 "
+                "ELSE confirmation_version END, "
+                "confirmed_at = COALESCE(confirmed_at, CURRENT_TIMESTAMP), "
                 "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (candidate_id,),
             )
@@ -3245,7 +3390,30 @@ class ReviewRepository:
             "ORDER BY published_at, rowid",
             (workspace_id,),
         ).fetchall()
-        records = tuple(self._catalog_record(row) for row in rows) + self._confirmed_project_questions(workspace_id)
+        source_rows = self._connection.execute(
+            "SELECT links.question_id, links.source_id "
+            "FROM review_question_source_links links "
+            "JOIN review_question_catalog catalog "
+            "ON catalog.question_id = links.question_id "
+            "WHERE catalog.workspace_id = ? AND catalog.active = 1 "
+            "GROUP BY links.question_id, links.source_id "
+            "ORDER BY MIN(links.created_at), MIN(links.rowid)",
+            (workspace_id,),
+        ).fetchall()
+        source_ids_by_question: dict[str, list[str]] = {}
+        for source_row in source_rows:
+            source_ids_by_question.setdefault(
+                str(source_row["question_id"]), []
+            ).append(str(source_row["source_id"]))
+        records = tuple(
+            replace(
+                self._catalog_record(row),
+                source_ids=tuple(
+                    source_ids_by_question.get(str(row["question_id"]), ())
+                ),
+            )
+            for row in rows
+        ) + self._confirmed_project_questions(workspace_id)
         if topic is not None:
             records = tuple(
                 item for item in records if topic in item.snapshot.topics
@@ -3422,6 +3590,137 @@ class ReviewRepository:
         ).fetchone()
         return None if row is None else self._input_receipt(row)
 
+    def record_auxiliary_turn(
+        self,
+        *,
+        round_id: str,
+        request_id: str,
+        idempotency_key: str,
+        value: str,
+        intent: Literal[
+            "show_question",
+            "request_hint",
+            "reveal_answer",
+            "explain",
+            "unrelated",
+        ],
+        response: str,
+    ) -> dict[str, object]:
+        value_hash = sha256(value.encode("utf-8")).hexdigest()
+        with self._transaction():
+            existing = self._connection.execute(
+                "SELECT * FROM review_auxiliary_turn_receipts "
+                "WHERE input_request_id = ? AND idempotency_key = ?",
+                (request_id, idempotency_key),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    existing["value_hash"] != value_hash
+                    or existing["intent"] != intent
+                ):
+                    raise ReviewConflictError(
+                        "auxiliary turn idempotency key was reused"
+                    )
+                return dict(existing)
+            request = self._connection.execute(
+                "SELECT * FROM review_input_requests WHERE id = ?",
+                (request_id,),
+            ).fetchone()
+            if (
+                request is None
+                or request["round_id"] != round_id
+                or request["status"] != "pending"
+            ):
+                raise ReviewConflictError("review input is no longer pending")
+            round_row = self._connection.execute(
+                "SELECT * FROM review_rounds WHERE id = ?", (round_id,)
+            ).fetchone()
+            if round_row is None:
+                raise ReviewRoundNotFoundError(round_id)
+            ordinal = int(request["ordinal"])
+            if intent in {"request_hint", "reveal_answer"}:
+                self._connection.execute(
+                    "INSERT INTO review_question_assistance "
+                    "(round_id, ordinal, hint_level, revealed) "
+                    "VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT(round_id, ordinal) DO UPDATE SET "
+                    "hint_level = MAX(review_question_assistance.hint_level, "
+                    "excluded.hint_level), "
+                    "revealed = MAX(review_question_assistance.revealed, "
+                    "excluded.revealed), updated_at = CURRENT_TIMESTAMP",
+                    (
+                        round_id,
+                        ordinal,
+                        1 if intent == "request_hint" else 2,
+                        1 if intent == "reveal_answer" else 0,
+                    ),
+                )
+            user_message_id = str(uuid4())
+            assistant_message_id = str(uuid4())
+            payload = _canonical_json(
+                {
+                    "roundId": round_id,
+                    "inputRequestId": request_id,
+                    "ordinal": ordinal,
+                    "intent": intent,
+                    "auxiliary": True,
+                }
+            )
+            for message_id, role, content, kind in (
+                (user_message_id, "user", value, "review_answer"),
+                (assistant_message_id, "assistant", response, "review_prompt"),
+            ):
+                self._connection.execute(
+                    "INSERT INTO agent_messages "
+                    "(id, session_id, run_id, role, content, message_kind, "
+                    "payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        message_id,
+                        round_row["session_id"],
+                        round_row["execution_id"],
+                        role,
+                        content,
+                        kind,
+                        payload,
+                    ),
+                )
+            receipt_id = str(uuid4())
+            self._connection.execute(
+                "INSERT INTO review_auxiliary_turn_receipts "
+                "(id, round_id, input_request_id, idempotency_key, value_hash, "
+                "intent, user_message_id, assistant_message_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    receipt_id,
+                    round_id,
+                    request_id,
+                    idempotency_key,
+                    value_hash,
+                    intent,
+                    user_message_id,
+                    assistant_message_id,
+                ),
+            )
+            row = self._connection.execute(
+                "SELECT * FROM review_auxiliary_turn_receipts WHERE id = ?",
+                (receipt_id,),
+            ).fetchone()
+            assert row is not None
+            return dict(row)
+
+    def question_assistance(
+        self, round_id: str, ordinal: int
+    ) -> tuple[int, bool]:
+        row = self._connection.execute(
+            "SELECT hint_level, revealed FROM review_question_assistance "
+            "WHERE round_id = ? AND ordinal = ?",
+            (round_id, ordinal),
+        ).fetchone()
+        return (0, False) if row is None else (
+            int(row["hint_level"]),
+            bool(row["revealed"]),
+        )
+
     def resolve_input(
         self,
         request_id: str,
@@ -3570,17 +3869,29 @@ class ReviewRepository:
                 if attempt_row is not None:
                     raise ReviewConflictError("answer attempt already exists")
                 resolved_attempt_id = attempt_id or str(uuid4())
+                snapshot = snapshots[ordinal - 1]
+                required_points = snapshot.get(
+                    "required_key_points", snapshot["key_points"]
+                )
+                initial_coverage = [
+                    {"point": point, "status": "uncovered", "evidence": []}
+                    for point in required_points
+                ]
                 self._connection.execute(
                     "INSERT INTO review_attempts "
                     "(id, round_id, ordinal, question_snapshot_json, answer, "
-                    "status, evaluation_started_at) "
-                    "VALUES (?, ?, ?, ?, ?, 'evaluating', CURRENT_TIMESTAMP)",
+                    "status, evaluation_started_at, coverage_json, "
+                    "answer_revisions_json) "
+                    "VALUES (?, ?, ?, ?, ?, 'evaluating', CURRENT_TIMESTAMP, "
+                    "?, ?)",
                     (
                         resolved_attempt_id,
                         request["round_id"],
                         ordinal,
-                        _canonical_json(snapshots[ordinal - 1]),
+                        _canonical_json(snapshot),
                         value,
+                        _canonical_json(initial_coverage),
+                        _canonical_json([value]),
                     ),
                 )
             else:
@@ -3589,13 +3900,16 @@ class ReviewRepository:
                         "follow-up input requires an existing attempt"
                     )
                 resolved_attempt_id = str(attempt_row["id"])
+                revisions = json.loads(attempt_row["answer_revisions_json"])
+                revisions.append(value)
                 self._connection.execute(
                     "UPDATE review_attempts SET follow_up_answer = ?, "
                     "status = 'evaluating', evaluation_error_code = NULL, "
                     "evaluation_started_at = CURRENT_TIMESTAMP, "
                     "evaluation_completed_at = NULL, "
+                    "answer_revisions_json = ?, "
                     "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    (value, resolved_attempt_id),
+                    (value, _canonical_json(revisions), resolved_attempt_id),
                 )
 
             resolved_message_id = message_id or str(uuid4())
@@ -3618,6 +3932,34 @@ class ReviewRepository:
                     _canonical_json(message_payload),
                 ),
             )
+            if request["kind"] == "answer":
+                reference_answer = str(
+                    snapshots[ordinal - 1].get("reference_answer") or ""
+                ).strip()
+                if reference_answer:
+                    reference_payload = {
+                        **message_payload,
+                        "auxiliary": True,
+                        "intent": "post_answer_reference",
+                        "automaticReference": True,
+                        "affectsMastery": False,
+                    }
+                    self._connection.execute(
+                        "INSERT INTO agent_messages "
+                        "(id, session_id, run_id, role, content, message_kind, "
+                        "payload_json) VALUES (?, ?, ?, 'assistant', ?, "
+                        "'review_prompt', ?)",
+                        (
+                            str(uuid4()),
+                            round_row["session_id"],
+                            execution_id,
+                            "参考答案："
+                            f"{reference_answer}\n\n"
+                            "这份答案在你提交后自动展示，仅用于答后对照，"
+                            "不影响本次掌握度评价。",
+                            _canonical_json(reference_payload),
+                        ),
+                    )
             resolved_receipt_id = receipt_id or str(uuid4())
             receipt_payload = {
                 "roundId": request["round_id"],
@@ -3678,6 +4020,13 @@ class ReviewRepository:
         attempt_id: str | None = None,
     ) -> str:
         identifier = attempt_id or str(uuid4())
+        coverage = [
+            {"point": point, "status": "uncovered", "evidence": []}
+            for point in question_snapshot.required_key_points
+        ]
+        revisions = [
+            item for item in (answer, follow_up_answer) if item is not None
+        ]
         with self._transaction():
             existing = self._connection.execute(
                 "SELECT id FROM review_attempts "
@@ -3693,8 +4042,9 @@ class ReviewRepository:
             self._connection.execute(
                 "INSERT INTO review_attempts "
                 "(id, round_id, ordinal, question_snapshot_json, answer, "
-                "follow_up_answer, evaluation_json, mastery_suggestion, skipped) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "follow_up_answer, evaluation_json, mastery_suggestion, skipped, "
+                "coverage_json, result_kind, answer_revisions_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     identifier,
                     round_id,
@@ -3705,9 +4055,24 @@ class ReviewRepository:
                     None if evaluation is None else _canonical_json(evaluation),
                     mastery_suggestion,
                     1 if skipped else 0,
+                    _canonical_json(coverage),
+                    "skipped" if skipped else None,
+                    _canonical_json(revisions),
                 ),
             )
         return identifier
+
+    def skip_attempt(self, attempt_id: str) -> ReviewAttemptRecord:
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE review_attempts SET skipped = 1, status = 'completed', "
+                "result_kind = 'skipped', updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND status = 'waiting_for_follow_up'",
+                (attempt_id,),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError("attempt is not waiting for follow-up")
+        return self.get_attempt(attempt_id)
 
     def list_attempts(self, round_id: str) -> tuple[ReviewAttemptRecord, ...]:
         rows = self._connection.execute(
@@ -3732,12 +4097,18 @@ class ReviewRepository:
         evaluation: dict[str, object],
         mastery_suggestion: str,
         needs_follow_up: bool,
+        coverage: tuple[KeyPointCoverage, ...] | None = None,
+        result_kind: ReviewResultKind | None = None,
+        hint_level: int | None = None,
     ) -> ReviewAttemptRecord:
         target = "waiting_for_follow_up" if needs_follow_up else "completed"
         with self._transaction():
             cursor = self._connection.execute(
                 "UPDATE review_attempts SET evaluation_json = ?, "
                 "mastery_suggestion = ?, status = ?, "
+                "coverage_json = COALESCE(?, coverage_json), "
+                "result_kind = COALESCE(?, result_kind), "
+                "hint_level = COALESCE(?, hint_level), "
                 "evaluation_error_code = NULL, "
                 "evaluation_completed_at = CURRENT_TIMESTAMP, "
                 "updated_at = CURRENT_TIMESTAMP "
@@ -3746,6 +4117,13 @@ class ReviewRepository:
                     _canonical_json(evaluation),
                     mastery_suggestion,
                     target,
+                    (
+                        None
+                        if coverage is None
+                        else _canonical_json([asdict(item) for item in coverage])
+                    ),
+                    result_kind,
+                    hint_level,
                     attempt_id,
                 ),
             )
@@ -3770,6 +4148,113 @@ class ReviewRepository:
             if cursor.rowcount != 1:
                 raise ReviewConflictError("attempt is not awaiting evaluation")
         return self.get_attempt(attempt_id)
+
+    def has_round_control_receipt(
+        self,
+        round_id: str,
+        *,
+        operation: Literal["interrupt_evaluation", "skip_current"],
+        idempotency_key: str,
+    ) -> bool:
+        row = self._connection.execute(
+            "SELECT 1 FROM review_round_control_receipts "
+            "WHERE round_id = ? AND operation = ? AND idempotency_key = ?",
+            (round_id, operation, idempotency_key),
+        ).fetchone()
+        return row is not None
+
+    def interrupt_attempt_evaluation(
+        self,
+        attempt_id: str,
+        *,
+        idempotency_key: str,
+    ) -> ReviewAttemptRecord:
+        with self._transaction():
+            attempt = self._connection.execute(
+                "SELECT * FROM review_attempts WHERE id = ?", (attempt_id,)
+            ).fetchone()
+            if attempt is None:
+                raise LookupError(attempt_id)
+            existing = self._connection.execute(
+                "SELECT 1 FROM review_round_control_receipts "
+                "WHERE round_id = ? AND operation = 'interrupt_evaluation' "
+                "AND idempotency_key = ?",
+                (attempt["round_id"], idempotency_key),
+            ).fetchone()
+            if existing is not None:
+                return self.get_attempt(attempt_id)
+            if attempt["status"] == "evaluating":
+                self._connection.execute(
+                    "UPDATE review_attempts SET status = 'evaluation_failed', "
+                    "evaluation_error_code = 'evaluation_interrupted', "
+                    "evaluation_completed_at = CURRENT_TIMESTAMP, "
+                    "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (attempt_id,),
+                )
+            elif not (
+                attempt["status"] == "evaluation_failed"
+                and attempt["evaluation_error_code"] == "evaluation_interrupted"
+            ):
+                raise ReviewConflictError("attempt evaluation is not interruptible")
+            self._connection.execute(
+                "INSERT INTO review_round_control_receipts "
+                "(id, round_id, operation, idempotency_key) "
+                "VALUES (?, ?, 'interrupt_evaluation', ?)",
+                (str(uuid4()), attempt["round_id"], idempotency_key),
+            )
+        return self.get_attempt(attempt_id)
+
+    def skip_current_attempt(
+        self,
+        round_id: str,
+        *,
+        attempt_id: str,
+        idempotency_key: str,
+    ) -> ReviewRoundRecord:
+        with self._transaction():
+            existing = self._connection.execute(
+                "SELECT 1 FROM review_round_control_receipts "
+                "WHERE round_id = ? AND operation = 'skip_current' "
+                "AND idempotency_key = ?",
+                (round_id, idempotency_key),
+            ).fetchone()
+            if existing is not None:
+                return self.get_round(round_id)
+            round_row = self._connection.execute(
+                "SELECT * FROM review_rounds WHERE id = ?", (round_id,)
+            ).fetchone()
+            if round_row is None:
+                raise ReviewRoundNotFoundError(round_id)
+            attempt = self._connection.execute(
+                "SELECT * FROM review_attempts WHERE id = ? AND round_id = ?",
+                (attempt_id, round_id),
+            ).fetchone()
+            if (
+                attempt is None
+                or int(attempt["ordinal"]) != int(round_row["current_index"]) + 1
+            ):
+                raise ReviewConflictError("attempt is not the current question")
+            if attempt["status"] not in {
+                "evaluating",
+                "evaluation_failed",
+                "waiting_for_follow_up",
+            }:
+                raise ReviewConflictError("current attempt cannot be skipped")
+            self._connection.execute(
+                "UPDATE review_attempts SET skipped = 1, status = 'completed', "
+                "result_kind = 'skipped', evaluation_error_code = NULL, "
+                "evaluation_completed_at = COALESCE("
+                "evaluation_completed_at, CURRENT_TIMESTAMP), "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (attempt_id,),
+            )
+            self._connection.execute(
+                "INSERT INTO review_round_control_receipts "
+                "(id, round_id, operation, idempotency_key) "
+                "VALUES (?, ?, 'skip_current', ?)",
+                (str(uuid4()), round_id, idempotency_key),
+            )
+        return self.get_round(round_id)
 
     def complete_attempt_without_follow_up(
         self, attempt_id: str
@@ -4320,7 +4805,7 @@ class ReviewRepository:
         try:
             from app.agents.question_curation_contracts import (
                 QuestionCandidateChunk,
-                QuestionSeedChunk,
+                QuestionSeedBatch,
             )
         except ImportError:
             # Task 1 and this persistence foundation can land independently.
@@ -4375,7 +4860,7 @@ class ReviewRepository:
             validated = output
         else:
             contract = (
-                QuestionSeedChunk if stage == "discovery" else QuestionCandidateChunk
+                QuestionSeedBatch if stage == "discovery" else QuestionCandidateChunk
             )
             validated = contract.model_validate(output).model_dump(mode="json")
         encoded = _canonical_json(validated)
@@ -4511,6 +4996,10 @@ class ReviewRepository:
             difficulty=cast(Difficulty, data["difficulty"]),
             key_points=tuple(data["key_points"]),
             follow_ups=tuple(data["follow_ups"]),
+            required_key_points=tuple(
+                data.get("required_key_points", data["key_points"])
+            ),
+            bonus_key_points=tuple(data.get("bonus_key_points", ())),
         )
 
     @staticmethod
@@ -4526,6 +5015,11 @@ class ReviewRepository:
             answer_model_id=str(data["answer_model_id"]),
             reasoning_effort=cast(
                 ReasoningEffort, data["reasoning_effort"]
+            ),
+            source_id=(
+                None
+                if data.get("source_id") is None
+                else str(data["source_id"])
             ),
         )
 
@@ -4581,6 +5075,12 @@ class ReviewRepository:
             normalization_issues=tuple(
                 json.loads(row["normalization_issues_json"])
             ),
+            confirmation_status=cast(
+                Literal["pending", "confirmed"],
+                row["confirmation_status"],
+            ),
+            confirmation_version=int(row["confirmation_version"]),
+            confirmed_at=row["confirmed_at"],
             status=row["status"],
             deleted_at=row["deleted_at"],
             deletion_reason=row["deletion_reason"],
@@ -4828,6 +5328,20 @@ class ReviewRepository:
             evaluation_error_code=row["evaluation_error_code"],
             evaluation_started_at=row["evaluation_started_at"],
             evaluation_completed_at=row["evaluation_completed_at"],
+            coverage=tuple(
+                KeyPointCoverage(
+                    point=str(item["point"]),
+                    status=cast(
+                        Literal["uncovered", "partial", "covered"],
+                        item["status"],
+                    ),
+                    evidence=tuple(item.get("evidence", ())),
+                )
+                for item in json.loads(row["coverage_json"])
+            ),
+            result_kind=cast(ReviewResultKind | None, row["result_kind"]),
+            hint_level=int(row["hint_level"]),
+            answer_revisions=tuple(json.loads(row["answer_revisions_json"])),
         )
 
     @staticmethod

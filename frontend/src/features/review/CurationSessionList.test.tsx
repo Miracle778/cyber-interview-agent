@@ -37,10 +37,11 @@ describe("CurationSessionList", () => {
     const onOpenLibrary = vi.fn();
     render(<CurationSessionList sessions={[session("active", "waiting_for_command", 4, 1)]} candidateCount={4} publishedCount={1} onSelect={vi.fn()} onCreate={vi.fn()} onDelete={vi.fn()} onOpenLibrary={onOpenLibrary} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /题目总数/ }));
+    fireEvent.click(screen.getByRole("button", { name: /题库题目/ }));
     expect(onOpenLibrary).toHaveBeenLastCalledWith(null);
-    fireEvent.click(screen.getByRole("button", { name: /已发布/ }));
+    fireEvent.click(screen.getByRole("button", { name: /已入库题目/ }));
     expect(onOpenLibrary).toHaveBeenLastCalledWith("published");
+    expect(screen.getByRole("button", { name: /active\.md/ })).toHaveTextContent("本次：4 个候选 · 1 道已入库 · 3 道待确认");
   });
 
   it("explains the aggregate candidate limit", () => {

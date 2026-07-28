@@ -1,4 +1,5 @@
 import { History } from "lucide-react";
+import { formatBeijingDate } from "../../shared/time";
 import type { ReviewRound } from "./reviewTypes";
 
 function progressLabel(round: ReviewRound): string {
@@ -24,7 +25,7 @@ export function ReviewHistory({ rounds, selectedId, onSelect }: { rounds: Review
         <button key={round.id} type="button" className="review-history__item" aria-current={round.id === selectedId} onClick={() => onSelect(round.id)}>
           <strong>{round.questionCount} 题 · {round.settings.mode}</strong>
           <span>{progressLabel(round)}</span>
-          <small>{round.status} · {new Date(round.updatedAt).toLocaleDateString("zh-CN")}</small>
+          <small>{round.status} · {formatBeijingDate(round.updatedAt) ?? round.updatedAt}</small>
         </button>
       ))}
     </nav>

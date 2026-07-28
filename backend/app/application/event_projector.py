@@ -40,6 +40,8 @@ _CUSTOM_KEYS = {
         "errorCode",
     },
     "execution.warning": {"code", "message"},
+    "review.evaluation.checking_key_points": {"roundId", "attemptId", "ordinal"},
+    "review.evaluation.deciding_follow_up": {"roundId", "attemptId", "ordinal"},
 }
 
 

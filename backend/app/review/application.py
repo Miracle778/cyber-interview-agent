@@ -7,7 +7,7 @@ from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Awaitable, Callable, Literal
 from uuid import uuid4
 
 from app.application.execution_service import (
@@ -41,7 +41,9 @@ from app.hitl.service import HitlService
 from app.knowledge.drafts import KnowledgeDraftService, UpdateDraftCommand
 from app.knowledge.source_registry import KnowledgeSourceService
 from app.knowledge.publication import PublicationService
-from app.review.errors import ReviewConflictError
+from app.review.errors import InsufficientQuestionsError, ReviewConflictError
+from app.review.turn_intent import classify_review_turn
+from app.review.turn_intent import ReviewTurnIntent
 from app.review.curation_commands import CurationCommandService
 from app.review.curation_command_contracts import CurationCommandPlan
 from app.review.curation_context import (
@@ -92,6 +94,20 @@ def _is_transient_sqlite_lock(error: BaseException) -> bool:
             "database is busy",
         )
     )
+
+
+def _publication_error_code(error: BaseException) -> str:
+    if _is_transient_sqlite_lock(error):
+        return "database_locked"
+    if isinstance(error, ReviewConflictError):
+        return "publication_conflict"
+    stable_code = getattr(error, "code", None)
+    if isinstance(stable_code, str) and stable_code in {
+        "publication_failed",
+        "publication_index_failed",
+    }:
+        return stable_code
+    return "publication_failed"
 
 
 def _seed_progress_resource(seed_tasks) -> dict[str, int]:
@@ -153,6 +169,9 @@ class ReviewApplication:
         ) = None,
         curation_context_projection=None,
         curation_context_factory: Callable[..., AgentContext] | None = None,
+        review_turn_classifier: (
+            Callable[..., Awaitable[ReviewTurnIntent]] | None
+        ) = None,
     ) -> None:
         self.workspace_id = workspace_id
         self.workspace_root = workspace_root
@@ -169,6 +188,7 @@ class ReviewApplication:
         self.curation_command_agents_factory = curation_command_agents_factory
         self.curation_context_projection = curation_context_projection
         self.curation_context_factory = curation_context_factory
+        self.review_turn_classifier = review_turn_classifier
         self.selector = QuestionSelector()
         self._discussion_locks: dict[str, asyncio.Lock] = {}
         self._curation_control_locks: dict[str, asyncio.Lock] = {}
@@ -379,11 +399,13 @@ class ReviewApplication:
             for batch in self.repository.list_batches(self.workspace_id)
             if batch.session_id == session_id
         ]
-        candidates = [
-            candidate
-            for candidate in self.repository.list_candidates(self.workspace_id)
-            if any(candidate.batch_id == batch.id for batch in batches)
-        ]
+        candidates = list(
+            self.repository.list_candidates(
+                self.workspace_id,
+                batch_ids=tuple(batch.id for batch in batches),
+                limit=None,
+            )
+        )
         latest_command = self.repository.latest_curation_command_receipt(
             session_id
         )
@@ -569,6 +591,13 @@ class ReviewApplication:
                         if phase == "enrichment" and seed_tasks
                         else work_items
                     )
+                ),
+                "retryable_units": sum(
+                    item.status in {"failed", "interrupted", "retryable"}
+                    for item in phase_items
+                ),
+                "pending_units": sum(
+                    item.status == "pending" for item in phase_items
                 ),
             },
             "timing": {
@@ -1122,9 +1151,7 @@ class ReviewApplication:
                             item.id,
                             expected=("running",),
                             target="failed",
-                            error_code=str(
-                                getattr(error, "code", "publication_failed")
-                            ),
+                            error_code=_publication_error_code(error),
                         )
                     await self.events.publish(
                         operation.session_id,
@@ -1193,6 +1220,18 @@ class ReviewApplication:
         self, operation_id: str
     ) -> dict[str, Any]:
         operation = self.repository.reconcile_bulk_publication(operation_id)
+        return self._bulk_publication_resource(operation)
+
+    def latest_bulk_publication_resource(
+        self, session_id: str
+    ) -> dict[str, Any] | None:
+        operation = self.repository.get_latest_bulk_publication(session_id)
+        if operation is None:
+            return None
+        operation = self.repository.reconcile_bulk_publication(operation.id)
+        return self._bulk_publication_resource(operation)
+
+    def _bulk_publication_resource(self, operation) -> dict[str, Any]:
         return {
             "id": operation.id,
             "session_id": operation.session_id,
@@ -2184,6 +2223,17 @@ class ReviewApplication:
         }:
             return None
         items = self.repository.list_curation_work_items(record.active_batch_id)
+        discovery_items = tuple(
+            item for item in items if item.stage == "discovery"
+        )
+        if discovery_items and all(
+            item.status == "completed" for item in discovery_items
+        ):
+            seed_tasks = self.repository.list_curation_seed_tasks(
+                record.active_batch_id
+            )
+            if seed_tasks:
+                return "enrichment"
         if any(item.stage == "enrichment" for item in items):
             return "enrichment"
         return "discovery" if items else None
@@ -2354,8 +2404,11 @@ class ReviewApplication:
         batch = self.repository.get_batch(batch_id)
         if batch.workspace_id != self.workspace_id:
             raise LookupError(batch_id)
-        candidates = self.repository.list_candidates(self.workspace_id)
-        own = [item for item in candidates if item.batch_id == batch.id]
+        own = self.repository.list_candidates(
+            self.workspace_id,
+            batch_ids=(batch.id,),
+            limit=None,
+        )
         return {
             "id": batch.id,
             "workspace_id": batch.workspace_id,
@@ -2434,6 +2487,9 @@ class ReviewApplication:
             "material_support": candidate.material_support,
             "needs_review": candidate.needs_review,
             "normalization_issues": candidate.normalization_issues,
+            "confirmation_status": candidate.confirmation_status,
+            "confirmation_version": candidate.confirmation_version,
+            "confirmed_at": candidate.confirmed_at,
             "is_active_version": is_active_version,
             "status": candidate.status,
             "deleted_at": candidate.deleted_at,
@@ -2505,6 +2561,18 @@ class ReviewApplication:
             items=items,
             idempotency_key=idempotency_key,
             reason=reason.strip(),
+        )
+
+    def confirm_candidates(
+        self,
+        candidate_ids: tuple[str, ...],
+        *,
+        idempotency_key: str,
+    ) -> dict[str, object]:
+        return self.repository.confirm_candidates(
+            self.workspace_id,
+            candidate_ids=candidate_ids,
+            idempotency_key=idempotency_key,
         )
 
     async def restore_candidate(self, candidate_id: str) -> dict[str, Any]:
@@ -2685,12 +2753,24 @@ class ReviewApplication:
             topics=tuple(values.get("topics", current.topics)),
             difficulty=values.get("difficulty", current.difficulty),
             key_points=tuple(values.get("key_points", current.key_points)),
+            required_key_points=tuple(
+                values.get("required_key_points", current.required_key_points)
+            ),
+            bonus_key_points=tuple(
+                values.get("bonus_key_points", current.bonus_key_points)
+            ),
             follow_ups=tuple(values.get("follow_ups", current.follow_ups)),
         )
         markdown = (
             f"# {updated.title}\n\n## 题目\n\n{updated.question_text}\n\n"
-            f"## 参考答案\n\n{updated.reference_answer}\n\n## 关键点\n\n"
-            + "\n".join(f"- {item}" for item in updated.key_points)
+            f"## 参考答案\n\n{updated.reference_answer}\n\n## 必答点\n\n"
+            + "\n".join(f"- {item}" for item in updated.required_key_points)
+            + "\n\n## 加分点\n\n"
+            + (
+                "\n".join(f"- {item}" for item in updated.bonus_key_points)
+                if updated.bonus_key_points
+                else "- 暂无"
+            )
             + "\n"
         )
         draft = await self.drafts.update(
@@ -2721,8 +2801,24 @@ class ReviewApplication:
     async def create_round(self, settings: ReviewRoundSettings):
         self.validate_model(settings.answer_model_id, settings.reasoning_effort)
         mastery = self.repository.get_mastery(self.workspace_id)
+        catalog = self.repository.list_active_questions(self.workspace_id)
+        if settings.mode == "source-file":
+            assert settings.source_id is not None
+            try:
+                await KnowledgeSourceService(
+                    self.workspace_root,
+                    workspace_id=self.workspace_id,
+                ).get(settings.source_id, include_deleted=False)
+            except LookupError as error:
+                raise InsufficientQuestionsError(
+                    available=0,
+                    requested=settings.question_count,
+                ) from error
+            available = self.selector.eligible_count(catalog, settings)
+            if available < settings.question_count and available > 0:
+                settings = replace(settings, question_count=available)
         snapshots = self.selector.select(
-            self.repository.list_active_questions(self.workspace_id),
+            catalog,
             mastery,
             settings,
             seed=settings.seed,
@@ -2795,6 +2891,141 @@ class ReviewApplication:
         )
         return receipt
 
+    async def submit_turn(
+        self,
+        round_id: str,
+        *,
+        request_id: str,
+        version: int,
+        idempotency_key: str,
+        value: str,
+        provider_model_id: str | None = None,
+        reasoning_effort: ReasoningEffort | None = None,
+    ) -> dict[str, Any]:
+        round_record = self.repository.get_round(round_id)
+        request = self.repository.get_input_request(request_id)
+        if (
+            request.round_id != round_id
+            or request.version != version
+            or request.status != "pending"
+        ):
+            raise ReviewConflictError("input request changed")
+        intent = classify_review_turn(value)
+        if intent is None and self.review_turn_classifier is not None:
+            resolved_model_id = (
+                provider_model_id or round_record.settings.answer_model_id
+            )
+            resolved_reasoning = (
+                reasoning_effort or round_record.settings.reasoning_effort
+            )
+            self.validate_model(resolved_model_id, resolved_reasoning)
+            intent = await self.review_turn_classifier(
+                question=round_record.question_snapshots[request.ordinal - 1],
+                message=value,
+                provider_model_id=resolved_model_id,
+                reasoning_effort=resolved_reasoning,
+                session_id=round_record.session_id,
+                execution_id=round_record.execution_id,
+            )
+        intent = intent or "answer"
+        if intent == "answer":
+            receipt = await self.submit_answer(
+                round_id,
+                request_id=request_id,
+                version=version,
+                idempotency_key=idempotency_key,
+                value=value,
+                provider_model_id=provider_model_id,
+                reasoning_effort=reasoning_effort,
+            )
+            return {
+                "kind": "answer",
+                "intent": "answer",
+                "round_id": round_id,
+                "input_request_id": request_id,
+                "attempt_id": receipt.attempt_id,
+                "receipt_id": receipt.id,
+                "status": receipt.status,
+            }
+        if intent == "skip":
+            await self.skip(
+                round_id,
+                request_id=request_id,
+                version=version,
+                idempotency_key=idempotency_key,
+            )
+            return {
+                "kind": "skipped",
+                "intent": "skip",
+                "round_id": round_id,
+                "input_request_id": request_id,
+                "attempt_id": None,
+                "receipt_id": idempotency_key,
+                "status": "completed",
+            }
+        question = round_record.question_snapshots[request.ordinal - 1]
+        if intent == "show_question":
+            response = f"当前题目：{question.question_text}\n\n请继续回答这道题。"
+        elif intent == "request_hint":
+            attempts = self.repository.list_attempts(round_id)
+            current = next(
+                (item for item in attempts if item.ordinal == request.ordinal),
+                None,
+            )
+            uncovered = (
+                [
+                    item.point
+                    for item in current.coverage
+                    if item.status != "covered"
+                ]
+                if current is not None
+                else list(question.required_key_points)
+            )
+            direction = uncovered[0] if uncovered else question.topics[0]
+            response = (
+                f"提示：先从“{direction}”这个方向组织你的回答。"
+                "\n\n不用一次答得完，回答后我会告诉你还缺哪个方向。"
+            )
+        elif intent == "reveal_answer":
+            response = (
+                f"参考答案：{question.reference_answer}"
+                "\n\n这次会记为“查看答案”，请再用自己的话复述一遍。"
+            )
+        elif intent == "explain":
+            response = (
+                f"这道题主要考察：{'、'.join(question.topics)}。"
+                "你可以先说明核心概念，再讲判断或处理步骤。"
+                "\n\n回到当前题，请继续作答。"
+            )
+        else:
+            response = (
+                "我先帮你守住当前复习进度。请继续回答当前题；"
+                "如果暂时不想答，可以点击“跳过此题”。"
+            )
+        receipt = self.repository.record_auxiliary_turn(
+            round_id=round_id,
+            request_id=request_id,
+            idempotency_key=idempotency_key,
+            value=value,
+            intent=intent,
+            response=response,
+        )
+        await self.events.publish(
+            round_record.session_id,
+            round_record.execution_id,
+            "review.turn.responded",
+            {"roundId": round_id, "intent": intent},
+        )
+        return {
+            "kind": "auxiliary",
+            "intent": intent,
+            "round_id": round_id,
+            "input_request_id": request_id,
+            "attempt_id": None,
+            "receipt_id": receipt["id"],
+            "status": "waiting_for_answer",
+        }
+
     @staticmethod
     def answer_receipt_resource(receipt) -> dict[str, Any]:
         return {
@@ -2847,20 +3078,114 @@ class ReviewApplication:
         return self.repository.get_round(round_id)
 
     async def skip(
-        self, round_id: str, *, request_id: str, version: int, idempotency_key: str
+        self,
+        round_id: str,
+        *,
+        request_id: str | None,
+        version: int | None,
+        idempotency_key: str,
     ):
         round_record = self.repository.get_round(round_id)
-        request = self.repository.get_input_request(request_id)
-        if request.round_id != round_id or request.version != version:
-            raise ReviewConflictError("input request changed")
         if round_record.execution_id is None:
             raise ReviewConflictError("round has no execution")
-        await self.executions.skip_input(
-            round_record.execution_id,
-            request_id=request_id,
-            receipt_id=idempotency_key,
+        pending = self.repository.pending_input(round_id)
+        if pending is not None:
+            if request_id is not None and request_id != pending.id:
+                raise ReviewConflictError("input request changed")
+            if version is not None and version != pending.version:
+                raise ReviewConflictError("input request changed")
+            await self.executions.skip_input(
+                round_record.execution_id,
+                request_id=pending.id,
+                receipt_id=idempotency_key,
+            )
+            await self.executions.wait(round_record.execution_id)
+            return self.repository.get_round(round_id)
+
+        if self.repository.has_round_control_receipt(
+            round_id,
+            operation="skip_current",
+            idempotency_key=idempotency_key,
+        ):
+            return self.repository.get_round(round_id)
+        attempt = next(
+            (
+                item
+                for item in reversed(self.repository.list_attempts(round_id))
+                if item.ordinal == round_record.current_index + 1
+                and item.status in {
+                    "evaluating",
+                    "evaluation_failed",
+                    "waiting_for_follow_up",
+                }
+            ),
+            None,
+        )
+        if attempt is None:
+            raise ReviewConflictError("current question cannot be skipped")
+        execution = self.executions.execution(round_record.execution_id)
+        if execution.status == "running":
+            await self.executions.interrupt_review_evaluation(execution.id)
+        elif execution.status != "interrupted":
+            raise ReviewConflictError("review evaluation cannot be skipped")
+        self.repository.skip_current_attempt(
+            round_id,
+            attempt_id=attempt.id,
+            idempotency_key=idempotency_key,
+        )
+        await self.executions.resume_review_after_skip(
+            execution.id,
+            round_id=round_id,
         )
         await self.executions.wait(round_record.execution_id)
+        return self.repository.get_round(round_id)
+
+    async def interrupt_evaluation(
+        self, round_id: str, *, idempotency_key: str
+    ):
+        round_record = self.repository.get_round(round_id)
+        if round_record.execution_id is None:
+            raise ReviewConflictError("round has no execution")
+        if self.repository.has_round_control_receipt(
+            round_id,
+            operation="interrupt_evaluation",
+            idempotency_key=idempotency_key,
+        ):
+            return self.repository.get_round(round_id)
+        attempt = next(
+            (
+                item
+                for item in reversed(self.repository.list_attempts(round_id))
+                if item.ordinal == round_record.current_index + 1
+                and item.status in {"evaluating", "evaluation_failed"}
+            ),
+            None,
+        )
+        if attempt is None:
+            raise ReviewConflictError("current evaluation is not interruptible")
+        execution = self.executions.execution(round_record.execution_id)
+        if execution.status == "running":
+            await self.executions.interrupt_review_evaluation(execution.id)
+        elif not (
+            execution.status == "interrupted"
+            and attempt.status == "evaluation_failed"
+            and attempt.evaluation_error_code == "evaluation_interrupted"
+        ):
+            raise ReviewConflictError("current evaluation is not interruptible")
+        self.repository.interrupt_attempt_evaluation(
+            attempt.id, idempotency_key=idempotency_key
+        )
+        await self.events.publish(
+            round_record.session_id,
+            execution.id,
+            "review.evaluation.failed",
+            {
+                "roundId": round_id,
+                "attemptId": attempt.id,
+                "code": "evaluation_interrupted",
+                "version": round_record.version,
+            },
+        )
         return self.repository.get_round(round_id)
 
     async def cancel(self, round_id: str):
@@ -2958,12 +3283,115 @@ class ReviewApplication:
         current_question = None
         if round_record.current_index < len(round_record.question_snapshots):
             question = round_record.question_snapshots[round_record.current_index]
+            attempt = next(
+                (
+                    item
+                    for item in attempts
+                    if item.ordinal == round_record.current_index + 1
+                ),
+                None,
+            )
+            coverage = () if attempt is None else attempt.coverage
+            hint_level, _revealed = self.repository.question_assistance(
+                round_id, round_record.current_index + 1
+            )
+            source_links = self.repository.list_question_source_links(
+                question.question_id
+            )
+            source_ids = tuple(
+                dict.fromkeys(link.source_id for link in source_links)
+            )
+            source_service = (
+                KnowledgeSourceService(
+                    self.workspace_root,
+                    workspace_id=self.workspace_id,
+                )
+                if source_ids
+                else None
+            )
+
+            async def load_source(source_id: str):
+                assert source_service is not None
+                try:
+                    return await source_service.get(source_id)
+                except LookupError:
+                    return None
+
+            source_records = (
+                await asyncio.gather(
+                    *(load_source(source_id) for source_id in source_ids),
+                )
+                if source_ids
+                else ()
+            )
+            sources_by_id = {
+                source_id: record
+                for source_id, record in zip(
+                    source_ids, source_records, strict=True
+                )
+                if record is not None
+            }
+            source_resources = []
+            for source_id in source_ids:
+                links = [
+                    link
+                    for link in source_links
+                    if link.source_id == source_id
+                ]
+                section_numbers = []
+                for link in links:
+                    suffix = link.evidence_ref.rpartition("#section-")[2]
+                    if suffix.isdigit():
+                        section_numbers.append(int(suffix))
+                source = sources_by_id.get(source_id)
+                source_resources.append(
+                    {
+                        "source_id": source_id,
+                        "filename": (
+                            None
+                            if source is None
+                            else source.original_filename
+                        ),
+                        "section_numbers": tuple(
+                            dict.fromkeys(section_numbers)
+                        ),
+                        "evidence_count": len(links),
+                        "availability": (
+                            "missing"
+                            if source is None
+                            else "deleted"
+                            if source.deleted_at is not None
+                            else "available"
+                        ),
+                    }
+                )
             current_question = {
                 "id": question.question_id,
+                "document_id": question.document_id,
                 "title": question.title,
                 "question_text": question.question_text,
                 "topics": question.topics,
                 "difficulty": question.difficulty,
+                "required_key_point_count": len(
+                    question.required_key_points
+                ),
+                "covered_key_point_count": sum(
+                    item.status == "covered" for item in coverage
+                ),
+                "missing_directions": (
+                    [
+                        item.point
+                        for item in coverage
+                        if item.status != "covered"
+                    ]
+                    if attempt is not None and attempt.evaluation is not None
+                    else []
+                ),
+                "has_answer": bool(
+                    attempt is not None and attempt.answer_revisions
+                ),
+                "hint_level": hint_level,
+                "sources": source_resources,
             }
         reports = []
         for report_kind in ("session_report", "mastery_report"):
@@ -2979,6 +3407,7 @@ class ReviewApplication:
                     "id": draft.id,
                     "report_kind": report_kind,
                     "title": draft.title,
+                    "markdown": draft.markdown,
                     "status": draft.status,
                     "version": draft.version,
                     "publication": (

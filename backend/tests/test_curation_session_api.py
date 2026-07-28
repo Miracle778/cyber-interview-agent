@@ -32,7 +32,23 @@ from app.agents.question_curation_contracts import (
 )
 from tests.test_review_api_v2 import _graph_factory
 from app.review.curation_command_contracts import CurationCommandPlan
+from app.review.application import _publication_error_code
 from app.review.errors import ReviewConflictError
+from app.review.models import QuestionSnapshot
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (sqlite3.OperationalError("database is locked"), "database_locked"),
+        (ReviewConflictError("candidate changed"), "publication_conflict"),
+        (RuntimeError("private provider detail"), "publication_failed"),
+    ],
+)
+def test_bulk_publication_failure_uses_safe_specific_error_code(
+    error: BaseException, expected: str
+) -> None:
+    assert _publication_error_code(error) == expected
 
 
 def _session_graph_factory(kind, **dependencies):
@@ -913,9 +929,11 @@ async def test_curation_control_api_uses_header_and_resumes_same_batch(
     assert paused.json()["progress"] == {
         "phase": "discovery",
         "completed": 1,
-        "total": 2,
-        "generatedCandidateCount": 0,
-        "activeWorkers": 0,
+            "total": 2,
+            "generatedCandidateCount": 0,
+            "activeWorkers": 0,
+            "retryableUnits": 1,
+            "pendingUnits": 0,
     }
     assert repeated_pause.status_code == 202
     assert repeated_pause.json()["batchVersion"] == paused.json()["batchVersion"]
@@ -1302,6 +1320,8 @@ async def test_curation_resource_projects_timing_workers_and_read_only_provision
         "total": 2,
         "generatedCandidateCount": 2,
         "activeWorkers": 1,
+        "retryableUnits": 0,
+        "pendingUnits": 0,
     }
     assert resource["timing"] == {
         "currentElapsedMs": 10_000,
@@ -1345,6 +1365,48 @@ async def test_curation_resource_projects_timing_workers_and_read_only_provision
     assert formal_candidates.status_code == 200
     assert formal_candidates.json() == []
     assert "draft" not in resource["provisionalCandidates"][0]
+
+
+@pytest.mark.asyncio
+async def test_curation_resource_switches_to_seed_progress_after_discovery(
+    application,
+) -> None:
+    app, source_ids = application
+    review = app.review("w1")
+    session, batch, _execution = await _seed_running_curation(
+        review, source_ids[0]
+    )
+    source_ref = f"{source_ids[0]}#section-0001"
+    discovery = review.repository.plan_curation_work_item(
+        batch_id=batch.id,
+        stage="discovery",
+        unit_index=0,
+        input_digest="a" * 64,
+        source_refs=(source_ref,),
+        processor_kind="deterministic",
+    )
+    review.repository.complete_deterministic_curation_work_item(
+        discovery.id,
+        output={
+            "seeds": [{
+                "question_text": "What happens after discovery?",
+                "source_ref": source_ref,
+                "source_refs": [source_ref],
+            }]
+        },
+    )
+
+    resource = await review.curation_resource(session.id)
+
+    assert resource["progress"] == {
+        "phase": "enrichment",
+        "completed": 0,
+        "total": 1,
+        "generated_candidate_count": 0,
+        "active_workers": 0,
+        "retryable_units": 0,
+        "pending_units": 1,
+    }
 
 
 @pytest.mark.asyncio
@@ -2269,6 +2331,62 @@ async def test_curation_session_api_projects_progress_summary_and_timeline(
         )
         assert listed.status_code == 200
         assert [item["id"] for item in listed.json()] == [resource["id"]]
+
+
+@pytest.mark.asyncio
+async def test_curation_session_counts_all_candidates_beyond_repository_page_limit(
+    api, application
+) -> None:
+    app, source_ids = application
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = (
+            await client.post(
+                "/api/review/curation-sessions",
+                json={"workspaceId": "w1", "sourceRefs": list(source_ids)},
+            )
+        ).json()
+        await app.wait_execution(created["executionId"])
+        review = app.locate_review_session(created["id"])
+        batch_id = review.repository.get_curation_session(
+            created["id"]
+        ).active_batch_id
+        assert batch_id is not None
+        for ordinal in range(100):
+            review.repository.save_candidate(
+                batch_id=batch_id,
+                question=QuestionSnapshot(
+                    question_id=f"extra-{ordinal}",
+                    document_id=f"extra-doc-{ordinal}",
+                    content_hash=f"{ordinal:064x}",
+                    title=f"Extra question {ordinal}",
+                    question_text=f"Explain extra question {ordinal}",
+                    reference_answer=f"Answer {ordinal}",
+                    topics=("runtime",),
+                    difficulty="medium",
+                    key_points=("point",),
+                    follow_ups=(),
+                ),
+                draft_id=None,
+                source_refs=(source_ids[0],),
+                status="review_pending",
+            )
+
+        detail = (
+            await client.get(
+                f"/api/review/curation-sessions/{created['id']}"
+            )
+        ).json()
+
+        assert detail["candidateCount"] == 101
+        assert detail["pendingCount"] == 101
+        assert detail["publishedCount"] == 0
+        batch = (
+            await client.get(f"/api/review/question-batches/{batch_id}")
+        ).json()
+        assert batch["candidateCount"] == 101
+        assert batch["pendingCount"] == 101
 
 
 @pytest.mark.asyncio

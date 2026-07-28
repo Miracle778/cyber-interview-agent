@@ -111,3 +111,29 @@ async def test_product_event_retries_a_transient_sqlite_lock(
     assert event.type == "execution.started"
     assert attempts == 2
     connection.close()
+
+
+@pytest.mark.asyncio
+async def test_product_event_accepts_review_auxiliary_turn_response(
+    tmp_path: Path,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+    repository = ProductRepository(connection)
+    session = repository.create_session(
+        workspace_id="w1", kind="review.round", title="Review"
+    )
+    events = ProductEventStream(repository, workspace_root=tmp_path)
+
+    event = await events.publish(
+        session.id,
+        None,
+        "review.turn.responded",
+        {"roundId": "round-1", "intent": "reveal_answer"},
+    )
+
+    assert event.type == "review.turn.responded"
+    assert event.payload == {
+        "roundId": "round-1",
+        "intent": "reveal_answer",
+    }
+    connection.close()

@@ -20,6 +20,7 @@
 - 应用外壳、页面外壳、工作台和各 Grid/Flex 中间层必须形成连续的高度传递，并设置 `min-height: 0`。
 - 页面标题、一级页签和工作台工具栏不随内容滚出视口。
 - 工作台使用 `grid-template-rows: auto minmax(0, 1fr)` 或等价结构。
+- 新增工作台必须复用 `TaskWorkspace` 与 `TaskWorkspacePane`（或明确的共享等价物）；禁止依靠把新页面类名追加到父容器选择器来获得高度和滚动，否则新增子页会再次出现内容裁切。
 - 列表、详情正文和长文阅读器分别声明滚动所有权，使用 `overflow-y: auto`、`overscroll-behavior: contain` 和稳定滚动槽。
 - 桌面工作台不得把 `document.documentElement.scrollHeight` 撑出可用视口。
 - 同一层级最多存在两个并列滚动区；禁止无意义的滚动套滚动。
@@ -69,7 +70,16 @@
 - 键盘焦点顺序与视觉顺序一致；面板切换后焦点进入新内容标题。
 - 动效仅用于状态连续性，持续 150–300ms，并尊重 `prefers-reduced-motion`。
 
-## 8. 自动与人工门禁
+## 8. 时间与耗时
+
+- 数据库和 API 的时间戳以 UTC 为权威；所有面向用户的日期、时间和消息时间统一显示北京时间（`Asia/Shanghai`），不得依赖用户操作系统或浏览器所在时区。
+- 前端必须复用 `frontend/src/shared/time.ts`。SQLite `CURRENT_TIMESTAMP` 产生的 `YYYY-MM-DD HH:mm:ss` 无时区字符串必须先按 UTC 解析，再转换为北京时间；业务组件禁止直接对 API 时间调用 `new Date(value)`、`Date.parse(value)`、`toLocaleString()` 或自行创建 `Intl.DateTimeFormat`。
+- 日期、时间、日期时间只允许改变展示精度，不允许改变时区口径。仅包含 `YYYY-MM-DD` 的业务日期（例如用户填写的计划日期）按原值展示，不得当作时间戳偏移。
+- “耗时”是两个时间点的差值，不做时区格式化；运行中由持久化 `startedAt` 与前端秒表计算，终态使用 `finishedAt` 冻结。不得把耗时误显示成时刻，也不得每秒请求后端刷新。
+- 本地 JSONL 等人工诊断产物保留 UTC 权威字段，并同时提供北京时间可读投影；排序、关联和恢复继续使用 UTC 字段。
+- 新增时间展示至少覆盖两类回归：带 `Z`/offset 的 ISO 时间，以及 SQLite 无时区 UTC 时间。代码评审应确认共享时间工具之外没有新增 API 时间格式化实现。
+
+## 9. 自动与人工门禁
 
 工作台页面至少验证：
 
@@ -89,3 +99,4 @@ document scrollHeight <= viewport height
 3. 长内容、空数据、运行中和失败时高度是否仍成立？
 4. 固定元素是否为正文预留空间？
 5. 是否复用了共享工作台外壳，而不是重新计算 `100dvh - Npx`？
+6. 所有用户可见时间是否经过共享工具转换为北京时间，耗时是否按时间差计算？

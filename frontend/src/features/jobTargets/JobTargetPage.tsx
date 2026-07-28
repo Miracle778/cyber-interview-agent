@@ -9,7 +9,7 @@ import {
   answerDeepDive, confirmDocumentVersion, controlAnalysis, controlDeepDive, createDeepDive,
   createDocumentVersion, createJobTarget, decideProjectQuestion, decideProjectQuestions, editProjectQuestion, decideRequirements, cancelDeepDive,
   getCurrentAnalysis, getCurrentDeepDive, getReadiness, listJobTargets, listRequirements,
-  dispatchProjectGap, resolveDeepDiveMessage, restartDeepDive, retryDeepDive, setProjectPriorities, startAnalysis,
+  dispatchProjectGap, resolveDeepDiveMessage, restartDeepDive, retryDeepDive, setProjectPriorities, startAnalysis, updateJobTarget,
 } from "./jobTargetApi";
 import type { DeepDiveResource, JobTarget } from "./jobTargetTypes";
 import { JobTargetList } from "./JobTargetList";
@@ -27,9 +27,11 @@ export function JobTargetPage({ workspace }: { workspace: WorkspaceConfig | null
   const [searchParams] = useSearchParams();
   const workspaceId = workspace?.id ?? "";
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [targetListCollapsed, setTargetListCollapsed] = useState(false);
   const [tab, setTab] = useState<JobTargetTab>("overview");
   const [createOpen, setCreateOpen] = useState(false);
   const [jdOpen, setJdOpen] = useState(false);
+  const [targetInfoOpen, setTargetInfoOpen] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const targetsQuery = useQuery({ queryKey: ["job-targets", workspaceId], queryFn: ({ signal }) => listJobTargets(workspaceId, signal), enabled: Boolean(workspace) });
@@ -58,6 +60,14 @@ export function JobTargetPage({ workspace }: { workspace: WorkspaceConfig | null
   }, [analysis.data?.id, analysis.data?.status, client, target?.id, workspaceId]);
   const create = useMutation({ mutationFn: (values: { roleName: string; seniority: string; companyName: string }) => createJobTarget(workspaceId, values), onSuccess: async (value) => { setSelectedId(value.id); setCreateOpen(false); await refresh(); } });
   const createFromJd = useMutation({ mutationFn: async (body: string) => { const created = await createJobTarget(workspaceId, { roleName: "", seniority: "", companyName: "" }); const version = await createDocumentVersion(workspaceId, created.id, body); const confirmed = await confirmDocumentVersion(workspaceId, created, version.id); await startAnalysis(workspaceId, confirmed); return confirmed; }, onSuccess: async (value) => { setSelectedId(value.id); setCreateOpen(false); await refresh(); } });
+  const targetUpdate = useMutation({
+    mutationFn: (values: { roleName: string; seniority: string; companyName: string }) =>
+      updateJobTarget(workspaceId, target!, { ...values, sourceUrl: target!.sourceUrl ?? undefined }),
+    onSuccess: async () => {
+      setTargetInfoOpen(false);
+      await refresh();
+    },
+  });
   const jd = useMutation({ mutationFn: async (body: string) => { const version = await createDocumentVersion(workspaceId, target!.id, body); const confirmed = await confirmDocumentVersion(workspaceId, target!, version.id); await startAnalysis(workspaceId, confirmed); return confirmed; }, onSuccess: async () => { setJdOpen(false); await refresh(); } });
   const runAnalysis = useMutation({ mutationFn: () => startAnalysis(workspaceId, target!), onSuccess: refresh });
   const analysisControl = useMutation({ mutationFn: (action: "pause" | "resume" | "terminate") => controlAnalysis(workspaceId, target!.id, analysis.data!, action), onSuccess: refresh });
@@ -75,15 +85,16 @@ export function JobTargetPage({ workspace }: { workspace: WorkspaceConfig | null
   const questionEdit = useMutation({ mutationFn: ({ id, title, question }: { id: string; title: string; question: string }) => editProjectQuestion(workspaceId, target!.id, id, { title, question }), onSuccess: refresh });
   const gapDispatch = useMutation({ mutationFn: (gapId: string) => dispatchProjectGap(workspaceId, target!.id, gapId), onSuccess: refresh });
   if (!workspace) return <div className="job-target-missing"><FolderLock /><h1>求职目标</h1><p>请先初始化工作区。</p><Link to="/settings">前往设置</Link></div>;
-  return <section className="job-target-page"><JobTargetList targets={targets} selectedId={target?.id} onSelect={(id) => { setSelectedId(id); setProjectPickerOpen(false); setTab("overview"); }} onCreate={() => setCreateOpen(true)} />
-    <main>{target ? <JobTargetWorkspace target={target} analysis={analysis.data} tab={tab} onTab={setTab}>
+  return <section className={`job-target-page${targetListCollapsed ? " job-target-page--list-collapsed" : ""}`}><JobTargetList targets={targets} selectedId={target?.id} collapsed={targetListCollapsed} onToggleCollapsed={() => setTargetListCollapsed((value) => !value)} onSelect={(id) => { setSelectedId(id); setProjectPickerOpen(false); setTab("overview"); }} onCreate={() => setCreateOpen(true)} />
+    <main>{target ? <JobTargetWorkspace target={target} analysis={analysis.data} tab={tab} onTab={setTab} onCompleteInfo={() => setTargetInfoOpen(true)}>
       {tab === "overview" ? <JobTargetOverview target={target} readiness={readiness.data} analysis={analysis.data} onEditJd={() => setJdOpen(true)} onStartAnalysis={() => runAnalysis.mutate()} onControl={(action) => analysisControl.mutate(action)} onNavigate={setTab} /> : null}
       {tab === "requirements" ? <RequirementWorkbench requirements={requirements.data ?? []} busy={decisions.isPending} onDecide={(ids, decision) => decisions.mutate({ ids, decision })} /> : null}
-      {tab === "deep-dive" ? projectPickerOpen || !dive.data ? <ProjectPriorityPanel projects={projects} busy={priorities.isPending || startDive.isPending} onSave={(core, supplementary) => priorities.mutate({ core, supplementary })} onStart={(projectId) => startDive.mutate(projectId)} /> : <DeepDiveWorkspace resource={dive.data} busy={send.isPending} stopping={stopDive.isPending || restart.isPending || gapDispatch.isPending} onSend={(content, configuration) => send.mutate({ content, configuration })} onStop={(executionId) => stopDive.mutate(executionId)} onControl={(action) => diveControl.mutate(action)} onRestart={() => restart.mutate()} onChooseProject={() => setProjectPickerOpen(true)} onRetry={(executionId) => retry.mutate(executionId)} onResolve={(messageId, resolution, replacement) => resolve.mutate({ messageId, resolution, replacement })} onDispatchGap={(gap) => gapDispatch.mutate(gap.id)} onOpenProfile={() => navigate("/profile", { state: { returnTo: `/targets?${new URLSearchParams({ tab: "deep-dive", target: target.id, project: activeProjectId ?? "" })}`, returnLabel: "返回项目深挖" } })} /> : null}
+      {tab === "deep-dive" ? projectPickerOpen || !dive.data ? <ProjectPriorityPanel projects={projects} initialCoreProjectId={readiness.data?.coreProjectId} initialSupplementaryProjectIds={readiness.data?.supplementaryProjectIds} saving={priorities.isPending} startingProjectId={startDive.isPending ? startDive.variables : null} saveError={priorities.error instanceof Error ? priorities.error.message : null} onSave={(core, supplementary) => priorities.mutate({ core, supplementary })} onStart={(projectId) => startDive.mutate(projectId)} /> : <DeepDiveWorkspace resource={dive.data} busy={send.isPending} stopping={stopDive.isPending || restart.isPending || gapDispatch.isPending} onSend={(content, configuration) => send.mutate({ content, configuration })} onStop={(executionId) => stopDive.mutate(executionId)} onControl={(action) => diveControl.mutate(action)} onRestart={() => restart.mutate()} onChooseProject={() => setProjectPickerOpen(true)} onRetry={(executionId) => retry.mutate(executionId)} onResolve={(messageId, resolution, replacement) => resolve.mutate({ messageId, resolution, replacement })} onDispatchGap={(gap) => gapDispatch.mutate(gap.id)} onOpenProfile={() => navigate("/profile", { state: { returnTo: `/targets?${new URLSearchParams({ tab: "deep-dive", target: target.id, project: activeProjectId ?? "" })}`, returnLabel: "返回项目深挖" } })} /> : null}
       {tab === "review" ? <ProjectQuestionCandidates projectTitle={dive.data?.projectTitle} candidates={dive.data?.questionCandidates ?? []} busy={questionDecision.isPending || questionBatchDecision.isPending || questionEdit.isPending} onDecide={(id, decision) => questionDecision.mutate({ id, decision })} onBatchDecide={(ids, decision) => questionBatchDecision.mutate({ ids, decision })} onEdit={(id, title, question) => questionEdit.mutate({ id, title, question })} /> : null}
     </JobTargetWorkspace> : <div className="job-target-empty"><BriefcaseBusiness /><h1>建立第一个求职目标</h1><p>粘贴岗位描述，系统会拆出明确要求，并结合个人画像安排项目准备和项目题训练。</p><Button onClick={() => setCreateOpen(true)}>新建求职目标</Button></div>}</main>
     {createOpen ? <TargetDialog busy={create.isPending || createFromJd.isPending} onClose={() => setCreateOpen(false)} onSubmitJd={(body) => createFromJd.mutate(body)} onSubmitManual={(values) => create.mutate(values)} /> : null}
     {jdOpen && target ? <JdDialog onClose={() => setJdOpen(false)} onSubmit={(body) => jd.mutate(body)} /> : null}
+    {targetInfoOpen && target ? <TargetInfoDialog target={target} busy={targetUpdate.isPending} error={targetUpdate.error instanceof Error ? targetUpdate.error.message : null} onClose={() => { targetUpdate.reset(); setTargetInfoOpen(false); }} onSubmit={(values) => targetUpdate.mutate(values)} /> : null}
   </section>;
 }
 
@@ -94,4 +105,9 @@ function TargetDialog({ busy, onClose, onSubmitJd, onSubmitManual }: { busy: boo
 
 function JdDialog({ onClose, onSubmit }: { onClose: () => void; onSubmit: (body: string) => void }) {
   return <div className="job-target-dialog" role="dialog" aria-modal="true" aria-labelledby="jd-dialog-title"><form onSubmit={(event) => { event.preventDefault(); onSubmit(String(new FormData(event.currentTarget).get("body") ?? "")); }}><h2 id="jd-dialog-title">添加岗位描述</h2><p>粘贴完整 JD 或你整理的岗位方向。原文会保留为一个不可变版本。</p><label>岗位内容<textarea name="body" rows={12} required /></label><footer><Button type="button" variant="secondary" onClick={onClose}>稍后添加</Button><Button type="submit">保存并用于分析</Button></footer></form></div>;
+}
+
+function TargetInfoDialog({ target, busy, error, onClose, onSubmit }: { target: JobTarget; busy: boolean; error?: string | null; onClose: () => void; onSubmit: (values: { companyName: string; roleName: string; seniority: string }) => void }) {
+  const missing = [!target.roleName ? "岗位名称" : "", !target.seniority ? "经验或职级范围" : ""].filter(Boolean);
+  return <div className="job-target-dialog" role="dialog" aria-modal="true" aria-labelledby="target-info-dialog-title"><form onSubmit={(event) => { event.preventDefault(); const data = new FormData(event.currentTarget); onSubmit({ companyName: String(data.get("companyName") ?? ""), roleName: String(data.get("roleName") ?? ""), seniority: String(data.get("seniority") ?? "") }); }}><h2 id="target-info-dialog-title">补充岗位信息</h2><p>当前还缺：<strong>{missing.join("、") || "岗位基本信息"}</strong>。这些信息只用于命名和管理求职目标，不会改写已经提取的岗位要求。</p><label>公司（可选）<input name="companyName" defaultValue={target.companyName ?? ""} /></label><label>岗位名称<input name="roleName" defaultValue={target.roleName} required autoFocus placeholder="例如：Agent 开发工程师" /></label><label>经验或职级范围（可选）<input name="seniority" defaultValue={target.seniority} placeholder="例如：3-5 年 / P6" /></label>{error ? <p className="job-target-dialog__error" role="alert">保存失败：{error}</p> : null}<footer><Button type="button" variant="secondary" onClick={onClose}>取消</Button><Button type="submit" loading={busy}>保存岗位信息</Button></footer></form></div>;
 }

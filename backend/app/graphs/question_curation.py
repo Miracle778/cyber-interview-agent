@@ -5,22 +5,30 @@ from dataclasses import dataclass, replace
 from hashlib import sha256
 from typing import Any, Literal, TypedDict
 
+from langchain.agents.structured_output import StructuredOutputValidationError
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
 from pydantic import ValidationError
 
 from app.agents.context import AgentContext
-from app.agents.question_curation_agent import QuestionCurationAgents
+from app.agents.question_curation_agent import (
+    ModelOutputTruncatedError,
+    QuestionCurationAgents,
+)
 from app.agents.question_curation_normalization import (
     normalize_provider_candidate_observation,
 )
 from app.agents.question_curation_contracts import (
     QuestionCandidate,
     QuestionCandidateBatch,
+    QuestionSeedBatch,
     QuestionSeedChunk,
 )
-from app.review.curation_planner import plan_curation_discovery
+from app.review.curation_planner import (
+    pack_model_sections,
+    plan_curation_discovery,
+)
 from app.review.curation_seed_reconciliation import reconcile_curation_seed_tasks
 from app.review.curation_scheduler import (
     CurationWaveResult,
@@ -105,6 +113,56 @@ class CurationInvocationInputProvider:
 
     def discard(self, batch_id: str) -> None:
         self._loaded.pop(batch_id, None)
+
+
+async def _discover_bounded(
+    agents: QuestionCurationAgents,
+    sections: tuple[SourceSection, ...],
+    *,
+    context: AgentContext,
+    config: dict[str, Any],
+    parent_unit_index: int,
+) -> QuestionSeedBatch:
+    """Recover legacy dense work items without changing their durable identity."""
+    call_ordinal = 0
+
+    async def invoke(partition: tuple[SourceSection, ...]) -> list:
+        nonlocal call_ordinal
+        invocation_index = (
+            parent_unit_index
+            if len(sections) == len(partition)
+            else 1_000_000 + parent_unit_index * 10_000 + call_ordinal
+        )
+        call_ordinal += 1
+        try:
+            chunk = await agents.discover(
+                partition,
+                context=context,
+                config=config,
+                unit_index=invocation_index,
+            )
+        except ModelOutputTruncatedError:
+            if len(partition) == 1:
+                raise
+            midpoint = len(partition) // 2
+            return [
+                *await invoke(partition[:midpoint]),
+                *await invoke(partition[midpoint:]),
+            ]
+        return list(chunk.seeds)
+
+    seeds = []
+    for partition in pack_model_sections(sections):
+        seeds.extend(await invoke(partition))
+
+    deduplicated = []
+    seen_primary_refs: set[str] = set()
+    for seed in seeds:
+        if seed.source_ref in seen_primary_refs:
+            continue
+        seen_primary_refs.add(seed.source_ref)
+        deduplicated.append(seed)
+    return QuestionSeedBatch(seeds=deduplicated)
 
 
 def create_question_curation_graph(
@@ -263,6 +321,22 @@ def create_question_curation_graph(
 
     async def plan_sections(state: QuestionCurationInput) -> dict[str, object]:
         batch_id = _batch_id(state)
+        existing = repository.list_curation_work_items(
+            batch_id, stage="discovery"
+        )
+        if existing:
+            return {
+                "discovery_work_item_ids": [item.id for item in existing],
+                "generation_phase": "discovery",
+                "completed_units": sum(
+                    item.status == "completed" for item in existing
+                ),
+                "total_units": len(existing),
+                "generated_candidate_count": _completed_candidate_count(
+                    repository, batch_id
+                ),
+                "warnings": [],
+            }
         invocation_input = invocation_inputs.load(batch_id)
         plan = plan_curation_discovery(
             section_sources(invocation_input.source_excerpts)
@@ -312,10 +386,8 @@ def create_question_curation_graph(
         runtime: Runtime[AgentContext],
     ) -> dict[str, object]:
         batch_id = _batch_id(state)
-        plan = plan_curation_discovery(
-            _sections_for_batch(invocation_inputs, batch_id)
-        )
-        units = {unit.unit_index: unit for unit in plan.model_units}
+        all_sections = _sections_for_batch(invocation_inputs, batch_id)
+        sections_by_ref = {section.ref: section for section in all_sections}
         limit = repository.get_batch(batch_id).concurrency_limit
         pending_ids = tuple(
             item_id
@@ -331,13 +403,17 @@ def create_question_curation_graph(
             running = repository.start_curation_work_item(work_item_id)
             if running.status == "completed":
                 return
-            unit = units[running.unit_index]
             try:
-                output = await agents.discover(
-                    unit.sections,
+                sections = tuple(
+                    sections_by_ref[source_ref]
+                    for source_ref in running.source_refs
+                )
+                output = await _discover_bounded(
+                    agents,
+                    sections,
                     context=runtime.context,
                     config=dict(config),
-                    unit_index=running.unit_index,
+                    parent_unit_index=running.unit_index,
                 )
                 repository.complete_curation_work_item(
                     running.id, output=output.model_dump(mode="json")
@@ -453,7 +529,11 @@ def create_question_curation_graph(
                     refund_automatic_attempt=True,
                 )
                 raise
-            except (ValidationError, ValueError):
+            except (
+                StructuredOutputValidationError,
+                ValidationError,
+                ValueError,
+            ):
                 output = {"candidates": "invalid"}
             except Exception as error:
                 _interrupt_seed_invocation(

@@ -1,18 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, ShieldAlert, X } from "lucide-react";
+import { formatBeijingTime } from "../../shared/time";
 import { Button } from "../../shared/ui/Button";
 import { permanentlyDeleteMaterial, previewMaterialDeletion } from "./profileApi";
 import type { MaterialDeletionPreview, PermanentMaterialDeletionResult, ProfileMaterial } from "./profileTypes";
 import { profileClaimTypeLabel } from "./profilePresentation";
 
 const CONFIRM_TEXT = "永久删除";
+type ClaimDeletionAction = "delete" | "retain_unsupported";
 
 export function DeletionImpactDialog({ open, workspaceId, material, onClose, onDeleted }: { open: boolean; workspaceId: string; material: ProfileMaterial; onClose: () => void; onDeleted: (result: PermanentMaterialDeletionResult) => void }) {
   const dialogRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const [preview, setPreview] = useState<MaterialDeletionPreview | null>(null);
-  const [choices, setChoices] = useState<Record<string, "delete" | "retain_unsupported">>({});
+  const [choices, setChoices] = useState<Record<string, ClaimDeletionAction>>({});
   const [confirmText, setConfirmText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,23 +56,56 @@ export function DeletionImpactDialog({ open, workspaceId, material, onClose, onD
   const hasActiveDependency = Boolean(preview?.activePublicationIds.length);
   const protectedDelete = preview?.affectedClaims.some((claim) => claim.selectionIds.length && choices[claim.claimId] === "delete");
   const canDelete = Boolean(preview && confirmText === CONFIRM_TEXT && !hasActiveDependency && !protectedDelete);
+  const protectedClaimCount = preview?.affectedClaims.filter((claim) => claim.selectionIds.length > 0).length ?? 0;
+  const deletableClaimCount = (preview?.affectedClaims.length ?? 0) - protectedClaimCount;
+  const allRetained = Boolean(preview?.affectedClaims.length) && preview!.affectedClaims.every((claim) => choices[claim.claimId] === "retain_unsupported");
+  const allDeletableRemoved = Boolean(deletableClaimCount) && preview!.affectedClaims.every((claim) => claim.selectionIds.length > 0 || choices[claim.claimId] === "delete");
+  const bulkChoice: ClaimDeletionAction | "mixed" = allRetained ? "retain_unsupported" : allDeletableRemoved ? "delete" : "mixed";
+
+  function applyBulkChoice(action: ClaimDeletionAction) {
+    if (!preview) return;
+    setChoices(Object.fromEntries(preview.affectedClaims.map((claim) => [
+      claim.claimId,
+      action === "delete" && claim.selectionIds.length ? "retain_unsupported" : action,
+    ])));
+  }
 
   return <div className="dialog-backdrop profile-delete-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section ref={dialogRef} className="profile-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-delete-title" onKeyDown={handleKeyDown}>
       <header><span><ShieldAlert size={21} /></span><div><h2 id="profile-delete-title">永久删除“{material.title}”</h2><p>归档可恢复；永久删除会清除原文件和证据正文，此操作不可撤销。</p></div><button ref={closeRef} type="button" aria-label="关闭永久删除" onClick={onClose}><X size={19} /></button></header>
-      {busy && !preview ? <div className="profile-delete-dialog__loading" role="status">正在分析材料依赖…</div> : null}
-      {error ? <p className="profile-delete-dialog__error" role="alert"><AlertTriangle size={16} />{error}</p> : null}
-      {preview ? <div className="profile-delete-dialog__body">
-        <dl><div><dt>受影响原文</dt><dd>{preview.affectedEvidenceCount}</dd></div><div><dt>受影响简历要点</dt><dd>{preview.affectedClaims.length}</dd></div><div><dt>将失去依据</dt><dd>{preview.unsupportedClaimIds.length}</dd></div></dl>
-        {preview.affectedClaims.length ? <section><h3>逐条选择简历要点的处理方式</h3>{preview.affectedClaims.map((claim) => {
-          const claimTypeLabel = profileClaimTypeLabel(claim.claimType);
-          return <label key={claim.claimId}><span><strong>{claimTypeLabel}</strong><small>{claim.remainingEvidenceIds.length ? `仍有 ${claim.remainingEvidenceIds.length} 条其他依据` : "删除简历后将没有原文依据"}{claim.selectionIds.length ? "；这条信息仍被其他功能使用，暂时不能同时删除" : ""}</small></span><select aria-label={`${claimTypeLabel} 的处理方式`} value={choices[claim.claimId]} onChange={(event) => setChoices((value) => ({ ...value, [claim.claimId]: event.target.value as "delete" | "retain_unsupported" }))}><option value="retain_unsupported">保留并标记为依据不足</option><option value="delete" disabled={Boolean(claim.selectionIds.length)}>同时删除简历要点</option></select></label>;
-        })}</section> : null}
-        {hasActiveDependency ? <p className="profile-delete-dialog__revoke" role="alert"><AlertTriangle size={17} /><span><strong>这份简历仍被其他功能使用</strong><small>当前无法永久删除。请先保留材料，后续在使用它的功能中解除关联。</small></span></p> : null}
-        <label className="profile-delete-dialog__confirm"><span>输入“{CONFIRM_TEXT}”确认</span><input value={confirmText} onChange={(event) => setConfirmText(event.target.value)} autoComplete="off" /></label>
-      </div> : null}
-      <footer><Button variant="ghost" onClick={onClose}>取消，保留材料</Button><Button variant="danger" disabled={!canDelete} loading={busy && Boolean(preview)} onClick={() => void remove()}>永久删除</Button></footer>
-      {preview && !error ? <span className="profile-delete-dialog__safe"><CheckCircle2 size={14} />预检有效至 {new Date(preview.expiresAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</span> : null}
+      <div className="profile-delete-dialog__scroll">
+        {busy && !preview ? <div className="profile-delete-dialog__loading" role="status">正在分析材料依赖…</div> : null}
+        {error ? <p className="profile-delete-dialog__error" role="alert"><AlertTriangle size={16} />{error}</p> : null}
+        {preview ? <div className="profile-delete-dialog__body">
+          <dl><div><dt>受影响原文</dt><dd>{preview.affectedEvidenceCount}</dd></div><div><dt>受影响简历要点</dt><dd>{preview.affectedClaims.length}</dd></div><div><dt>将失去依据</dt><dd>{preview.unsupportedClaimIds.length}</dd></div></dl>
+          {preview.affectedClaims.length ? <section className="profile-delete-dialog__claims">
+            <div className="profile-delete-dialog__claim-toolbar">
+              <div><h3>选择简历要点的处理方式</h3><p>可以先统一处理，再单独调整个别要点。</p></div>
+              <label>
+                <span>统一处理</span>
+                <select aria-label="批量更改处理方式" value={bulkChoice} onChange={(event) => applyBulkChoice(event.target.value as ClaimDeletionAction)}>
+                  {bulkChoice === "mixed" ? <option value="mixed" disabled>多种处理方式</option> : null}
+                  <option value="retain_unsupported">全部保留并标记依据不足</option>
+                  <option value="delete" disabled={!deletableClaimCount}>删除所有可删除的简历要点</option>
+                </select>
+              </label>
+              {protectedClaimCount ? <small>{protectedClaimCount} 条仍被其他功能使用，会继续保留；其余 {deletableClaimCount} 条可批量更改。</small> : null}
+            </div>
+            {preview.affectedClaims.map((claim) => {
+              const claimTypeLabel = profileClaimTypeLabel(claim.claimType);
+              return <label key={claim.claimId}><span><strong>{claimTypeLabel}</strong><small>{claim.remainingEvidenceIds.length ? `仍有 ${claim.remainingEvidenceIds.length} 条其他依据` : "删除简历后将没有原文依据"}{claim.selectionIds.length ? "；这条信息仍被其他功能使用，暂时不能同时删除" : ""}</small></span><select aria-label={`${claimTypeLabel} 的处理方式`} value={choices[claim.claimId]} onChange={(event) => setChoices((value) => ({ ...value, [claim.claimId]: event.target.value as ClaimDeletionAction }))}><option value="retain_unsupported">保留并标记为依据不足</option><option value="delete" disabled={Boolean(claim.selectionIds.length)}>同时删除简历要点</option></select></label>;
+            })}
+          </section> : null}
+          {hasActiveDependency ? <p className="profile-delete-dialog__revoke" role="alert"><AlertTriangle size={17} /><span><strong>这份简历仍被其他功能使用</strong><small>当前无法永久删除。请先保留材料，后续在使用它的功能中解除关联。</small></span></p> : null}
+        </div> : null}
+      </div>
+      <footer>
+        <div className="profile-delete-dialog__confirm-block">
+          <label className="profile-delete-dialog__confirm"><span>输入“{CONFIRM_TEXT}”确认</span><input aria-label={`输入“${CONFIRM_TEXT}”确认`} value={confirmText} onChange={(event) => setConfirmText(event.target.value)} autoComplete="off" /></label>
+          {preview && !error ? <span className="profile-delete-dialog__safe"><CheckCircle2 size={14} />预检有效至 {formatBeijingTime(preview.expiresAt, false) ?? preview.expiresAt}</span> : null}
+        </div>
+        <div className="profile-delete-dialog__actions"><Button variant="ghost" onClick={onClose}>取消，保留材料</Button><Button variant="danger" disabled={!canDelete} loading={busy && Boolean(preview)} onClick={() => void remove()}>永久删除</Button></div>
+      </footer>
     </section>
   </div>;
 }

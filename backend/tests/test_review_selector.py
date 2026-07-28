@@ -132,6 +132,32 @@ def test_topic_focused_never_leaks_another_topic() -> None:
     assert [item.question_id for item in selected] == ["b"]
 
 
+def test_source_file_never_leaks_questions_from_another_source() -> None:
+    first, second, shared = _catalog(
+        _snapshot("a"),
+        _snapshot("b"),
+        _snapshot("c"),
+    )
+    catalog = (
+        replace(first, source_ids=("source-a",)),
+        replace(second, source_ids=("source-b",)),
+        replace(shared, source_ids=("source-a", "source-b")),
+    )
+
+    selected = QuestionSelector().select(
+        catalog,
+        _mastery(),
+        replace(
+            _settings(mode="random-mixed", count=2),
+            mode="source-file",
+            source_id="source-a",
+        ),
+        seed=1,
+    )
+
+    assert {item.question_id for item in selected} == {"a", "c"}
+
+
 def test_insufficient_inventory_reports_available_and_requested() -> None:
     inactive = replace(_catalog(_snapshot("a"))[0], active=False)
 
@@ -187,3 +213,8 @@ def test_round_settings_reject_invalid_values(field: str, value: object) -> None
 def test_topic_focused_requires_topics() -> None:
     with pytest.raises(ValueError, match="topics"):
         _settings(mode="topic-focused", topics=())
+
+
+def test_source_file_requires_source_id() -> None:
+    with pytest.raises(ValueError, match="source_id"):
+        _settings(mode="source-file")

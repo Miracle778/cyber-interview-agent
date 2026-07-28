@@ -56,6 +56,7 @@ from app.profile.errors import (
     ProfileDeletionPlanExpired,
     ProfileDocumentNotReady,
     ProfileMaterialNotFound,
+    ProfileMaterialVersionHasPendingProposals,
     ProfileMaterialVersionConflict,
     ProfileProposalNotFound,
     ProfilePublicationRevocationRequired,
@@ -1283,6 +1284,44 @@ class ProfileService:
             idempotency_key=idempotency_key,
         )
 
+    def preview_material_version_deletion(
+        self,
+        version_id: str,
+        *,
+        expected_version: int,
+        idempotency_key: str,
+    ) -> MaterialDeletionPlanRecord:
+        version = self._require_workspace_version(version_id)
+        material = self.get_material(version.material_id)
+        if material.version != expected_version:
+            raise ProfileMaterialVersionConflict(
+                "profile material changed before version deletion preview"
+            )
+        impact = self.repository.build_material_version_deletion_impact(
+            version_id, workspace_id=self.workspace_id
+        )
+        if impact.get("pendingProposalIds"):
+            raise ProfileMaterialVersionHasPendingProposals(
+                "workspace has pending profile proposals"
+            )
+        if not impact.get("replacementVersions"):
+            raise ProfileDeletionPlanConflict(
+                "cannot delete the only material version"
+            )
+        expires_at = (
+            datetime.now(timezone.utc) + timedelta(minutes=15)
+        ).isoformat()
+        return self.repository.create_material_deletion_plan(
+            workspace_id=self.workspace_id,
+            material_id=material.id,
+            material_version=material.version,
+            impact=impact,
+            expires_at=expires_at,
+            target_kind="material_version",
+            target_version_id=version.id,
+            idempotency_key=idempotency_key,
+        )
+
     def permanently_delete_material(
         self,
         material_id: str,
@@ -1310,7 +1349,11 @@ class ProfileService:
         if existing is not None:
             return self._deletion_result(existing)
         plan = self.repository.get_material_deletion_plan(deletion_plan_id)
-        if plan.workspace_id != self.workspace_id or plan.material_id != material_id:
+        if (
+            plan.workspace_id != self.workspace_id
+            or plan.material_id != material_id
+            or plan.target_kind != "material"
+        ):
             raise ProfileDeletionPlanConflict("deletion plan target mismatch")
         if plan.status not in {"planned", "failed"}:
             raise ProfileDeletionPlanConflict("deletion plan is no longer executable")
@@ -1370,6 +1413,159 @@ class ProfileService:
                     self.repository.apply_material_deletion(
                         plan_id=plan.id,
                         expected_material_version=expected_version,
+                        claim_choices=claim_choices,
+                    )
+                )
+            for artifact in plan.impact.get("artifactRefs", []):
+                if not isinstance(artifact, dict):
+                    continue
+                ref = str(artifact.get("ref", ""))
+                if not ref:
+                    continue
+                remaining = self.repository.artifact_reference_count(ref)
+                deleted = self.storage.delete_ref(
+                    ref, remaining_references=remaining
+                )
+                receipts.append(
+                    DeletionItemReceipt(
+                        kind="artifact",
+                        target_id=str(artifact.get("kind", "artifact")),
+                        status="completed",
+                        action=(
+                            "retain_shared"
+                            if remaining
+                            else "delete" if deleted else "already_absent"
+                        ),
+                    )
+                )
+            result = MaterialDeletionResult(
+                plan_id=plan.id, status="completed", items=tuple(receipts)
+            )
+            payload = self._deletion_result_payload(result)
+            self.repository.set_material_deletion_plan_status(
+                plan.id, status="completed", result=payload
+            )
+            self.repository.store_operation_receipt(
+                workspace_id=self.workspace_id,
+                operation=operation,
+                idempotency_key=idempotency_key,
+                request=request,
+                result=payload,
+            )
+            return result
+        except Exception:
+            self.repository.set_material_deletion_plan_status(
+                plan.id,
+                status="failed",
+                result={"items": [asdict(item) for item in receipts]},
+            )
+            raise
+
+    def permanently_delete_material_version(
+        self,
+        version_id: str,
+        *,
+        deletion_plan_id: str,
+        expected_version: int,
+        replacement_version_id: str | None,
+        claim_choices: dict[str, str],
+        active_publication_action: str,
+        idempotency_key: str,
+    ) -> MaterialDeletionResult:
+        request = {
+            "versionId": version_id,
+            "deletionPlanId": deletion_plan_id,
+            "expectedVersion": expected_version,
+            "replacementVersionId": replacement_version_id,
+            "claimChoices": dict(sorted(claim_choices.items())),
+            "activePublicationAction": active_publication_action,
+        }
+        operation = f"profile.material.version.permanent_delete:{version_id}"
+        existing = self.repository.load_operation_receipt(
+            workspace_id=self.workspace_id,
+            operation=operation,
+            idempotency_key=idempotency_key,
+            request=request,
+        )
+        if existing is not None:
+            return self._deletion_result(existing)
+        plan = self.repository.get_material_deletion_plan(deletion_plan_id)
+        if (
+            plan.workspace_id != self.workspace_id
+            or plan.target_kind != "material_version"
+            or plan.target_version_id != version_id
+        ):
+            raise ProfileDeletionPlanConflict("deletion plan target mismatch")
+        if plan.status not in {"planned", "failed"}:
+            raise ProfileDeletionPlanConflict(
+                "deletion plan is no longer executable"
+            )
+        expires_at = datetime.fromisoformat(plan.expires_at.replace("Z", "+00:00"))
+        if expires_at <= datetime.now(timezone.utc):
+            self.repository.set_material_deletion_plan_status(
+                plan.id, status="expired"
+            )
+            raise ProfileDeletionPlanExpired("deletion plan expired")
+        if (
+            active_publication_action == "cancel"
+            or "cancel" in claim_choices.values()
+        ):
+            cancelled = MaterialDeletionResult(
+                plan_id=plan.id, status="cancelled", items=()
+            )
+            self.repository.set_material_deletion_plan_status(
+                plan.id,
+                status="cancelled",
+                result=self._deletion_result_payload(cancelled),
+            )
+            return cancelled
+        if plan.active_publication_ids:
+            if active_publication_action != "revoke":
+                raise ProfilePublicationRevocationRequired(
+                    "active publication must be revoked before deletion"
+                )
+            if self._revoke_publication is None:
+                raise ProfilePublicationRevocationUnavailable(
+                    "publication revocation is not wired yet"
+                )
+        elif active_publication_action not in {"not_applicable", "revoke"}:
+            raise ProfileDeletionPlanConflict(
+                "invalid publication deletion choice"
+            )
+
+        receipts = [
+            self._deletion_receipt(item)
+            for item in plan.result.get("items", [])
+            if isinstance(item, dict)
+        ]
+        completed_targets = {
+            (item.kind, item.target_id)
+            for item in receipts
+            if item.status == "completed"
+        }
+        self.repository.set_material_deletion_plan_status(
+            plan.id, status="executing"
+        )
+        try:
+            for publication_id in plan.active_publication_ids:
+                if ("publication", publication_id) in completed_targets:
+                    continue
+                assert self._revoke_publication is not None
+                self._revoke_publication(publication_id)
+                receipts.append(
+                    DeletionItemReceipt(
+                        kind="publication",
+                        target_id=publication_id,
+                        status="completed",
+                        action="revoke",
+                    )
+                )
+            if ("material_version", version_id) not in completed_targets:
+                receipts.extend(
+                    self.repository.apply_material_version_deletion(
+                        plan_id=plan.id,
+                        expected_material_version=expected_version,
+                        replacement_version_id=replacement_version_id,
                         claim_choices=claim_choices,
                     )
                 )

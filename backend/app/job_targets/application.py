@@ -937,9 +937,10 @@ class JobTargetApplication:
 
     def readiness(self, target_id: str) -> dict:
         requirements = self.service.list_preparation_requirements(target_id)
+        priorities = self.repository.list_project_priorities(target_id)
         if any(item.confirmation_status == "pending" for item in requirements):
             status = "requirements_pending"
-        elif not self.repository.list_project_priorities(target_id):
+        elif not priorities:
             status = "project_selection_pending"
         else:
             active = self.repository.connection.execute(
@@ -970,6 +971,19 @@ class JobTargetApplication:
             "jobTargetId": target_id,
             "status": status,
             "requirements": len(requirements),
+            "coreProjectId": next(
+                (
+                    row["project_claim_id"]
+                    for row in priorities
+                    if row["priority_kind"] == "core"
+                ),
+                None,
+            ),
+            "supplementaryProjectIds": [
+                row["project_claim_id"]
+                for row in priorities
+                if row["priority_kind"] == "supplementary"
+            ],
         }
 
     def _evaluate_turn(

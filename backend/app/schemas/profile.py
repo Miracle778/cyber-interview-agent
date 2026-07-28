@@ -286,15 +286,27 @@ class ProfileCardReferenceResource(AgentModel):
     title: str
 
 
+class ProfileSupportEvidenceResource(AgentModel):
+    evidence_id: str
+    material_title: str
+    version_number: int
+    section: str
+    excerpt: str
+    relation: str
+
+
 class UnifiedProfileCardResource(AgentModel):
     claim_id: str
     claim_version_id: str
     category: str
     version: int
+    support_status: str
     title: str
     subtitle: str | None
     value: dict[str, Any]
     sources: list[ProfileSourceSummaryResource]
+    support_summary: str
+    support_evidence: list[ProfileSupportEvidenceResource]
     linked_to: list[ProfileCardReferenceResource]
     used_in: list[ProfileCardReferenceResource]
 
@@ -428,6 +440,7 @@ class AffectedClaimResource(AgentModel):
     claim_type: str
     claim_version: int
     claim_version_id: str
+    value: dict[str, Any] = Field(default_factory=dict)
     support_status: str
     affected_evidence_ids: list[str]
     remaining_evidence_ids: list[str]
@@ -446,6 +459,33 @@ class MaterialDeletionPreviewResource(AgentModel):
     active_publication_ids: list[str]
 
 
+class MaterialVersionDeletionPreviewCommand(MaterialActionCommand):
+    pass
+
+
+class MaterialVersionReplacementResource(AgentModel):
+    id: str
+    version_number: int
+    file_name: str
+
+
+class MaterialVersionDeletionPreviewResource(AgentModel):
+    deletion_plan_id: str
+    material_id: str
+    material_version: int
+    version_id: str
+    version_number: int
+    is_current_version: bool
+    expires_at: str
+    affected_evidence_count: int
+    affected_claims: list[AffectedClaimResource]
+    unsupported_claim_ids: list[str]
+    publication_selection_ids: list[str]
+    active_publication_ids: list[str]
+    pending_proposal_count: int
+    replacement_versions: list[MaterialVersionReplacementResource]
+
+
 class MaterialDeletionClaimChoice(AgentModel):
     claim_id: str
     action: Literal["delete", "retain_unsupported", "cancel"]
@@ -453,6 +493,13 @@ class MaterialDeletionClaimChoice(AgentModel):
 
 class PermanentMaterialDeletionCommand(MaterialActionCommand):
     deletion_plan_id: str
+    claim_choices: list[MaterialDeletionClaimChoice]
+    active_publication_action: Literal["revoke", "cancel", "not_applicable"]
+
+
+class PermanentMaterialVersionDeletionCommand(MaterialActionCommand):
+    deletion_plan_id: str
+    replacement_version_id: str | None = None
     claim_choices: list[MaterialDeletionClaimChoice]
     active_publication_action: Literal["revoke", "cancel", "not_applicable"]
 

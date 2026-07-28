@@ -137,4 +137,6 @@ export interface TargetReadiness {
   jobTargetId: string;
   status: TargetDerivedStatus;
   requirements: number;
+  coreProjectId: string | null;
+  supplementaryProjectIds: string[];
 }

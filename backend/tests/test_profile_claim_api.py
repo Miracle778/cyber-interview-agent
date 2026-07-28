@@ -213,6 +213,155 @@ async def test_duplicate_proposals_require_preview_before_explicit_consolidation
 
 
 @pytest.mark.asyncio
+async def test_material_version_deletion_preview_and_current_replacement(
+    client: AsyncClient, application: AgentApplication
+) -> None:
+    async with client:
+        first = await client.post(
+            "/api/workspaces/w1/profile/materials",
+            data={"title": "后端工程师简历", "primaryRole": "resume"},
+            files={"file": ("resume-v1.md", b"Python", "text/markdown")},
+            headers={"Idempotency-Key": "version-delete-upload-v1"},
+        )
+        assert first.status_code == 202, first.text
+        first_body = first.json()
+        second = await client.post(
+            f"/api/profile/materials/{first_body['materialId']}/versions",
+            data={"workspaceId": "w1"},
+            files={"file": ("resume-v2.md", b"Python and FastAPI", "text/markdown")},
+            headers={"Idempotency-Key": "version-delete-upload-v2"},
+        )
+        assert second.status_code == 202, second.text
+        second_body = second.json()
+        service = application.profile("w1")
+        evidence = service.repository.replace_version_evidence(
+            second_body["versionId"],
+            ({
+                "section": "projects",
+                "start_offset": 0,
+                "end_offset": 18,
+                "sanitized_text": "Python and FastAPI",
+                "content_sha256": "f" * 64,
+                "sensitivity": "normal",
+            },),
+        )[0]
+        proposal = service.repository.create_claim_proposals(
+            second_body["versionId"],
+            (CreateClaimProposalSpec(
+                proposal_type="create",
+                proposed_value={
+                    "category": "project",
+                    "name": "面试准备 Agent",
+                    "description": "基于可恢复工作流整理面试资料",
+                },
+                reason="第二版项目经历",
+                evidence_ids=(evidence.id,),
+            ),),
+        )[0]
+        accepted = service.decide_claim_proposal(
+            proposal.id,
+            decision="accepted",
+            expected_version=0,
+            idempotency_key="version-delete-accept-api",
+        )
+        material = service.set_primary_version(
+            first_body["materialId"],
+            second_body["versionId"],
+            expected_version=service.get_material(first_body["materialId"]).version,
+            idempotency_key="version-delete-set-primary",
+        )
+
+        preview = await client.post(
+            f"/api/profile/material-versions/{second_body['versionId']}/deletion-preview",
+            json={"workspaceId": "w1", "expectedVersion": material.version},
+            headers={"Idempotency-Key": "version-delete-preview-api"},
+        )
+        assert preview.status_code == 200, preview.text
+        body = preview.json()
+        assert body["versionId"] == second_body["versionId"]
+        assert body["isCurrentVersion"] is True
+        assert body["replacementVersions"][0]["id"] == first_body["versionId"]
+        assert body["affectedClaims"][0]["value"]["name"] == "面试准备 Agent"
+
+        deleted = await client.post(
+            f"/api/profile/material-versions/{second_body['versionId']}/permanent-delete",
+            json={
+                "workspaceId": "w1",
+                "expectedVersion": material.version,
+                "deletionPlanId": body["deletionPlanId"],
+                "replacementVersionId": first_body["versionId"],
+                "claimChoices": [
+                    {"claimId": accepted.claim_id, "action": "retain_unsupported"}
+                ],
+                "activePublicationAction": "not_applicable",
+            },
+            headers={"Idempotency-Key": "version-delete-execute-api"},
+        )
+        assert deleted.status_code == 200, deleted.text
+        assert deleted.json()["status"] == "completed"
+        versions = await client.get(
+            f"/api/profile/materials/{first_body['materialId']}/versions",
+            params={"workspaceId": "w1"},
+        )
+        assert [item["id"] for item in versions.json()] == [first_body["versionId"]]
+
+
+@pytest.mark.asyncio
+async def test_material_version_deletion_rejects_pending_proposals_from_another_version(
+    client: AsyncClient, application: AgentApplication
+) -> None:
+    async with client:
+        first = await client.post(
+            "/api/workspaces/w1/profile/materials",
+            data={"title": "后端工程师简历", "primaryRole": "resume"},
+            files={"file": ("resume-v1.md", b"Python", "text/markdown")},
+            headers={"Idempotency-Key": "version-delete-pending-v1"},
+        )
+        assert first.status_code == 202, first.text
+        first_body = first.json()
+        second = await client.post(
+            f"/api/profile/materials/{first_body['materialId']}/versions",
+            data={"workspaceId": "w1"},
+            files={"file": ("resume-v2.md", b"FastAPI", "text/markdown")},
+            headers={"Idempotency-Key": "version-delete-pending-v2"},
+        )
+        assert second.status_code == 202, second.text
+        second_body = second.json()
+        service = application.profile("w1")
+        evidence = service.repository.replace_version_evidence(
+            second_body["versionId"],
+            ({
+                "section": "skills",
+                "start_offset": 0,
+                "end_offset": 7,
+                "sanitized_text": "FastAPI",
+                "content_sha256": "e" * 64,
+                "sensitivity": "normal",
+            },),
+        )[0]
+        service.repository.create_claim_proposals(
+            second_body["versionId"],
+            (CreateClaimProposalSpec(
+                proposal_type="create",
+                proposed_value={"category": "skill", "text": "FastAPI"},
+                reason="第二版明确列出",
+                evidence_ids=(evidence.id,),
+            ),),
+        )
+        material = service.get_material(first_body["materialId"])
+
+        blocked = await client.post(
+            f"/api/profile/material-versions/{first_body['versionId']}/deletion-preview",
+            json={"workspaceId": "w1", "expectedVersion": material.version},
+            headers={"Idempotency-Key": "version-delete-pending-preview"},
+        )
+        assert blocked.status_code == 409, blocked.text
+        assert blocked.json()["code"] == (
+            "profile_material_version_has_pending_proposals"
+        )
+
+
+@pytest.mark.asyncio
 async def test_deletion_preview_requires_exact_claim_choice_and_returns_receipts(
     client: AsyncClient, application: AgentApplication
 ) -> None:

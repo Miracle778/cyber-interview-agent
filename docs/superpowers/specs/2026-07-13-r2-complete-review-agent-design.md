@@ -125,30 +125,70 @@ Graph 在展示题目后通过 input interrupt 暂停。应用层把 interrupt �
 
 确定性 selector 从 active catalog 和已确认 mastery projection 中选题。轮次启动时冻结题目 ID、内容版本/hash、顺序和 mastery before，避免轮次中题库外部编辑改变当前问题。
 
+每道题的关键点分为阻塞完成的 `required_key_points` 和只影响评价的
+`bonus_key_points`。新候选在整理时生成该分类，题目详情允许用户在确认前调整；
+发布后随题目版本冻结。历史题目的现有 `key_points` 确定性迁移为
+`required_key_points`，不得在复习运行时静默调用模型重新分类。后续调整必须创建
+可审核的新题目版本，只影响新轮次。
+
 ### 4.3 回答循环
+
+每道题建模为一个有持久 Checklist 的复习任务。必答点分别维护
+`uncovered`、`partial`、`covered`，多次正式回答可以累计覆盖；加分点不阻塞完成。
+只有全部必答点为 `covered` 或用户显式跳过，才能推进到下一题。不得以对话轮数、
+模型的整体印象或隐藏计数作为完成条件。
 
 每题按以下路径运行：
 
 ```text
 load frozen question
   -> request answer input
-  -> accept answer and persist user message/attempt
-  -> return 202 receipt immediately
-  -> evaluate answer Agent asynchronously
-  -> deterministic follow-up policy
-       -> no follow-up -> persist attempt
-       -> follow-up required -> request follow-up input -> evaluate supplement
-  -> calculate mastery suggestion
-  -> advance progress
-       -> more questions -> next question
-       -> round complete -> generate reports
+  -> classify input intent
+       -> show_question / request_hint / explain / unrelated
+            -> respond without resolving the answer request
+            -> return to the same question
+       -> skip
+            -> persist skipped result
+            -> next question
+       -> answer
+            -> persist user message/answer revision
+            -> return 202 receipt immediately
+            -> evaluate required/bonus coverage asynchronously
+            -> validate structured coverage decision
+            -> deterministic coverage reducer
+                 -> required points remain -> request supplement
+                 -> all required points covered -> persist result -> next question
+  -> round complete -> generate reports
 ```
+
+高置信操作请求先由确定性 parser 识别；无法确定时允许一次结构化意图分类，输出仅限
+`answer`、`show_question`、`request_hint`、`explain`、`skip`、`unrelated`。
+分类结果只能进入固定业务路径，模型不获得推进题号或修改 mastery 的自由写工具。
+意图不确定时默认不推进，并要求用户确认。
+
+“查看原题/再说一遍”只重放 frozen question；学习辅助请求先回答，再明确回到当前题并
+继续等待。若一条消息同时包含回答和疑问，先评价可识别的回答内容，再回答疑问并追问
+尚未覆盖的必答点。辅助消息不得创建正式 answer attempt、关闭 current input request
+或增加题目进度。
 
 用户消息在接口返回前持久化，前端立即显示用户气泡和“正在评价回答…”状态，不等待 LLM 完成。SSE 推送 `answer.accepted`、`evaluation.started`、`evaluation.checking_key_points`、`evaluation.deciding_follow_up`、`evaluation.completed` 和 `session.message.created` 等安全阶段；事件只含 ID、阶段和资源版本，页面再读取完整资源。
 
+首次正式回答与参考答案在同一事务中落库：页面在回答提交成功后立即展示参考答案，供用户在异步评价期间进行答后对照。评价只读取提交时已经冻结的回答，自动展示不写入 `review_question_assistance`，不改变本次结果类型或掌握度建议。回答前由用户主动请求提示或完整答案时，仍记录为辅助行为，并按 `assisted_mastery` 或 `answer_revealed` 计算。
+
 复习评价、追问决策和报告生成使用“阶段 SSE + 校验后的完整卡片”，不逐字输出半截结构化 JSON。派生 discussion 可以使用 `assistant.delta` 流式展示最终可见文本。任何场景都不传输或持久化模型内部 Chain of Thought；“正在对照关键点”等文案是系统定义的可观察阶段。
 
-模型失败时 attempt 进入 `evaluation_failed`，不推进 current index；用户原回答仍在会话中，可以重新评价、跳过或取消。重复提交同一 input request 返回同一 receipt，不重复评价或推进。
+覆盖判断由模型返回结构化 decision，确定性的 `KeyPointCoverageReducer` 累计状态，
+`ReviewCompletionPolicy` 是唯一允许推进题号的守卫。可选的复习 Middleware 只负责
+注入当前题和未覆盖点、校验模型输出以及阻止非法转移，不持有 Checklist 领域真相，
+也不使用通用 Agent Todo 作为持久状态源。
+
+模型失败或用户停止评价时，attempt 进入 `evaluation_failed`，不推进 current index，
+用户原回答仍在会话中。停止评价必须先取消当前 Provider 任务，再持久化
+`evaluation_interrupted`，用户可对同一回答继续评价或直接跳过本题。评估中跳过同样先
+取消 Provider 任务，再把当前 attempt 标记为 `skipped`，由原 checkpoint 的唯一推进路径
+进入下一题，禁止旧模型结果迟到回写或产生双重推进。用户也可“编辑后重试”并创建显式
+修订版；旧回答保留并标记为已替换。未完成 assistant 输出不进入正式上下文。重复提交同一
+控制命令返回已有状态，不重复评价或推进。
 
 ### 4.4 报告与掌握度
 
@@ -162,6 +202,17 @@ load frozen question
 6. 同一轮次重复生成报告使用 round ID + report kind 幂等，新版本发生内容冲突时交给用户选择。
 
 新轮次选择题目时只参考已确认的全局 mastery projection 与最近三份已发布 session report；未确认草稿不参与选择。
+
+单题结果使用四种稳定语义：
+
+- `independent_mastery`：未使用提示或答案，覆盖全部必答点；
+- `assisted_mastery`：使用提示后覆盖全部必答点；
+- `answer_revealed`：查看完整答案，不视为独立掌握；
+- `skipped`：用户主动跳过。
+
+后续 selector 降低 `independent_mastery` 的近期重复概率；`assisted_mastery` 保持较短
+复习间隔；`answer_revealed` 与 `skipped` 优先进入后续复习。四种结果在回放和报告中
+可见，不能把查看答案或跳过投影为已掌握。
 
 ### 4.5 派生深入讨论
 
@@ -341,6 +392,7 @@ GET  /api/review/rounds
 GET  /api/review/rounds/{id}
 POST /api/review/rounds/{id}/answers
 POST /api/review/rounds/{id}/retry-evaluation
+POST /api/review/rounds/{id}/interrupt-evaluation
 POST /api/review/rounds/{id}/skip
 POST /api/review/rounds/{id}/cancel
 POST /api/review/rounds/{id}/discussions
@@ -352,7 +404,7 @@ POST /api/review/rounds/{id}/discussions
 
 `question-candidates` 是“题目库”资源，支持 `query`、`topic`、`difficulty`、`sourceId`、`status`、分页和排序；资源包含全部安全 source links、draft/publication state、duplicate/merge summary 和所在整理 session。`questions` 只返回已发布 active catalog，供轮次设置与 selector 使用，不能用未确认 candidate 伪装 active question。
 
-`answers` 请求必须包含 `inputRequestId`、`version` 和 `idempotencyKey`。服务端在同一数据库事务中解决 input、持久化用户 timeline message 与 `evaluating` attempt，并把 execution 转为可运行状态；提交事务后调度 Graph 恢复，然后立即返回 `202 Accepted` receipt，不得 `await` LLM 完成。若进程在事务提交后、调度前退出，启动恢复根据 execution/attempt 状态继续原 checkpoint。`retry-evaluation` 只允许当前 index 的 `evaluation_failed` attempt，复用原回答并生成独立幂等 receipt。
+`answers` 请求必须包含 `inputRequestId`、`version` 和 `idempotencyKey`。服务端在同一数据库事务中解决 input、持久化用户 timeline message 与 `evaluating` attempt，并把 execution 转为可运行状态；提交事务后调度 Graph 恢复，然后立即返回 `202 Accepted` receipt，不得 `await` LLM 完成。若进程在事务提交后、调度前退出，启动恢复根据 execution/attempt 状态继续原 checkpoint。`retry-evaluation` 只允许当前 index 的 `evaluation_failed` attempt，复用原回答并生成独立幂等 receipt。`interrupt-evaluation` 只停止当前评价，不丢弃回答；`skip` 在存在 pending input 时保留原显式输入契约，在评价中或评价失败后允许只携带幂等键跳过当前 attempt。
 
 产品事件至少包括：
 
@@ -473,8 +525,13 @@ Cyber Interview Agent
 进入轮次后采用“会话导航 + 聊天消息 + 运行状态”三栏：
 
 - **左栏**：复习 session 列表与返回历史入口；派生 discussion 作为父会话的缩进子项，不与主轮次共享 thread。
-- **中栏**：按时间展示题目、用户回答、阶段状态、结构化评价、缺失点、必要追问、下一题和报告；底部固定输入区。
+- **中栏**：顶部使用吸顶题目卡固定展示 frozen question 的题号、完整题干和必答点覆盖进度；下方按时间展示用户回答、阶段状态、结构化评价、缺失方向、必要追问、下一题和报告；底部固定输入区。
 - **右栏**：展示 ordinal/total、选题模式、模型、思考强度、token/context、掌握度和产物。
+
+题目卡中的代码、场景和子问题必须完整可读；来源材料通过“查看来源”次级入口打开，
+不直接铺满复习主界面。作答前只显示必答点数量，不显示答案；首次评价后显示已覆盖数量
+和缺失方向；用户可以逐级请求提示或查看完整答案，系统分别记录 assisted/revealed
+结果。窄屏使用紧凑吸顶题目栏，点击后展开完整题干，不能要求用户回滚消息历史找题目。
 
 发送答案后，前端先显示用户气泡；`202` receipt 返回后输入框进入“已提交，等待下一次输入”，避免重复发送。SSE 阶段驱动一条可替换的状态消息，例如“正在评价回答…”和“正在判断是否需要追问…”。结构化输出校验并持久化后，`session.message.created` 触发完整评价卡刷新。失败时保留用户回答和 input request，显示“重新评价/跳过/结束本轮”，不得乐观推进题号。
 
@@ -500,7 +557,10 @@ Agent 对话属于 R8，不在 R2 用响应式浏览器页面替代。
 - **生成分片失败**：保留已完成分片和候选，只重试失败分片；
 - **相似性不确定**：低置信度只标记疑似重复；不得自动覆盖或合并 active catalog 内容；
 - **重复整理命令**：同 session + idempotency key 返回原 command receipt，不二次重写、拒绝或发布；
-- **批量发布部分失败**：不跨题回滚，最终总结逐题列出成功、关联、失败、未选择和待修改；
+- **批量选择**：表头只全选当前页可操作项；用户再次明确确认后才扩展到全部筛选结果。筛选变化清空跨页选择，批量命令提交冻结的显式 candidate IDs；
+- **批量确认**：提供“选择推荐确认项”和“批量确认所选”；不完整、重复冲突、来源失效或运行中的候选不进入推荐选择。确认与发布保持分离；
+- **批量发布部分失败**：使用持久批次和逐题幂等 receipt，不跨题回滚；离开页面或刷新不停止，用户停止只阻止领取新项，不中断当前单题事务；最终总结逐题列出成功、关联、失败、未选择和待修改；
+- **批量发布可见性**：页面持续显示阶段、已处理/总数、已发布、跳过、冲突、失败和累计耗时；逐题明细按需展开。不显示不可靠的剩余时间，恢复后只处理未完成或失败项；
 - **题目外部编辑**：轮次使用 frozen snapshot；编辑只影响下一轮；
 - **重复回答**：同 input request + idempotency key 返回已有 attempt；不同 key 在已解决 request 上返回 conflict；
 - **模型失败**：attempt 标记 `evaluation_failed`，current index 不推进，保留 answer/message，允许重新评价或跳过；

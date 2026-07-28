@@ -13,6 +13,7 @@ from app.agents.question_curation_contracts import (
 )
 from app.review.curation_sections import (
     MAX_DISCOVERY_CHARACTERS,
+    MAX_DISCOVERY_SECTIONS,
     DiscoveryUnit,
     SourceSection,
 )
@@ -75,7 +76,7 @@ def plan_curation_discovery(
         source_sections = sections[cursor:end]
         anchor_indexes = _question_anchor_indexes(source_sections)
         first_anchor = anchor_indexes[0] if anchor_indexes else len(source_sections)
-        for packed in _pack_model_sections(source_sections[:first_anchor]):
+        for packed in pack_model_sections(source_sections[:first_anchor]):
             model_units.append(DiscoveryUnit(
                 unit_index=next_unit_index,
                 sections=packed,
@@ -103,7 +104,7 @@ def plan_curation_discovery(
                 input_digest=_sections_digest(question_range),
             ))
             next_unit_index += 1
-            for packed in _pack_model_sections(
+            for packed in pack_model_sections(
                 full_question_range[MAX_QUESTION_SEED_SOURCE_REFS:]
             ):
                 model_units.append(DiscoveryUnit(
@@ -197,14 +198,18 @@ def _question_text(section: SourceSection) -> str:
     return text
 
 
-def _pack_model_sections(
+def pack_model_sections(
     sections: tuple[SourceSection, ...],
 ) -> tuple[tuple[SourceSection, ...], ...]:
+    """Pack one source into model-safe groups by both density dimensions."""
     packed: list[tuple[SourceSection, ...]] = []
     current: list[SourceSection] = []
     characters = 0
     for section in sections:
-        if current and characters + len(section.text) > MAX_DISCOVERY_CHARACTERS:
+        if current and (
+            len(current) == MAX_DISCOVERY_SECTIONS
+            or characters + len(section.text) > MAX_DISCOVERY_CHARACTERS
+        ):
             packed.append(tuple(current))
             current = []
             characters = 0

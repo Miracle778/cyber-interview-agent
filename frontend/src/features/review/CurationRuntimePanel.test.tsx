@@ -111,7 +111,7 @@ describe("CurationRuntimePanel candidate status", () => {
       executionErrorMessage: "Agent 执行失败",
     }} />);
 
-    const failure = screen.getByText("Agent 执行失败", { selector: "strong" }).closest("section");
+    const failure = screen.getByText("Agent 执行失败").closest("section");
     expect(failure).toHaveClass("curation-retry");
     expect(failure).not.toHaveClass("curation-progress");
     expect(failure).toHaveAttribute("role", "status");
@@ -141,6 +141,58 @@ describe("CurationRuntimePanel candidate status", () => {
     fireEvent.click(retry);
     expect(onRetry).toHaveBeenCalledWith(expect.objectContaining({ seedTaskId: "seed-1", version: 3 }));
     expect(screen.queryByText("Agent 执行失败", { selector: "strong" })).toBeNull();
+  });
+
+  it("filters unsuccessful generation tasks and explains why each one failed", () => {
+    render(<CurationRuntimePanel session={{
+      ...session,
+      batchStatus: "review_pending",
+      provisionalCandidates: [
+        { id: "seed-ok", seedTaskId: "seed-ok", title: "已经生成的题目", questionText: "已经生成的题目", sourceRefs: ["s1"], status: "completed", version: 2 },
+        { id: "seed-failed", seedTaskId: "seed-failed", title: "Redis 为什么会发生缓存击穿？", questionText: "Redis 为什么会发生缓存击穿？", sourceRefs: ["s1"], status: "retryable", version: 3, errorCode: "output_truncated" },
+      ],
+    }} />);
+
+    expect(screen.getByText("已经生成的题目")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "只看待重试 1" }));
+
+    expect(screen.queryByText("已经生成的题目")).toBeNull();
+    expect(screen.getByText("Redis 为什么会发生缓存击穿？")).toBeInTheDocument();
+    expect(screen.getByText("模型输出被截断，没有得到完整题目。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重试这一题" })).toBeInTheDocument();
+  });
+
+  it("keeps discovery work-item progress when provisional seeds already exist", () => {
+    render(<CurationRuntimePanel session={{
+      ...session,
+      stage: "failed",
+      batchStatus: "failed",
+      progress: {
+        phase: "discovery",
+        completed: 77,
+        total: 80,
+        generatedCandidateCount: 0,
+        activeWorkers: 0,
+        retryableUnits: 2,
+        pendingUnits: 1,
+      },
+      seedProgress: {
+        total: 125,
+        completed: 0,
+        degraded: 0,
+        retrying: 10,
+        skipped: 0,
+        pending: 115,
+      },
+      controls: { canPause: false, canResume: true, canTerminate: true },
+    }} />);
+
+    const progress = screen.getByRole("status", { name: "整理进度" });
+    expect(progress).toHaveTextContent("77 / 80");
+    expect(progress).toHaveTextContent("已完成识别");
+    expect(screen.getByText("已发现题目").closest("div")).toHaveTextContent("125");
+    expect(screen.getByText("可继续处理").closest("div")).toHaveTextContent("2");
+    expect(screen.getByText("等待处理").closest("div")).toHaveTextContent("1");
   });
 
   it("ticks from the server snapshot with a monotonic clock and ignores wall-clock skew", () => {

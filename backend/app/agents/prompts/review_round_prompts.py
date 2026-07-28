@@ -9,10 +9,21 @@ from app.agents.prompts.prompt_spec import PromptSpec
 
 REVIEW_ROUND_EVALUATION_PROMPT = PromptSpec(
     id="review-round-answer-evaluation",
+    version="2.0",
+    system=(
+        "根据冻结题目、参考答案和必答/加分点评价本次回答。逐项返回已覆盖、"
+        "部分覆盖、未覆盖及对应回答证据；只能使用题目中给出的关键点，不能臆造。"
+        "follow_up_prompt 只指出仍需补充的方向，不泄露完整答案。不得输出隐藏推理。"
+    ),
+)
+
+REVIEW_TURN_CLASSIFICATION_PROMPT = PromptSpec(
+    id="review-turn-classification",
     version="1.0",
     system=(
-        "根据冻结题目、参考答案和关键点评价回答。返回证据、缺失点、是否需要一次"
-        "必要追问和 mastery 建议；不得输出隐藏推理。"
+        "判断用户在当前复习题中的意图，只返回结构化 intent。"
+        "同时包含答案和疑问时优先 answer；只有明确请求重复题目、提示、答案、"
+        "解释或跳过时才选择对应意图。不得回答问题。"
     ),
 )
 
@@ -55,6 +66,15 @@ def render_round_evaluation_input(
     if supplement:
         rendered += f"\n补充回答：{supplement}"
     return rendered
+
+
+def render_review_turn_classification_input(
+    *, question: Mapping[str, Any], message: str
+) -> str:
+    return json.dumps(
+        {"question": dict(question), "message": message},
+        ensure_ascii=False,
+    )
 
 
 def render_round_report_input(

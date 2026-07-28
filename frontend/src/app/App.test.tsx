@@ -131,19 +131,13 @@ describe("App", () => {
   });
 
   it("shows the workspace initialization empty state after backend connects", async () => {
-    vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ status: "ok" }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify(null), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-      );
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/health")) return Response.json({ status: "ok" });
+      if (url.endsWith("/api/settings/workspaces")) return Response.json([]);
+      if (url.endsWith("/api/settings/workspace")) return Response.json(null);
+      throw new Error(`unexpected ${url}`);
+    });
 
     render(<App />);
 

@@ -58,6 +58,25 @@ describe("ClaimReview", () => {
     expect(refresh).toHaveBeenCalled();
   });
 
+  it("allows explicitly reviewed conflicts to be selected and batch confirmed", async () => {
+    api.batchDecideClaimProposals.mockResolvedValue({
+      items: [{ proposalId: "p1", status: "completed", result: { proposalId: "p1", status: "accepted" }, errorCode: null, retryable: false }],
+    });
+    render(<ClaimReview workspaceId="w1" snapshot={snapshot} onRefresh={vi.fn()} onOpenEvidence={vi.fn()} />);
+
+    const conflictCheckbox = screen.getByRole("checkbox", { name: "选择 核心后端开发" });
+    expect(conflictCheckbox).toBeEnabled();
+    fireEvent.click(conflictCheckbox);
+    expect(screen.getByText(/其中 1 条需要核对/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "批量确认" }));
+    await waitFor(() => expect(api.batchDecideClaimProposals).toHaveBeenCalledWith("w1", [{
+      proposalId: "p1",
+      decision: "accepted",
+      expectedVersion: 2,
+    }]));
+  });
+
   it("submits a single explicit decision with the current claim version", async () => {
     const refresh = vi.fn();
     render(<ClaimReview workspaceId="w1" snapshot={snapshot} onRefresh={refresh} onOpenEvidence={vi.fn()} />);

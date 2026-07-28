@@ -27,6 +27,7 @@ from app.schemas.review import (
     QuestionBatchResource,
     QuestionCandidateResource,
     ReviewRoundResource,
+    ReviewTurnReceiptResource,
     ReviewAnswerReceiptResource,
     RewriteQuestionCandidateCommand,
     SkipReviewInputCommand,
@@ -42,7 +43,9 @@ from app.schemas.review import (
     UpdateActiveQuestionVersionCommand,
     DeleteQuestionCandidateCommand,
     BulkDeleteQuestionCandidatesCommand,
+    BulkConfirmQuestionCandidatesCommand,
     QuestionDeletionResultResource,
+    QuestionConfirmationResultResource,
 )
 from app.schemas.agent import ExecutionResource
 
@@ -287,6 +290,18 @@ async def retry_bulk_publication(
 
 
 @router.get(
+    "/bulk-publications/latest",
+    response_model=BulkPublicationResource | None,
+)
+async def get_latest_bulk_publication(
+    session_id: Annotated[str, Query(alias="sessionId")],
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_review_session(session_id)
+    return review.latest_bulk_publication_resource(session_id)
+
+
+@router.get(
     "/bulk-publications/{operation_id}",
     response_model=BulkPublicationResource,
 )
@@ -351,6 +366,7 @@ async def list_question_candidates(
     source_id: Annotated[str | None, Query(alias="sourceId")] = None,
     candidate_status: Annotated[str | None, Query(alias="status")] = None,
     page: int = Query(default=1, ge=1),
+    page_size: Annotated[int, Query(alias="pageSize", ge=1, le=500)] = 50,
     deleted_only: Annotated[bool, Query(alias="deletedOnly")] = False,
     application: AgentApplication = Depends(get_agent_application),
 ):
@@ -361,8 +377,8 @@ async def list_question_candidates(
         source_id=source_id,
         status=candidate_status,
         deleted_only=deleted_only,
-        limit=50,
-        offset=(page - 1) * 50,
+        limit=page_size,
+        offset=(page - 1) * page_size,
     )
 
 
@@ -419,6 +435,20 @@ async def bulk_delete_question_candidates(
         tuple((item.candidate_id, item.expected_version) for item in command.items),
         idempotency_key=command.idempotency_key,
         reason=command.reason,
+    )
+
+
+@router.post(
+    "/question-candidates/bulk-confirm",
+    response_model=QuestionConfirmationResultResource,
+)
+async def bulk_confirm_question_candidates(
+    command: BulkConfirmQuestionCandidatesCommand,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    return application.review(command.workspace_id).confirm_candidates(
+        tuple(command.candidate_ids),
+        idempotency_key=command.idempotency_key,
     )
 
 
@@ -544,6 +574,7 @@ async def list_active_questions(
             "project_claim_id": item.project_claim_id,
             "project_dimension": item.project_dimension,
             "source_job_target_id": item.source_job_target_id,
+            "source_ids": item.source_ids,
         }
         for item in records
     ]
@@ -569,6 +600,7 @@ async def create_review_round(
             seed=command.seed if command.seed is not None else randbits(63),
             answer_model_id=command.answer_model_id,
             reasoning_effort=command.reasoning_effort,
+            source_id=command.source_id,
         )
     )
     return await review.round_resource(round_record.id)
@@ -615,6 +647,28 @@ async def submit_review_answer(
 
 
 @router.post(
+    "/rounds/{round_id}/turns",
+    response_model=ReviewTurnReceiptResource,
+    status_code=202,
+)
+async def submit_review_turn(
+    round_id: str,
+    command: SubmitReviewInputCommand,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_review_round(round_id)
+    return await review.submit_turn(
+        round_id,
+        request_id=command.input_request_id,
+        version=command.version,
+        idempotency_key=command.idempotency_key,
+        value=command.value,
+        provider_model_id=command.provider_model_id,
+        reasoning_effort=command.reasoning_effort,
+    )
+
+
+@router.post(
     "/rounds/{round_id}/retry-evaluation",
     response_model=ReviewAnswerReceiptResource,
     status_code=202,
@@ -657,6 +711,22 @@ async def skip_review_question(
         request_id=command.input_request_id,
         version=command.version,
         idempotency_key=command.idempotency_key,
+    )
+    return await review.round_resource(round_id)
+
+
+@router.post(
+    "/rounds/{round_id}/interrupt-evaluation",
+    response_model=ReviewRoundResource,
+)
+async def interrupt_review_evaluation(
+    round_id: str,
+    command: RetryReviewEvaluationCommand,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_review_round(round_id)
+    await review.interrupt_evaluation(
+        round_id, idempotency_key=command.idempotency_key
     )
     return await review.round_resource(round_id)
 

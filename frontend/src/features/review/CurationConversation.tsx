@@ -2,11 +2,13 @@ import { Bot, ChevronDown, FileText, ListChecks, SlidersHorizontal, Square, Rota
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../shared/ui/Button";
 import { SessionMessage } from "./SessionMessage";
-import type { CurationMessage, CurationSession, QuestionCandidate } from "./reviewTypes";
+import type { BulkPublication, CurationMessage, CurationSession, QuestionCandidate } from "./reviewTypes";
 import { elapsedSeconds, formatBeijingTime } from "../../shared/time";
 import { MarkdownView } from "../knowledge/MarkdownView";
 import type { StreamingAssistantState } from "../agent/agentTypes";
 import { CurationArtifactCard } from "./CurationArtifactCard";
+import { useAgentComposerKeyboard } from "../../shared/agent/useAgentComposerKeyboard";
+import { BulkPublicationProgress } from "./BulkPublicationProgress";
 
 const recommendationText: Record<string, string> = {
   recommend_confirm: "建议确认",
@@ -48,8 +50,15 @@ function processElapsed(startedAt: string | null | undefined, createdAt: string)
 
 function CurationProcessMessage({ messages, startedAt, finishedAt, active, failed }: { messages: CurationMessage[]; startedAt: string | null; finishedAt: string | null; active: boolean; failed: boolean }) {
   const [expanded, setExpanded] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
   const timelineRef = useRef<HTMLOListElement>(null);
   const latest = messages.at(-1)!;
+  useEffect(() => {
+    if (!active) return;
+    setNow(Date.now());
+    const timer = globalThis.setInterval(() => setNow(Date.now()), 1000);
+    return () => globalThis.clearInterval(timer);
+  }, [active, startedAt]);
   useEffect(() => {
     if (!expanded || !timelineRef.current) return;
     const timeline = timelineRef.current;
@@ -58,18 +67,19 @@ function CurationProcessMessage({ messages, startedAt, finishedAt, active, faile
     const frame = globalThis.requestAnimationFrame?.(scrollToLatest);
     return () => { if (frame !== undefined) globalThis.cancelAnimationFrame?.(frame); };
   }, [expanded, messages.length]);
-  const processDuration = processElapsed(startedAt, finishedAt ?? latest.createdAt);
+  const processDuration = processElapsed(startedAt, finishedAt ?? (active ? new Date(now).toISOString() : latest.createdAt));
   const statusLabel = active ? "Agent 处理中" : failed ? "Agent 处理失败" : "Agent 处理完成";
   return <article className="review-chat-message review-chat-message--agent curation-process-message"><span className="review-chat-message__avatar" aria-hidden="true"><Bot size={17} /></span><div className="review-chat-message__content"><div className="review-chat-message__meta"><strong>题匠</strong>{timeLabel(latest.createdAt) ? <span className="review-chat-message__timing"><time dateTime={latest.createdAt}>{timeLabel(latest.createdAt)}</time>{processDuration ? <span>· 耗时 {processDuration.slice(1)}</span> : null}</span> : null}</div><details className="curation-process-card" open={expanded}><summary onClick={(event) => { event.preventDefault(); setExpanded((value) => !value); }}><span>{active ? <i className="status-pulse" /> : null}<strong>{statusLabel}</strong><small>{latest.content}</small></span><em>{messages.length} 条</em><ChevronDown size={16} /></summary><ol ref={timelineRef}>{messages.map((message) => <li key={message.id}><span /><div><p>{message.content}</p><small>{timeLabel(message.createdAt)}{processElapsed(startedAt, message.createdAt) ? ` · ${processElapsed(startedAt, message.createdAt)}` : ""}</small></div></li>)}</ol></details></div></article>;
 }
 
-function CurationSummaryCard({ session, candidates, busyId, bulkBusy, bulkDisabledReason, bulkRetryAvailable, onBulkPublish, onOpenCandidate, onPublish, onNote }: { session: CurationSession; candidates: Record<string, QuestionCandidate>; busyId: string | null; bulkBusy: boolean; bulkDisabledReason: string | null; bulkRetryAvailable: boolean; onBulkPublish: () => void; onOpenCandidate: (candidateId: string) => void; onPublish: (candidateId: string) => void; onNote: (candidateId: string, note: string) => void }) {
+function CurationSummaryCard({ session, candidates, busyId, bulkOperation, bulkBusy, bulkStopping, bulkRetrying, bulkDisabledReason, bulkRetryAvailable, onBulkPublish, onBulkStop, onOpenCandidate, onPublish, onNote }: { session: CurationSession; candidates: Record<string, QuestionCandidate>; busyId: string | null; bulkOperation: BulkPublication | null; bulkBusy: boolean; bulkStopping: boolean; bulkRetrying: boolean; bulkDisabledReason: string | null; bulkRetryAvailable: boolean; onBulkPublish: () => void; onBulkStop: () => void; onOpenCandidate: (candidateId: string) => void; onPublish: (candidateId: string) => void; onNote: (candidateId: string, note: string) => void }) {
   const [expanded, setExpanded] = useState(false);
   if (session.summary.items.length === 0) return null;
   const visible = expanded ? session.summary.items : session.summary.items.slice(0, 3);
   return (
     <section className="curation-artifacts" aria-label="已生成文件">
       <header><div><FileText size={16} /><strong>已生成 {session.summary.items.length} 个 Markdown 文件</strong></div><div className="curation-artifacts__header-actions">{bulkDisabledReason ? <small>{bulkDisabledReason}</small> : <span>草稿 v{session.summaryVersion}</span>}<button type="button" title={bulkDisabledReason ?? undefined} disabled={Boolean(bulkDisabledReason) || bulkBusy || (!bulkRetryAvailable && session.pendingCount === 0)} onClick={onBulkPublish}><Rocket size={14} />{bulkRetryAvailable ? "仅重试失败项" : "一键发布"}</button></div></header>
+      {bulkOperation ? <BulkPublicationProgress operation={bulkOperation} candidates={candidates} stopping={bulkStopping} retrying={bulkRetrying} onStop={onBulkStop} onRetry={onBulkPublish} onOpenCandidate={onOpenCandidate} /> : null}
       <div className={`curation-artifacts__list${expanded ? " is-expanded" : ""}`}>
         {visible.map((item) => candidates[item.candidateId] ? <CurationArtifactCard key={item.candidateId} candidate={candidates[item.candidateId]} title={item.title} description={recommendationText[item.recommendation] ?? item.recommendation} busy={busyId === item.candidateId} onOpen={onOpenCandidate} onPublish={onPublish} onSaveNote={onNote} /> : null)}
       </div>
@@ -108,7 +118,10 @@ interface CurationConversationProps {
   onRetryCommand?: () => void;
   onAbandonCommand?: () => void;
   onBulkPublish?: () => void;
+  bulkOperation?: BulkPublication | null;
   bulkBusy?: boolean;
+  bulkStopping?: boolean;
+  bulkRetrying?: boolean;
   bulkDisabledReason?: string | null;
   bulkRetryAvailable?: boolean;
   onSubmit: (text: string) => void;
@@ -117,7 +130,7 @@ interface CurationConversationProps {
   onSaveNote?: (candidateId: string, note: string) => void;
 }
 
-export function CurationConversation({ session, candidates = {}, optimisticMessage, busy, artifactBusyId = null, activeExecutionId = null, streamingState = null, models = [], selectedModelId = "", reasoningEffort = "none", onModelChange = () => undefined, onReasoningEffortChange = () => undefined, onStop = () => undefined, onRetryCommand = () => undefined, onAbandonCommand = () => undefined, onBulkPublish = () => undefined, bulkBusy = false, bulkDisabledReason = null, bulkRetryAvailable = false, onSubmit, onOpenCandidate = () => undefined, onPublishCandidate = () => undefined, onSaveNote = () => undefined }: CurationConversationProps) {
+export function CurationConversation({ session, candidates = {}, optimisticMessage, busy, artifactBusyId = null, activeExecutionId = null, streamingState = null, models = [], selectedModelId = "", reasoningEffort = "none", onModelChange = () => undefined, onReasoningEffortChange = () => undefined, onStop = () => undefined, onRetryCommand = () => undefined, onAbandonCommand = () => undefined, onBulkPublish = () => undefined, bulkOperation = null, bulkBusy = false, bulkStopping = false, bulkRetrying = false, bulkDisabledReason = null, bulkRetryAvailable = false, onSubmit, onOpenCandidate = () => undefined, onPublishCandidate = () => undefined, onSaveNote = () => undefined }: CurationConversationProps) {
   const [text, setText] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
   const timeline = useMemo(() => groupTimeline(session?.messages ?? []), [session?.messages]);
@@ -155,29 +168,33 @@ export function CurationConversation({ session, candidates = {}, optimisticMessa
     const frame = globalThis.requestAnimationFrame?.(scrollToLatest);
     return () => { if (frame !== undefined) globalThis.cancelAnimationFrame?.(frame); };
   }, [session?.id, session?.messages.length, session?.summaryVersion, optimisticMessage?.id, streamingState?.text]);
-  if (!session) return <main className="curation-conversation curation-conversation--empty"><ListChecks size={28} /><h3>选择或新建整理会话</h3><p>每次整理会保留资料、运行过程、候选题总结和你的确认记录。</p></main>;
-  const canCommand = session.stage === "waiting_for_command" || session.stage === "completed";
-  const selectedModelLabel = models.find((model) => model.id === selectedModelId)?.label ?? "默认模型";
-  function submit(event: FormEvent) {
-    event.preventDefault();
+  const canCommand = session?.stage === "waiting_for_command" || session?.stage === "completed";
+  function send() {
     const value = text.trim();
     if (!value || !canCommand || busy) return;
     setText("");
     onSubmit(value);
   }
+  const keyboard = useAgentComposerKeyboard(send);
+  if (!session) return <main className="curation-conversation curation-conversation--empty"><ListChecks size={28} /><h3>选择或新建整理会话</h3><p>每次整理会保留资料、运行过程、候选题总结和你的确认记录。</p></main>;
+  const selectedModelLabel = models.find((model) => model.id === selectedModelId)?.label ?? "默认模型";
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    send();
+  }
   return (
     <main className="curation-conversation review-conversation review-conversation--chat">
       <h2 className="review-conversation__sr-title">{session.title}</h2>
       <div ref={logRef} className="curation-conversation__messages review-chat-log" role="log" aria-label="整理对话" aria-live="polite">
-        {timeline.map((item, index) => <div className="curation-timeline-item" key={item.kind === "process" ? item.id : item.message.id}>{item.kind === "process" ? <CurationProcessMessage messages={item.messages} startedAt={session.executionStartedAt} finishedAt={session.executionFinishedAt} active={!['waiting_for_command', 'completed', 'failed'].includes(session.stage)} failed={session.stage === "failed"} /> : <SessionMessage message={item.message} startedAt={item.message.messageKind === "command_receipt" ? commandStartedAt.get(item.message.id) ?? null : session.executionStartedAt} />}{index === summaryAnchor ? <CurationSummaryCard session={session} candidates={candidates} busyId={artifactBusyId} bulkBusy={bulkBusy} bulkDisabledReason={bulkDisabledReason} bulkRetryAvailable={bulkRetryAvailable} onBulkPublish={onBulkPublish} onOpenCandidate={onOpenCandidate} onPublish={onPublishCandidate} onNote={onSaveNote} /> : null}</div>)}
-        {summaryAnchor < 0 ? <CurationSummaryCard session={session} candidates={candidates} busyId={artifactBusyId} bulkBusy={bulkBusy} bulkDisabledReason={bulkDisabledReason} bulkRetryAvailable={bulkRetryAvailable} onBulkPublish={onBulkPublish} onOpenCandidate={onOpenCandidate} onPublish={onPublishCandidate} onNote={onSaveNote} /> : null}
+        {timeline.map((item, index) => <div className="curation-timeline-item" key={item.kind === "process" ? item.id : item.message.id}>{item.kind === "process" ? <CurationProcessMessage messages={item.messages} startedAt={session.executionStartedAt} finishedAt={session.executionFinishedAt} active={!['waiting_for_command', 'completed', 'failed'].includes(session.stage)} failed={session.stage === "failed"} /> : <SessionMessage message={item.message} startedAt={item.message.messageKind === "command_receipt" ? commandStartedAt.get(item.message.id) ?? null : session.executionStartedAt} />}{index === summaryAnchor ? <CurationSummaryCard session={session} candidates={candidates} busyId={artifactBusyId} bulkOperation={bulkOperation} bulkBusy={bulkBusy} bulkStopping={bulkStopping} bulkRetrying={bulkRetrying} bulkDisabledReason={bulkDisabledReason} bulkRetryAvailable={bulkRetryAvailable} onBulkPublish={onBulkPublish} onBulkStop={onStop} onOpenCandidate={onOpenCandidate} onPublish={onPublishCandidate} onNote={onSaveNote} /> : null}</div>)}
+        {summaryAnchor < 0 ? <CurationSummaryCard session={session} candidates={candidates} busyId={artifactBusyId} bulkOperation={bulkOperation} bulkBusy={bulkBusy} bulkStopping={bulkStopping} bulkRetrying={bulkRetrying} bulkDisabledReason={bulkDisabledReason} bulkRetryAvailable={bulkRetryAvailable} onBulkPublish={onBulkPublish} onBulkStop={onStop} onOpenCandidate={onOpenCandidate} onPublish={onPublishCandidate} onNote={onSaveNote} /> : null}
         {optimisticMessage ? <SessionMessage message={optimisticMessage} pending startedAt={session.executionStartedAt} /> : null}
         {streamingState && activeExecutionId ? <StreamingMessage state={streamingState} modelLabel={models.find((item) => item.id === selectedModelId)?.label} onRetry={onRetryCommand} onAbandon={onAbandonCommand} /> : null}
       </div>
       <form className="curation-composer review-chat-composer" onSubmit={submit}>
         <label className="review-conversation__sr-title" htmlFor="curation-command">回复题匠</label>
         <div className="review-chat-composer__field">
-          <textarea id="curation-command" rows={1} value={text} disabled={!canCommand || busy} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={canCommand ? "输入要求，或直接确认、发布、重写候选题…" : "Agent 整理完成后可在这里确认或调整"} />
+          <textarea id="curation-command" rows={1} value={text} disabled={!canCommand || busy} onChange={(event) => setText(event.target.value)} {...keyboard} placeholder={canCommand ? "输入要求，或直接确认、发布、重写候选题…" : "Agent 整理完成后可在这里确认或调整"} />
           <div className="curation-composer__toolbar">
             <details className="curation-composer__settings">
               <summary aria-disabled={busy} onClick={(event) => { if (busy) event.preventDefault(); }}>
