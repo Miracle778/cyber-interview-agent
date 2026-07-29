@@ -552,7 +552,7 @@ def _provisional_candidate(title: str, source_ref: str) -> dict[str, object]:
 
 
 @pytest.mark.asyncio
-async def test_six_item_curation_resumes_after_failure_pause_and_runtime_restart(
+async def test_six_item_curation_preserves_partial_failure_and_restart_recovery(
     tmp_path: Path,
 ) -> None:
     class ControlledProviderError(RuntimeError):
@@ -654,52 +654,40 @@ async def test_six_item_curation_resumes_after_failure_pause_and_runtime_restart
     created = await first.review("w1").create_curation_session(
         source_refs=(source.id,)
     )
-    session_id = str(created["id"])
     batch_id = str(created["active_batch_id"])
 
     await asyncio.wait_for(agents.first_wave_started.wait(), timeout=2)
     assert agents.peak == 3
     agents.release_first_wave.set()
-    failed_execution = await first.wait_execution(str(created["execution_id"]))
-    assert failed_execution.status == "failed"
-
+    partial_execution = await first.wait_execution(str(created["execution_id"]))
     first_review = first.review("w1")
     first_items = first_review.repository.list_curation_seed_tasks(batch_id)
+    assert partial_execution.status == "completed"
+    assert first_review.repository.get_batch(batch_id).status == "review_pending"
     assert len(first_items) == 18
-    assert [item.status for item in first_items[:9]] == [
-        *(["degraded"] * 6),
-        *(["interrupted"] * 3),
-    ]
-    completed_invocations = {
-        item.id: item.automatic_attempt_count
-        for item in first_items
-        if item.status in {"completed", "degraded"}
-    }
+    assert sum(item.status == "degraded" for item in first_items) == 17
+    assert sum(item.status == "skipped" for item in first_items) == 1
+    skipped_item = next(item for item in first_items if item.status == "skipped")
+    assert skipped_item.automatic_attempt_count == 2
+    assert skipped_item.last_error_code == "provider_error"
 
     agents.phase = "pause"
-    failed_batch = first_review.repository.get_batch(batch_id)
-    resumed = await first_review.resume_curation_session(
-        session_id,
-        expected_batch_version=failed_batch.version,
-        idempotency_key="resume-after-partial-failure-0001",
+    paused_created = await first_review.create_curation_session(
+        source_refs=(source.id,)
     )
+    paused_session_id = str(paused_created["id"])
+    paused_batch_id = str(paused_created["active_batch_id"])
     await asyncio.wait_for(agents.pause_wave_started.wait(), timeout=2)
-    assert all(
-        first_review.repository.get_curation_seed_task(item_id).automatic_attempt_count
-        == count
-        for item_id, count in completed_invocations.items()
-    )
-    generating_batch = first_review.repository.get_batch(batch_id)
+    generating_batch = first_review.repository.get_batch(paused_batch_id)
     paused = await first_review.pause_curation_session(
-        session_id,
+        paused_session_id,
         expected_batch_version=generating_batch.version,
-        idempotency_key="pause-resumed-attempt-0001",
+        idempotency_key="pause-before-runtime-restart-0001",
     )
     assert paused["batch_status"] == "paused"
-    assert resumed["execution_id"] != created["execution_id"]
     assert all(item.status != "running" for item in (
-        *first_review.repository.list_curation_work_items(batch_id),
-        *first_review.repository.list_curation_seed_tasks(batch_id),
+        *first_review.repository.list_curation_work_items(paused_batch_id),
+        *first_review.repository.list_curation_seed_tasks(paused_batch_id),
     ))
     await first.close()
 
@@ -708,28 +696,30 @@ async def test_six_item_curation_resumes_after_failure_pause_and_runtime_restart
     try:
         await second.recover()
         second_review = second.review("w1")
-        recovered_batch = second_review.repository.get_batch(batch_id)
+        recovered_batch = second_review.repository.get_batch(paused_batch_id)
         assert recovered_batch.status == "paused"
         final_attempt = await second_review.resume_curation_session(
-            session_id,
+            paused_session_id,
             expected_batch_version=recovered_batch.version,
             idempotency_key="resume-after-runtime-restart-0001",
         )
         await second.wait_execution(str(final_attempt["execution_id"]))
 
-        final_batch = second_review.repository.get_batch(batch_id)
-        final_items = second_review.repository.list_curation_work_items(batch_id)
-        final_seed_tasks = second_review.repository.list_curation_seed_tasks(batch_id)
-        assert agents.peak == 3
-        assert all(
-            second_review.repository.get_curation_seed_task(item_id).automatic_attempt_count
-            == count
-            for item_id, count in completed_invocations.items()
+        final_batch = second_review.repository.get_batch(paused_batch_id)
+        final_items = second_review.repository.list_curation_work_items(
+            paused_batch_id
         )
+        final_seed_tasks = second_review.repository.list_curation_seed_tasks(
+            paused_batch_id
+        )
+        assert agents.peak == 3
         assert final_batch.status == "review_pending"
-        assert all(item.status in {"completed", "degraded"} for item in final_seed_tasks)
+        assert all(
+            item.status in {"completed", "degraded"}
+            for item in final_seed_tasks
+        )
         assert all(item.status != "running" for item in final_items)
-        resource = await second_review.curation_resource(session_id)
+        resource = await second_review.curation_resource(paused_session_id)
         assert resource["seed_progress"] == {
             "total": 18,
             "completed": 0,
