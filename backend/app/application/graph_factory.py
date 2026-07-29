@@ -32,6 +32,27 @@ from app.tools.profile_tools import (
     ProfileToolBudgetMiddleware,
     create_profile_tools,
 )
+from app.observability.registry import assert_registry_complete
+
+
+PRODUCTION_GRAPH_KINDS = frozenset(
+    {
+        "profile.ingest",
+        "profile.assess",
+        "profile.manage",
+        "question.curate",
+        "question.revise",
+        "review.round",
+        "review.discussion",
+        "review.single",
+        "knowledge.publish",
+        "job.analysis",
+        "project.deep_dive",
+        "diagnostic.echo",
+        "diagnostic.approval",
+        "diagnostic.security",
+    }
+)
 
 
 class DiagnosticState(TypedDict, total=False):
@@ -45,6 +66,7 @@ class ProductionGraphFactory:
     """Explicit product graph selection; this is not a dynamic graph registry."""
 
     def __init__(self, agents: AgentFactory) -> None:
+        assert_registry_complete(PRODUCTION_GRAPH_KINDS)
         self._agents = agents
 
     @property
