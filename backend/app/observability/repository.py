@@ -57,6 +57,13 @@ class TraceIndexRepository:
             )
         )
 
+    def get_event(self, event_id: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT * FROM agent_trace_events WHERE event_id = ?",
+            (event_id,),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
     def replace_file_index(
         self,
         *,

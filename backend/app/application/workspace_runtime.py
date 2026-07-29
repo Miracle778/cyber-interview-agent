@@ -232,6 +232,7 @@ class WorkspaceRuntime:
         graph_factory: GraphFactory,
         observability,
         validate_review_model: Callable[[str, str], None],
+        advanced_diagnostics_enabled: Callable[[], bool],
     ) -> "WorkspaceRuntime":
         connection = connect_thread_local_runtime_database(root)
         initialize_agent_trace_directory(root)
@@ -244,9 +245,11 @@ class WorkspaceRuntime:
         )
         agent_observability = AgentObservabilityService(
             workspace_id=workspace_id,
+            workspace_root=root,
             connection=connection,
             trace_repository=trace_repository,
             indexer=trace_indexer,
+            advanced_diagnostics_enabled=advanced_diagnostics_enabled,
         )
         agent_observability.sync()
         events = ProductEventStream(repository, workspace_root=root)
@@ -538,6 +541,7 @@ class AgentApplication:
         observability=None,
         observability_flush_timeout_ms: int = 2_000,
         validate_review_model: Callable[[str, str, str], None] | None = None,
+        advanced_diagnostics_enabled: Callable[[], bool] | None = None,
     ) -> None:
         self._workspace_resolver = workspace_resolver
         self._workspace_ids = workspace_ids
@@ -547,6 +551,9 @@ class AgentApplication:
         self._observability_flush_timeout_ms = observability_flush_timeout_ms
         self._validate_review_model = validate_review_model or (
             lambda _workspace, _model, _effort: None
+        )
+        self._advanced_diagnostics_enabled = (
+            advanced_diagnostics_enabled or (lambda: False)
         )
         self._workspaces: dict[str, WorkspaceRuntime] = {}
 
@@ -968,6 +975,7 @@ class AgentApplication:
             validate_review_model=lambda model_id, effort: self._validate_review_model(
                 workspace_id, model_id, effort
             ),
+            advanced_diagnostics_enabled=self._advanced_diagnostics_enabled,
         )
         self._workspaces[workspace_id] = context
         return context

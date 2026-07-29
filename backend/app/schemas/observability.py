@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -73,6 +73,19 @@ class ExecutionSummaryPageResource(ObservabilityModel):
 
 class OperationSummaryListResource(ObservabilityModel):
     items: list[OperationSummaryResource]
+
+
+class TraceEventContentResource(ObservabilityModel):
+    event_id: str
+    event_type: str
+    content: str
+    content_encoding: Literal["utf-8-json"]
+    offset: int = Field(ge=0)
+    next_offset: int | None = Field(default=None, ge=0)
+    complete: bool
+    sha256: str
+    redactions_applied: bool
+    reasoning: Any | None = None
 
 
 class ExecutionChangedEventResource(ObservabilityModel):

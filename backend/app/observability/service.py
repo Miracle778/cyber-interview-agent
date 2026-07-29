@@ -7,8 +7,17 @@ import json
 import threading
 import time
 from datetime import datetime, timezone
+from pathlib import Path
+from collections.abc import Callable
 from typing import Any, AsyncIterator
 
+from app.observability.content_reader import (
+    InvalidTraceContentRangeError,
+    TraceContentNotFoundError,
+    TraceContentPage,
+    TraceContentReader,
+    TraceContentUnavailableError,
+)
 from app.observability.indexer import TraceLedgerIndexer, TraceSyncResult
 from app.observability.registry import AGENT_OBSERVABILITY_REGISTRY
 from app.observability.repository import TraceIndexRepository
@@ -29,19 +38,33 @@ class AgentExecutionNotFoundError(LookupError):
     pass
 
 
+class AdvancedDiagnosticsDisabledError(RuntimeError):
+    pass
+
+
 class AgentObservabilityService:
     def __init__(
         self,
         *,
         workspace_id: str,
+        workspace_root: Path | None = None,
         connection,
         trace_repository: TraceIndexRepository,
         indexer: TraceLedgerIndexer,
+        advanced_diagnostics_enabled: Callable[[], bool] | None = None,
     ) -> None:
         self.workspace_id = workspace_id
         self.connection = connection
         self.trace_repository = trace_repository
         self.indexer = indexer
+        self.advanced_diagnostics_enabled = (
+            advanced_diagnostics_enabled or (lambda: False)
+        )
+        self.content_reader = TraceContentReader(
+            workspace_id=workspace_id,
+            workspace_root=workspace_root or indexer.workspace_root,
+            repository=trace_repository,
+        )
         self.assembler = ExecutionSummaryAssembler(
             workspace_id=workspace_id,
             connection=connection,
@@ -140,6 +163,26 @@ class AgentObservabilityService:
         self._run(run_id)
         return OperationSummaryListResource(
             items=list(self.assembler.operations(run_id))
+        )
+
+    def get_event_content(
+        self,
+        run_id: str,
+        event_id: str,
+        *,
+        offset: int,
+        limit: int,
+    ) -> TraceContentPage:
+        if not self.advanced_diagnostics_enabled():
+            raise AdvancedDiagnosticsDisabledError(
+                "advanced diagnostics are disabled"
+            )
+        self._run(run_id)
+        return self.content_reader.read(
+            run_id=run_id,
+            event_id=event_id,
+            offset=offset,
+            limit=limit,
         )
 
     def replay_changes(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from httpx import ASGITransport, AsyncClient
 from app.api.dependencies import get_agent_application
 from app.api import routes_observability
 from app.application.workspace_runtime import AgentApplication
+from app.diagnostics.agent_trace import AgentTraceWriter, TraceIdentity
 from app.main import app as production_app
 
 
@@ -217,6 +219,119 @@ async def test_cross_workspace_detail_is_hidden_as_not_found(api, application) -
         "code": "agent_execution_not_found",
         "message": "Agent Execution 不存在或无权访问",
     }
+
+
+@pytest.mark.asyncio
+async def test_event_content_route_requires_advanced_diagnostics(
+    api, application
+) -> None:
+    await _insert_run(
+        application,
+        workspace_id="workspace-1",
+        run_id="run-private-body",
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        response = await client.get(
+            "/api/agent-observability/executions/run-private-body/"
+            "events/event-private/content",
+            params={"workspaceId": "workspace-1"},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "advanced_diagnostics_disabled"
+
+
+@pytest.mark.asyncio
+async def test_event_content_route_reads_indexed_payload_and_omits_reasoning(
+    api, application
+) -> None:
+    context, session_id = await _insert_run(
+        application,
+        workspace_id="workspace-1",
+        run_id="run-content",
+    )
+    context.agent_observability.advanced_diagnostics_enabled = lambda: True
+    identity = TraceIdentity(
+        workspace_id="workspace-1",
+        workspace_root=context.root,
+        session_id=session_id,
+        run_id="run-content",
+        agent_role="answer_evaluation",
+        agent_name="review_answer_evaluation",
+        invocation_id="invocation-content",
+    )
+    AgentTraceWriter().append(
+        identity,
+        "model.response",
+        {"structured_response": {"score": 4}},
+    )
+    context.agent_observability.sync()
+    event_id = context.agent_observability.trace_repository.list_events(
+        "run-content"
+    )[0]["event_id"]
+
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        response = await client.get(
+            f"/api/agent-observability/executions/run-content/"
+            f"events/{event_id}/content",
+            params={"workspaceId": "workspace-1"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert json.loads(body["content"]) == {
+        "structured_response": {"score": 4}
+    }
+    assert "reasoning" not in body
+    assert body["contentEncoding"] == "utf-8-json"
+
+
+@pytest.mark.asyncio
+async def test_event_content_route_hides_cross_workspace_run(
+    api, application
+) -> None:
+    context, session_id = await _insert_run(
+        application,
+        workspace_id="workspace-2",
+        run_id="run-other-content",
+    )
+    context.agent_observability.advanced_diagnostics_enabled = lambda: True
+    AgentTraceWriter().append(
+        TraceIdentity(
+            workspace_id="workspace-2",
+            workspace_root=context.root,
+            session_id=session_id,
+            run_id="run-other-content",
+            agent_role="answer_evaluation",
+            agent_name="review_answer_evaluation",
+            invocation_id="invocation-other-content",
+        ),
+        "model.request",
+        {"messages": ["private"]},
+    )
+    context.agent_observability.sync()
+    event_id = context.agent_observability.trace_repository.list_events(
+        "run-other-content"
+    )[0]["event_id"]
+    workspace_one = application._context("workspace-1")
+    workspace_one.agent_observability.advanced_diagnostics_enabled = lambda: True
+
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        response = await client.get(
+            f"/api/agent-observability/executions/run-other-content/"
+            f"events/{event_id}/content",
+            params={"workspaceId": "workspace-1"},
+        )
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "agent_execution_not_found"
 
 
 @pytest.mark.asyncio

@@ -12,14 +12,19 @@ from app.api.dependencies import (
 )
 from app.application.workspace_runtime import AgentApplication
 from app.observability.service import (
+    AdvancedDiagnosticsDisabledError,
     AgentExecutionNotFoundError,
     AgentObservabilityService,
+    InvalidTraceContentRangeError,
     InvalidExecutionCursorError,
+    TraceContentNotFoundError,
+    TraceContentUnavailableError,
 )
 from app.schemas.observability import (
     ExecutionSummaryPageResource,
     ExecutionSummaryResource,
     OperationSummaryListResource,
+    TraceEventContentResource,
 )
 
 
@@ -43,6 +48,13 @@ def _not_found() -> JSONResponse:
             "code": "agent_execution_not_found",
             "message": "Agent Execution 不存在或无权访问",
         },
+    )
+
+
+def _content_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={"code": code, "message": message},
     )
 
 
@@ -120,6 +132,50 @@ async def list_observability_operations(
         return service.list_operations(run_id)
     except AgentExecutionNotFoundError:
         return _not_found()
+
+
+@router.get(
+    "/executions/{run_id}/events/{event_id}/content",
+    response_model=TraceEventContentResource,
+    response_model_exclude_none=True,
+)
+async def get_observability_event_content(
+    run_id: str,
+    event_id: str,
+    offset: int = 0,
+    limit: int = 65536,
+    service: AgentObservabilityService = Depends(
+        get_agent_observability_service
+    ),
+):
+    service.sync_if_due()
+    try:
+        return service.get_event_content(
+            run_id,
+            event_id,
+            offset=offset,
+            limit=limit,
+        )
+    except AdvancedDiagnosticsDisabledError:
+        return _content_error(
+            409,
+            "advanced_diagnostics_disabled",
+            "请先在设置中开启高级诊断模式",
+        )
+    except (AgentExecutionNotFoundError, TraceContentNotFoundError):
+        return _not_found()
+    except InvalidTraceContentRangeError:
+        return _content_error(
+            422,
+            "invalid_trace_content_range",
+            "正文读取范围无效",
+        )
+    except TraceContentUnavailableError:
+        return _content_error(
+            409,
+            "trace_content_unavailable",
+            "Trace 正文缺失、损坏或已发生变化",
+        )
 
 
 def _parse_event_cursor(value: str | None) -> int | None:
