@@ -1,10 +1,11 @@
 import { AlertTriangle, ShieldCheck } from "lucide-react";
-import type { EvaluationRun } from "./evaluationTypes";
+import type { EvaluationFeedback, EvaluationRun } from "./evaluationTypes";
 
 
 interface JudgeResultPanelProps {
   run: EvaluationRun | null;
   feedbackPending: boolean;
+  feedback: EvaluationFeedback[];
   onFeedback: (
     verdict: "accurate" | "incorrect" | "uncertain",
     reason: string,
@@ -14,6 +15,7 @@ interface JudgeResultPanelProps {
 export function JudgeResultPanel({
   run,
   feedbackPending,
+  feedback,
   onFeedback,
 }: JudgeResultPanelProps) {
   if (!run) {
@@ -78,6 +80,19 @@ export function JudgeResultPanel({
         </details>
       ) : null}
       <FeedbackForm pending={feedbackPending} onSubmit={onFeedback} />
+      {feedback.length > 0 ? (
+        <section className="judge-feedback-history">
+          <strong>反馈历史</strong>
+          <ol>
+            {feedback.map((item) => (
+              <li key={item.id}>
+                <span>v{item.version} · {item.verdict}</span>
+                {item.reason ? <p>{item.reason}</p> : null}
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
     </div>
   );
 }

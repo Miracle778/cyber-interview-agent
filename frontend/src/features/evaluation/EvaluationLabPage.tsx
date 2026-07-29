@@ -9,6 +9,7 @@ import {
   createEvaluationRun,
   createRegressionCase,
   listEvaluationRuns,
+  listEvaluationFeedback,
   listRegressionCases,
   submitEvaluationFeedback,
 } from "./evaluationApi";
@@ -77,6 +78,12 @@ export function EvaluationLabPage({
     () => runs.find((item) => item.id === selectedId) ?? null,
     [runs, selectedId],
   );
+  const feedbackQuery = useQuery({
+    queryKey: ["agent-evaluation-feedback", workspace?.id, selectedId],
+    enabled: Boolean(workspace && selectedId),
+    queryFn: ({ signal }) =>
+      listEvaluationFeedback(workspace!.id, selectedId!, signal),
+  });
 
   return (
     <section className="evaluation-lab" aria-label="Agent 质量实验室">
@@ -138,7 +145,15 @@ export function EvaluationLabPage({
               <JudgeResultPanel
                 run={selected}
                 feedbackPending={feedback.isPending}
-                onFeedback={(verdict, reason) => feedback.mutate({ verdict, reason })}
+                feedback={feedbackQuery.data ?? []}
+                onFeedback={(verdict, reason) => feedback.mutate(
+                  { verdict, reason },
+                  {
+                    onSuccess: () => void queryClient.invalidateQueries({
+                      queryKey: ["agent-evaluation-feedback", workspace?.id, selectedId],
+                    }),
+                  },
+                )}
               />
             </TaskWorkspacePane>
             <TaskWorkspacePane className="evaluation-lab__cases">

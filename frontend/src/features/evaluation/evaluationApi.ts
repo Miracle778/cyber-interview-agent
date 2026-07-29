@@ -1,4 +1,4 @@
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 import { apiGet, apiPost } from "../../shared/api/client";
 import {
   comparisonSchema,
@@ -70,6 +70,18 @@ export async function submitEvaluationFeedback(
     { verdict, reason: reason.trim() || null },
   );
   return parse(() => feedbackSchema.parse(payload));
+}
+
+export async function listEvaluationFeedback(
+  workspaceId: string,
+  evalRunId: string,
+  signal?: AbortSignal,
+): Promise<EvaluationFeedback[]> {
+  const payload = await apiGet<unknown>(
+    `/api/agent-evaluations/runs/${encodeURIComponent(evalRunId)}/feedback?workspaceId=${encodeURIComponent(workspaceId)}`,
+    { signal },
+  );
+  return parse(() => z.array(feedbackSchema).parse(payload));
 }
 
 export async function createRegressionCase(
