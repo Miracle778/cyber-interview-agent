@@ -64,6 +64,8 @@ from app.observability.repository import TraceIndexRepository
 from app.observability.service import AgentObservabilityService
 from app.evaluation.repository import AgentEvaluationRepository
 from app.evaluation.service import AgentEvaluationService
+from app.observability.retention import TraceRetentionService
+from app.observability.cleanup import TraceCleanupService
 
 
 def _compact_session_title(content: str) -> str:
@@ -221,6 +223,8 @@ class WorkspaceRuntime:
     job_training: JobTargetApplication
     agent_observability: AgentObservabilityService
     agent_evaluation: AgentEvaluationService | None
+    trace_retention: TraceRetentionService
+    trace_cleanup: TraceCleanupService
     publication_locks: dict[str, asyncio.Lock] = field(
         default_factory=dict, repr=False
     )
@@ -256,6 +260,16 @@ class WorkspaceRuntime:
             advanced_diagnostics_enabled=advanced_diagnostics_enabled,
         )
         agent_observability.sync()
+        trace_retention = TraceRetentionService(
+            connection=connection,
+            workspace_id=workspace_id,
+            workspace_root=root,
+        )
+        trace_cleanup = TraceCleanupService(
+            retention=trace_retention,
+            repository=trace_repository,
+        )
+        trace_cleanup.resume_incomplete()
         events = ProductEventStream(repository, workspace_root=root)
         sessions = AgentSessionService(repository, events)
         actions = PendingActionRepository(root)
@@ -551,6 +565,8 @@ class WorkspaceRuntime:
             job_training=job_training,
             agent_observability=agent_observability,
             agent_evaluation=agent_evaluation,
+            trace_retention=trace_retention,
+            trace_cleanup=trace_cleanup,
         )
 
     async def close(self) -> None:
@@ -909,6 +925,12 @@ class AgentApplication:
         if service is None:
             raise RuntimeError("Agent 质量评估服务未配置")
         return service
+
+    def trace_retention(self, workspace_id: str) -> TraceRetentionService:
+        return self._context(workspace_id).trace_retention
+
+    def trace_cleanup(self, workspace_id: str) -> TraceCleanupService:
+        return self._context(workspace_id).trace_cleanup
 
     def locate_review_round(self, round_id: str) -> ReviewApplication:
         for workspace_id in self._workspace_ids():
