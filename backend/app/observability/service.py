@@ -192,6 +192,7 @@ class AgentObservabilityService:
                     observed_at=row["observed_at"],
                     byte_length=row["byte_length"],
                     sequence=row["sequence"],
+                    body_state=row.get("body_state", "available"),
                 )
                 for row in self.trace_repository.list_events(run_id)
             ]

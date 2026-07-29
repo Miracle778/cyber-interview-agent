@@ -24,10 +24,38 @@ from app.schemas.evaluation import (
     EvaluationRunResource,
     RegressionCaseListResource,
     RegressionCaseResource,
+    EvaluationTrendListResource,
 )
+from app.evaluation.trends import EvaluationTrendService
 
 
 router = APIRouter(prefix="/api/agent-evaluations", tags=["agent-evaluations"])
+
+
+@router.get("/trends", response_model=EvaluationTrendListResource)
+async def get_evaluation_trends(
+    graph_id: Annotated[str | None, Query(alias="graphId")] = None,
+    eval_pack_id: Annotated[str | None, Query(alias="evalPackId")] = None,
+    eval_pack_version: Annotated[int | None, Query(alias="evalPackVersion")] = None,
+    judge_provider_model_id: Annotated[
+        str | None, Query(alias="judgeProviderModelId")
+    ] = None,
+    started_from: Annotated[str | None, Query(alias="startedFrom")] = None,
+    started_to: Annotated[str | None, Query(alias="startedTo")] = None,
+    service: AgentEvaluationService = Depends(get_agent_evaluation_service),
+):
+    trends = EvaluationTrendService(
+        service.repository.connection,
+        service.workspace_id,
+    ).query(
+        graph_id=graph_id,
+        eval_pack_id=eval_pack_id,
+        eval_pack_version=eval_pack_version,
+        judge_provider_model_id=judge_provider_model_id,
+        started_from=started_from,
+        started_to=started_to,
+    )
+    return {"items": trends}
 
 
 def _error(status: int, code: str, message: str) -> JSONResponse:

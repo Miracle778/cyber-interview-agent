@@ -9,6 +9,8 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from app.api.dependencies import (
     get_agent_application,
     get_agent_observability_service,
+    get_trace_cleanup_service,
+    get_trace_retention_service,
 )
 from app.application.workspace_runtime import AgentApplication
 from app.observability.service import (
@@ -31,10 +33,81 @@ from app.schemas.observability import (
     TraceEventContentResource,
     TraceEventSummaryListResource,
     TraceExportResource,
+    TraceRetentionPolicyResource,
+    UpdateTraceRetentionPolicyCommand,
+    TraceCleanupPlanResource,
 )
+from app.observability.retention import TraceRetentionService
+from app.observability.cleanup import TraceCleanupService
 
 
 router = APIRouter(prefix="/api/agent-observability", tags=["agent-observability"])
+
+
+@router.get("/retention", response_model=TraceRetentionPolicyResource)
+async def get_trace_retention_policy(
+    service: TraceRetentionService = Depends(get_trace_retention_service),
+):
+    return service.get_policy()
+
+
+@router.put("/retention", response_model=TraceRetentionPolicyResource)
+async def replace_trace_retention_policy(
+    command: UpdateTraceRetentionPolicyCommand,
+    service: TraceRetentionService = Depends(get_trace_retention_service),
+):
+    try:
+        return service.replace_policy(
+            body_policy=command.body_policy,
+            body_days=command.body_days,
+        )
+    except ValueError:
+        return _content_error(
+            422, "invalid_trace_retention_policy", "Trace 保留策略无效"
+        )
+
+
+@router.post(
+    "/cleanup-plans",
+    response_model=TraceCleanupPlanResource,
+    status_code=201,
+)
+async def create_trace_cleanup_plan(
+    service: TraceRetentionService = Depends(get_trace_retention_service),
+):
+    return service.create_plan()
+
+
+@router.post(
+    "/cleanup-plans/{cleanup_id}/confirm",
+    response_model=TraceCleanupPlanResource,
+)
+async def confirm_trace_cleanup_plan(
+    cleanup_id: str,
+    service: TraceCleanupService = Depends(get_trace_cleanup_service),
+):
+    try:
+        return service.confirm(cleanup_id)
+    except LookupError:
+        return _content_error(
+            404, "trace_cleanup_not_found", "Trace 清理计划不存在或无权访问"
+        )
+
+
+@router.get(
+    "/cleanup-runs/{cleanup_id}",
+    response_model=TraceCleanupPlanResource,
+)
+async def get_trace_cleanup_run(
+    cleanup_id: str,
+    service: TraceRetentionService = Depends(get_trace_retention_service),
+):
+    try:
+        return service.get_plan(cleanup_id)
+    except LookupError:
+        return _content_error(
+            404, "trace_cleanup_not_found", "Trace 清理计划不存在或无权访问"
+        )
 
 
 def _query_error(message: str) -> JSONResponse:

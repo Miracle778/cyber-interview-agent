@@ -82,6 +82,7 @@ class TraceEventSummaryResource(ObservabilityModel):
     observed_at: str | None
     byte_length: int = Field(ge=0)
     sequence: int = Field(ge=0)
+    body_state: Literal["available", "quarantined", "deleted", "unavailable"]
 
 
 class TraceEventSummaryListResource(ObservabilityModel):
@@ -123,3 +124,40 @@ class ExecutionChangedEventResource(ObservabilityModel):
     event_id: str
     type: Literal["execution.summary.changed"] = "execution.summary.changed"
     execution: ExecutionSummaryResource
+
+
+class TraceRetentionPolicyResource(ObservabilityModel):
+    workspace_id: str
+    body_policy: Literal["permanent", "days", "metadata_only"]
+    body_days: int | None
+    metadata_policy: Literal["retain"]
+    updated_at: str
+
+
+class UpdateTraceRetentionPolicyCommand(ObservabilityModel):
+    body_policy: Literal["permanent", "days", "metadata_only"]
+    body_days: int | None = Field(default=None, ge=1, le=3650)
+
+
+class TraceCleanupItemResource(ObservabilityModel):
+    relative_path: str
+    run_id: str
+    event_count: int
+    byte_count: int
+    sha256: str
+    status: str
+    error_code: str | None
+
+
+class TraceCleanupPlanResource(ObservabilityModel):
+    id: str
+    workspace_id: str
+    status: str
+    file_count: int
+    event_count: int
+    total_bytes: int
+    protected_active_runs: int
+    error_code: str | None
+    created_at: str
+    completed_at: str | None
+    items: list[TraceCleanupItemResource]

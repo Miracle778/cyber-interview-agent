@@ -109,3 +109,26 @@ class EvaluationComparisonResource(EvaluationModel):
     eval_pack_version: int
     dimension_ids: list[str]
     runs: list[EvaluationRunResource]
+
+
+class EvaluationTrendPointResource(EvaluationModel):
+    bucket: str
+    graph_id: str
+    eval_pack_id: str
+    eval_pack_version: int
+    judge_provider_model_id: str | None
+    prompt_version: str
+    schema_version: str
+    tool_version: str
+    run_count: int
+    success_rate: float
+    deterministic_issue_rate: float
+    average_judge_score: float | None
+    human_review_rate: float
+    average_latency_ms: float | None
+    average_tokens: float
+    average_context_tokens: float
+
+
+class EvaluationTrendListResource(EvaluationModel):
+    items: list[EvaluationTrendPointResource]
