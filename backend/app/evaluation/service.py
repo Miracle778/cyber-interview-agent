@@ -41,6 +41,7 @@ class AgentEvaluationService:
         publish_event: Callable[[str, dict[str, object]], Awaitable[None] | None]
         | None = None,
         now: Callable[[], datetime] | None = None,
+        advanced_diagnostics_enabled: Callable[[], bool] | None = None,
     ) -> None:
         self.workspace_id = workspace_id
         self.workspace_root = workspace_root
@@ -51,6 +52,13 @@ class AgentEvaluationService:
         self._judge_factory = judge_factory
         self._publish_event = publish_event
         self._now = now or (lambda: datetime.now(timezone.utc))
+        self._advanced_diagnostics_enabled = (
+            advanced_diagnostics_enabled or (lambda: False)
+        )
+
+    @property
+    def advanced_diagnostics_enabled(self) -> bool:
+        return bool(self._advanced_diagnostics_enabled())
 
     async def evaluate(
         self,

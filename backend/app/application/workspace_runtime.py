@@ -299,6 +299,7 @@ class WorkspaceRuntime:
                     model_bindings=model_bindings(),
                     provider_model_id=provider_model_id,
                 ),
+                advanced_diagnostics_enabled=advanced_diagnostics_enabled,
             )
         )
 
