@@ -77,3 +77,26 @@ def test_symlink_source_is_denied_and_recorded(tmp_path) -> None:
         assert original.exists()
     finally:
         connection.close()
+
+
+def test_restart_resumes_quarantined_cleanup_deterministically(tmp_path) -> None:
+    connection, retention, cleanup = _cleanup(tmp_path)
+    try:
+        plan = retention.create_plan()
+        cleanup._set_run_status(plan.id, "quarantining", confirmed=True)
+        cleanup._quarantine(plan.id, plan.items[0])
+        cleanup._set_run_status(plan.id, "quarantined")
+
+        restarted = TraceCleanupService(
+            retention=retention,
+            repository=TraceIndexRepository(connection),
+        )
+        recovered = restarted.resume_incomplete()
+
+        assert len(recovered) == 1
+        assert recovered[0].status == "completed"
+        assert recovered[0].items[0].status == "finalized"
+        assert not _trace(tmp_path).exists()
+        assert restarted.resume_incomplete() == ()
+    finally:
+        connection.close()
