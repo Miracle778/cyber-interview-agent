@@ -1,4 +1,5 @@
 import { AlertTriangle, Bot, CheckCircle2, Clock3, LoaderCircle, PauseCircle, XCircle } from "lucide-react";
+import { Link } from "react-router-dom";
 import { formatBeijingTime } from "../../shared/time";
 import type { ExecutionSummary } from "./observabilityTypes";
 
@@ -46,12 +47,14 @@ interface ExecutionListProps {
   executions: ExecutionSummary[];
   selectedId: string | null;
   onSelect: (executionId: string) => void;
+  returnTo: string;
 }
 
 export function ExecutionList({
   executions,
   selectedId,
   onSelect,
+  returnTo,
 }: ExecutionListProps) {
   return (
     <div className="execution-list" aria-label="Execution 列表">
@@ -63,40 +66,49 @@ export function ExecutionList({
         <span>开始时间</span>
       </div>
       {executions.map((execution) => (
-        <button
-          className="execution-row"
-          data-status={execution.status}
-          aria-pressed={execution.id === selectedId}
-          type="button"
-          key={execution.id}
-          onClick={() => onSelect(execution.id)}
-        >
-          <span className="execution-row__identity">
-            <span className="execution-row__icon" aria-hidden="true">
-              <Bot size={17} />
+        <div className="execution-row-card" key={execution.id}>
+          <button
+            className="execution-row"
+            data-status={execution.status}
+            aria-pressed={execution.id === selectedId}
+            type="button"
+            onClick={() => onSelect(execution.id)}
+          >
+            <span className="execution-row__identity">
+              <span className="execution-row__icon" aria-hidden="true">
+                <Bot size={17} />
+              </span>
+              <span>
+                <strong>{execution.title}</strong>
+                <small>{execution.displayName}</small>
+              </span>
             </span>
-            <span>
-              <strong>{execution.title}</strong>
-              <small>{execution.displayName}</small>
+            <span className="execution-status" data-status={execution.status}>
+              <StatusIcon status={execution.status} />
+              {statusLabel(execution.status)}
             </span>
-          </span>
-          <span className="execution-status" data-status={execution.status}>
-            <StatusIcon status={execution.status} />
-            {statusLabel(execution.status)}
-          </span>
-          <span className="execution-row__metric">
-            {formatDuration(execution.latencyMs)}
-          </span>
-          <span className="execution-row__metric">
-            {formatCompactNumber(execution.totalTokens)}
-          </span>
-          <time dateTime={execution.startedAt ?? execution.createdAt}>
-            {formatBeijingTime(
-              execution.startedAt ?? execution.createdAt,
-              false,
-            ) ?? "—"}
-          </time>
-        </button>
+            <span className="execution-row__metric">
+              {formatDuration(execution.latencyMs)}
+            </span>
+            <span className="execution-row__metric">
+              {formatCompactNumber(execution.totalTokens)}
+            </span>
+            <time dateTime={execution.startedAt ?? execution.createdAt}>
+              {formatBeijingTime(
+                execution.startedAt ?? execution.createdAt,
+                false,
+              ) ?? "—"}
+            </time>
+          </button>
+          <Link
+            className="execution-row__details"
+            to={`/agents/executions/${encodeURIComponent(execution.id)}`}
+            state={{ from: returnTo }}
+            aria-label={`查看“${execution.title}”运行详情`}
+          >
+            详情
+          </Link>
+        </div>
       ))}
     </div>
   );

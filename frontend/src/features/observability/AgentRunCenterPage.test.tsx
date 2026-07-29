@@ -128,6 +128,9 @@ describe("AgentRunCenterPage", () => {
     expect(row).toHaveTextContent("12.8k");
     expect(row).toHaveTextContent("14:26");
     expect(row).toHaveTextContent("运行中");
+    expect(screen.getByRole("link", {
+      name: "查看“MyBatis 拦截器资料整理”运行详情",
+    })).toHaveAttribute("href", "/agents/executions/run-running");
   });
 
   it("filters by status, search text, and explicit system-agent inclusion", async () => {

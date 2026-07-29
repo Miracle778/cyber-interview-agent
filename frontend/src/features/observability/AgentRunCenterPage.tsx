@@ -120,6 +120,8 @@ export function AgentRunCenterPage({
 
   const selected =
     executions.find((execution) => execution.id === selectedId) ?? null;
+  const returnTo =
+    `/agents${searchParams.size ? `?${searchParams.toString()}` : ""}`;
   const agentNames = useMemo(
     () => [...new Set((query.data?.items ?? []).map((item) => item.displayName))].sort(),
     [query.data?.items],
@@ -307,12 +309,13 @@ export function AgentRunCenterPage({
                 executions={executions}
                 selectedId={selectedId}
                 onSelect={setSelectedId}
+                returnTo={returnTo}
               />
               {selected ? (
                 <ExecutionPreview
                   execution={selected}
                   onClose={() => setSelectedId(null)}
-                  returnTo={`/agents${searchParams.size ? `?${searchParams.toString()}` : ""}`}
+                  returnTo={returnTo}
                 />
               ) : null}
             </div>
