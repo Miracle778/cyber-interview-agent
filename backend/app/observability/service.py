@@ -19,6 +19,13 @@ from app.observability.content_reader import (
     TraceContentUnavailableError,
 )
 from app.observability.indexer import TraceLedgerIndexer, TraceSyncResult
+from app.observability.export_service import (
+    TraceExportConflictError,
+    TraceExportGenerationError,
+    TraceExportNotFoundError,
+    TraceExportRecord,
+    TraceExportService,
+)
 from app.observability.registry import AGENT_OBSERVABILITY_REGISTRY
 from app.observability.repository import TraceIndexRepository
 from app.observability.summary import ExecutionSummaryAssembler
@@ -64,6 +71,12 @@ class AgentObservabilityService:
             workspace_id=workspace_id,
             workspace_root=workspace_root or indexer.workspace_root,
             repository=trace_repository,
+        )
+        self.export_service = TraceExportService(
+            workspace_id=workspace_id,
+            workspace_root=workspace_root or indexer.workspace_root,
+            repository=trace_repository,
+            content_reader=self.content_reader,
         )
         self.assembler = ExecutionSummaryAssembler(
             workspace_id=workspace_id,
@@ -184,6 +197,44 @@ class AgentObservabilityService:
             offset=offset,
             limit=limit,
         )
+
+    def create_export(
+        self,
+        run_id: str,
+        *,
+        idempotency_key: str,
+        metadata_only: bool,
+        include_stored_bodies: bool,
+    ) -> TraceExportRecord:
+        if metadata_only and include_stored_bodies:
+            raise ValueError(
+                "metadata-only exports cannot include stored bodies"
+            )
+        if include_stored_bodies and not self.advanced_diagnostics_enabled():
+            raise AdvancedDiagnosticsDisabledError(
+                "advanced diagnostics are disabled"
+            )
+        execution = self.get_execution(run_id)
+        operations = self.list_operations(run_id)
+        events = list(self.trace_repository.list_events(run_id))
+        return self.export_service.create(
+            run_id=run_id,
+            idempotency_key=idempotency_key,
+            metadata_only=metadata_only,
+            include_stored_bodies=include_stored_bodies,
+            execution=execution.model_dump(by_alias=True, mode="json"),
+            operations=[
+                item.model_dump(by_alias=True, mode="json")
+                for item in operations.items
+            ],
+            events=events,
+        )
+
+    def get_export(self, export_id: str) -> TraceExportRecord:
+        return self.export_service.get(export_id)
+
+    def get_export_artifact(self, export_id: str) -> Path:
+        return self.export_service.artifact(export_id)
 
     def replay_changes(
         self, *, after_event_id: int | None

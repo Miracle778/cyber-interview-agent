@@ -4,7 +4,7 @@ import json
 from typing import Annotated, AsyncIterator
 
 from fastapi import APIRouter, Depends, Header, Query
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from app.api.dependencies import (
     get_agent_application,
@@ -19,12 +19,17 @@ from app.observability.service import (
     InvalidExecutionCursorError,
     TraceContentNotFoundError,
     TraceContentUnavailableError,
+    TraceExportConflictError,
+    TraceExportGenerationError,
+    TraceExportNotFoundError,
 )
 from app.schemas.observability import (
+    CreateTraceExportCommand,
     ExecutionSummaryPageResource,
     ExecutionSummaryResource,
     OperationSummaryListResource,
     TraceEventContentResource,
+    TraceExportResource,
 )
 
 
@@ -176,6 +181,80 @@ async def get_observability_event_content(
             "trace_content_unavailable",
             "Trace 正文缺失、损坏或已发生变化",
         )
+
+
+@router.post(
+    "/executions/{run_id}/exports",
+    response_model=TraceExportResource,
+    status_code=201,
+)
+async def create_observability_export(
+    run_id: str,
+    command: CreateTraceExportCommand,
+    idempotency_key: Annotated[
+        str,
+        Header(alias="Idempotency-Key", min_length=8, max_length=200),
+    ],
+    service: AgentObservabilityService = Depends(
+        get_agent_observability_service
+    ),
+):
+    service.sync_if_due()
+    try:
+        return service.create_export(
+            run_id,
+            idempotency_key=idempotency_key,
+            metadata_only=command.metadata_only,
+            include_stored_bodies=command.include_stored_bodies,
+        )
+    except AdvancedDiagnosticsDisabledError:
+        return _content_error(
+            409,
+            "advanced_diagnostics_disabled",
+            "请先在设置中开启高级诊断模式",
+        )
+    except AgentExecutionNotFoundError:
+        return _not_found()
+    except TraceExportConflictError:
+        return _content_error(
+            409,
+            "trace_export_idempotency_conflict",
+            "该导出请求标识已用于其他选项",
+        )
+    except ValueError:
+        return _content_error(
+            422,
+            "invalid_trace_export_request",
+            "导出选项无效",
+        )
+    except TraceExportGenerationError:
+        return _content_error(
+            500,
+            "trace_export_failed",
+            "诊断包生成失败，未保留不完整文件",
+        )
+
+
+@router.get("/exports/{export_id}")
+async def download_observability_export(
+    export_id: str,
+    service: AgentObservabilityService = Depends(
+        get_agent_observability_service
+    ),
+):
+    try:
+        path = service.get_export_artifact(export_id)
+    except TraceExportNotFoundError:
+        return _content_error(
+            404,
+            "trace_export_not_found",
+            "诊断包不存在或无权访问",
+        )
+    return FileResponse(
+        path,
+        media_type="application/zip",
+        filename=f"agent-trace-{export_id}.zip",
+    )
 
 
 def _parse_event_cursor(value: str | None) -> int | None:

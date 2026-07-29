@@ -335,6 +335,83 @@ async def test_event_content_route_hides_cross_workspace_run(
 
 
 @pytest.mark.asyncio
+async def test_trace_export_route_creates_receipt_and_downloads_private_zip(
+    api, application
+) -> None:
+    context, session_id = await _insert_run(
+        application,
+        workspace_id="workspace-1",
+        run_id="run-export",
+    )
+    context.agent_observability.advanced_diagnostics_enabled = lambda: True
+    AgentTraceWriter().append(
+        TraceIdentity(
+            workspace_id="workspace-1",
+            workspace_root=context.root,
+            session_id=session_id,
+            run_id="run-export",
+            agent_role="answer_evaluation",
+            agent_name="review_answer_evaluation",
+            invocation_id="invocation-export",
+        ),
+        "model.request",
+        {"messages": ["private"]},
+    )
+    context.agent_observability.sync()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = await client.post(
+            "/api/agent-observability/executions/run-export/exports",
+            params={"workspaceId": "workspace-1"},
+            headers={"Idempotency-Key": "route-export-001"},
+            json={
+                "metadataOnly": False,
+                "includeStoredBodies": True,
+            },
+        )
+        downloaded = await client.get(
+            f"/api/agent-observability/exports/{created.json()['id']}",
+            params={"workspaceId": "workspace-1"},
+        )
+
+    assert created.status_code == 201
+    assert created.json()["includesBodies"] is True
+    assert created.json()["status"] == "completed"
+    assert downloaded.status_code == 200
+    assert downloaded.headers["content-type"] == "application/zip"
+    assert downloaded.content.startswith(b"PK")
+
+
+@pytest.mark.asyncio
+async def test_trace_body_export_route_is_disabled_with_advanced_mode_off(
+    api, application
+) -> None:
+    await _insert_run(
+        application,
+        workspace_id="workspace-1",
+        run_id="run-export-disabled",
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/api/agent-observability/executions/run-export-disabled/exports",
+            params={"workspaceId": "workspace-1"},
+            headers={"Idempotency-Key": "route-export-002"},
+            json={
+                "metadataOnly": False,
+                "includeStoredBodies": True,
+            },
+        )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "advanced_diagnostics_disabled"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("params", "message"),
     (
@@ -462,3 +539,7 @@ def test_production_application_registers_observability_routes() -> None:
     paths = set(production_app.openapi()["paths"])
     assert "/api/agent-observability/executions" in paths
     assert "/api/agent-observability/events" in paths
+    assert (
+        "/api/agent-observability/executions/{run_id}/exports" in paths
+    )
+    assert "/api/agent-observability/exports/{export_id}" in paths

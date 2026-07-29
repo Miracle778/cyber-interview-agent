@@ -202,7 +202,7 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-    ] == list(range(1, 38))
+    ] == list(range(1, 39))
     assert "agent_context_usage" in _tables(connection)
     assert "profile_deletion_plans" in _tables(connection)
     assert "deleted_at" in {
@@ -998,7 +998,7 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-    ] == list(range(1, 38))
+    ] == list(range(1, 39))
     reopened.close()
 
 
@@ -1212,6 +1212,41 @@ def test_agent_trace_index_migration_is_repeatable(tmp_path: Path) -> None:
         == 1
     )
     reopened.close()
+
+
+def test_agent_trace_export_migration_creates_receipt_table(
+    tmp_path: Path,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+    try:
+        columns = {
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(agent_trace_exports)"
+            )
+        }
+        migration = connection.execute(
+            "SELECT name FROM runtime_schema_migrations WHERE version = 38"
+        ).fetchone()
+    finally:
+        connection.close()
+
+    assert {
+        "id",
+        "workspace_id",
+        "run_id",
+        "idempotency_key",
+        "request_hash",
+        "status",
+        "artifact_relative_path",
+        "artifact_sha256",
+        "metadata_only",
+        "includes_bodies",
+        "error_code",
+        "created_at",
+        "completed_at",
+    } <= columns
+    assert migration["name"] == "038_agent_trace_exports.sql"
 
 
 def test_session_experience_migration_preserves_existing_r2_rows(

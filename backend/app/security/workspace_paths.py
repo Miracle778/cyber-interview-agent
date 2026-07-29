@@ -11,6 +11,9 @@ SCOPE_PATHS = {
     "knowledge.active": Path("knowledge-vault"),
     "diagnostics.security": Path(".cyber-interview-agent/diagnostics"),
     "diagnostics.agent_traces": Path(".cyber-interview-agent/agent-traces"),
+    "diagnostics.agent_exports": Path(
+        ".cyber-interview-agent/diagnostic-exports"
+    ),
 }
 
 

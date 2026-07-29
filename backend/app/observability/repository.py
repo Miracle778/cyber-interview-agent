@@ -64,6 +64,80 @@ class TraceIndexRepository:
         ).fetchone()
         return dict(row) if row is not None else None
 
+    def get_export(self, export_id: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT * FROM agent_trace_exports WHERE id = ?",
+            (export_id,),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def get_export_by_idempotency_key(
+        self,
+        *,
+        workspace_id: str,
+        idempotency_key: str,
+    ) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT * FROM agent_trace_exports "
+            "WHERE workspace_id = ? AND idempotency_key = ?",
+            (workspace_id, idempotency_key),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def create_export(
+        self,
+        *,
+        export_id: str,
+        workspace_id: str,
+        run_id: str,
+        idempotency_key: str,
+        request_hash: str,
+        metadata_only: bool,
+        includes_bodies: bool,
+    ) -> None:
+        self.connection.execute(
+            "INSERT INTO agent_trace_exports "
+            "(id, workspace_id, run_id, idempotency_key, request_hash, "
+            "status, metadata_only, includes_bodies) "
+            "VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)",
+            (
+                export_id,
+                workspace_id,
+                run_id,
+                idempotency_key,
+                request_hash,
+                int(metadata_only),
+                int(includes_bodies),
+            ),
+        )
+        self.connection.commit()
+
+    def complete_export(
+        self,
+        *,
+        export_id: str,
+        artifact_relative_path: str,
+        artifact_sha256: str,
+    ) -> None:
+        self.connection.execute(
+            "UPDATE agent_trace_exports SET status = 'completed', "
+            "artifact_relative_path = ?, artifact_sha256 = ?, "
+            "completed_at = CURRENT_TIMESTAMP, error_code = NULL "
+            "WHERE id = ? AND status = 'pending'",
+            (artifact_relative_path, artifact_sha256, export_id),
+        )
+        self.connection.commit()
+
+    def fail_export(self, *, export_id: str, error_code: str) -> None:
+        self.connection.execute(
+            "UPDATE agent_trace_exports SET status = 'failed', "
+            "artifact_relative_path = NULL, artifact_sha256 = NULL, "
+            "completed_at = CURRENT_TIMESTAMP, error_code = ? "
+            "WHERE id = ? AND status = 'pending'",
+            (error_code, export_id),
+        )
+        self.connection.commit()
+
     def replace_file_index(
         self,
         *,

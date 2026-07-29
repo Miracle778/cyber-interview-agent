@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from app.observability.models import (
     ObservabilityCapability,
@@ -86,6 +86,24 @@ class TraceEventContentResource(ObservabilityModel):
     sha256: str
     redactions_applied: bool
     reasoning: Any | None = None
+
+
+class CreateTraceExportCommand(ObservabilityModel):
+    metadata_only: StrictBool = True
+    include_stored_bodies: StrictBool = False
+
+
+class TraceExportResource(ObservabilityModel):
+    id: str
+    workspace_id: str
+    run_id: str
+    status: Literal["pending", "completed", "failed"]
+    metadata_only: bool
+    includes_bodies: bool
+    artifact_sha256: str | None
+    error_code: str | None
+    created_at: str
+    completed_at: str | None
 
 
 class ExecutionChangedEventResource(ObservabilityModel):
