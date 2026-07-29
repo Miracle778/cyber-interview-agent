@@ -130,6 +130,7 @@ class AgentObservabilityService:
             dict(row)
             for row in self.connection.execute(
                 "SELECT run.*, session.workspace_id, session.graph_id, "
+                "session.graph_version, "
                 "session.title, session.visibility "
                 "FROM agent_runs run JOIN agent_sessions session "
                 "ON session.id = run.session_id "
@@ -195,6 +196,11 @@ class AgentObservabilityService:
                 for row in self.trace_repository.list_events(run_id)
             ]
         )
+
+    def build_evaluation_snapshot(self, run_id: str, pack):
+        from app.evaluation.snapshot import EvaluationSnapshotBuilder
+
+        return EvaluationSnapshotBuilder(self).build(run_id, pack)
 
     def get_event_content(
         self,
@@ -307,6 +313,7 @@ class AgentObservabilityService:
     def _run(self, run_id: str) -> dict[str, Any]:
         row = self.connection.execute(
             "SELECT run.*, session.workspace_id, session.graph_id, "
+            "session.graph_version, "
             "session.title, session.visibility "
             "FROM agent_runs run JOIN agent_sessions session "
             "ON session.id = run.session_id "

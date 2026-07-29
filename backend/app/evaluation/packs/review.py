@@ -24,8 +24,8 @@ REVIEW_PACK = EvalPack(
         DeterministicRule(
             "terminal_or_waiting",
             "状态可恢复",
-            "运行必须终止或停在明确的等待状态。",
-            frozenset({"execution.completed", "execution.failed"}),
+            "运行必须产生可验证的评价响应或明确证据缺口。",
+            frozenset({"model.response"}),
         ),
     ),
     judge=JudgeContract(
