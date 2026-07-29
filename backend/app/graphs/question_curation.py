@@ -38,12 +38,18 @@ from app.review.curation_scheduler import (
     run_curation_wave,
 )
 from app.review.curation_sections import SourceSection, section_sources
-from app.review.models import CurationSeedTaskRecord, QuestionCandidateRecord
+from app.review.models import (
+    CurationSeedTaskRecord,
+    CurationWorkItemRecord,
+    QuestionCandidateRecord,
+)
 from app.review.question_similarity import question_similarity, same_question
 from app.review.repository import ReviewRepository
 
 
 class CurationWaveFailed(RuntimeError):
+    """A persistence or scheduler failure that must still stop the batch."""
+
     def __init__(self, error_code: str) -> None:
         self.code = error_code
         super().__init__("curation work wave failed")
@@ -163,6 +169,16 @@ async def _discover_bounded(
         seen_primary_refs.add(seed.source_ref)
         deduplicated.append(seed)
     return QuestionSeedBatch(seeds=deduplicated)
+
+
+_DISCOVERY_MAX_ATTEMPTS = 2
+
+
+def _discovery_terminal(item: CurationWorkItemRecord) -> bool:
+    return item.status == "completed" or (
+        item.status == "failed"
+        and item.attempt_count >= _DISCOVERY_MAX_ATTEMPTS
+    )
 
 
 def create_question_curation_graph(
@@ -395,7 +411,7 @@ def create_question_curation_graph(
             if (
                 (item := repository.get_curation_work_item(item_id)).processor_kind
                 == "model"
-                and item.status != "completed"
+                and not _discovery_terminal(item)
             )
         )[:limit]
 
@@ -415,9 +431,6 @@ def create_question_curation_graph(
                     config=dict(config),
                     parent_unit_index=running.unit_index,
                 )
-                repository.complete_curation_work_item(
-                    running.id, output=output.model_dump(mode="json")
-                )
             except asyncio.CancelledError:
                 repository.interrupt_running_curation_work_items(
                     batch_id, error_code="curation_interrupted"
@@ -428,7 +441,10 @@ def create_question_curation_graph(
                     repository.fail_curation_work_item(
                         running.id, error_code=curation_error_code(error)
                     )
-                raise
+                return
+            repository.complete_curation_work_item(
+                running.id, output=output.model_dump(mode="json")
+            )
 
         result = await run_curation_wave(
             pending_ids,
@@ -437,6 +453,22 @@ def create_question_curation_graph(
         )
         _raise_wave_failure(repository, batch_id, result)
         items = repository.list_curation_work_items(batch_id, stage="discovery")
+        warnings = list(state.get("warnings", []))
+        for item in items:
+            if (
+                item.status != "failed"
+                or item.attempt_count < _DISCOVERY_MAX_ATTEMPTS
+            ):
+                continue
+            warning = _discovery_failure_warning(item)
+            if warning not in warnings:
+                warnings.append(warning)
+            if item.last_error_code and is_curation_overload_error(
+                item.last_error_code
+            ):
+                repository.reduce_curation_concurrency(
+                    batch_id, error_code=item.last_error_code
+                )
         return {
             "generation_phase": "discovery",
             "completed_units": sum(item.status == "completed" for item in items),
@@ -444,6 +476,7 @@ def create_question_curation_graph(
             "generated_candidate_count": _completed_candidate_count(
                 repository, batch_id
             ),
+            "warnings": warnings,
         }
 
     async def plan_enrichment(state: QuestionCurationState) -> dict[str, object]:
@@ -536,10 +569,15 @@ def create_question_curation_graph(
             ):
                 output = {"candidates": "invalid"}
             except Exception as error:
-                _interrupt_seed_invocation(
-                    repository, seeds, curation_error_code(error)
+                error_code = curation_error_code(error)
+                _retry_or_skip_seed_invocation(
+                    repository, seeds, error_code
                 )
-                raise
+                if is_curation_overload_error(error_code):
+                    repository.reduce_curation_concurrency(
+                        batch_id, error_code=error_code
+                    )
+                return
             try:
                 outcomes = normalize_provider_candidate_observation(
                     output, seed_tasks=seeds
@@ -639,6 +677,13 @@ def create_question_curation_graph(
                 })
         batch = QuestionCandidateBatch(candidates=candidates[:200])
         total = len(state.get("seed_task_ids", []))
+        warnings = list(state.get("warnings", []))
+        for item in repository.list_curation_seed_tasks(_batch_id(state)):
+            if item.id not in selected_ids or item.status != "skipped":
+                continue
+            warning = _enrichment_failure_warning(item)
+            if warning not in warnings:
+                warnings.append(warning)
         generated_candidate_count = _completed_candidate_count(
             repository, _batch_id(state)
         )
@@ -649,6 +694,7 @@ def create_question_curation_graph(
             "completed_units": total,
             "total_units": total,
             "generated_candidate_count": generated_candidate_count,
+            "warnings": warnings,
         }
 
     def route_mode(state: QuestionCurationInput) -> str:
@@ -660,7 +706,9 @@ def create_question_curation_graph(
         return (
             "pending"
             if any(
-                repository.get_curation_work_item(item_id).status != "completed"
+                not _discovery_terminal(
+                    repository.get_curation_work_item(item_id)
+                )
                 for item_id in state.get("discovery_work_item_ids", [])
             )
             else "done"
@@ -837,6 +885,61 @@ def _interrupt_seed_invocation(
                 error_code=error_code,
                 refund_automatic_attempt=refund_automatic_attempt,
             )
+
+
+def _retry_or_skip_seed_invocation(
+    repository: ReviewRepository,
+    seeds: tuple[CurationSeedTaskRecord, ...],
+    error_code: str,
+) -> None:
+    for seed in seeds:
+        current = repository.get_curation_seed_task(seed.id)
+        if current.status != "running":
+            continue
+        if current.automatic_attempt_count >= 2:
+            repository.skip_curation_seed_task(
+                current.id,
+                expected_version=current.version,
+                error_code=error_code,
+                normalization_issues=(error_code,),
+            )
+        else:
+            repository.mark_curation_seed_retryable(
+                current.id,
+                expected_version=current.version,
+                error_code=error_code,
+                normalization_issues=(error_code,),
+            )
+
+
+def _discovery_failure_warning(item: object) -> dict[str, object]:
+    source_refs = list(getattr(item, "source_refs", ()))
+    first_ref = source_refs[0] if source_refs else ""
+    return {
+        "code": "curation_discovery_block_failed",
+        "stage": "discovery",
+        "unitIndex": int(getattr(item, "unit_index", 0)),
+        "sourceId": first_ref.split("#", 1)[0] if first_ref else "",
+        "sourceRefs": source_refs,
+        "errorCode": (
+            getattr(item, "last_error_code", None)
+            or "curation_work_item_failed"
+        ),
+    }
+
+
+def _enrichment_failure_warning(
+    item: CurationSeedTaskRecord,
+) -> dict[str, object]:
+    first_ref = item.source_refs[0] if item.source_refs else ""
+    return {
+        "code": "curation_enrichment_item_skipped",
+        "stage": "enrichment",
+        "seedOrdinal": item.seed_ordinal,
+        "sourceId": first_ref.split("#", 1)[0] if first_ref else "",
+        "sourceRefs": list(item.source_refs),
+        "errorCode": item.last_error_code or "curation_work_item_failed",
+    }
 
 
 def _raise_wave_failure(

@@ -9,11 +9,14 @@ from app.agents.prompts.prompt_spec import PromptSpec
 
 REVIEW_ROUND_EVALUATION_PROMPT = PromptSpec(
     id="review-round-answer-evaluation",
-    version="2.0",
+    version="2.1",
     system=(
         "根据冻结题目、参考答案和必答/加分点评价本次回答。逐项返回已覆盖、"
         "部分覆盖、未覆盖及对应回答证据；只能使用题目中给出的关键点，不能臆造。"
-        "follow_up_prompt 只指出仍需补充的方向，不泄露完整答案。不得输出隐藏推理。"
+        "仍有待完善关键点时，必须令 follow_up_required=true 且 follow_up_prompt 非空，"
+        "follow_up_prompt 只指出仍需完善的方向，不泄露完整答案。"
+        "没有待完善关键点时，必须令 follow_up_required=false 且 follow_up_prompt=null。"
+        "不要把延伸学习建议写进 follow_up_prompt。不得输出隐藏推理。"
     ),
 )
 

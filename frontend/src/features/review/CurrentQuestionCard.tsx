@@ -61,9 +61,9 @@ export function CurrentQuestionCard({
         <small>
           {question.hasAnswer
             ? missingDirections.length > 0
-              ? `还有 ${missingDirections.length} 个方向待补充，详情见右侧`
+              ? `还有 ${missingDirections.length} 个方向待完善，详情见右侧`
               : "已覆盖全部必答方向"
-            : "回答后在右侧显示待补充方向"}
+            : "回答后在右侧显示待完善方向"}
         </small>
       </div>
       <footer>

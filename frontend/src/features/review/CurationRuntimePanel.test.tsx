@@ -103,6 +103,28 @@ describe("CurationRuntimePanel candidate status", () => {
     expect(screen.getByText("已生成前 200 道候选题，请先审核当前结果")).toBeInTheDocument();
   });
 
+  it("shows failed source blocks without turning partial success into a failed run", () => {
+    render(<CurationRuntimePanel session={{
+      ...session,
+      batchStatus: "review_pending",
+      sources: [{ id: "s1", filename: "MyBatis 随手记.md", organizationState: "not_curated" }],
+      warnings: [{
+        code: "curation_discovery_block_failed",
+        stage: "discovery",
+        unitIndex: 2,
+        sourceId: "s1",
+        sourceRefs: ["s1#section-0005", "s1#section-0006"],
+        errorCode: "structured_output_missing",
+      }],
+    }} />);
+
+    expect(screen.getByText("部分资料未完成")).toBeInTheDocument();
+    expect(screen.getByText("MyBatis 随手记.md").closest("li")).toHaveTextContent("第 3 个识别块");
+    expect(screen.getByText("MyBatis 随手记.md").closest("li")).toHaveTextContent("原文片段 5–6");
+    expect(screen.getByText("MyBatis 随手记.md").closest("li")).toHaveTextContent("没有按约定返回题目结构");
+    expect(screen.queryByText("本次整理未完成")).toBeNull();
+  });
+
   it("keeps the danger treatment for a failed execution", () => {
     render(<CurationRuntimePanel session={{
       ...session,

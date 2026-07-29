@@ -52,9 +52,7 @@ class RoundAnswerEvaluation(_StrictReviewRoundOutput):
                 "follow_up_prompt is required when follow_up_required is true"
             )
         if not self.follow_up_required and self.follow_up_prompt is not None:
-            raise ValueError(
-                "follow_up_prompt must be null when no follow-up is required"
-            )
+            self.follow_up_prompt = None
         if self.fact_conflict:
             self.project_mastery = "pending"
         return self

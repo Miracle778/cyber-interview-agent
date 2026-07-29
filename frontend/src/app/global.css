@@ -4188,6 +4188,8 @@ select:disabled {
 .review-key-points li > span { display: grid; width: 24px; height: 24px; place-items: center; color: var(--primary); font-size: .76rem; font-weight: 700; border: 1px solid var(--primary); border-radius: 50%; }
 .review-key-points li > p { min-width: 0; overflow-wrap: anywhere; font-size: .82rem; }
 .review-key-points li > em { color: var(--danger); font-size: .72rem; font-style: normal; }
+.review-key-points li > em.is-partial { color: var(--warning); }
+.review-key-points li > em.is-uncovered { color: var(--danger); }
 
 .review-runtime-fact { display: grid; gap: var(--space-2); }
 .review-runtime-fact > strong { font-size: .9rem; }
@@ -4701,6 +4703,11 @@ select:disabled {
 .curation-runtime-warning summary::-webkit-details-marker { display: none; }
 .curation-runtime-warning summary span { margin-left: auto; padding: 2px 7px; background: var(--warning-soft); border-radius: 999px; }
 .curation-runtime-warning p { padding: 0 var(--space-3) 10px; color: var(--text-muted); font-size: .74rem; line-height: 1.45; }
+.curation-runtime-warning ul { display: grid; gap: var(--space-2); margin: 0; padding: 0 var(--space-3) var(--space-3); list-style: none; }
+.curation-runtime-warning li { display: grid; grid-template-columns: minmax(90px, .8fr) minmax(0, 1.2fr); gap: 2px var(--space-2); padding: var(--space-2); color: var(--text); background: var(--surface-subtle); border-radius: var(--radius-sm); }
+.curation-runtime-warning li strong,
+.curation-runtime-warning li span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.curation-runtime-warning li small { grid-column: 1 / -1; color: var(--text-muted); font-size: .72rem; }
 
 .curation-recycle-bin { width: min(760px, 100%); max-height: min(760px, calc(100dvh - 32px)); overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-md); }
 .curation-recycle-bin > header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-4) var(--space-5); border-bottom: 1px solid var(--border); }

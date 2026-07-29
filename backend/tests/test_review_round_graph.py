@@ -180,6 +180,31 @@ class SequencedRoundAgents:
         )
 
 
+class CompletedCheckpointRoundAgents:
+    async def evaluate(self, **_kwargs):
+        return RoundAnswerEvaluation.model_validate(
+            {
+                "covered_key_points": [
+                    "Checkpoint 负责运行恢复",
+                    "领域表拥有业务真相",
+                    "消息只是交互投影",
+                ],
+                "partial_key_points": [],
+                "missing_key_points": [],
+                "follow_up_required": False,
+                "follow_up_prompt": (
+                    "三个关键点已全部覆盖。如果想进一步深入，可以思考……"
+                ),
+                "score": "good",
+                "evidence": "三个必答点均已覆盖。",
+                "mastery_suggestion": "stable",
+            }
+        )
+
+    async def report(self, **_kwargs):
+        raise AssertionError("reports should not be generated before question 2")
+
+
 def _round_question(question_id: str) -> QuestionSnapshot:
     return QuestionSnapshot(
         question_id=question_id,
@@ -193,6 +218,115 @@ def _round_question(question_id: str) -> QuestionSnapshot:
         key_points=("point",),
         follow_ups=("why",),
     )
+
+
+def _checkpoint_question() -> QuestionSnapshot:
+    return QuestionSnapshot(
+        question_id="checkpoint-question",
+        document_id="doc-checkpoint-question",
+        content_hash="c" * 64,
+        title="Agent 状态分层",
+        question_text=(
+            "Agent 的 checkpoint 和业务状态有什么区别？为什么不能只保存消息历史？"
+        ),
+        reference_answer="运行恢复、业务真相和交互投影必须分层。",
+        topics=("agent",),
+        difficulty="medium",
+        key_points=(
+            "Checkpoint 负责运行恢复",
+            "领域表拥有业务真相",
+            "消息只是交互投影",
+        ),
+        follow_ups=("为什么不能从消息反推业务状态？",),
+    )
+
+
+@pytest.mark.asyncio
+async def test_completed_evaluation_updates_coverage_and_advances_question(
+    tmp_path: Path,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+    product = ProductRepository(connection)
+    product.create_session(
+        workspace_id="w1", kind="review.round", title="Round", session_id="s1"
+    )
+    product.create_execution("s1", input={}, model_bindings={}, execution_id="r1")
+    repository = ReviewRepository(connection)
+    repository.create_round(
+        workspace_id="w1",
+        session_id="s1",
+        execution_id="r1",
+        settings=ReviewRoundSettings(
+            topics=(),
+            difficulties=("medium",),
+            mode="random-mixed",
+            question_count=2,
+            allow_follow_up=True,
+            seed=1,
+            answer_model_id="model-1",
+            reasoning_effort="none",
+        ),
+        question_snapshots=(
+            _checkpoint_question(),
+            _round_question("q2"),
+        ),
+        mastery_before=MasteryProjection("w1", 0, (), ()),
+        round_id="round-1",
+    )
+
+    async def drafts(**_values):
+        raise AssertionError("reports should not be generated before question 2")
+
+    async def action(_draft):
+        raise AssertionError("publication should not be requested before question 2")
+
+    graph = create_review_round_graph(
+        CompletedCheckpointRoundAgents(),
+        repository=repository,
+        create_report_drafts=drafts,
+        request_publication_action=action,
+        checkpointer=InMemorySaver(),
+    )
+    config = {"configurable": {"thread_id": "s1"}}
+    context = _context()
+    first = await graph.ainvoke(
+        {"round_id": "round-1"}, config, context=context
+    )
+    request = first["__interrupt__"][0].value
+    product.transition_execution(
+        "r1", expected=("running",), target="waiting_for_input"
+    )
+    repository.accept_review_answer(
+        request_id=request["inputRequestId"],
+        expected_version=request["version"],
+        idempotency_key="answer-checkpoint",
+        value=(
+            "题目、当前进度、掌握度这些产品事实由领域表持有，"
+            "checkpoint 负责恢复执行，消息只是交互投影。"
+        ),
+    )
+
+    second = await graph.ainvoke(
+        Command(
+            resume={
+                "inputRequestId": request["inputRequestId"],
+                "value": "answer",
+                "receiptId": "answer-checkpoint",
+            }
+        ),
+        config,
+        context=context,
+    )
+
+    assert second["__interrupt__"][0].value["ordinal"] == 2
+    attempt = repository.list_attempts("round-1")[0]
+    assert attempt.status == "completed"
+    assert [item.status for item in attempt.coverage] == [
+        "covered",
+        "covered",
+        "covered",
+    ]
+    connection.close()
 
 
 @pytest.mark.asyncio

@@ -36,14 +36,21 @@ describe("CurrentQuestionCard", () => {
     expect(screen.queryByText("事务边界")).toBeNull();
   });
 
-  it("keeps cumulative coverage compact and leaves detailed directions to the side panel", () => {
-    render(<CurrentQuestionCard question={{ ...question, hasAnswer: true, coveredKeyPointCount: 1, missingDirections: ["补充失败重试的幂等键"] }} referenceShown onHint={vi.fn()} onReveal={vi.fn()} onSkip={vi.fn()} />);
+  it("counts partial and uncovered directions as directions to improve", () => {
+    render(<CurrentQuestionCard question={{ ...question, requiredKeyPointCount: 3, hasAnswer: true, coveredKeyPointCount: 1, missingDirections: ["部分覆盖的 B", "未覆盖的 C"] }} referenceShown onHint={vi.fn()} onReveal={vi.fn()} onSkip={vi.fn()} />);
 
-    expect(screen.getByText("已覆盖 1 / 2")).toBeInTheDocument();
-    expect(screen.getByText("还有 1 个方向待补充，详情见右侧")).toBeInTheDocument();
-    expect(screen.queryByText("补充失败重试的幂等键")).toBeNull();
+    expect(screen.getByText("已覆盖 1 / 3")).toBeInTheDocument();
+    expect(screen.getByText("还有 2 个方向待完善，详情见右侧")).toBeInTheDocument();
+    expect(screen.queryByText("部分覆盖的 B")).toBeNull();
+    expect(screen.queryByText("未覆盖的 C")).toBeNull();
     expect(screen.getByRole("button", { name: "参考答案已展示" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "查看答案" })).toBeNull();
+  });
+
+  it("shows one direction to improve when coverage only contains partial", () => {
+    render(<CurrentQuestionCard question={{ ...question, hasAnswer: true, coveredKeyPointCount: 1, missingDirections: ["部分覆盖的 B"] }} onHint={vi.fn()} onReveal={vi.fn()} onSkip={vi.fn()} />);
+
+    expect(screen.getByText("还有 1 个方向待完善，详情见右侧")).toBeInTheDocument();
   });
 
   it("offers progressive help, source disclosure, and explicit skip", () => {

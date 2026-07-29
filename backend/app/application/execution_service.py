@@ -1368,6 +1368,16 @@ class AgentExecutionService:
                         self._review_repository.append_curation_warning(
                             session.id, warning
                         )
+            partial_failure_count = sum(
+                1
+                for warning in state.get("warnings", ())
+                if isinstance(warning, dict)
+                and warning.get("code")
+                in {
+                    "curation_discovery_block_failed",
+                    "curation_enrichment_item_skipped",
+                }
+            )
             if curation is not None and not persisted:
                 await self._events.publish(
                     session.id,
@@ -1384,10 +1394,17 @@ class AgentExecutionService:
                     execution_id=execution.id,
                     role="assistant",
                     message_kind="curation_summary",
-                    content="未从本次材料中识别到可整理的题目，无需确认。",
+                    content=(
+                        "未从本次材料中识别到可整理的题目；"
+                        f"{partial_failure_count} 个处理单元未完成，"
+                        "已记录原因，可在运行提示中查看。"
+                        if partial_failure_count
+                        else "未从本次材料中识别到可整理的题目，无需确认。"
+                    ),
                     payload={
                         "resourceId": session.id,
                         "version": curation.summary_version,
+                        "partialFailureCount": partial_failure_count,
                     },
                 )
                 await self._events.publish(
@@ -1455,11 +1472,17 @@ class AgentExecutionService:
                 message_kind="curation_summary",
                 content=(
                     f"已整理 {len(curation.summary.items)} 道候选题，"
-                    "请确认处理方式。"
+                    + (
+                        f"{partial_failure_count} 个处理单元未完成并已跳过；"
+                        "其他结果不受影响，请确认处理方式。"
+                        if partial_failure_count
+                        else "请确认处理方式。"
+                    )
                 ),
                 payload={
                     "resourceId": session.id,
                     "version": curation.summary_version,
+                    "partialFailureCount": partial_failure_count,
                 },
             )
             await self._events.publish(

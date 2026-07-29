@@ -99,6 +99,7 @@ def curation_error_code(error: BaseException) -> str:
             "protocol_error": "protocol_error",
             "schema_validation_error": "schema_validation_error",
             "output_truncated": "output_truncated",
+            "structured_output_missing": "structured_output_missing",
         }
         if normalized_code in aliases:
             mapped = aliases[normalized_code]
@@ -141,6 +142,7 @@ def curation_error_code(error: BaseException) -> str:
             "protocol_error": "protocol_error",
             "schema_validation_error": "schema_validation_error",
             "output_truncated": "output_truncated",
+            "structured_output_missing": "structured_output_missing",
         }
         if normalized_code in aliases:
             return aliases[normalized_code]

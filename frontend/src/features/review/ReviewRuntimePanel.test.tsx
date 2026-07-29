@@ -10,32 +10,89 @@ describe("ReviewRuntimePanel", () => {
     vi.useRealTimers();
   });
 
-  it("shows the configured model name and every reported missing key point", () => {
+  it("uses coverage to show partial and uncovered directions to improve", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     client.setQueryData(["providers"], [{ id: "provider-1", name: "火山", enabled: true, models: [{ id: "model-1", displayName: "glm", enabled: true }] }]);
-    const missing = ["可达性分析", "从 GC Roots 沿引用链遍历", "GC Roots 的具体分类", "finalize 两次标记流程"];
     const round = {
       settings: { answer_model_id: "model-1", reasoning_effort: "medium" },
       status: "waiting_for_input",
       executionStatus: "waiting_for_input",
-      attempts: [{ status: "completed", evaluation: { missing_key_points: missing, mastery_suggestion: "weak" }, masterySuggestion: "weak" }],
+      attempts: [{
+        status: "completed",
+        evaluation: { missing_key_points: ["未覆盖的 C"], mastery_suggestion: "weak" },
+        masterySuggestion: "weak",
+        coverage: [
+          { point: "已覆盖的 A", status: "covered", evidence: ["回答证据"] },
+          { point: "部分覆盖的 B", status: "partial", evidence: ["部分证据"] },
+          { point: "未覆盖的 C", status: "uncovered", evidence: [] },
+        ],
+      }],
       usage: { totalTokens: 3100, callCount: 2 },
+      contextUsage: { currentTokens: 0, thresholdTokens: 0 },
+    } as unknown as ReviewRound;
+
+    render(<QueryClientProvider client={client}><ReviewRuntimePanel round={round} /></QueryClientProvider>);
+
+    expect(screen.getByText("火山 / glm")).toBeInTheDocument();
+    const keyPoints = screen.getByText("待完善关键点").closest("details")!;
+    const runtime = screen.getByText("运行详情").closest("details")!;
+    expect(keyPoints).toHaveAttribute("open");
+    expect(runtime).toHaveAttribute("open");
+    expect(within(keyPoints).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(keyPoints).getByTitle("部分覆盖的 B")).toHaveTextContent("部分覆盖");
+    expect(within(keyPoints).getByTitle("未覆盖的 C")).toHaveTextContent("未覆盖");
+    expect(within(runtime).getByText(/查看提示和答案直接读取本轮题库/)).toBeInTheDocument();
+    fireEvent.click(screen.getByText("运行详情"));
+    expect(runtime).toHaveAttribute("open");
+    expect(keyPoints).toHaveAttribute("open");
+  });
+
+  it("prefers coverage when only a partial direction remains", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(["providers"], []);
+    const round = {
+      settings: { answer_model_id: "model-1", reasoning_effort: "medium" },
+      status: "waiting_for_input",
+      executionStatus: "waiting_for_input",
+      attempts: [{
+        status: "completed",
+        evaluation: { missing_key_points: [], mastery_suggestion: "partial" },
+        coverage: [{ point: "部分覆盖的 B", status: "partial", evidence: [] }],
+      }],
+      usage: { totalTokens: 0, callCount: 0 },
+      contextUsage: { currentTokens: 0, thresholdTokens: 0 },
+    } as unknown as ReviewRound;
+
+    render(<QueryClientProvider client={client}><ReviewRuntimePanel round={round} /></QueryClientProvider>);
+
+    const keyPoints = screen.getByText("待完善关键点").closest("details")!;
+    expect(within(keyPoints).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(keyPoints).getByTitle("部分覆盖的 B")).toHaveTextContent("部分覆盖");
+  });
+
+  it("falls back to historical missing key points when coverage is absent", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(["providers"], []);
+    const round = {
+      settings: { answer_model_id: "model-1", reasoning_effort: "medium" },
+      status: "waiting_for_input",
+      executionStatus: "waiting_for_input",
+      attempts: [{
+        status: "completed",
+        evaluation: {
+          missing_key_points: ["历史未覆盖项"],
+          mastery_suggestion: "weak",
+        },
+      }],
+      usage: { totalTokens: 0, callCount: 0 },
       contextUsage: { currentTokens: 0, thresholdTokens: 0 },
     } as ReviewRound;
 
     render(<QueryClientProvider client={client}><ReviewRuntimePanel round={round} /></QueryClientProvider>);
 
-    expect(screen.getByText("火山 / glm")).toBeInTheDocument();
-    const keyPoints = screen.getByText("待补充关键点").closest("details")!;
-    const runtime = screen.getByText("运行详情").closest("details")!;
-    expect(keyPoints).toHaveAttribute("open");
-    expect(runtime).toHaveAttribute("open");
-    expect(within(keyPoints).getAllByRole("listitem")).toHaveLength(4);
-    expect(within(keyPoints).getByTitle("finalize 两次标记流程")).toBeInTheDocument();
-    expect(within(runtime).getByText(/查看提示和答案直接读取本轮题库/)).toBeInTheDocument();
-    fireEvent.click(screen.getByText("运行详情"));
-    expect(runtime).toHaveAttribute("open");
-    expect(keyPoints).toHaveAttribute("open");
+    const keyPoints = screen.getByText("待完善关键点").closest("details")!;
+    expect(within(keyPoints).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(keyPoints).getByTitle("历史未覆盖项")).toHaveTextContent("未覆盖");
   });
 
   it("shows the current evaluation stage and live elapsed duration", () => {

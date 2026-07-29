@@ -37,6 +37,13 @@ _ENRICHMENT_POLICY = ModelInvocationPolicy(4_096, 180, 1)
 _REVISION_POLICY = ModelInvocationPolicy(4_096, 180, 0)
 _MARKDOWN_HEADING_ONLY = re.compile(r"^\s{0,3}#{1,6}\s+\S.*$")
 _BOLD_HEADING_ONLY = re.compile(r"^\s*(?:\*\*|__)\S.+(?:\*\*|__)\s*$")
+_EXPLICIT_ZERO_QUESTION_PATTERNS = (
+    re.compile(r"未(?:发现|找到|识别出|提取出).{0,40}(?:面试题|候选题|题目|问题)"),
+    re.compile(r"(?:材料|片段|内容).{0,30}(?:未包含|不包含|没有).{0,30}(?:面试题|候选题|题目|问题)"),
+    re.compile(r"没有.{0,30}(?:可识别|可提取|适合生成).{0,20}(?:面试题|候选题|题目|问题)"),
+    re.compile(r"\bno\s+(?:interview\s+)?questions?\b", re.IGNORECASE),
+    re.compile(r"\bdoes\s+not\s+contain.{0,30}questions?\b", re.IGNORECASE),
+)
 
 
 class ModelOutputTruncatedError(RuntimeError):
@@ -46,6 +53,15 @@ class ModelOutputTruncatedError(RuntimeError):
 
     def __init__(self) -> None:
         super().__init__("模型输出在结构化结果完成前被截断")
+
+
+class ModelStructuredOutputMissingError(RuntimeError):
+    """The Provider answered, but did not return the requested schema."""
+
+    code = "structured_output_missing"
+
+    def __init__(self) -> None:
+        super().__init__("模型未按约定返回结构化题目结果")
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,7 +142,7 @@ class QuestionCurationAgents:
             ),
             context=context,
         )
-        chunk = normalize_provider_seed_chunk(_structured(result))
+        chunk = normalize_provider_seed_chunk(_discovery_structured(result))
         allowed = {section.ref: section.source_id for section in sections}
         seeds: list[QuestionSeed] = []
         seen_refs: set[str] = set()
@@ -202,13 +218,59 @@ class QuestionCurationAgents:
 
 def _structured(result: object) -> object:
     if not isinstance(result, dict):
-        raise ValueError("模型未生成结构化题目候选")
+        raise ModelStructuredOutputMissingError()
     structured = result.get("structured_response")
     if structured is not None:
         return structured
     if _result_stop_reason(result) in {"max_tokens", "length", "max_output_tokens"}:
         raise ModelOutputTruncatedError()
-    raise ValueError("模型未生成结构化题目候选")
+    raise ModelStructuredOutputMissingError()
+
+
+def _discovery_structured(result: object) -> object:
+    try:
+        return _structured(result)
+    except ModelStructuredOutputMissingError:
+        if _explicit_zero_question_response(result):
+            return {"seeds": []}
+        raise
+
+
+def _explicit_zero_question_response(result: object) -> bool:
+    if not isinstance(result, Mapping):
+        return False
+    text = _result_text(result).strip()
+    if not text or len(text) > 240 or any(mark in text for mark in ("?", "？")):
+        return False
+    return any(pattern.search(text) for pattern in _EXPLICIT_ZERO_QUESTION_PATTERNS)
+
+
+def _result_text(result: Mapping[str, object]) -> str:
+    candidates: list[object] = []
+    for key in ("result", "messages", "output"):
+        value = result.get(key)
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            candidates.extend(value)
+        elif value is not None:
+            candidates.append(value)
+    parts: list[str] = []
+    for candidate in candidates:
+        content = getattr(candidate, "content", None)
+        if content is None and isinstance(candidate, Mapping):
+            content = candidate.get("content") or candidate.get("text")
+        if isinstance(content, str):
+            parts.append(content)
+            continue
+        if not isinstance(content, Sequence) or isinstance(content, (str, bytes)):
+            continue
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, Mapping):
+                text = block.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+    return "\n".join(parts)
 
 
 def _result_stop_reason(result: Mapping[str, object]) -> str | None:
