@@ -144,6 +144,23 @@ CYBER_INTERVIEW_AGENT_DATA_DIR=/private/tmp/cyber-interview-agent-readme-app \
 
 当前适用范围是：**单用户、本地优先、SQLite、单进程可恢复执行**。它不是分布式 Agent 平台、招聘信息聚合器或自动投递系统。
 
+### Agent Trace 诊断维护
+
+Trace 正文是本地私有诊断数据，元数据索引可以从 JSONL 重建。维护命令必须传入明确的 Workspace 根目录；脚本拒绝 `/`、用户主目录和不含应用数据目录的宽泛目标。
+
+```bash
+# 只读检查；存在缺文件、损坏行或失效偏移时返回非零
+python3 scripts/check_agent_trace_consistency.py \
+  --workspace-root /absolute/path/to/workspace
+
+# 仅重建 Agent Trace 索引表，不改业务表、Trace JSONL 或领域产物
+python3 scripts/rebuild_agent_trace_index.py \
+  --workspace-root /absolute/path/to/workspace \
+  --workspace-id <workspace-id>
+```
+
+已按保留策略删除的正文不会由索引重建恢复；需要从备份恢复原 JSONL 后再重建。检查命令默认不执行修复。
+
 ## 架构文档
 
 - [产品总体路线](docs/superpowers/specs/2026-07-10-product-development-roadmap-design.md)
