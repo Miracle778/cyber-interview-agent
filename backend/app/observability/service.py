@@ -203,7 +203,11 @@ class AgentObservabilityService:
         ).fetchone()
         if row is None:
             raise AgentExecutionNotFoundError("Agent Execution 不存在")
-        return dict(row)
+        result = dict(row)
+        registration = AGENT_OBSERVABILITY_REGISTRY.get(result["graph_id"])
+        if registration is None or not registration.run_center_visible:
+            raise AgentExecutionNotFoundError("Agent Execution 不存在")
+        return result
 
     @staticmethod
     def _matches(
@@ -217,7 +221,7 @@ class AgentObservabilityService:
         include_system_agents: bool,
     ) -> bool:
         registration = AGENT_OBSERVABILITY_REGISTRY.get(row["graph_id"])
-        if registration is None:
+        if registration is None or not registration.run_center_visible:
             return False
         if not include_system_agents and (
             registration.system or row["visibility"] == "system"

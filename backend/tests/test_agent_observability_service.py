@@ -8,6 +8,7 @@ from app.infrastructure.runtime_database import connect_runtime_database
 from app.observability.indexer import TraceLedgerIndexer
 from app.observability.repository import TraceIndexRepository
 from app.observability.service import (
+    AgentExecutionNotFoundError,
     AgentObservabilityService,
     InvalidExecutionCursorError,
 )
@@ -207,6 +208,22 @@ def test_cursor_filters_and_system_agent_visibility_are_stable(
         created_at="2026-07-29T12:00:07+00:00",
         visibility="system",
     )
+    _insert_run(
+        connection,
+        run_id="run-publication",
+        graph_id="knowledge.publish",
+        status="completed",
+        created_at="2026-07-29T12:00:08+00:00",
+        title="发布题目：不会进入运行中心",
+    )
+    _insert_run(
+        connection,
+        run_id="run-diagnostic",
+        graph_id="diagnostic.echo",
+        status="completed",
+        created_at="2026-07-29T12:00:09+00:00",
+        visibility="system",
+    )
 
     first = service.list_executions(limit=2)
     second = service.list_executions(limit=2, cursor=first.next_cursor)
@@ -226,6 +243,10 @@ def test_cursor_filters_and_system_agent_visibility_are_stable(
     assert [item.id for item in searched.items] == ["run-missing"]
     assert system.total == 7
     assert system.items[0].id == "run-system"
+    assert system.items[0].system is True
+    assert next(item for item in system.items if item.id == "run-completed").system is False
+    assert "run-publication" not in {item.id for item in system.items}
+    assert "run-diagnostic" not in {item.id for item in system.items}
     assert {item.id for item in time_window.items} == {
         "run-failed",
         "run-cancelled",
@@ -233,3 +254,6 @@ def test_cursor_filters_and_system_agent_visibility_are_stable(
 
     with pytest.raises(InvalidExecutionCursorError):
         service.list_executions(cursor="not-a-cursor")
+
+    with pytest.raises(AgentExecutionNotFoundError):
+        service.get_execution("run-publication")

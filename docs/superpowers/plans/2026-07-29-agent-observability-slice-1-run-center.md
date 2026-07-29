@@ -313,3 +313,13 @@ git commit -m "docs(agent-observability): record slice 1 implementation evidence
 - SSE status update, Beijing time, compact Token/context values, hierarchy, safe disclosure, filter return, business navigation, and missing-trace fallback passed.
 - Acceptance found one mobile reachability defect: the 390px list hid the preview and therefore had no detail entry. Commit `6cd194b` adds a tested mobile row-level detail link.
 - Browser console result: no warnings or errors.
+
+### Post-acceptance correction: run-center boundary and shared workspace layout
+
+- [x] Keep `knowledge.publish` and diagnostic fixtures in the durable runtime ledger while excluding them from run-center list, detail, operations, and SSE surfaces.
+- [x] Add an explicit `run_center_visible` Registry boundary; `includeSystemAgents` only includes true system Agents such as profile ingest/assessment.
+- [x] Add a typed `system` flag to Execution summaries so live SSE updates obey the same system-Agent filter as snapshot queries.
+- [x] Refactor both pages onto `TaskWorkspace / TaskWorkspacePane` with fixed headers and explicit pane scroll ownership.
+- [x] Replace large summary/Agent card stacks with compact strips and keep all filter/action targets at least 44px.
+- [x] Re-accept 390 / 768 / 1024 / 1440 layouts; fix the 1024 detail-height gap and the 768 single-pane width inheritance.
+- [x] Confirm the development dataset retains publication audit rows internally while `/agents` returns no `knowledge.publish` executions.

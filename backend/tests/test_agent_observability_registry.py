@@ -43,6 +43,19 @@ def test_system_graphs_do_not_expose_business_navigation() -> None:
         assert "open_business" not in registration.capabilities
 
 
+def test_non_agent_workflows_are_not_visible_in_the_agent_run_center() -> None:
+    for graph_id in (
+        "knowledge.publish",
+        "diagnostic.echo",
+        "diagnostic.approval",
+        "diagnostic.security",
+    ):
+        assert AGENT_OBSERVABILITY_REGISTRY[graph_id].run_center_visible is False
+
+    for graph_id in ("profile.ingest", "profile.assess"):
+        assert AGENT_OBSERVABILITY_REGISTRY[graph_id].run_center_visible is True
+
+
 def test_execution_summary_resource_uses_camel_case_contract() -> None:
     resource = ExecutionSummaryResource(
         id="run-1",
@@ -50,6 +63,7 @@ def test_execution_summary_resource_uses_camel_case_contract() -> None:
         workspace_id="workspace-1",
         graph_id="review.round",
         display_name="复习助手",
+        system=False,
         title="随机复习",
         status="completed",
         trace_health=TraceHealth.COMPLETE,
@@ -72,6 +86,7 @@ def test_execution_summary_resource_uses_camel_case_contract() -> None:
     assert payload["sessionId"] == "session-1"
     assert payload["workspaceId"] == "workspace-1"
     assert payload["graphId"] == "review.round"
+    assert payload["system"] is False
     assert payload["traceHealth"] == "complete"
     assert payload["systemOperationCount"] == 2
     assert payload["modelCallCount"] == 3

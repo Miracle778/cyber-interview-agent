@@ -186,7 +186,14 @@ Workspace
 - `Operation`：一次模型调用、Tool 调用、校验、领域写入或上下文组装。
 - `Event`：Operation 内不可变的时间点记录。
 
-列表一行统计一个顶层业务 `Execution`，不是每个子 Agent 调用各占一行。子 Agent、上下文摘要、标题生成、Judge、Embedding 和 Rerank 等系统组件进入该 Execution 的执行树；独立触发且不属于任何业务 Execution 的系统任务才作为单独运行出现。
+列表一行统计一个顶层 Agent `Execution`，不是每个子 Agent 调用各占一行。子 Agent、上下文摘要、标题生成、Judge、Embedding 和 Rerank 等系统组件进入该 Execution 的执行树；只有独立触发、确实具有 Agent 运行语义且在 Registry 中声明为运行中心可见的系统任务，才可作为单独运行出现。
+
+题目发布、确定性领域写入、健康探测和诊断夹具可以继续使用内部 `Session / Run / Event` 账本实现幂等、恢复和审计，但它们不是 Agent 运行中心的展示对象：
+
+- 单题或批量发布不能按题目数量生成运行中心记录；
+- 即使用户开启“包含系统 Agent”，`knowledge.publish` 与诊断夹具仍不可见；
+- 如果未来需要展示批量发布进度，应按一个业务批次汇总，而不是把每个条目伪装成 Agent Execution；
+- 隐藏仅影响运行中心查询、详情与 SSE，不删除内部审计记录。
 
 ### 5.2 用户名称与技术标识
 
@@ -243,6 +250,7 @@ stable_name
 display_name
 business_route
 component_type: business | system
+run_center_visible: true | false
 capabilities: pause | resume | stop | retry
 prompt_schema_versions
 eval_pack_id
@@ -251,6 +259,7 @@ sensitivity
 
 - 默认列表只显示用户可理解的业务 Agent；
 - 开启“包含系统 Agent”筛选后，显示文本提取、上下文摘要、标题生成、Judge、Embedding、Rerank 等系统组件；
+- `run_center_visible = false` 的内部工作流不因“包含系统 Agent”而暴露；
 - AgentFactory 创建的 Agent 必须注册；
 - 直接使用模型但不经过 AgentFactory、且会影响产品结果的系统组件同样必须注册；
 - 未注册组件在开发启动或契约测试中失败，不能靠前端手写名单补漏；
@@ -553,7 +562,7 @@ POST /api/agent-evals/executions/{executionId}/judge
 - 快速打开业务页面或高级详情；
 - 不展示大段 Trace 正文。
 
-默认展示业务 Agent；“包含系统 Agent”打开后才把内部组件纳入筛选与统计。模型调用次数旁必须说明当前统计是否包含系统组件。
+默认展示业务 Agent；“包含系统 Agent”打开后才把 Registry 中明确可见的系统 Agent 纳入筛选与统计。该边界同时应用于分页查询、单次详情和 SSE 实时事件，不能在页面刷新后正确、实时更新后又混入系统记录。模型调用次数旁必须说明当前统计是否包含系统组件。
 
 #### 桌面布局（1440）
 
@@ -561,9 +570,9 @@ POST /api/agent-evals/executions/{executionId}/judge
 侧栏 240
 ┌────────────────────────────── 主内容 minmax(0,1fr) ─────────────────────────────┐
 │ 标题 / 时间范围 / 质量评估入口                                                 │
-│ 6 个全局汇总卡，单卡最小 148，高 92                                            │
-│ Agent 概览，5 卡一行；不足宽度时横向内部滚动                                   │
-│ 筛选栏                                                                         │
+│ 紧凑全局汇总条，6 项一行，高 58                                                │
+│ 紧凑 Agent 概览条；不足宽度时横向内部滚动                                      │
+│ 44px 筛选栏                                                                     │
 │ Execution 列表 minmax(0,1fr) │ 本次运行预览 clamp(300,24vw,340)                │
 └────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -571,6 +580,7 @@ POST /api/agent-evals/executions/{executionId}/judge
 滚动归属：
 
 - 页面 Shell 固定；
+- 复用共享 `TaskWorkspace / TaskWorkspacePane`，标题、汇总、筛选固定；
 - Execution 列表内部纵向滚动；
 - 右侧预览内部纵向滚动；
 - 页面本身不产生横向滚动。
@@ -805,8 +815,8 @@ Judge 不获得领域写 Tool，不重跑业务 Agent，不写画像、题库、
 - 普通圆角 6px，容器圆角 8px；
 - 触控目标不小于 44×44；
 - 固定 Header 不小于 58px；
-- 筛选控件高 36–40px；
-- 状态卡高 88–96px；
+- 筛选控件和操作入口不小于 44px；
+- 汇总项默认高 58px，不为每个数字创建独立大卡片；
 - 表格行高 56–72px。
 
 ### 11.4 颜色原则
@@ -839,17 +849,17 @@ Judge 不获得领域写 Tool，不重跑业务 Agent，不写画像、题库、
 
 ### 1024–1439
 
-- 运行中心右侧预览默认收起为 44–52px rail；
+- 运行中心右侧预览在空间不足时隐藏，列表每行提供 44px 详情入口；
 - 高级详情左侧运行索引可收起；
 - 详情面板保持至少 420px；
 - 全局汇总改为 3×2。
 
 ### 768–1023
 
-- 两栏变为“主区 + 抽屉”；
+- 运行中心只保留主列表，详情通过行内入口进入；
 - Agent 概览水平内部滚动；
 - 列表隐藏低优先级列，使用行内详情；
-- 高级详情执行树为主，详情使用全高抽屉。
+- 高级详情使用“执行过程 / 详情”页签，活动面板占满工作区宽度。
 
 ### 390–767
 

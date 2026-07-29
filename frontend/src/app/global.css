@@ -3320,6 +3320,13 @@ select:disabled {
   padding-top: 0;
 }
 
+.page-shell--task-workspace,
+.page-shell--task-workspace > .page-content {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .task-workspace {
   display: grid;
   width: 100%;
@@ -3327,6 +3334,21 @@ select:disabled {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .page-shell--task-workspace,
+  .page-shell--task-workspace > .page-content {
+    height: calc(100dvh - var(--app-mobile-header-height));
+  }
+}
+
+@media (max-width: 767px) {
+  .page-shell--task-workspace,
+  .page-shell--task-workspace > .page-content {
+    height: auto;
+    overflow: visible;
+  }
 }
 
 .task-workspace__pane {

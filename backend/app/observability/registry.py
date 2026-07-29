@@ -14,6 +14,7 @@ class AgentObservabilityRegistration:
     eval_pack_id: str | None
     system_components: tuple[str, ...]
     system: bool = False
+    run_center_visible: bool = True
 
 
 def _registration(
@@ -24,6 +25,7 @@ def _registration(
     eval_pack_id: str | None = None,
     system_components: tuple[str, ...] = (),
     system: bool = False,
+    run_center_visible: bool = True,
 ) -> AgentObservabilityRegistration:
     return AgentObservabilityRegistration(
         graph_id=graph_id,
@@ -33,6 +35,7 @@ def _registration(
         eval_pack_id=eval_pack_id,
         system_components=system_components,
         system=system,
+        run_center_visible=run_center_visible,
     )
 
 
@@ -164,10 +167,29 @@ _REGISTRATIONS = (
         "",
         "export_trace",
         system=True,
+        run_center_visible=False,
     ),
-    _registration("diagnostic.echo", "诊断回声", "", system=True),
-    _registration("diagnostic.approval", "诊断确认", "", system=True),
-    _registration("diagnostic.security", "诊断安全", "", system=True),
+    _registration(
+        "diagnostic.echo",
+        "诊断回声",
+        "",
+        system=True,
+        run_center_visible=False,
+    ),
+    _registration(
+        "diagnostic.approval",
+        "诊断确认",
+        "",
+        system=True,
+        run_center_visible=False,
+    ),
+    _registration(
+        "diagnostic.security",
+        "诊断安全",
+        "",
+        system=True,
+        run_center_visible=False,
+    ),
 )
 
 

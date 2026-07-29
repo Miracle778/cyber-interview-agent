@@ -61,9 +61,9 @@ export function ExecutionList({
       <div className="execution-list__header" aria-hidden="true">
         <span>Agent / 运行任务</span>
         <span>状态</span>
-        <span>耗时</span>
-        <span>Token</span>
-        <span>开始时间</span>
+        <span className="execution-list__duration">耗时</span>
+        <span className="execution-list__tokens">Token</span>
+        <span className="execution-list__started">开始时间</span>
       </div>
       {executions.map((execution) => (
         <div className="execution-row-card" key={execution.id}>
@@ -87,10 +87,10 @@ export function ExecutionList({
               <StatusIcon status={execution.status} />
               {statusLabel(execution.status)}
             </span>
-            <span className="execution-row__metric">
+            <span className="execution-row__metric execution-row__duration">
               {formatDuration(execution.latencyMs)}
             </span>
-            <span className="execution-row__metric">
+            <span className="execution-row__metric execution-row__tokens">
               {formatCompactNumber(execution.totalTokens)}
             </span>
             <time dateTime={execution.startedAt ?? execution.createdAt}>

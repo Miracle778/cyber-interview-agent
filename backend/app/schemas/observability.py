@@ -30,6 +30,7 @@ class ExecutionSummaryResource(ObservabilityModel):
     workspace_id: str
     graph_id: str
     display_name: str
+    system: bool
     title: str
     status: str
     trace_health: TraceHealth

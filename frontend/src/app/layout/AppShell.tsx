@@ -174,6 +174,7 @@ export function AppShell() {
                   health={health}
                   workspace={workspace}
                   workspaceMode
+                  taskWorkspaceMode
                 >
                   <AgentRunCenterPage workspace={workspace} />
                 </PageFrame>
@@ -188,6 +189,7 @@ export function AppShell() {
                   health={health}
                   workspace={workspace}
                   workspaceMode
+                  taskWorkspaceMode
                 >
                   <ExecutionTracePage workspace={workspace} />
                 </PageFrame>
@@ -229,14 +231,16 @@ interface PageFrameProps {
   workspace: WorkspaceConfig | null;
   children: ReactNode;
   workspaceMode?: boolean;
+  taskWorkspaceMode?: boolean;
   contained?: boolean;
   revealWorkspacePath?: boolean;
 }
 
-function PageFrame({ title, description, health, workspace, children, workspaceMode = false, contained = false, revealWorkspacePath = false }: PageFrameProps) {
+function PageFrame({ title, description, health, workspace, children, workspaceMode = false, taskWorkspaceMode = false, contained = false, revealWorkspacePath = false }: PageFrameProps) {
   const shellClassName = [
     "page-shell",
     workspaceMode ? "page-shell--workspace" : "",
+    taskWorkspaceMode ? "page-shell--task-workspace" : "",
     contained ? "page-shell--contained" : "",
   ].filter(Boolean).join(" ");
 

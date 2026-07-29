@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -43,6 +43,7 @@ const runningExecution = {
   workspaceId: "workspace-1",
   graphId: "question.curate",
   displayName: "题库整理",
+  system: false,
   title: "MyBatis 拦截器资料整理",
   status: "running",
   traceHealth: "complete",
@@ -118,11 +119,16 @@ describe("AgentRunCenterPage", () => {
   it("renders real execution summaries with Beijing time and compact token values", async () => {
     mockPage();
 
-    render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
+    const view = render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
 
     expect(screen.getByRole("heading", { level: 1, name: "Agent 运行中心" })).toBeInTheDocument();
-    expect(await screen.findByRole("region", { name: "运行汇总" })).toHaveTextContent("运行中1");
-    expect(screen.getByRole("region", { name: "运行汇总" })).toHaveTextContent("今日完成1");
+    const summary = await screen.findByRole("list", { name: "运行汇总" });
+    expect(summary).toHaveTextContent("运行中1");
+    expect(summary).toHaveTextContent("已完成1");
+    expect(view.container.querySelector(".agent-run-center > .task-workspace")).not.toBeNull();
+    expect(screen.getByRole("region", { name: "Execution 列表" })).toHaveClass(
+      "task-workspace__pane",
+    );
     const row = screen.getByRole("button", { name: /MyBatis 拦截器资料整理/ });
     expect(row).toHaveTextContent("题库整理");
     expect(row).toHaveTextContent("12.8k");
@@ -153,6 +159,21 @@ describe("AgentRunCenterPage", () => {
       expect(latestUrl).toContain("search=MyBatis");
       expect(latestUrl).toContain("includeSystemAgents=true");
     });
+  });
+
+  it("uses a mobile filter sheet trigger without duplicating filter controls", async () => {
+    mockPage();
+
+    render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
+    await screen.findByRole("button", { name: /MyBatis 拦截器资料整理/ });
+
+    const trigger = screen.getByRole("button", { name: "筛选运行" });
+    const filters = screen.getByRole("region", { name: "运行筛选" });
+    expect(filters).toHaveAttribute("data-mobile-open", "false");
+
+    fireEvent.click(trigger);
+    expect(filters).toHaveAttribute("data-mobile-open", "true");
+    expect(screen.getAllByLabelText("运行状态")).toHaveLength(1);
   });
 
   it("derives navigation actions from capabilities and registry routes", async () => {
@@ -226,6 +247,35 @@ describe("AgentRunCenterPage", () => {
 
     await waitFor(() => expect(row).toHaveTextContent("已完成"));
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps system-agent live events out until system agents are included", async () => {
+    mockPage(page([runningExecution]));
+
+    render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
+    await screen.findByRole("button", {
+      name: /MyBatis 拦截器资料整理/,
+    });
+
+    await act(async () => {
+      FakeEventSource.instances[0].emit("execution.summary.changed", {
+        eventId: "10",
+        type: "execution.summary.changed",
+        execution: {
+          ...completedExecution,
+          id: "run-system-live",
+          sessionId: "session-system-live",
+          graphId: "profile.ingest",
+          displayName: "简历画像整理",
+          title: "系统画像任务",
+          system: true,
+        },
+      });
+    });
+
+    expect(screen.queryByRole("button", { name: /系统画像任务/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: "包含系统 Agent" }));
+    expect(await screen.findByRole("button", { name: /系统画像任务/ })).toBeInTheDocument();
   });
 
   it("does not query without a selected workspace", () => {

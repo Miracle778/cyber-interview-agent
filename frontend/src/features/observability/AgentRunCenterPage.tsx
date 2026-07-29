@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { Activity, AlertTriangle, Bot, CheckCircle2, Clock3, LoaderCircle, Search, XCircle } from "lucide-react";
+import { Activity, AlertTriangle, Bot, CheckCircle2, Clock3, LoaderCircle, Search, SlidersHorizontal, X, XCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { useSearchParams } from "react-router-dom";
+import { TaskWorkspace, TaskWorkspacePane } from "../../shared/ui/TaskWorkspace";
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import { ExecutionList, formatDuration } from "./ExecutionList";
 import { ExecutionPreview } from "./ExecutionPreview";
@@ -32,6 +33,7 @@ function matchesFilters(
   execution: ExecutionSummary,
   filters: ExecutionFilters,
 ) {
+  if (!filters.includeSystemAgents && execution.system) return false;
   if (filters.status && execution.status !== filters.status) return false;
   if (
     filters.agentName &&
@@ -59,6 +61,7 @@ export function AgentRunCenterPage({
     includeSystemAgents: searchParams.get("includeSystemAgents") === "true",
   }));
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [liveById, setLiveById] = useState<Record<string, ExecutionSummary>>({});
   const previousWorkspaceId = useRef(workspace?.id);
   const onExecutionChanged = useCallback((execution: ExecutionSummary) => {
@@ -165,7 +168,7 @@ export function AgentRunCenterPage({
     <section aria-label="Agent 运行中心" className="agent-run-center">
       <header className="agent-run-center__header">
         <div>
-          <h1>Agent 运行中心</h1>
+          <h1 id="agent-run-center-title">Agent 运行中心</h1>
           <p>统一查看项目内所有 Agent 的运行、异常、上下文与质量。</p>
         </div>
         {workspace ? (
@@ -198,35 +201,80 @@ export function AgentRunCenterPage({
           <p>业务 Agent 不受影响，可以稍后重新打开此页面。</p>
         </div>
       ) : (
-        <>
-          <section className="agent-run-metrics" aria-label="运行汇总">
+        <TaskWorkspace
+          className="agent-run-center__workspace"
+          labelledBy="agent-run-center-title"
+        >
+          <ul className="agent-run-metrics" aria-label="运行汇总">
             <Metric icon={<Activity />} label="运行中" value={metrics.running} tone="primary" />
             <Metric icon={<Clock3 />} label="等待处理" value={metrics.waiting} tone="neutral" />
-            <Metric icon={<CheckCircle2 />} label="今日完成" value={metrics.completed} tone="success" />
+            <Metric icon={<CheckCircle2 />} label="已完成" value={metrics.completed} tone="success" />
             <Metric icon={<AlertTriangle />} label="部分成功" value={metrics.partial} tone="warning" />
             <Metric icon={<XCircle />} label="失败" value={metrics.failed} tone="danger" />
             <Metric icon={<Clock3 />} label="平均耗时" value={formatDuration(metrics.average)} tone="neutral" />
-          </section>
+          </ul>
 
           {agentOverview.length > 0 ? (
             <section className="agent-overview" aria-label="Agent 概览">
               <header><h2>Agent 概览</h2><span>{agentOverview.length} 类</span></header>
               <div>
                 {agentOverview.map((agent) => (
-                  <article key={agent.name}>
+                  <button
+                    key={agent.name}
+                    type="button"
+                    aria-pressed={filters.agentName === agent.name}
+                    onClick={() => setFilters((current) => ({
+                      ...current,
+                      agentName: current.agentName === agent.name ? "" : agent.name,
+                    }))}
+                  >
                     <span aria-hidden="true"><Bot size={18} /></span>
                     <strong>{agent.name}</strong>
                     <small>
                       运行中 {agent.running} · 已完成 {agent.completed}
                       {agent.attention ? ` · 需关注 ${agent.attention}` : ""}
                     </small>
-                  </article>
+                  </button>
                 ))}
               </div>
             </section>
           ) : null}
 
-          <div className="agent-run-filters" aria-label="运行筛选">
+          <button
+            className="agent-run-filter-toggle"
+            type="button"
+            aria-expanded={mobileFiltersOpen}
+            aria-controls="agent-run-filters"
+            onClick={() => setMobileFiltersOpen(true)}
+          >
+            <SlidersHorizontal size={17} aria-hidden="true" />
+            筛选运行
+          </button>
+          {mobileFiltersOpen ? (
+            <button
+              className="agent-run-filter-scrim"
+              type="button"
+              aria-label="关闭运行筛选"
+              onClick={() => setMobileFiltersOpen(false)}
+            />
+          ) : null}
+          <div
+            id="agent-run-filters"
+            className="agent-run-filters"
+            role="region"
+            aria-label="运行筛选"
+            data-mobile-open={mobileFiltersOpen}
+          >
+            <header className="agent-run-filters__mobile-header">
+              <strong>筛选运行</strong>
+              <button
+                type="button"
+                aria-label="关闭运行筛选"
+                onClick={() => setMobileFiltersOpen(false)}
+              >
+                <X size={18} aria-hidden="true" />
+              </button>
+            </header>
             <label>
               <span>Agent</span>
               <select
@@ -295,6 +343,13 @@ export function AgentRunCenterPage({
               />
               包含系统 Agent
             </label>
+            <button
+              className="agent-run-filters__done"
+              type="button"
+              onClick={() => setMobileFiltersOpen(false)}
+            >
+              查看结果
+            </button>
           </div>
 
           {executions.length === 0 ? (
@@ -304,23 +359,33 @@ export function AgentRunCenterPage({
               <p>启动题库整理、复习、画像或求职准备任务后会显示在这里。</p>
             </div>
           ) : (
-            <div className={`agent-run-workspace${selected ? " has-preview" : ""}`}>
-              <ExecutionList
-                executions={executions}
-                selectedId={selectedId}
-                onSelect={setSelectedId}
-                returnTo={returnTo}
-              />
-              {selected ? (
-                <ExecutionPreview
-                  execution={selected}
-                  onClose={() => setSelectedId(null)}
+            <TaskWorkspace className={`agent-run-workspace${selected ? " has-preview" : ""}`}>
+              <TaskWorkspacePane
+                className="agent-run-workspace__list"
+                aria-label="Execution 列表"
+              >
+                <ExecutionList
+                  executions={executions}
+                  selectedId={selectedId}
+                  onSelect={setSelectedId}
                   returnTo={returnTo}
                 />
+              </TaskWorkspacePane>
+              {selected ? (
+                <TaskWorkspacePane
+                  className="agent-run-workspace__preview"
+                  aria-label="运行预览面板"
+                >
+                  <ExecutionPreview
+                    execution={selected}
+                    onClose={() => setSelectedId(null)}
+                    returnTo={returnTo}
+                  />
+                </TaskWorkspacePane>
               ) : null}
-            </div>
+            </TaskWorkspace>
           )}
-        </>
+        </TaskWorkspace>
       )}
     </section>
   );
@@ -338,9 +403,9 @@ function Metric({
   tone: string;
 }) {
   return (
-    <article data-tone={tone}>
+    <li data-tone={tone}>
       <span aria-hidden="true">{icon}</span>
       <div><small>{label}</small><strong>{value}</strong></div>
-    </article>
+    </li>
   );
 }

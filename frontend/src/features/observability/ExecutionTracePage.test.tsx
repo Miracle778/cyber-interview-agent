@@ -20,6 +20,7 @@ const execution = {
   workspaceId: "workspace-1",
   graphId: "question.curate",
   displayName: "题库整理",
+  system: false,
   title: "MyBatis 拦截器资料整理",
   status: "completed",
   traceHealth: "complete",
@@ -36,6 +37,14 @@ const execution = {
   startedAt: "2026-07-29T06:26:00Z",
   finishedAt: "2026-07-29T06:26:18.400Z",
   errorCode: null,
+};
+
+const previousExecution = {
+  ...execution,
+  id: "run-previous",
+  sessionId: "session-previous",
+  title: "上一轮题库整理",
+  status: "failed",
 };
 
 const operations = [
@@ -94,6 +103,13 @@ function mockTrace(
     const url = String(input);
     if (url.includes("/operations?")) {
       return Response.json({ items: operationItems });
+    }
+    if (url.includes("/api/agent-observability/executions?")) {
+      return Response.json({
+        items: [execution, previousExecution],
+        nextCursor: null,
+        total: 2,
+      });
     }
     if (url.includes("/api/agent-observability/executions/run-1?")) {
       return Response.json(summary);
@@ -164,7 +180,16 @@ describe("ExecutionTracePage", () => {
     expect(detail).not.toHaveTextContent("tool arguments");
     expect(detail).not.toHaveTextContent("provider payload");
 
-    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2));
+    const runIndex = screen.getByRole("navigation", { name: "运行索引" });
+    expect(within(runIndex).getByRole("link", { name: /上一轮题库整理/ })).toHaveAttribute(
+      "href",
+      "/agents/executions/run-previous",
+    );
+    expect(screen.getByRole("region", { name: "执行过程面板" })).toHaveClass(
+      "task-workspace__pane",
+    );
+
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(3));
     for (const [request] of fetchSpy.mock.calls) {
       expect(String(request)).not.toMatch(/body|content|prompt|payload|events/);
     }

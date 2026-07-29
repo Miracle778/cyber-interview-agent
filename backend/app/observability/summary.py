@@ -56,6 +56,7 @@ class ExecutionSummaryAssembler:
             workspace_id=self.workspace_id,
             graph_id=run["graph_id"],
             display_name=registration.display_name,
+            system=registration.system or run["visibility"] == "system",
             title=run["title"],
             status=run["status"],
             trace_health=trace_health,

@@ -13,9 +13,11 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { formatBeijingTime } from "../../shared/time";
+import { TaskWorkspace, TaskWorkspacePane } from "../../shared/ui/TaskWorkspace";
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import {
   getObservabilityExecution,
+  listObservabilityExecutions,
   listObservabilityOperations,
   ObservabilityPayloadError,
 } from "./observabilityApi";
@@ -62,6 +64,21 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
     enabled: Boolean(workspace && runId),
     queryFn: ({ signal }) =>
       listObservabilityOperations(workspace!.id, runId, signal),
+  });
+  const runIndexQuery = useQuery({
+    queryKey: ["agent-observability", "execution-index", workspace?.id],
+    enabled: Boolean(workspace),
+    queryFn: ({ signal }) =>
+      listObservabilityExecutions(
+        workspace!.id,
+        {
+          search: "",
+          status: "",
+          agentName: "",
+          includeSystemAgents: false,
+        },
+        signal,
+      ),
   });
   const operations = operationsQuery.data ?? [];
 
@@ -120,6 +137,10 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
   }
 
   const execution = executionQuery.data;
+  const indexedExecutions =
+    runIndexQuery.data?.items.some((item) => item.id === execution.id)
+      ? runIndexQuery.data.items
+      : [execution, ...(runIndexQuery.data?.items ?? [])];
   const traceWarning =
     execution.traceHealth === "missing" ||
     execution.traceHealth === "unavailable"
@@ -163,12 +184,12 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
         </p>
       ) : null}
 
-      <section className="execution-trace__metrics" aria-label="运行指标">
+      <ul className="execution-trace__metrics" aria-label="运行指标">
         <TraceMetric icon={<Clock3 />} label="总耗时" value={formatDuration(execution.latencyMs)} />
         <TraceMetric icon={<Cpu />} label="模型调用" value={String(execution.modelCallCount)} />
         <TraceMetric icon={<Database />} label="Token" value={formatCompactNumber(execution.totalTokens)} />
         <TraceMetric icon={<RotateCcw />} label="重试" value={String(execution.retryCount)} />
-      </section>
+      </ul>
 
       <nav className="execution-trace__mobile-nav" aria-label="详情视图">
         <button
@@ -187,23 +208,35 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
         </button>
       </nav>
 
-      <div className="execution-trace__workspace">
-        <aside className="execution-trace__identity" aria-label="运行摘要">
-          <header><h2>运行摘要</h2></header>
-          <dl>
-            <div><dt>Agent</dt><dd>{execution.displayName}</dd></div>
-            <div><dt>状态</dt><dd>{statusLabel(execution.status)}</dd></div>
-            <div><dt>系统步骤</dt><dd>{execution.systemOperationCount}</dd></div>
-            <div><dt>上下文</dt><dd>{formatCompactNumber(execution.contextCurrentTokens)} / {formatCompactNumber(execution.contextThresholdTokens)}</dd></div>
-          </dl>
-          <details>
-            <summary>技术标识</summary>
-            <code>{execution.id}</code>
-            <code>{execution.graphId}</code>
-          </details>
-        </aside>
+      <TaskWorkspace className="execution-trace__workspace">
+        <TaskWorkspacePane className="execution-trace__index">
+          <nav aria-label="运行索引">
+            <header>
+              <h2>运行索引</h2>
+              <span>{indexedExecutions.length} 条</span>
+            </header>
+            <div className="execution-trace__index-list">
+              {indexedExecutions.map((item) => (
+                <Link
+                  key={item.id}
+                  to={`/agents/executions/${encodeURIComponent(item.id)}`}
+                  state={{ from: returnTo }}
+                  aria-current={item.id === execution.id ? "page" : undefined}
+                >
+                  <span>{item.displayName}</span>
+                  <strong>{item.title}</strong>
+                  <small>
+                    {statusLabel(item.status)}
+                    {" · "}
+                    {formatBeijingTime(item.startedAt ?? item.createdAt, false) ?? "—"}
+                  </small>
+                </Link>
+              ))}
+            </div>
+          </nav>
+        </TaskWorkspacePane>
 
-        <section
+        <TaskWorkspacePane
           className="execution-trace__process"
           aria-label="执行过程面板"
           data-mobile-active={mobileView === "process"}
@@ -228,9 +261,9 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
               <p>业务结果仍可正常查看，本页不会展示推测或伪造的步骤。</p>
             </div>
           )}
-        </section>
+        </TaskWorkspacePane>
 
-        <section
+        <TaskWorkspacePane
           className="execution-trace__detail"
           aria-label="Operation 详情"
           data-mobile-active={mobileView === "detail"}
@@ -259,8 +292,8 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
           ) : (
             <p className="execution-preview__empty">选择一个 Operation 查看安全摘要。</p>
           )}
-        </section>
-      </div>
+        </TaskWorkspacePane>
+      </TaskWorkspace>
     </section>
   );
 }
@@ -275,9 +308,9 @@ function TraceMetric({
   value: string;
 }) {
   return (
-    <article>
+    <li>
       <span aria-hidden="true">{icon}</span>
       <div><small>{label}</small><strong>{value}</strong></div>
-    </article>
+    </li>
   );
 }

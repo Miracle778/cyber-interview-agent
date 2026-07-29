@@ -38,6 +38,24 @@ describe("App", () => {
     expect(window.location.pathname).toBe("/review");
   });
 
+  it.each([
+    ["/agents", "Agent 运行中心"],
+    ["/agents/executions/run-1", "高级运行详情"],
+  ])("gives %s a shared viewport-owned task workspace shell", async (path, heading) => {
+    window.history.replaceState({}, "", path);
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("Failed to fetch"));
+
+    render(<App />);
+
+    const pageHeading = await screen.findByRole("heading", {
+      level: 1,
+      name: heading,
+    });
+    expect(pageHeading.closest(".page-shell")).toHaveClass(
+      "page-shell--task-workspace",
+    );
+  });
+
   it("exposes only implemented destinations and marks the current page", async () => {
     window.history.replaceState({}, "", "/knowledge");
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("Failed to fetch"));
