@@ -64,6 +64,16 @@ class TraceIndexRepository:
         ).fetchone()
         return dict(row) if row is not None else None
 
+    def mark_file_body_state(self, relative_path: str, state: str) -> None:
+        if state not in {"available", "quarantined", "deleted", "unavailable"}:
+            raise ValueError("invalid trace body state")
+        self.connection.execute(
+            "UPDATE agent_trace_events SET body_state = ? "
+            "WHERE relative_path = ?",
+            (state, relative_path),
+        )
+        self.connection.commit()
+
     def get_export(self, export_id: str) -> dict[str, Any] | None:
         row = self.connection.execute(
             "SELECT * FROM agent_trace_exports WHERE id = ?",

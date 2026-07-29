@@ -74,6 +74,8 @@ class TraceContentReader:
             raise TraceContentNotFoundError("trace event not found")
         if event["event_type"] == "trace.index_gap":
             raise TraceContentUnavailableError("trace event body is malformed")
+        if event.get("body_state", "available") != "available":
+            raise TraceContentUnavailableError("trace event body was removed by retention")
 
         row = self._read_indexed_row(event)
         payload = row.get("payload")

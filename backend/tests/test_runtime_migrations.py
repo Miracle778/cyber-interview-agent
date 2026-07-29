@@ -87,6 +87,10 @@ OBSERVABILITY_TABLES = {
     "agent_trace_executions",
     "agent_trace_operations",
     "agent_trace_events",
+    "agent_trace_retention_policy",
+    "agent_trace_cleanup_runs",
+    "agent_trace_cleanup_items",
+    "agent_trace_projection_deliveries",
 }
 
 EVALUATION_TABLES = {
@@ -211,7 +215,7 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-    ] == list(range(1, 40))
+        ] == list(range(1, 41))
     assert "agent_context_usage" in _tables(connection)
     assert "profile_deletion_plans" in _tables(connection)
     assert "deleted_at" in {
@@ -1007,7 +1011,7 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-    ] == list(range(1, 40))
+        ] == list(range(1, 41))
     reopened.close()
 
 
