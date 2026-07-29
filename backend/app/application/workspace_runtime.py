@@ -59,6 +59,9 @@ from app.profile.storage import MaterialStorage
 from app.job_targets.repository import JobTargetRepository
 from app.job_targets.service import JobTargetService
 from app.job_targets.application import JobTargetApplication
+from app.observability.indexer import TraceLedgerIndexer
+from app.observability.repository import TraceIndexRepository
+from app.observability.service import AgentObservabilityService
 
 
 def _compact_session_title(content: str) -> str:
@@ -214,6 +217,7 @@ class WorkspaceRuntime:
     profile: ProfileService
     job_targets: JobTargetService
     job_training: JobTargetApplication
+    agent_observability: AgentObservabilityService
     publication_locks: dict[str, asyncio.Lock] = field(
         default_factory=dict, repr=False
     )
@@ -232,6 +236,19 @@ class WorkspaceRuntime:
         connection = connect_thread_local_runtime_database(root)
         initialize_agent_trace_directory(root)
         repository = ProductRepository(connection)
+        trace_repository = TraceIndexRepository(connection)
+        trace_indexer = TraceLedgerIndexer(
+            workspace_id=workspace_id,
+            workspace_root=root,
+            repository=trace_repository,
+        )
+        agent_observability = AgentObservabilityService(
+            workspace_id=workspace_id,
+            connection=connection,
+            trace_repository=trace_repository,
+            indexer=trace_indexer,
+        )
+        agent_observability.sync()
         events = ProductEventStream(repository, workspace_root=root)
         sessions = AgentSessionService(repository, events)
         actions = PendingActionRepository(root)
@@ -495,6 +512,7 @@ class WorkspaceRuntime:
             profile=profile,
             job_targets=job_targets,
             job_training=job_training,
+            agent_observability=agent_observability,
         )
 
     async def close(self) -> None:

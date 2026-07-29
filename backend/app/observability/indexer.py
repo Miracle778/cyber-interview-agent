@@ -247,6 +247,7 @@ class TraceLedgerIndexer:
         ).hexdigest()
         status = _event_status(event_type)
         error_code = _error_code(payload) if status == "failed" else None
+        latency_ms = _payload_latency_ms(payload)
         agent_role = (
             row.get("agent_role")
             if isinstance(row.get("agent_role"), str)
@@ -296,6 +297,7 @@ class TraceLedgerIndexer:
                 observed_at=observed_at,
                 error_code=error_code,
                 retry_count=1 if event_type.endswith(".retry") else 0,
+                latency_ms=latency_ms,
             )
         )
         return {
@@ -379,6 +381,15 @@ def _error_code(payload: object) -> str | None:
     return None
 
 
+def _payload_latency_ms(payload: object) -> int | None:
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("duration_ms")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return max(int(value), 0)
+
+
 def _operation(
     *,
     operation_id: str,
@@ -391,6 +402,7 @@ def _operation(
     observed_at: str | None = None,
     error_code: str | None = None,
     retry_count: int = 0,
+    latency_ms: int | None = None,
 ) -> dict[str, Any]:
     terminal = status in {"completed", "failed"}
     return {
@@ -403,7 +415,7 @@ def _operation(
         "status": status,
         "started_at": None if terminal else observed_at,
         "finished_at": observed_at if terminal else None,
-        "latency_ms": None,
+        "latency_ms": latency_ms,
         "retry_count": retry_count,
         "error_code": error_code,
     }

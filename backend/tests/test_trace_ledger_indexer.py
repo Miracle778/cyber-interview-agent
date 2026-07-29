@@ -135,7 +135,7 @@ def test_indexes_v3_parent_child_operation_without_rewriting_identity(
                 "event_type": "model.response",
                 "timestamp": "2026-07-29T12:00:01+00:00",
                 "sequence": 2,
-                "payload": {"answer": "ok"},
+                "payload": {"answer": "ok", "duration_ms": 1_000},
             },
         ],
     )
@@ -150,6 +150,7 @@ def test_indexes_v3_parent_child_operation_without_rewriting_identity(
     assert operations["model-operation"]["parent_operation_id"] == "agent-operation"
     assert operations["agent-operation"]["kind"] == "agent"
     assert operations["model-operation"]["status"] == "completed"
+    assert operations["model-operation"]["latency_ms"] == 1_000
 
 
 def test_waits_for_crash_torn_trailer_then_indexes_it_when_completed(
