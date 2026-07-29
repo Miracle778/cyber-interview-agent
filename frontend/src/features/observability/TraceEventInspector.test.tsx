@@ -87,7 +87,6 @@ describe("TraceEventInspector", () => {
       content: "not-json",
       contentEncoding: "utf-8-json",
       offset: 0,
-      nextOffset: null,
       complete: true,
       sha256: "abc",
       redactionsApplied: false,
@@ -118,7 +117,7 @@ describe("TraceEventInspector", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json({
       eventId: "event-1",
       eventType: "model.response",
-      content: "{\"structured_response\":{\"score\":4}}",
+      content: "{\"duration_ms\":120,\"response\":{\"structured_response\":{\"score\":4},\"result\":\"raw\"}}",
       contentEncoding: "utf-8-json",
       offset: 0,
       nextOffset: null,
@@ -136,6 +135,9 @@ describe("TraceEventInspector", () => {
       />,
     );
     expect(await screen.findByRole("heading", { name: "Provider 返回的 reasoning" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "结构化响应" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "原始响应" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "响应元数据" })).toBeInTheDocument();
     unmount();
 
     vi.restoreAllMocks();

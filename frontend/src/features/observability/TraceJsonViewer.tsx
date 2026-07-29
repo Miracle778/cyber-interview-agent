@@ -59,26 +59,33 @@ function sectionsFor(eventType: string, value: unknown): TraceSection[] {
   }
 
   if (eventType === "model.response") {
+    const providerResponse = objectEntries(record.response);
+    const response = providerResponse ?? record;
     return [
       {
         label: "结构化响应",
-        value: record.structured_response ?? record.parsed,
+        value: response.structured_response ?? response.parsed,
       },
       {
         label: "原始响应",
-        value: record.raw_response ?? record.result ?? record.output ?? record.content,
+        value: response.raw_response ?? response.result ?? response.output ?? response.content,
       },
       {
         label: "响应元数据",
-        value: select(record, ["model", "finish_reason", "response_id", "latency_ms"]),
+        value: {
+          ...select(record, ["duration_ms", "latency_ms"]),
+          ...select(response, ["model", "finish_reason", "response_id"]),
+        },
       },
       {
         label: "Token 用量",
-        value: record.usage ?? select(record, ["input_tokens", "output_tokens", "total_tokens"]),
+        value: response.usage ??
+          record.usage ??
+          select(response, ["input_tokens", "output_tokens", "total_tokens"]),
       },
       {
         label: "错误",
-        value: record.error ?? record.error_code,
+        value: response.error ?? record.error ?? record.error_code,
       },
     ].filter((section) => section.value !== undefined &&
       (!objectEntries(section.value) || hasValues(objectEntries(section.value)!)));

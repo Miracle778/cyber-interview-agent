@@ -86,7 +86,8 @@ export const traceEventContentSchema = z.object({
   content: z.string(),
   contentEncoding: z.literal("utf-8-json"),
   offset: z.number().int().nonnegative(),
-  nextOffset: z.number().int().nonnegative().nullable(),
+  nextOffset: z.number().int().nonnegative().nullable().optional()
+    .transform((value) => value ?? null),
   complete: z.boolean(),
   sha256: z.string().min(1),
   redactionsApplied: z.boolean(),
