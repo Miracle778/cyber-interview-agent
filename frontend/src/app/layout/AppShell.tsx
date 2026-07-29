@@ -8,6 +8,7 @@ import type { ReviewQuestion } from "../../features/review/reviewTypes";
 import { ProfilePage } from "../../features/profile/ProfilePage";
 import { SettingsPage } from "../../features/settings/SettingsPage";
 import { JobTargetPage } from "../../features/jobTargets/JobTargetPage";
+import { AgentRunCenterPage } from "../../features/observability/AgentRunCenterPage";
 import { getWorkspace, type WorkspaceConfig } from "../../features/settings/settingsApi";
 import { WorkspaceSwitcher } from "../../features/settings/WorkspaceSwitcher";
 import { MobileNavigation } from "../navigation/MobileNavigation";
@@ -160,6 +161,20 @@ export function AppShell() {
                   workspaceMode
                 >
                   <JobTargetPage workspace={workspace} />
+                </PageFrame>
+              }
+            />
+            <Route
+              path="/agents"
+              element={
+                <PageFrame
+                  title="Agent 运行中心"
+                  description="统一查看项目内所有 Agent 的运行、异常、上下文与质量。"
+                  health={health}
+                  workspace={workspace}
+                  workspaceMode
+                >
+                  <AgentRunCenterPage workspace={workspace} />
                 </PageFrame>
               }
             />
