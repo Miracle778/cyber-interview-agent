@@ -1,4 +1,5 @@
 import {
+  Activity,
   Bot,
   Box,
   BrainCircuit,
@@ -8,13 +9,16 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { formatDuration, statusLabel } from "./ExecutionList";
-import type { OperationSummary } from "./observabilityTypes";
+import type { OperationSummary, TraceEventSummary } from "./observabilityTypes";
 
 
 interface OperationTreeProps {
   operations: OperationSummary[];
+  events?: TraceEventSummary[];
   selectedId: string | null;
+  selectedEventId?: string | null;
   onSelect: (operationId: string) => void;
+  onSelectEvent?: (eventId: string) => void;
 }
 
 function OperationIcon({ kind }: { kind: OperationSummary["kind"] }) {
@@ -27,8 +31,11 @@ function OperationIcon({ kind }: { kind: OperationSummary["kind"] }) {
 
 export function OperationTree({
   operations,
+  events = [],
   selectedId,
+  selectedEventId = null,
   onSelect,
+  onSelectEvent,
 }: OperationTreeProps) {
   const { childrenByParent, roots } = useMemo(() => {
     const ids = new Set(operations.map((operation) => operation.id));
@@ -47,6 +54,16 @@ export function OperationTree({
     return { childrenByParent: children, roots: rootItems };
   }, [operations]);
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
+  const eventsByOperation = useMemo(() => {
+    const groups = new Map<string, TraceEventSummary[]>();
+    for (const event of events) {
+      groups.set(event.operationId, [
+        ...(groups.get(event.operationId) ?? []),
+        event,
+      ]);
+    }
+    return groups;
+  }, [events]);
 
   function moveFocus(target: EventTarget & HTMLElement, direction: -1 | 1) {
     const items = [...target.closest('[role="tree"]')!.querySelectorAll<HTMLElement>('[role="treeitem"]')];
@@ -56,7 +73,9 @@ export function OperationTree({
 
   function renderOperation(operation: OperationSummary, level: number) {
     const children = childrenByParent.get(operation.id) ?? [];
-    const expanded = children.length > 0 && !collapsedIds.has(operation.id);
+    const operationEvents = eventsByOperation.get(operation.id) ?? [];
+    const hasChildren = children.length > 0 || operationEvents.length > 0;
+    const expanded = hasChildren && !collapsedIds.has(operation.id);
     return (
       <li role="none" key={operation.id}>
         <button
@@ -64,31 +83,31 @@ export function OperationTree({
           role="treeitem"
           aria-level={level}
           aria-selected={selectedId === operation.id}
-          aria-expanded={children.length > 0 ? expanded : undefined}
+          aria-expanded={hasChildren ? expanded : undefined}
           className="operation-tree__item"
           onClick={() => onSelect(operation.id)}
           onKeyDown={(event) => {
             if (event.key === "ArrowDown" || event.key === "ArrowUp") {
               event.preventDefault();
               moveFocus(event.currentTarget, event.key === "ArrowDown" ? 1 : -1);
-            } else if (event.key === "ArrowRight" && children.length > 0) {
+            } else if (event.key === "ArrowRight" && hasChildren) {
               setCollapsedIds((current) => {
                 const next = new Set(current);
                 next.delete(operation.id);
                 return next;
               });
-            } else if (event.key === "ArrowLeft" && children.length > 0) {
+            } else if (event.key === "ArrowLeft" && hasChildren) {
               setCollapsedIds((current) => new Set(current).add(operation.id));
             }
           }}
         >
           <span
             className="operation-tree__chevron"
-            data-visible={children.length > 0}
+            data-visible={hasChildren}
             data-expanded={expanded}
             aria-hidden="true"
             onClick={(event) => {
-              if (children.length === 0) return;
+              if (!hasChildren) return;
               event.stopPropagation();
               setCollapsedIds((current) => {
                 const next = new Set(current);
@@ -113,6 +132,36 @@ export function OperationTree({
         {expanded ? (
           <ul role="group">
             {children.map((child) => renderOperation(child, level + 1))}
+            {operationEvents.map((event) => (
+              <li role="none" key={event.eventId}>
+                <button
+                  type="button"
+                  role="treeitem"
+                  aria-level={level + 1}
+                  aria-selected={selectedEventId === event.eventId}
+                  className="operation-tree__item operation-tree__event"
+                  onClick={() => onSelectEvent?.(event.eventId)}
+                  onKeyDown={(keyboardEvent) => {
+                    if (keyboardEvent.key === "ArrowDown" || keyboardEvent.key === "ArrowUp") {
+                      keyboardEvent.preventDefault();
+                      moveFocus(
+                        keyboardEvent.currentTarget,
+                        keyboardEvent.key === "ArrowDown" ? 1 : -1,
+                      );
+                    }
+                  }}
+                >
+                  <span className="operation-tree__chevron" data-visible="false" />
+                  <span className="operation-tree__icon" data-kind="event">
+                    <Activity size={15} aria-hidden="true" />
+                  </span>
+                  <span className="operation-tree__copy">
+                    <strong>{event.eventType}</strong>
+                    <small>事件 #{event.sequence} · {event.byteLength.toLocaleString()} B</small>
+                  </span>
+                </button>
+              </li>
+            ))}
           </ul>
         ) : null}
       </li>

@@ -34,6 +34,8 @@ from app.schemas.observability import (
     ExecutionSummaryResource,
     ExecutionChangedEventResource,
     OperationSummaryListResource,
+    TraceEventSummaryListResource,
+    TraceEventSummaryResource,
 )
 
 
@@ -176,6 +178,22 @@ class AgentObservabilityService:
         self._run(run_id)
         return OperationSummaryListResource(
             items=list(self.assembler.operations(run_id))
+        )
+
+    def list_events(self, run_id: str) -> TraceEventSummaryListResource:
+        self._run(run_id)
+        return TraceEventSummaryListResource(
+            items=[
+                TraceEventSummaryResource(
+                    event_id=row["event_id"],
+                    operation_id=row["operation_id"],
+                    event_type=row["event_type"],
+                    observed_at=row["observed_at"],
+                    byte_length=row["byte_length"],
+                    sequence=row["sequence"],
+                )
+                for row in self.trace_repository.list_events(run_id)
+            ]
         )
 
     def get_event_content(

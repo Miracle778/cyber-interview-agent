@@ -222,6 +222,58 @@ async def test_cross_workspace_detail_is_hidden_as_not_found(api, application) -
 
 
 @pytest.mark.asyncio
+async def test_event_index_exposes_safe_metadata_without_advanced_diagnostics(
+    api, application
+) -> None:
+    context, session_id = await _insert_run(
+        application,
+        workspace_id="workspace-1",
+        run_id="run-event-index",
+    )
+    identity = TraceIdentity(
+        workspace_id="workspace-1",
+        workspace_root=context.root,
+        session_id=session_id,
+        run_id="run-event-index",
+        agent_role="answer_evaluation",
+        agent_name="review_answer_evaluation",
+        invocation_id="invocation-event-index",
+    )
+    AgentTraceWriter().append(
+        identity,
+        "model.request",
+        {"messages": ["private prompt"]},
+    )
+    AgentTraceWriter().append(
+        identity,
+        "model.response",
+        {"structured_response": {"score": 4}},
+    )
+    context.agent_observability.sync()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        response = await client.get(
+            "/api/agent-observability/executions/run-event-index/events",
+            params={"workspaceId": "workspace-1"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["eventType"] for item in body["items"]] == [
+        "model.request",
+        "model.response",
+    ]
+    assert all(item["operationId"] for item in body["items"])
+    assert all(item["byteLength"] > 0 for item in body["items"])
+    serialized = json.dumps(body)
+    assert "private prompt" not in serialized
+    assert "relativePath" not in serialized
+    assert "payloadSha256" not in serialized
+
+
+@pytest.mark.asyncio
 async def test_event_content_route_requires_advanced_diagnostics(
     api, application
 ) -> None:

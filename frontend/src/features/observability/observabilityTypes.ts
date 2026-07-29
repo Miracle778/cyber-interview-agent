@@ -67,6 +67,45 @@ export const operationSummaryPageSchema = z.object({
   items: z.array(operationSummarySchema),
 });
 
+export const traceEventSummarySchema = z.object({
+  eventId: z.string().min(1),
+  operationId: z.string().min(1),
+  eventType: z.string().min(1),
+  observedAt: z.string().nullable(),
+  byteLength: z.number().int().nonnegative(),
+  sequence: z.number().int().nonnegative(),
+});
+
+export const traceEventSummaryPageSchema = z.object({
+  items: z.array(traceEventSummarySchema),
+});
+
+export const traceEventContentSchema = z.object({
+  eventId: z.string().min(1),
+  eventType: z.string().min(1),
+  content: z.string(),
+  contentEncoding: z.literal("utf-8-json"),
+  offset: z.number().int().nonnegative(),
+  nextOffset: z.number().int().nonnegative().nullable(),
+  complete: z.boolean(),
+  sha256: z.string().min(1),
+  redactionsApplied: z.boolean(),
+  reasoning: z.unknown().optional(),
+});
+
+export const traceExportSchema = z.object({
+  id: z.string().min(1),
+  workspaceId: z.string().min(1),
+  runId: z.string().min(1),
+  status: z.enum(["pending", "completed", "failed"]),
+  metadataOnly: z.boolean(),
+  includesBodies: z.boolean(),
+  artifactSha256: z.string().nullable(),
+  errorCode: z.string().nullable(),
+  createdAt: z.string().min(1),
+  completedAt: z.string().nullable(),
+});
+
 export type ObservabilityCapability = z.infer<
   typeof observabilityCapabilitySchema
 >;
@@ -74,6 +113,9 @@ export type ExecutionSummary = z.infer<typeof executionSummarySchema>;
 export type ExecutionSummaryPage = z.infer<typeof executionSummaryPageSchema>;
 export type ExecutionChangedEvent = z.infer<typeof executionChangedEventSchema>;
 export type OperationSummary = z.infer<typeof operationSummarySchema>;
+export type TraceEventSummary = z.infer<typeof traceEventSummarySchema>;
+export type TraceEventContent = z.infer<typeof traceEventContentSchema>;
+export type TraceExport = z.infer<typeof traceExportSchema>;
 
 export interface ExecutionFilters {
   search: string;

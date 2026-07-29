@@ -1,13 +1,19 @@
 import { ZodError } from "zod";
-import { apiGet } from "../../shared/api/client";
+import { apiGet, apiPost } from "../../shared/api/client";
 import {
   executionSummaryPageSchema,
   executionSummarySchema,
   operationSummaryPageSchema,
+  traceEventContentSchema,
+  traceEventSummaryPageSchema,
+  traceExportSchema,
   type ExecutionFilters,
   type ExecutionSummary,
   type ExecutionSummaryPage,
   type OperationSummary,
+  type TraceEventContent,
+  type TraceEventSummary,
+  type TraceExport,
 } from "./observabilityTypes";
 
 
@@ -68,4 +74,64 @@ export async function listObservabilityOperations(
     { signal },
   );
   return parsePayload(() => operationSummaryPageSchema.parse(payload).items);
+}
+
+export async function listObservabilityEvents(
+  workspaceId: string,
+  executionId: string,
+  signal?: AbortSignal,
+): Promise<TraceEventSummary[]> {
+  const payload = await apiGet<unknown>(
+    `/api/agent-observability/executions/${encodeURIComponent(executionId)}/events?workspaceId=${encodeURIComponent(workspaceId)}`,
+    { signal },
+  );
+  return parsePayload(() => traceEventSummaryPageSchema.parse(payload).items);
+}
+
+export async function getTraceEventContent(
+  workspaceId: string,
+  executionId: string,
+  eventId: string,
+  offset = 0,
+  signal?: AbortSignal,
+): Promise<TraceEventContent> {
+  const query = new URLSearchParams({
+    workspaceId,
+    offset: String(offset),
+    limit: "65536",
+  });
+  const payload = await apiGet<unknown>(
+    `/api/agent-observability/executions/${encodeURIComponent(executionId)}/events/${encodeURIComponent(eventId)}/content?${query.toString()}`,
+    { signal },
+  );
+  return parsePayload(() => traceEventContentSchema.parse(payload));
+}
+
+export async function createTraceExport(
+  workspaceId: string,
+  executionId: string,
+  includeStoredBodies: boolean,
+): Promise<TraceExport> {
+  const idempotencyKey =
+    globalThis.crypto?.randomUUID?.() ??
+    `trace-export-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const payload = await apiPost<
+    { metadataOnly: boolean; includeStoredBodies: boolean },
+    unknown
+  >(
+    `/api/agent-observability/executions/${encodeURIComponent(executionId)}/exports?workspaceId=${encodeURIComponent(workspaceId)}`,
+    {
+      metadataOnly: !includeStoredBodies,
+      includeStoredBodies,
+    },
+    { headers: { "Idempotency-Key": idempotencyKey } },
+  );
+  return parsePayload(() => traceExportSchema.parse(payload));
+}
+
+export function traceExportDownloadUrl(
+  workspaceId: string,
+  exportId: string,
+): string {
+  return `/api/agent-observability/exports/${encodeURIComponent(exportId)}?workspaceId=${encodeURIComponent(workspaceId)}`;
 }

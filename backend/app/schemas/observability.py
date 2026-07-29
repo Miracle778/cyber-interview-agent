@@ -75,6 +75,19 @@ class OperationSummaryListResource(ObservabilityModel):
     items: list[OperationSummaryResource]
 
 
+class TraceEventSummaryResource(ObservabilityModel):
+    event_id: str
+    operation_id: str
+    event_type: str
+    observed_at: str | None
+    byte_length: int = Field(ge=0)
+    sequence: int = Field(ge=0)
+
+
+class TraceEventSummaryListResource(ObservabilityModel):
+    items: list[TraceEventSummaryResource]
+
+
 class TraceEventContentResource(ObservabilityModel):
     event_id: str
     event_type: str

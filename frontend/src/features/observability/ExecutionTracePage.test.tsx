@@ -98,9 +98,33 @@ const operations = [
 function mockTrace(
   summary: unknown = execution,
   operationItems: unknown = operations,
+  eventItems: unknown = [],
+  advancedEnabled = false,
 ) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
+    if (url.includes("/api/settings/agent-diagnostics")) {
+      return Response.json({
+        advancedEnabled,
+        updatedAt: "2026-07-29T06:20:00Z",
+      });
+    }
+    if (url.includes("/events/") && url.includes("/content?")) {
+      return Response.json({
+        eventId: "event-1",
+        eventType: "model.request",
+        content: "{\"messages\":[\"private prompt\"]}",
+        contentEncoding: "utf-8-json",
+        offset: 0,
+        nextOffset: null,
+        complete: true,
+        sha256: "abc",
+        redactionsApplied: true,
+      });
+    }
+    if (url.includes("/events?")) {
+      return Response.json({ items: eventItems });
+    }
     if (url.includes("/operations?")) {
       return Response.json({ items: operationItems });
     }
@@ -189,10 +213,31 @@ describe("ExecutionTracePage", () => {
       "task-workspace__pane",
     );
 
-    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(5));
     for (const [request] of fetchSpy.mock.calls) {
-      expect(String(request)).not.toMatch(/body|content|prompt|payload|events/);
+      expect(String(request)).not.toMatch(/body|content|prompt|payload/);
     }
+  });
+
+  it("selects a safe event index before lazily loading its private body", async () => {
+    const fetchSpy = mockTrace(execution, operations, [{
+      eventId: "event-1",
+      operationId: "model-1",
+      eventType: "model.request",
+      observedAt: "2026-07-29T06:26:02Z",
+      byteLength: 44,
+      sequence: 1,
+    }], true);
+    renderTrace();
+
+    const eventItem = await screen.findByRole("treeitem", { name: /model.request/ });
+    expect(fetchSpy.mock.calls.some(([request]) =>
+      String(request).includes("/content?"))).toBe(false);
+
+    fireEvent.click(eventItem);
+    expect(await screen.findByRole("heading", { name: "请求消息" })).toBeInTheDocument();
+    expect(fetchSpy.mock.calls.some(([request]) =>
+      String(request).includes("/content?"))).toBe(true);
   });
 
   it("keeps v2 linear operations readable and explains the compatibility fallback", async () => {

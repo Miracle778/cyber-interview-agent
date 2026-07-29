@@ -29,6 +29,7 @@ from app.schemas.observability import (
     ExecutionSummaryResource,
     OperationSummaryListResource,
     TraceEventContentResource,
+    TraceEventSummaryListResource,
     TraceExportResource,
 )
 
@@ -135,6 +136,23 @@ async def list_observability_operations(
     service.sync_if_due()
     try:
         return service.list_operations(run_id)
+    except AgentExecutionNotFoundError:
+        return _not_found()
+
+
+@router.get(
+    "/executions/{run_id}/events",
+    response_model=TraceEventSummaryListResource,
+)
+async def list_observability_events(
+    run_id: str,
+    service: AgentObservabilityService = Depends(
+        get_agent_observability_service
+    ),
+):
+    service.sync_if_due()
+    try:
+        return service.list_events(run_id)
     except AgentExecutionNotFoundError:
         return _not_found()
 

@@ -6,6 +6,7 @@ import {
   Clock3,
   Cpu,
   Database,
+  Download,
   ExternalLink,
   LoaderCircle,
   RotateCcw,
@@ -15,9 +16,11 @@ import { Link, useLocation, useParams } from "react-router-dom";
 import { formatBeijingTime } from "../../shared/time";
 import { TaskWorkspace, TaskWorkspacePane } from "../../shared/ui/TaskWorkspace";
 import type { WorkspaceConfig } from "../settings/settingsApi";
+import { getAgentDiagnosticsSettings } from "../settings/settingsApi";
 import {
   getObservabilityExecution,
   listObservabilityExecutions,
+  listObservabilityEvents,
   listObservabilityOperations,
   ObservabilityPayloadError,
 } from "./observabilityApi";
@@ -27,6 +30,8 @@ import {
   statusLabel,
 } from "./ExecutionList";
 import { OperationTree } from "./OperationTree";
+import { TraceEventInspector } from "./TraceEventInspector";
+import { TraceExportDialog } from "./TraceExportDialog";
 import type { OperationSummary } from "./observabilityTypes";
 import "./observability.css";
 
@@ -52,7 +57,10 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
       ? from
       : "/agents";
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [mobileView, setMobileView] = useState<"process" | "detail">("process");
+  const [exportOpen, setExportOpen] = useState(false);
+  const [narrowScreen, setNarrowScreen] = useState(false);
   const executionQuery = useQuery({
     queryKey: ["agent-observability", "execution", workspace?.id, runId],
     enabled: Boolean(workspace && runId),
@@ -64,6 +72,17 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
     enabled: Boolean(workspace && runId),
     queryFn: ({ signal }) =>
       listObservabilityOperations(workspace!.id, runId, signal),
+  });
+  const eventsQuery = useQuery({
+    queryKey: ["agent-observability", "events", workspace?.id, runId],
+    enabled: Boolean(workspace && runId),
+    queryFn: ({ signal }) =>
+      listObservabilityEvents(workspace!.id, runId, signal),
+  });
+  const diagnosticsQuery = useQuery({
+    queryKey: ["agent-diagnostics-settings"],
+    enabled: Boolean(workspace),
+    queryFn: getAgentDiagnosticsSettings,
   });
   const runIndexQuery = useQuery({
     queryKey: ["agent-observability", "execution-index", workspace?.id],
@@ -81,15 +100,29 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
       ),
   });
   const operations = operationsQuery.data ?? [];
+  const events = eventsQuery.data ?? [];
 
   useEffect(() => {
     if (selectedId && operations.some((item) => item.id === selectedId)) return;
     setSelectedId(operations[0]?.id ?? null);
   }, [operations, selectedId]);
 
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const query = window.matchMedia("(max-width: 767px)");
+    const update = () => setNarrowScreen(query.matches);
+    update();
+    query.addEventListener?.("change", update);
+    return () => query.removeEventListener?.("change", update);
+  }, []);
+
   const selected = useMemo(
     () => operations.find((operation) => operation.id === selectedId) ?? null,
     [operations, selectedId],
+  );
+  const selectedEvent = useMemo(
+    () => events.find((event) => event.eventId === selectedEventId) ?? null,
+    [events, selectedEventId],
   );
   const linearFallback =
     operations.length > 1 &&
@@ -164,12 +197,18 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
             {formatBeijingTime(execution.startedAt ?? execution.createdAt, true) ?? "—"}
           </p>
         </div>
-        {execution.capabilities.includes("open_business") && execution.route ? (
-          <a className="execution-trace__business-link" href={execution.route}>
-            打开业务页面
-            <ExternalLink size={15} aria-hidden="true" />
-          </a>
-        ) : null}
+        <div className="execution-trace__actions">
+          <button type="button" onClick={() => setExportOpen(true)}>
+            <Download size={15} aria-hidden="true" />
+            导出诊断包
+          </button>
+          {execution.capabilities.includes("open_business") && execution.route ? (
+            <a className="execution-trace__business-link" href={execution.route}>
+              打开业务页面
+              <ExternalLink size={15} aria-hidden="true" />
+            </a>
+          ) : null}
+        </div>
       </header>
 
       {traceWarning ? (
@@ -248,9 +287,18 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
           {operations.length > 0 ? (
             <OperationTree
               operations={operations}
+              events={events}
               selectedId={selectedId}
+              selectedEventId={selectedEventId}
               onSelect={(operationId) => {
                 setSelectedId(operationId);
+                setSelectedEventId(null);
+                setMobileView("detail");
+              }}
+              onSelectEvent={(eventId) => {
+                const event = events.find((item) => item.eventId === eventId);
+                setSelectedEventId(eventId);
+                if (event) setSelectedId(event.operationId);
                 setMobileView("detail");
               }}
             />
@@ -268,8 +316,22 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
           aria-label="Operation 详情"
           data-mobile-active={mobileView === "detail"}
         >
-          <header><h2>Operation 详情</h2></header>
-          {selected ? (
+          <header>
+            <h2>{selectedEvent ? "事件详情" : "Operation 详情"}</h2>
+          </header>
+          {selectedEvent ? (
+            <TraceEventInspector
+              workspaceId={workspace.id}
+              runId={runId}
+              event={selectedEvent}
+              advancedEnabled={diagnosticsQuery.data?.advancedEnabled ?? false}
+              drawer={narrowScreen}
+              onClose={() => {
+                setSelectedEventId(null);
+                setMobileView("process");
+              }}
+            />
+          ) : selected ? (
             <>
               <div className="execution-trace__detail-title">
                 <span>{OPERATION_KIND_LABELS[selected.kind]}</span>
@@ -294,6 +356,14 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
           )}
         </TaskWorkspacePane>
       </TaskWorkspace>
+      {exportOpen ? (
+        <TraceExportDialog
+          workspaceId={workspace.id}
+          runId={runId}
+          advancedEnabled={diagnosticsQuery.data?.advancedEnabled ?? false}
+          onClose={() => setExportOpen(false)}
+        />
+      ) : null}
     </section>
   );
 }
