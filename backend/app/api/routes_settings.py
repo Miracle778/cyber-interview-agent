@@ -11,6 +11,7 @@ from app.api.dependencies import (
 from app.application.workspace_runtime import AgentApplication
 from app.core.errors import WorkspaceConflictError
 from app.schemas.settings import (
+    AgentDiagnosticsSettingsResource,
     CreateProviderCommand,
     CreateProviderModelCommand,
     ProviderModelResource,
@@ -19,6 +20,7 @@ from app.schemas.settings import (
     RelinkWorkspaceCommand,
     UpdateProviderCommand,
     UpdateProviderModelCommand,
+    UpdateAgentDiagnosticsSettingsCommand,
     UpdateWorkspaceCommand,
     UpdateWorkspaceModelBindingsCommand,
     WorkspaceConfig,
@@ -35,6 +37,29 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 class LegacyWorkspaceCommand(BaseModel):
     workspace_path: str = Field(alias="workspacePath")
     model_config = {"populate_by_name": True}
+
+
+@router.get(
+    "/agent-diagnostics",
+    response_model=AgentDiagnosticsSettingsResource,
+)
+def get_agent_diagnostics_settings(
+    service: WorkspaceService = Depends(get_workspace_service),
+) -> AgentDiagnosticsSettingsResource:
+    return service.get_agent_diagnostics_settings()
+
+
+@router.put(
+    "/agent-diagnostics",
+    response_model=AgentDiagnosticsSettingsResource,
+)
+def replace_agent_diagnostics_settings(
+    command: UpdateAgentDiagnosticsSettingsCommand,
+    service: WorkspaceService = Depends(get_workspace_service),
+) -> AgentDiagnosticsSettingsResource:
+    return service.replace_agent_diagnostics_settings(
+        advanced_enabled=command.advanced_enabled
+    )
 
 
 @router.get("/providers", response_model=list[ProviderResource])

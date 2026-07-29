@@ -199,6 +199,9 @@ async def invalid_request(
         path.startswith("/api/workspaces/") and "/profile/" in path
     )
     is_job_target_path = "/job-targets" in path
+    is_settings_path = path.startswith("/api/settings/")
+    if is_settings_path:
+        return _error(422, "invalid_request", "请求参数不完整或格式错误")
     if not is_profile_path and not is_job_target_path:
         return JSONResponse(
             status_code=422,

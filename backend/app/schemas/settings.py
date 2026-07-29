@@ -1,7 +1,14 @@
 from typing import Literal
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    field_validator,
+    model_validator,
+)
 
 ProviderFormat = Literal["openai-compatible", "anthropic-compatible"]
 ConnectivityStatus = Literal["unknown", "ok", "failed"]
@@ -14,6 +21,15 @@ def _to_camel(value: str) -> str:
 
 class CamelModel(BaseModel):
     model_config = ConfigDict(alias_generator=_to_camel, populate_by_name=True)
+
+
+class UpdateAgentDiagnosticsSettingsCommand(CamelModel):
+    advanced_enabled: StrictBool
+
+
+class AgentDiagnosticsSettingsResource(CamelModel):
+    advanced_enabled: bool
+    updated_at: str
 
 
 class ProviderConfig(BaseModel):

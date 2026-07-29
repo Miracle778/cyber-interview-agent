@@ -14,6 +14,7 @@ from app.infrastructure.runtime_database import runtime_database_path
 from app.repositories.provider_repository import ProviderRepository
 from app.repositories.workspace_repository import WorkspaceRecord, WorkspaceRepository
 from app.schemas.settings import (
+    AgentDiagnosticsSettingsResource,
     MODEL_ROLES,
     WorkspaceDeletionImpactResource,
     WorkspaceModelBindingsResource,
@@ -76,6 +77,32 @@ class WorkspaceService:
     def get_current(self) -> WorkspaceResource | None:
         record = self.workspaces.get_current()
         return None if record is None else self._to_resource(record)
+
+    def get_agent_diagnostics_settings(
+        self,
+    ) -> AgentDiagnosticsSettingsResource:
+        row = self._connection.execute(
+            "SELECT advanced_enabled, updated_at "
+            "FROM agent_diagnostics_settings WHERE singleton = 1"
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("agent diagnostics singleton is missing")
+        return AgentDiagnosticsSettingsResource(
+            advanced_enabled=bool(row["advanced_enabled"]),
+            updated_at=row["updated_at"],
+        )
+
+    def replace_agent_diagnostics_settings(
+        self, *, advanced_enabled: bool
+    ) -> AgentDiagnosticsSettingsResource:
+        with self._transaction():
+            self._connection.execute(
+                "UPDATE agent_diagnostics_settings "
+                "SET advanced_enabled = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE singleton = 1",
+                (int(advanced_enabled),),
+            )
+        return self.get_agent_diagnostics_settings()
 
     def resolve_root(self, workspace_id: str) -> Path:
         record = self._require_workspace(workspace_id)
