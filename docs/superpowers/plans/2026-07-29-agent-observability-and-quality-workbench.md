@@ -118,16 +118,16 @@ When trace is absent or damaged, the execution remains visible with `traceHealth
 
 ## Cross-Slice Acceptance
 
-- [ ] All production graph IDs are registered.
-- [ ] An execution remains visible when its JSONL is missing, corrupt, or temporarily unindexed.
-- [ ] A new trace event becomes visible without reloading the whole application.
-- [ ] The global list counts business executions, not model/tool calls.
-- [ ] Normal mode shows safe summaries; advanced mode shows allowed stored bodies.
-- [ ] Manual Judge is available for supported executions without pretending to be the business Agent.
-- [ ] Judge failure cannot change the business execution result.
-- [ ] No UI or API reports cost.
-- [ ] 390, 768, 1024, and 1440 widths have no page-level horizontal overflow.
-- [ ] One minimal browser path is recorded after each slice and one complete browser acceptance pass is recorded before closure.
+- [x] All production graph IDs are registered.
+- [x] An execution remains visible when its JSONL is missing, corrupt, or temporarily unindexed.
+- [x] A new trace event becomes visible without reloading the whole application.
+- [x] The global list counts business executions, not model/tool calls.
+- [x] Normal mode shows safe summaries; advanced mode shows allowed stored bodies.
+- [x] Manual Judge is available for supported executions without pretending to be the business Agent.
+- [x] Judge failure cannot change the business execution result.
+- [x] No UI or API reports cost.
+- [x] 390, 768, 1024, and 1440 widths have no page-level horizontal overflow.
+- [x] One minimal browser path is recorded after each slice and one complete browser acceptance pass is recorded before closure.
 
 ## Commit and Integration Policy
 

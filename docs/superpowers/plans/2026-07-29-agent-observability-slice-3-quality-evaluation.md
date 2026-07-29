@@ -33,19 +33,19 @@
 - Create: `backend/app/evaluation/packs/project_deep_dive.py`
 - Create: `backend/tests/test_agent_eval_pack_registry.py`
 
-- [ ] Write RED tests for unique pack IDs/versions, all registry `eval_pack_id` references resolving, immutable dimension IDs, and strict Judge output.
-- [ ] Define `EvalPack`, `EvalDimension`, `DeterministicRule`, `JudgeContract`, and `EvaluationTriggerPolicy`.
-- [ ] Each pack declares 3–7 user-visible dimensions, required evidence event types, deterministic checks, and a versioned Judge prompt ID.
-- [ ] `JudgeResult` must contain dimension scores, cited event/artifact hashes, confidence, summary, risks, and `human_review_required`; unknown fields fail.
-- [ ] Do not include hidden chain-of-thought requirements in any prompt.
-- [ ] Run:
+- [x] Write RED tests for unique pack IDs/versions, all registry `eval_pack_id` references resolving, immutable dimension IDs, and strict Judge output.
+- [x] Define `EvalPack`, `EvalDimension`, `DeterministicRule`, `JudgeContract`, and `EvaluationTriggerPolicy`.
+- [x] Each pack declares 3–7 user-visible dimensions, required evidence event types, deterministic checks, and a versioned Judge prompt ID.
+- [x] `JudgeResult` must contain dimension scores, cited event/artifact hashes, confidence, summary, risks, and `human_review_required`; unknown fields fail.
+- [x] Do not include hidden chain-of-thought requirements in any prompt.
+- [x] Run:
 
 ```bash
 cd backend
 .venv/bin/python -m pytest -q tests/test_agent_eval_pack_registry.py
 ```
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add backend/app/evaluation backend/tests/test_agent_eval_pack_registry.py
@@ -81,11 +81,11 @@ App setting fields:
 - `automatic_daily_cap` default `20`;
 - optional `judge_provider_model_id`, falling back to the existing answer-evaluation binding.
 
-- [ ] Write migration/repository RED tests for idempotency, frozen hashes, workspace isolation, feedback versioning, case privacy, and daily cap concurrency.
-- [ ] Write settings RED tests for defaults, bounds, nullable model, restart persistence, and invalid model ID.
-- [ ] Implement repositories with explicit transactions and immutable completed eval input hashes.
-- [ ] Do not add a ninth required model role.
-- [ ] Run:
+- [x] Write migration/repository RED tests for idempotency, frozen hashes, workspace isolation, feedback versioning, case privacy, and daily cap concurrency.
+- [x] Write settings RED tests for defaults, bounds, nullable model, restart persistence, and invalid model ID.
+- [x] Implement repositories with explicit transactions and immutable completed eval input hashes.
+- [x] Do not add a ninth required model role.
+- [x] Run:
 
 ```bash
 cd backend
@@ -96,7 +96,7 @@ cd backend
   tests/test_agent_quality_eval_settings.py
 ```
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add backend/app/db/migrations/runtime/039_agent_evaluation.sql \
@@ -118,19 +118,19 @@ git commit -m "feat(agent-evaluation): persist eval runs and settings"
 - Create: `backend/tests/test_agent_evaluation_runtime.py`
 - Modify: `backend/app/observability/service.py`
 
-- [ ] Write RED tests that freeze execution metadata, selected trace events, referenced artifacts, schema/model/tool versions, and hashes.
-- [ ] Prove a later domain edit does not change an existing snapshot.
-- [ ] Prove the Evaluation Runtime has no domain service, no write tool, and no generic path/tool access.
-- [ ] Implement deterministic rules before the model call and record pass/fail evidence.
-- [ ] Make missing/corrupt trace produce `inconclusive` with explicit evidence gaps, not a false score or business failure.
-- [ ] Run:
+- [x] Write RED tests that freeze execution metadata, selected trace events, referenced artifacts, schema/model/tool versions, and hashes.
+- [x] Prove a later domain edit does not change an existing snapshot.
+- [x] Prove the Evaluation Runtime has no domain service, no write tool, and no generic path/tool access.
+- [x] Implement deterministic rules before the model call and record pass/fail evidence.
+- [x] Make missing/corrupt trace produce `inconclusive` with explicit evidence gaps, not a false score or business failure.
+- [x] Run:
 
 ```bash
 cd backend
 .venv/bin/python -m pytest -q tests/test_agent_evaluation_runtime.py
 ```
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add backend/app/evaluation/snapshot.py backend/app/evaluation/runtime.py \
@@ -149,12 +149,12 @@ git commit -m "feat(agent-evaluation): isolate frozen execution evaluation"
 - Modify: `backend/app/application/event_projector.py`
 - Modify: `backend/app/application/workspace_runtime.py`
 
-- [ ] Write RED tests for manual Judge, failed/partial/degraded/rejected/heavily-edited automatic triggers, 5% successful sampling, 20/day cap, duplicate terminal events, cancellation, Provider failure, and no recursive evaluation.
-- [ ] Resolve Judge model from eval settings, with explicit fallback to answer-evaluation binding.
-- [ ] Use ToolStrategy/strict structured response and store raw model trace through the existing Trace Writer under a system evaluation operation.
-- [ ] Run deterministic rules even when Judge Provider fails; mark the Judge portion failed without changing the business run.
-- [ ] Emit only evaluation-domain events; do not append business messages or update `agent_runs.status`.
-- [ ] Run:
+- [x] Write RED tests for manual Judge, failed/partial/degraded/rejected/heavily-edited automatic triggers, 5% successful sampling, 20/day cap, duplicate terminal events, cancellation, Provider failure, and no recursive evaluation.
+- [x] Resolve Judge model from eval settings, with explicit fallback to answer-evaluation binding.
+- [x] Use ToolStrategy/strict structured response and store raw model trace through the existing Trace Writer under a system evaluation operation.
+- [x] Run deterministic rules even when Judge Provider fails; mark the Judge portion failed without changing the business run.
+- [x] Emit only evaluation-domain events; do not append business messages or update `agent_runs.status`.
+- [x] Run:
 
 ```bash
 cd backend
@@ -163,7 +163,7 @@ cd backend
   tests/test_agent_evaluation_runtime.py
 ```
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add backend/app/evaluation backend/app/application/event_projector.py \
@@ -195,11 +195,11 @@ POST /api/agent-evaluations/regression-runs
 GET  /api/agent-evaluations/comparisons
 ```
 
-- [ ] Write RED tests for workspace isolation, unsupported Agent pack, manual run idempotency, advanced/raw disclosure, feedback history, case redaction, version comparison, and evaluation SSE/status polling.
-- [ ] Return safe dimension summaries in normal mode and raw Judge trace links only in advanced mode.
-- [ ] Regression case creation shows exactly which execution fields/bodies will be frozen and requires explicit confirmation.
-- [ ] Comparison rejects incompatible dimension IDs rather than silently averaging unrelated packs.
-- [ ] Run:
+- [x] Write RED tests for workspace isolation, unsupported Agent pack, manual run idempotency, advanced/raw disclosure, feedback history, case redaction, version comparison, and evaluation SSE/status polling.
+- [x] Return safe dimension summaries in normal mode and raw Judge trace links only in advanced mode.
+- [x] Regression case creation shows exactly which execution fields/bodies will be frozen and requires explicit confirmation.
+- [x] Comparison rejects incompatible dimension IDs rather than silently averaging unrelated packs.
+- [x] Run:
 
 ```bash
 cd backend
@@ -208,7 +208,7 @@ cd backend
   tests/test_agent_judge_service.py
 ```
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add backend/app/schemas/evaluation.py \
@@ -234,13 +234,13 @@ git commit -m "feat(agent-evaluation): expose judge and regression APIs"
 - Modify: `frontend/src/features/observability/ExecutionTracePage.tsx`
 - Modify: `frontend/src/app/layout/AppShell.tsx`
 
-- [ ] Write RED tests for manual Judge launch, unsupported pack, pending/progress/failure, dimension evidence, human feedback, regression case confirmation, pack version filtering, and comparison incompatibility.
-- [ ] Add `/agents/evaluations` as a tab within the global Agent area, not a review child page.
-- [ ] Add “发起 Judge” only when registry/status allow it.
-- [ ] Build the frozen-case list, dimension score/evidence panel, compare columns, and regression controls from the approved reference.
-- [ ] Keep raw Judge input/output behind advanced mode; normal users still see score evidence and uncertainty.
-- [ ] Display no cost field.
-- [ ] Run:
+- [x] Write RED tests for manual Judge launch, unsupported pack, pending/progress/failure, dimension evidence, human feedback, regression case confirmation, pack version filtering, and comparison incompatibility.
+- [x] Add `/agents/evaluations` as a tab within the global Agent area, not a review child page.
+- [x] Add “发起 Judge” only when registry/status allow it.
+- [x] Build the frozen-case list, dimension score/evidence panel, compare columns, and regression controls from the approved reference.
+- [x] Keep raw Judge input/output behind advanced mode; normal users still see score evidence and uncertainty.
+- [x] Display no cost field.
+- [x] Run:
 
 ```bash
 cd frontend
@@ -251,7 +251,7 @@ npx vitest run \
 npx tsc --noEmit
 ```
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add frontend/src/features/evaluation \
@@ -266,13 +266,13 @@ git commit -m "feat(agent-evaluation): add quality evaluation lab"
 **Files:**
 - Update local only: `docs/verification/agent-observability-and-quality-workbench.md`
 
-- [ ] Use a disposable workspace with one successful and one failed execution.
-- [ ] Manually trigger Judge for both; verify failure does not alter the business status.
-- [ ] Confirm one execution as a regression case, run it against two Eval Pack/model configurations, and compare dimensions.
-- [ ] Submit human feedback and verify history/reload.
-- [ ] Enable advanced mode and inspect Judge raw input/output; disable it and verify summaries remain.
-- [ ] Verify 390/768/1024/1440 and compare with `quality-evaluation-lab-reference.png`.
-- [ ] Run:
+- [x] Use a disposable workspace with one successful and one failed execution.
+- [x] Manually trigger Judge for both; verify failure does not alter the business status.
+- [x] Confirm one execution as a regression case, run it against two Eval Pack/model configurations, and compare dimensions.
+- [x] Submit human feedback and verify history/reload.
+- [x] Enable advanced mode and inspect Judge raw input/output; disable it and verify summaries remain.
+- [x] Verify 390/768/1024/1440 and compare with `quality-evaluation-lab-reference.png`.
+- [x] Run:
 
 ```bash
 cd backend

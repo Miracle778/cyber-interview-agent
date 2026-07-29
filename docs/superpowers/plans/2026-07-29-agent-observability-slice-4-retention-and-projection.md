@@ -37,11 +37,11 @@ Tables:
 - `agent_trace_cleanup_items`;
 - `agent_trace_projection_deliveries`.
 
-- [ ] Write RED tests for defaults, each policy, invalid days, idempotent plan, repeated finalization, crash recovery, and multiple workspaces.
-- [ ] Implement policy resolution and a dry-run plan listing files/events/bytes without deleting.
-- [ ] Eligibility uses event timestamp and protects active/running executions.
-- [ ] Metadata-only removes body access while preserving execution/operation/event metadata and hashes.
-- [ ] Run:
+- [x] Write RED tests for defaults, each policy, invalid days, idempotent plan, repeated finalization, crash recovery, and multiple workspaces.
+- [x] Implement policy resolution and a dry-run plan listing files/events/bytes without deleting.
+- [x] Eligibility uses event timestamp and protects active/running executions.
+- [x] Metadata-only removes body access while preserving execution/operation/event metadata and hashes.
+- [x] Run:
 
 ```bash
 cd backend
@@ -50,7 +50,7 @@ cd backend
   tests/test_agent_trace_retention.py
 ```
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add backend/app/db/migrations/runtime/040_agent_trace_retention.sql \
@@ -67,12 +67,12 @@ git commit -m "feat(agent-observability): persist trace retention policies"
 - Modify: `backend/app/services/workspace_service.py`
 - Modify: `backend/app/application/workspace_runtime.py`
 
-- [ ] Write RED tests for plan → quarantine → verify → finalize, crash after quarantine, hash mismatch, active run, symlink denial, partial failure, and permanent workspace deletion.
-- [ ] Move eligible body files into a private workspace quarantine directory, record old/new path and hash, then finalize only after the index/receipt transaction commits.
-- [ ] On restart, resume incomplete cleanup from receipts; never infer completion from file absence alone.
-- [ ] Update indexed events to `body_state="deleted"` only after finalization; keep timestamp/type/hash.
-- [ ] Ensure workspace permanent deletion removes trace, quarantine, exports, eval cases/results, and their receipts or reports a safe retryable failure.
-- [ ] Run:
+- [x] Write RED tests for plan → quarantine → verify → finalize, crash after quarantine, hash mismatch, active run, symlink denial, partial failure, and permanent workspace deletion.
+- [x] Move eligible body files into a private workspace quarantine directory, record old/new path and hash, then finalize only after the index/receipt transaction commits.
+- [x] On restart, resume incomplete cleanup from receipts; never infer completion from file absence alone.
+- [x] Update indexed events to `body_state="deleted"` only after finalization; keep timestamp/type/hash.
+- [x] Ensure workspace permanent deletion removes trace, quarantine, exports, eval cases/results, and their receipts or reports a safe retryable failure.
+- [x] Run:
 
 ```bash
 cd backend
@@ -81,7 +81,7 @@ cd backend
   tests/test_agent_trace_retention.py
 ```
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add backend/app/observability/cleanup.py \
@@ -99,19 +99,19 @@ git commit -m "feat(agent-observability): clean trace bodies with receipts"
 - Create: `backend/tests/test_agent_trace_maintenance_scripts.py`
 - Modify: `README.md`
 
-- [ ] Write RED tests using a disposable workspace for index loss, corrupt row, missing file, stale pointer, and repairable offset.
-- [ ] `check_agent_trace_consistency.py` is read-only by default and returns non-zero for unreconciled errors.
-- [ ] `rebuild_agent_trace_index.py` requires explicit workspace root, prints the resolved target, rebuilds only trace-index tables, and reports counts/gaps.
-- [ ] Neither script accepts `/`, `$HOME`, or an unresolved broad target.
-- [ ] Document exact commands and recovery boundaries in README diagnostics.
-- [ ] Run:
+- [x] Write RED tests using a disposable workspace for index loss, corrupt row, missing file, stale pointer, and repairable offset.
+- [x] `check_agent_trace_consistency.py` is read-only by default and returns non-zero for unreconciled errors.
+- [x] `rebuild_agent_trace_index.py` requires explicit workspace root, prints the resolved target, rebuilds only trace-index tables, and reports counts/gaps.
+- [x] Neither script accepts `/`, `$HOME`, or an unresolved broad target.
+- [x] Document exact commands and recovery boundaries in README diagnostics.
+- [x] Run:
 
 ```bash
 cd backend
 .venv/bin/python -m pytest -q tests/test_agent_trace_maintenance_scripts.py
 ```
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add scripts/rebuild_agent_trace_index.py \
@@ -136,12 +136,12 @@ Allowlisted projection fields:
 - Eval Pack/result dimension IDs and numeric scores;
 - no prompt, message, tool arguments/results, provider raw body, resume/JD/review text, or filesystem paths.
 
-- [ ] Write RED tests that place secrets and private bodies in local trace and prove none reach the fake exporter.
-- [ ] Write retry/idempotency tests using `agent_trace_projection_deliveries`.
-- [ ] Implement a projection interface and OTel adapter using the existing OTLP dependency/configuration.
-- [ ] Projection failure is fail-open and recorded; it cannot fail or delay the business execution.
-- [ ] Do not add a Langfuse SDK or UI claim in this slice.
-- [ ] Run:
+- [x] Write RED tests that place secrets and private bodies in local trace and prove none reach the fake exporter.
+- [x] Write retry/idempotency tests using `agent_trace_projection_deliveries`.
+- [x] Implement a projection interface and OTel adapter using the existing OTLP dependency/configuration.
+- [x] Projection failure is fail-open and recorded; it cannot fail or delay the business execution.
+- [x] Do not add a Langfuse SDK or UI claim in this slice.
+- [x] Run:
 
 ```bash
 cd backend
@@ -149,7 +149,7 @@ cd backend
   tests/test_agent_trace_projection.py
 ```
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add backend/app/observability/projection.py \
@@ -181,10 +181,10 @@ GET  /api/agent-observability/cleanup-runs/{cleanup_id}
 GET  /api/agent-evaluations/trends
 ```
 
-- [ ] Write RED tests for dry-run counts, confirmation idempotency, active-run exclusion, body-state disclosure, trend filters, pack-version separation, and no-cost response.
-- [ ] Trend queries aggregate immutable eval dimension results by Agent, pack version, model ID, prompt/schema/tool version, and time bucket.
-- [ ] Never average incompatible pack versions into one series.
-- [ ] Run:
+- [x] Write RED tests for dry-run counts, confirmation idempotency, active-run exclusion, body-state disclosure, trend filters, pack-version separation, and no-cost response.
+- [x] Trend queries aggregate immutable eval dimension results by Agent, pack version, model ID, prompt/schema/tool version, and time bucket.
+- [x] Never average incompatible pack versions into one series.
+- [x] Run:
 
 ```bash
 cd backend
@@ -193,7 +193,7 @@ cd backend
   tests/test_agent_evaluation_trends.py
 ```
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add backend/app/evaluation/trends.py backend/app/schemas \
@@ -217,12 +217,12 @@ git commit -m "feat(agent-observability): expose retention and quality trends"
 - Modify: `frontend/src/features/evaluation/evaluationApi.ts`
 - Modify: `frontend/src/features/evaluation/evaluationTypes.ts`
 
-- [ ] Write RED tests for the three retention choices, dry-run preview, explicit cleanup confirmation, partial failure, body-deleted disclosure, pack-version filters, and no cost.
-- [ ] Add retention controls under Settings → 诊断 with clear consequences and default 90 days.
-- [ ] Show cleanup counts/bytes and protected active executions before confirmation.
-- [ ] Add trend charts/tables for success, deterministic rule failure, Judge score, human-review rate, and latency/token/context; omit price/cost.
-- [ ] Use accessible table fallback for charts and preserve 390px usability.
-- [ ] Run:
+- [x] Write RED tests for the three retention choices, dry-run preview, explicit cleanup confirmation, partial failure, body-deleted disclosure, pack-version filters, and no cost.
+- [x] Add retention controls under Settings → 诊断 with clear consequences and default 90 days.
+- [x] Show cleanup counts/bytes and protected active executions before confirmation.
+- [x] Add trend charts/tables for success, deterministic rule failure, Judge score, human-review rate, and latency/token/context; omit price/cost.
+- [x] Use accessible table fallback for charts and preserve 390px usability.
+- [x] Run:
 
 ```bash
 cd frontend
@@ -233,7 +233,7 @@ npx vitest run \
 npx tsc --noEmit
 ```
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add frontend/src/features/settings frontend/src/features/evaluation
@@ -247,12 +247,12 @@ git commit -m "feat(agent-observability): add retention controls and trends"
 - Update local only: `docs/verification/agent-observability-and-quality-workbench.md`
 - Update local only: `docs/learning/agent-observability-and-quality-workbench/`
 
-- [ ] Generate a disposable workspace with 10,000 executions and at least 1,000 events in a single execution.
-- [ ] Verify paged Run Center query and operation tree stay within the spec budgets on the development machine; record measured values, not universal promises.
-- [ ] Interrupt index sync and cleanup mid-operation, restart, and verify deterministic recovery.
-- [ ] Run one complete browser acceptance pass across Run Center, advanced trace, manual Judge, regression compare, retention dry-run, and trends.
-- [ ] Re-run only affected scenarios after fixes.
-- [ ] Run final gates:
+- [x] Generate a disposable workspace with 10,000 executions and at least 1,000 events in a single execution.
+- [x] Verify paged Run Center query and operation tree stay within the spec budgets on the development machine; record measured values, not universal promises.
+- [x] Interrupt index sync and cleanup mid-operation, restart, and verify deterministic recovery.
+- [x] Run one complete browser acceptance pass across Run Center, advanced trace, manual Judge, regression compare, retention dry-run, and trends.
+- [x] Re-run only affected scenarios after fixes.
+- [x] Run final gates:
 
 ```bash
 cd backend
@@ -271,7 +271,7 @@ python3 scripts/check_stage_docs.py \
   --plan docs/superpowers/plans/2026-07-29-agent-observability-and-quality-workbench.md
 ```
 
-- [ ] Commit formal documentation corrections only after final evidence is refreshed:
+- [x] Commit formal documentation corrections only after final evidence is refreshed:
 
 ```bash
 git add docs/superpowers/plans docs/superpowers/specs \

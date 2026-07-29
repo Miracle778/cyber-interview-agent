@@ -40,11 +40,11 @@ CREATE TABLE agent_diagnostics_settings (
 );
 ```
 
-- [ ] Write RED tests for default off, update/read, app restart persistence, and absence of workspace/user ownership fields.
-- [ ] Add `GET` and `PUT /api/settings/agent-diagnostics`.
-- [ ] Require a boolean body and return the shared settings error envelope.
-- [ ] Keep this setting local to the application database; do not add account or permission tables.
-- [ ] Run:
+- [x] Write RED tests for default off, update/read, app restart persistence, and absence of workspace/user ownership fields.
+- [x] Add `GET` and `PUT /api/settings/agent-diagnostics`.
+- [x] Require a boolean body and return the shared settings error envelope.
+- [x] Keep this setting local to the application database; do not add account or permission tables.
+- [x] Run:
 
 ```bash
 cd backend
@@ -53,7 +53,7 @@ cd backend
   tests/test_agent_diagnostics_settings.py
 ```
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add backend/app/db/migrations/app/007_agent_diagnostics_settings.sql \
@@ -83,12 +83,12 @@ GET /api/agent-observability/executions/{run_id}/events/{event_id}/content
 
 Response fields include `eventId`, `eventType`, `content`, `contentEncoding`, `offset`, `nextOffset`, `complete`, `sha256`, and `redactionsApplied`.
 
-- [ ] Write RED cases for advanced-off, wrong workspace, missing pointer, symlink/path escape, changed file hash, invalid byte range, UTF-8 boundary, large body pagination, and malformed historical payload.
-- [ ] Resolve the event from the index and revalidate `run_id`, workspace, relative path, byte range, row event ID, and payload hash before returning content.
-- [ ] Read at most 64 KiB per request and cap total JSON payload display at the product limit in the spec.
-- [ ] Return `409 advanced_diagnostics_disabled` when disabled and safe `404` for cross-workspace or missing resources.
-- [ ] Surface stored `payload.reasoning` only if present; otherwise return no reasoning field and no placeholder.
-- [ ] Run:
+- [x] Write RED cases for advanced-off, wrong workspace, missing pointer, symlink/path escape, changed file hash, invalid byte range, UTF-8 boundary, large body pagination, and malformed historical payload.
+- [x] Resolve the event from the index and revalidate `run_id`, workspace, relative path, byte range, row event ID, and payload hash before returning content.
+- [x] Read at most 64 KiB per request and cap total JSON payload display at the product limit in the spec.
+- [x] Return `409 advanced_diagnostics_disabled` when disabled and safe `404` for cross-workspace or missing resources.
+- [x] Surface stored `payload.reasoning` only if present; otherwise return no reasoning field and no placeholder.
+- [x] Run:
 
 ```bash
 cd backend
@@ -97,7 +97,7 @@ cd backend
   tests/test_agent_observability_routes.py
 ```
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add backend/app/observability/content_reader.py \
@@ -129,12 +129,12 @@ GET  /api/agent-observability/exports/{export_id}
 
 Request options are `metadataOnly` and `includeStoredBodies`. Bodies require advanced mode. The generated ZIP contains `manifest.json`, `execution.json`, `operations.json`, `events.jsonl`, and optional `bodies/`.
 
-- [ ] Write RED tests for idempotency, advanced-off body export, secret absence, workspace isolation, immutable manifest, and failed partial cleanup.
-- [ ] Add `agent_trace_exports` receipt rows with request hash, status, artifact relative path/hash, body inclusion, and error code.
-- [ ] Store artifacts under the workspace-controlled diagnostic artifact root with `0600` files and `0700` directories.
-- [ ] Manifest must state trace schema versions, generated time, workspace ID, run ID, included/excluded categories, redaction policy, and integrity hashes.
-- [ ] Do not include API keys, credentials, application database, runtime database, or unrelated executions.
-- [ ] Run:
+- [x] Write RED tests for idempotency, advanced-off body export, secret absence, workspace isolation, immutable manifest, and failed partial cleanup.
+- [x] Add `agent_trace_exports` receipt rows with request hash, status, artifact relative path/hash, body inclusion, and error code.
+- [x] Store artifacts under the workspace-controlled diagnostic artifact root with `0600` files and `0700` directories.
+- [x] Manifest must state trace schema versions, generated time, workspace ID, run ID, included/excluded categories, redaction policy, and integrity hashes.
+- [x] Do not include API keys, credentials, application database, runtime database, or unrelated executions.
+- [x] Run:
 
 ```bash
 cd backend
@@ -143,7 +143,7 @@ cd backend
   tests/test_agent_trace_export.py
 ```
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add backend/app/db/migrations/runtime/038_agent_trace_exports.sql \
@@ -162,11 +162,11 @@ git commit -m "feat(agent-observability): export trace diagnostic bundles"
 - Modify: `frontend/src/features/settings/SettingsNavigation.tsx`
 - Modify: `frontend/src/features/settings/SettingsPage.tsx`
 
-- [ ] Write RED tests for default off, persistence, confirmation disclosure, save failure, and no account/permission wording.
-- [ ] Add the switch under existing “诊断” settings, with text explaining that private resume/JD/review content may be shown locally.
-- [ ] Require an explicit confirmation before first enable; disabling is immediate.
-- [ ] Invalidate observability detail queries after the setting changes.
-- [ ] Run:
+- [x] Write RED tests for default off, persistence, confirmation disclosure, save failure, and no account/permission wording.
+- [x] Add the switch under existing “诊断” settings, with text explaining that private resume/JD/review content may be shown locally.
+- [x] Require an explicit confirmation before first enable; disabling is immediate.
+- [x] Invalidate observability detail queries after the setting changes.
+- [x] Run:
 
 ```bash
 cd frontend
@@ -176,7 +176,7 @@ npx vitest run \
 npx tsc --noEmit
 ```
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add frontend/src/features/settings
@@ -195,14 +195,14 @@ git commit -m "feat(agent-observability): add advanced diagnostics setting"
 - Modify: `frontend/src/features/observability/observabilityTypes.ts`
 - Modify: `frontend/src/features/observability/observability.css`
 
-- [ ] Write RED tests for disabled disclosure, request/response/tool tabs, paged body loading, copy success/failure toast, JSON parse fallback, reasoning present/absent, export receipt progress, and narrow-screen drawer.
-- [ ] Add event selection to the operation tree and lazy-fetch bodies only after user selection.
-- [ ] Show request messages, response metadata/structured result/raw payload, tool args/results, model parameters, usage, latency, retry, and errors as separate labelled sections.
-- [ ] Reuse the shared copy-feedback behavior; never leave a copy icon without success/failure feedback.
-- [ ] Show “Provider 未返回可展示的思维过程” only in the optional reasoning section, not as fabricated content.
-- [ ] Render a body-size warning and “继续加载” for paged content.
-- [ ] Add export preview showing whether bodies are included and the privacy warning.
-- [ ] Run:
+- [x] Write RED tests for disabled disclosure, request/response/tool tabs, paged body loading, copy success/failure toast, JSON parse fallback, reasoning present/absent, export receipt progress, and narrow-screen drawer.
+- [x] Add event selection to the operation tree and lazy-fetch bodies only after user selection.
+- [x] Show request messages, response metadata/structured result/raw payload, tool args/results, model parameters, usage, latency, retry, and errors as separate labelled sections.
+- [x] Reuse the shared copy-feedback behavior; never leave a copy icon without success/failure feedback.
+- [x] Show “Provider 未返回可展示的思维过程” only in the optional reasoning section, not as fabricated content.
+- [x] Render a body-size warning and “继续加载” for paged content.
+- [x] Add export preview showing whether bodies are included and the privacy warning.
+- [x] Run:
 
 ```bash
 cd frontend
@@ -212,7 +212,7 @@ npx vitest run \
 npx tsc --noEmit
 ```
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add frontend/src/features/observability
@@ -224,12 +224,12 @@ git commit -m "feat(agent-observability): add advanced trace inspection"
 **Files:**
 - Update local only: `docs/verification/agent-observability-and-quality-workbench.md`
 
-- [ ] With advanced mode off, verify safe metadata remains usable and every body route returns the disabled contract.
-- [ ] Enable advanced mode in Settings, reopen one real execution, and inspect one model request, model response, and tool event.
-- [ ] Verify copy feedback, paged content, export metadata-only, export with bodies, and ZIP manifest.
-- [ ] Verify disabling the switch immediately removes body access without affecting Agent execution.
-- [ ] Check 390/768/1024/1440 widths and compare with the advanced trace reference.
-- [ ] Run:
+- [x] With advanced mode off, verify safe metadata remains usable and every body route returns the disabled contract.
+- [x] Enable advanced mode in Settings, reopen one real execution, and inspect one model request, model response, and tool event.
+- [x] Verify copy feedback, paged content, export metadata-only, export with bodies, and ZIP manifest.
+- [x] Verify disabling the switch immediately removes body access without affecting Agent execution.
+- [x] Check 390/768/1024/1440 widths and compare with the advanced trace reference.
+- [x] Run:
 
 ```bash
 cd backend
