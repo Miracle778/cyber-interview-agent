@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import json
+import threading
+import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, AsyncIterator
 
 from app.observability.indexer import TraceLedgerIndexer, TraceSyncResult
 from app.observability.registry import AGENT_OBSERVABILITY_REGISTRY
@@ -13,6 +16,7 @@ from app.observability.summary import ExecutionSummaryAssembler
 from app.schemas.observability import (
     ExecutionSummaryPageResource,
     ExecutionSummaryResource,
+    ExecutionChangedEventResource,
     OperationSummaryListResource,
 )
 
@@ -43,9 +47,27 @@ class AgentObservabilityService:
             connection=connection,
             trace_repository=trace_repository,
         )
+        self._sync_lock = threading.Lock()
+        self._last_sync_at = 0.0
 
     def sync(self) -> TraceSyncResult:
         return self.indexer.sync_workspace()
+
+    def sync_if_due(self, *, minimum_interval_seconds: float = 1.0) -> None:
+        now = time.monotonic()
+        if now - self._last_sync_at < minimum_interval_seconds:
+            return
+        with self._sync_lock:
+            now = time.monotonic()
+            if now - self._last_sync_at < minimum_interval_seconds:
+                return
+            self._last_sync_at = now
+            try:
+                self.indexer.sync_workspace()
+            except Exception:
+                # The trace index is diagnostic infrastructure. Business runs
+                # remain queryable when indexing is temporarily unavailable.
+                return
 
     def list_executions(
         self,
@@ -61,6 +83,10 @@ class AgentObservabilityService:
     ) -> ExecutionSummaryPageResource:
         if not 1 <= limit <= 200:
             raise ValueError("limit must be between 1 and 200")
+        if started_from is not None:
+            _parse_time(started_from)
+        if started_to is not None:
+            _parse_time(started_to)
         cursor_value = _decode_cursor(cursor) if cursor is not None else None
         rows = [
             dict(row)
@@ -115,6 +141,56 @@ class AgentObservabilityService:
         return OperationSummaryListResource(
             items=list(self.assembler.operations(run_id))
         )
+
+    def replay_changes(
+        self, *, after_event_id: int | None
+    ) -> tuple[ExecutionChangedEventResource, ...]:
+        rows = self.connection.execute(
+            "SELECT MAX(event.id) AS event_id, event.run_id "
+            "FROM agent_events event "
+            "JOIN agent_sessions session ON session.id = event.session_id "
+            "WHERE session.workspace_id = ? AND event.id > ? "
+            "AND event.run_id IS NOT NULL "
+            "GROUP BY event.run_id ORDER BY event_id",
+            (self.workspace_id, after_event_id or 0),
+        ).fetchall()
+        changes: list[ExecutionChangedEventResource] = []
+        for row in rows:
+            try:
+                execution = self.get_execution(row["run_id"])
+            except AgentExecutionNotFoundError:
+                continue
+            changes.append(
+                ExecutionChangedEventResource(
+                    event_id=str(row["event_id"]),
+                    execution=execution,
+                )
+            )
+        return tuple(changes)
+
+    async def changes(
+        self,
+        *,
+        after_event_id: int | None,
+        poll_interval_seconds: float = 0.25,
+        keepalive_seconds: float = 15.0,
+    ) -> AsyncIterator[ExecutionChangedEventResource | None]:
+        cursor = after_event_id
+        next_keepalive = time.monotonic() + keepalive_seconds
+        while True:
+            self.sync_if_due()
+            changes = self.replay_changes(after_event_id=cursor)
+            if changes:
+                for change in changes:
+                    cursor = int(change.event_id)
+                    yield change
+                next_keepalive = time.monotonic() + keepalive_seconds
+                continue
+            now = time.monotonic()
+            if now >= next_keepalive:
+                yield None
+                next_keepalive = now + keepalive_seconds
+            await asyncio.sleep(poll_interval_seconds)
 
     def _run(self, run_id: str) -> dict[str, Any]:
         row = self.connection.execute(

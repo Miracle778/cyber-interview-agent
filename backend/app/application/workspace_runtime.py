@@ -855,6 +855,11 @@ class AgentApplication:
     def job_training(self, workspace_id: str) -> JobTargetApplication:
         return self._context(workspace_id).job_training
 
+    def agent_observability(
+        self, workspace_id: str
+    ) -> AgentObservabilityService:
+        return self._context(workspace_id).agent_observability
+
     def locate_review_round(self, round_id: str) -> ReviewApplication:
         for workspace_id in self._workspace_ids():
             context = self._context(workspace_id)

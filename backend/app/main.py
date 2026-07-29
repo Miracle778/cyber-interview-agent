@@ -13,6 +13,7 @@ from app.api.routes_hitl import router as hitl_router
 from app.api.routes_knowledge import router as knowledge_router
 from app.api.routes_profile import router as profile_router
 from app.api.routes_job_targets import router as job_targets_router
+from app.api.routes_observability import router as observability_router
 from app.api.routes_review import router as review_router
 from app.api.routes_settings import router as settings_router
 from app.agents.agent_factory import AgentFactory
@@ -172,6 +173,7 @@ app.include_router(drafts_router)
 app.include_router(review_router)
 app.include_router(profile_router)
 app.include_router(job_targets_router)
+app.include_router(observability_router)
 
 
 def _error(status_code: int, code: str, message: str) -> JSONResponse:

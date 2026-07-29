@@ -1,7 +1,8 @@
 import sqlite3
 from collections.abc import Iterator
+from typing import Annotated
 
-from fastapi import Depends, Request
+from fastapi import Depends, Query, Request
 
 from app.db.app_database import connect_app_database
 from app.providers.anthropic_compatible import AnthropicCompatibleAdapter
@@ -14,10 +15,18 @@ from app.services.secrets import (
 )
 from app.services.workspace_service import WorkspaceService
 from app.application.workspace_runtime import AgentApplication
+from app.observability.service import AgentObservabilityService
 
 
 def get_agent_application(request: Request) -> AgentApplication:
     return request.app.state.agent_application
+
+
+def get_agent_observability_service(
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    application: AgentApplication = Depends(get_agent_application),
+) -> AgentObservabilityService:
+    return application.agent_observability(workspace_id)
 
 
 def get_app_connection() -> Iterator[sqlite3.Connection]:
