@@ -198,6 +198,13 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
           </p>
         </div>
         <div className="execution-trace__actions">
+          {execution.capabilities.includes("manual_judge") ? (
+            <Link
+              to={`/agents/evaluations?executionId=${encodeURIComponent(execution.id)}`}
+            >
+              发起 Judge
+            </Link>
+          ) : null}
           <button type="button" onClick={() => setExportOpen(true)}>
             <Download size={15} aria-hidden="true" />
             导出诊断包

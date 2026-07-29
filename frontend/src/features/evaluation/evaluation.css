@@ -1,0 +1,224 @@
+.evaluation-lab {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+
+.evaluation-lab__header {
+  align-items: end;
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.evaluation-lab__header h1 {
+  font-size: clamp(1.5rem, 2.4vw, 2rem);
+  margin: 0;
+}
+
+.evaluation-lab__header p {
+  color: var(--color-text-secondary);
+  margin: 6px 0 0;
+}
+
+.evaluation-lab__header nav {
+  background: var(--color-surface-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  display: flex;
+  padding: 4px;
+}
+
+.evaluation-lab__header nav a {
+  border-radius: 8px;
+  color: var(--color-text-secondary);
+  padding: 8px 12px;
+  text-decoration: none;
+}
+
+.evaluation-lab__header nav a[aria-current="page"] {
+  background: var(--color-surface);
+  box-shadow: 0 1px 4px rgb(15 23 42 / 8%);
+  color: var(--color-text);
+  font-weight: 650;
+}
+
+.evaluation-launch {
+  align-items: center;
+  background: color-mix(in srgb, var(--color-primary) 7%, var(--color-surface));
+  border: 1px solid color-mix(in srgb, var(--color-primary) 20%, var(--color-border));
+  border-radius: 12px;
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.evaluation-launch span { min-width: 0; }
+.evaluation-launch code { overflow-wrap: anywhere; }
+.evaluation-launch button,
+.judge-feedback button,
+.regression-panel__create button {
+  background: var(--color-primary);
+  border: 0;
+  border-radius: 8px;
+  color: white;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 650;
+  margin-left: auto;
+  padding: 9px 13px;
+}
+
+.evaluation-launch small {
+  color: var(--color-danger);
+}
+
+.evaluation-lab__workspace {
+  grid-template-columns: minmax(220px, .8fr) minmax(360px, 1.65fr) minmax(240px, .85fr);
+  min-height: min(720px, calc(100vh - 250px));
+}
+
+.evaluation-lab__runs,
+.evaluation-lab__result,
+.evaluation-lab__cases { min-width: 0; overflow: auto; }
+
+.evaluation-lab__runs > header,
+.regression-panel > header,
+.evaluation-compare > header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  padding: 16px;
+}
+
+.evaluation-lab__runs h2,
+.regression-panel h2,
+.evaluation-compare h2 { font-size: 1rem; margin: 0; }
+
+.evaluation-run-list {
+  display: grid;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0 10px 12px;
+}
+
+.evaluation-run-list li {
+  border: 1px solid transparent;
+  border-radius: 10px;
+  display: grid;
+  gap: 4px;
+  padding: 4px;
+}
+
+.evaluation-run-list li[data-selected="true"] {
+  background: color-mix(in srgb, var(--color-primary) 7%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--color-primary) 22%, transparent);
+}
+
+.evaluation-run-list button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px;
+  text-align: left;
+}
+
+.evaluation-run-list button > span:last-child { display: grid; gap: 3px; min-width: 0; }
+.evaluation-run-list svg { height: 18px; width: 18px; }
+.evaluation-run-list small { color: var(--color-text-secondary); }
+.evaluation-run-list label { color: var(--color-text-secondary); font-size: .78rem; padding: 0 8px 6px 36px; }
+
+.judge-result { display: grid; gap: 16px; padding: 18px; }
+.judge-result > header { align-items: start; display: flex; justify-content: space-between; gap: 16px; }
+.judge-result > header span:first-child { color: var(--color-text-secondary); font-size: .75rem; text-transform: uppercase; }
+.judge-result h2 { font-size: 1.1rem; margin: 3px 0 0; }
+.judge-result > header > span { background: var(--color-surface-subtle); border-radius: 99px; padding: 5px 9px; }
+
+.judge-result__summary,
+.judge-result__warning {
+  align-items: start;
+  border-radius: 10px;
+  display: flex;
+  gap: 10px;
+  margin: 0;
+  padding: 13px;
+}
+
+.judge-result__summary { background: color-mix(in srgb, var(--color-success) 9%, var(--color-surface)); }
+.judge-result__summary p { margin: 4px 0; }
+.judge-result__summary small { color: var(--color-text-secondary); }
+.judge-result__warning { background: color-mix(in srgb, var(--color-warning) 12%, var(--color-surface)); }
+
+.judge-dimensions { display: grid; gap: 10px; }
+.judge-dimensions article { border: 1px solid var(--color-border); border-radius: 10px; padding: 13px; }
+.judge-dimensions article > header { display: flex; justify-content: space-between; gap: 12px; }
+.judge-dimensions article p { color: var(--color-text-secondary); margin: 8px 0; }
+.judge-dimensions dl { display: grid; gap: 5px; margin: 0; }
+.judge-dimensions dl div { display: grid; grid-template-columns: 80px minmax(0, 1fr); }
+.judge-dimensions dt { color: var(--color-text-secondary); }
+.judge-dimensions dd { font-family: ui-monospace, monospace; margin: 0; overflow-wrap: anywhere; }
+.judge-dimension__risk { color: var(--color-warning-strong) !important; }
+
+.judge-result__raw { border-top: 1px solid var(--color-border); padding-top: 12px; }
+.judge-result__raw pre { background: #101828; border-radius: 8px; color: #e6edf3; max-height: 300px; overflow: auto; padding: 12px; white-space: pre-wrap; }
+
+.judge-feedback { border-top: 1px solid var(--color-border); display: grid; gap: 8px; grid-template-columns: minmax(120px, .5fr) minmax(180px, 1fr) auto; padding-top: 14px; }
+.judge-feedback strong { grid-column: 1 / -1; }
+.judge-feedback select,
+.judge-feedback input {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  color: inherit;
+  font: inherit;
+  min-width: 0;
+  padding: 9px 10px;
+}
+.judge-feedback button { margin: 0; }
+
+.regression-panel__create { background: var(--color-surface-subtle); border-radius: 10px; display: grid; gap: 8px; margin: 0 12px 12px; padding: 12px; }
+.regression-panel__create p { color: var(--color-text-secondary); margin: 0; }
+.regression-panel__create button { justify-self: start; margin: 0; }
+.regression-panel ul { display: grid; gap: 8px; list-style: none; margin: 0; padding: 0 12px 16px; }
+.regression-panel li { align-items: start; border-top: 1px solid var(--color-border); display: flex; gap: 8px; padding-top: 10px; }
+.regression-panel li span { display: grid; gap: 3px; min-width: 0; }
+.regression-panel li small { color: var(--color-text-secondary); }
+
+.evaluation-compare { border: 1px solid var(--color-border); border-radius: 12px; overflow: auto; }
+.evaluation-compare__grid { display: grid; grid-template-columns: minmax(160px, .8fr) repeat(2, minmax(220px, 1fr)); min-width: 650px; }
+.evaluation-compare__grid > * { border-top: 1px solid var(--color-border); padding: 11px 14px; }
+.evaluation-compare__grid small { color: var(--color-text-secondary); display: block; margin-top: 4px; }
+.evaluation-compare-error,
+.evaluation-compare-loading { align-items: center; background: var(--color-surface-subtle); border-radius: 10px; display: flex; gap: 8px; margin: 0; padding: 12px; }
+.evaluation-compare-error { color: var(--color-danger); }
+
+.evaluation-state,
+.evaluation-empty { color: var(--color-text-secondary); padding: 32px; text-align: center; }
+.evaluation-state { align-items: center; display: flex; flex-direction: column; gap: 10px; }
+.evaluation-state--error { color: var(--color-danger); }
+.evaluation-spin { animation: evaluation-spin 1s linear infinite; }
+@keyframes evaluation-spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 1100px) {
+  .evaluation-lab__workspace { grid-template-columns: minmax(220px, .8fr) minmax(420px, 1.5fr); }
+  .evaluation-lab__cases { grid-column: 1 / -1; }
+}
+
+@media (max-width: 767px) {
+  .evaluation-lab__header { align-items: stretch; flex-direction: column; }
+  .evaluation-lab__header nav { align-self: stretch; }
+  .evaluation-lab__header nav a { flex: 1; text-align: center; }
+  .evaluation-launch { align-items: stretch; flex-wrap: wrap; }
+  .evaluation-launch button { margin-left: 0; width: 100%; }
+  .evaluation-lab__workspace { display: grid; grid-template-columns: minmax(0, 1fr); min-height: auto; }
+  .evaluation-lab__cases { grid-column: auto; }
+  .judge-feedback { grid-template-columns: minmax(0, 1fr); }
+  .judge-feedback strong { grid-column: auto; }
+  .judge-dimensions dl div { grid-template-columns: 1fr; }
+}

@@ -10,6 +10,7 @@ import { SettingsPage } from "../../features/settings/SettingsPage";
 import { JobTargetPage } from "../../features/jobTargets/JobTargetPage";
 import { AgentRunCenterPage } from "../../features/observability/AgentRunCenterPage";
 import { ExecutionTracePage } from "../../features/observability/ExecutionTracePage";
+import { EvaluationLabPage } from "../../features/evaluation/EvaluationLabPage";
 import { getWorkspace, type WorkspaceConfig } from "../../features/settings/settingsApi";
 import { WorkspaceSwitcher } from "../../features/settings/WorkspaceSwitcher";
 import { MobileNavigation } from "../navigation/MobileNavigation";
@@ -192,6 +193,21 @@ export function AppShell() {
                   taskWorkspaceMode
                 >
                   <ExecutionTracePage workspace={workspace} />
+                </PageFrame>
+              }
+            />
+            <Route
+              path="/agents/evaluations"
+              element={
+                <PageFrame
+                  title="Agent 质量实验室"
+                  description="基于冻结证据评估 Agent 输出并沉淀回归样例。"
+                  health={health}
+                  workspace={workspace}
+                  workspaceMode
+                  taskWorkspaceMode
+                >
+                  <EvaluationLabPage workspace={workspace} />
                 </PageFrame>
               }
             />

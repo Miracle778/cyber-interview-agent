@@ -58,6 +58,14 @@ export function ExecutionPreview({
               查看运行详情
               <ArrowRight size={15} aria-hidden="true" />
             </Link>
+            {execution.capabilities.includes("manual_judge") ? (
+              <Link
+                to={`/agents/evaluations?executionId=${encodeURIComponent(execution.id)}`}
+              >
+                发起 Judge
+                <ArrowRight size={15} aria-hidden="true" />
+              </Link>
+            ) : null}
             {execution.capabilities.includes("open_business") && execution.route ? (
               <a href={execution.route}>
                 打开业务页面

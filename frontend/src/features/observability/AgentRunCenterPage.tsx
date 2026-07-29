@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Activity, AlertTriangle, Bot, CheckCircle2, Clock3, LoaderCircle, Search, SlidersHorizontal, X, XCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { TaskWorkspace, TaskWorkspacePane } from "../../shared/ui/TaskWorkspace";
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import { ExecutionList, formatDuration } from "./ExecutionList";
@@ -177,6 +177,10 @@ export function AgentRunCenterPage({
             {connectionStatus === "connected" ? "实时更新" : "正在连接"}
           </span>
         ) : null}
+        <nav className="agent-run-center__tabs" aria-label="Agent 工作区">
+          <Link to="/agents" aria-current="page">运行中心</Link>
+          <Link to="/agents/evaluations">质量评估</Link>
+        </nav>
       </header>
 
       {!workspace ? (
