@@ -70,7 +70,7 @@ describe("ReviewRuntimePanel", () => {
     expect(within(keyPoints).getByTitle("部分覆盖的 B")).toHaveTextContent("部分覆盖");
   });
 
-  it("falls back to historical missing key points when coverage is absent", () => {
+  it("falls back to historical missing key points when migrated coverage is empty", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     client.setQueryData(["providers"], []);
     const round = {
@@ -83,10 +83,11 @@ describe("ReviewRuntimePanel", () => {
           missing_key_points: ["历史未覆盖项"],
           mastery_suggestion: "weak",
         },
+        coverage: [],
       }],
       usage: { totalTokens: 0, callCount: 0 },
       contextUsage: { currentTokens: 0, thresholdTokens: 0 },
-    } as ReviewRound;
+    } as unknown as ReviewRound;
 
     render(<QueryClientProvider client={client}><ReviewRuntimePanel round={round} /></QueryClientProvider>);
 

@@ -24,7 +24,7 @@ function pendingDirections(
   coverage: ReviewKeyPointCoverage[] | undefined,
   historicalMissingPoints: string[],
 ): PendingDirection[] {
-  if (coverage !== undefined) {
+  if (coverage?.length) {
     return coverage
       .filter((item) => item.status !== "covered")
       .map(({ point, status }) => ({ point, status }));
