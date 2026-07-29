@@ -34,7 +34,7 @@ from app.infrastructure.runtime_database import (
     ThreadLocalRuntimeConnection,
     connect_thread_local_runtime_database,
 )
-from app.infrastructure.observability import NoopObservabilitySink
+from app.infrastructure.observability import NoopObservabilitySink, OtelMetadataExporter
 from app.knowledge.drafts import (
     DraftNotEditableError,
     DraftNotFoundError,
@@ -66,6 +66,7 @@ from app.evaluation.repository import AgentEvaluationRepository
 from app.evaluation.service import AgentEvaluationService
 from app.observability.retention import TraceRetentionService
 from app.observability.cleanup import TraceCleanupService
+from app.observability.projection import TraceMetadataProjector
 
 
 def _compact_session_title(content: str) -> str:
@@ -225,6 +226,7 @@ class WorkspaceRuntime:
     agent_evaluation: AgentEvaluationService | None
     trace_retention: TraceRetentionService
     trace_cleanup: TraceCleanupService
+    trace_projection: TraceMetadataProjector
     publication_locks: dict[str, asyncio.Lock] = field(
         default_factory=dict, repr=False
     )
@@ -270,6 +272,11 @@ class WorkspaceRuntime:
             repository=trace_repository,
         )
         trace_cleanup.resume_incomplete()
+        trace_projection = TraceMetadataProjector(
+            connection=connection,
+            workspace_id=workspace_id,
+            exporter=OtelMetadataExporter(observability),
+        )
         events = ProductEventStream(repository, workspace_root=root)
         sessions = AgentSessionService(repository, events)
         actions = PendingActionRepository(root)
@@ -567,6 +574,7 @@ class WorkspaceRuntime:
             agent_evaluation=agent_evaluation,
             trace_retention=trace_retention,
             trace_cleanup=trace_cleanup,
+            trace_projection=trace_projection,
         )
 
     async def close(self) -> None:
