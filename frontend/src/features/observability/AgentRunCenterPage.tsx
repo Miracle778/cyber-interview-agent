@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Activity, AlertTriangle, Bot, CheckCircle2, Clock3, LoaderCircle, Search, XCircle } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { useSearchParams } from "react-router-dom";
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import { ExecutionList, formatDuration } from "./ExecutionList";
 import { ExecutionPreview } from "./ExecutionPreview";
@@ -50,9 +51,16 @@ function matchesFilters(
 export function AgentRunCenterPage({
   workspace,
 }: AgentRunCenterPageProps) {
-  const [filters, setFilters] = useState<ExecutionFilters>(EMPTY_FILTERS);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [filters, setFilters] = useState<ExecutionFilters>(() => ({
+    search: searchParams.get("search") ?? "",
+    status: searchParams.get("status") ?? "",
+    agentName: searchParams.get("agentName") ?? "",
+    includeSystemAgents: searchParams.get("includeSystemAgents") === "true",
+  }));
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [liveById, setLiveById] = useState<Record<string, ExecutionSummary>>({});
+  const previousWorkspaceId = useRef(workspace?.id);
   const onExecutionChanged = useCallback((execution: ExecutionSummary) => {
     setLiveById((current) => ({ ...current, [execution.id]: execution }));
   }, []);
@@ -74,10 +82,23 @@ export function AgentRunCenterPage({
   });
 
   useEffect(() => {
+    if (previousWorkspaceId.current === workspace?.id) return;
+    previousWorkspaceId.current = workspace?.id;
     setSelectedId(null);
     setLiveById({});
     setFilters(EMPTY_FILTERS);
   }, [workspace?.id]);
+
+  useEffect(() => {
+    const next = new URLSearchParams();
+    if (filters.search.trim()) next.set("search", filters.search.trim());
+    if (filters.status) next.set("status", filters.status);
+    if (filters.agentName) next.set("agentName", filters.agentName);
+    if (filters.includeSystemAgents) next.set("includeSystemAgents", "true");
+    if (next.toString() !== searchParams.toString()) {
+      setSearchParams(next, { replace: true });
+    }
+  }, [filters, searchParams, setSearchParams]);
 
   const executions = useMemo(() => {
     const byId = new Map<string, ExecutionSummary>();
@@ -291,6 +312,7 @@ export function AgentRunCenterPage({
                 <ExecutionPreview
                   execution={selected}
                   onClose={() => setSelectedId(null)}
+                  returnTo={`/agents${searchParams.size ? `?${searchParams.toString()}` : ""}`}
                 />
               ) : null}
             </div>

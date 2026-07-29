@@ -162,6 +162,10 @@ describe("AgentRunCenterPage", () => {
     fireEvent.click(running);
 
     const preview = screen.getByRole("complementary", { name: "本次运行" });
+    expect(within(preview).getByRole("link", { name: "查看运行详情" })).toHaveAttribute(
+      "href",
+      "/agents/executions/run-running",
+    );
     expect(within(preview).getByRole("link", { name: "打开业务页面" })).toHaveAttribute("href", "/review");
 
     fireEvent.click(screen.getByRole("button", { name: /简历 v3 画像建议/ }));

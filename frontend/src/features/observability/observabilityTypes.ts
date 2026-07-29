@@ -46,12 +46,33 @@ export const executionChangedEventSchema = z.object({
   execution: executionSummarySchema,
 });
 
+export const operationSummarySchema = z.object({
+  id: z.string().min(1),
+  runId: z.string().min(1),
+  parentOperationId: z.string().nullable(),
+  kind: z.enum(["execution", "agent", "model", "tool", "graph"]),
+  name: z.string().min(1),
+  agentRole: z.string().nullable(),
+  status: z.string().min(1),
+  startedAt: z.string().nullable(),
+  finishedAt: z.string().nullable(),
+  latencyMs: z.number().int().nonnegative().nullable(),
+  retryCount: z.number().int().nonnegative(),
+  errorCode: z.string().nullable(),
+  eventCount: z.number().int().nonnegative(),
+});
+
+export const operationSummaryPageSchema = z.object({
+  items: z.array(operationSummarySchema),
+});
+
 export type ObservabilityCapability = z.infer<
   typeof observabilityCapabilitySchema
 >;
 export type ExecutionSummary = z.infer<typeof executionSummarySchema>;
 export type ExecutionSummaryPage = z.infer<typeof executionSummaryPageSchema>;
 export type ExecutionChangedEvent = z.infer<typeof executionChangedEventSchema>;
+export type OperationSummary = z.infer<typeof operationSummarySchema>;
 
 export interface ExecutionFilters {
   search: string;

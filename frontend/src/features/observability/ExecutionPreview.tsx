@@ -1,4 +1,5 @@
-import { AlertTriangle, ArrowUpRight, Bot, Clock3, Cpu, Database, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, ArrowUpRight, Bot, Clock3, Cpu, Database, X } from "lucide-react";
+import { Link } from "react-router-dom";
 import type { ExecutionSummary } from "./observabilityTypes";
 import {
   formatCompactNumber,
@@ -10,11 +11,13 @@ import {
 interface ExecutionPreviewProps {
   execution: ExecutionSummary | null;
   onClose: () => void;
+  returnTo: string;
 }
 
 export function ExecutionPreview({
   execution,
   onClose,
+  returnTo,
 }: ExecutionPreviewProps) {
   return (
     <aside className="execution-preview" aria-label="本次运行">
@@ -48,6 +51,13 @@ export function ExecutionPreview({
             <div><dt>上下文</dt><dd>{formatCompactNumber(execution.contextCurrentTokens)} / {formatCompactNumber(execution.contextThresholdTokens)}</dd></div>
           </dl>
           <div className="execution-preview__actions">
+            <Link
+              to={`/agents/executions/${encodeURIComponent(execution.id)}`}
+              state={{ from: returnTo }}
+            >
+              查看运行详情
+              <ArrowRight size={15} aria-hidden="true" />
+            </Link>
             {execution.capabilities.includes("open_business") && execution.route ? (
               <a href={execution.route}>
                 打开业务页面

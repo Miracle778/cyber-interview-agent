@@ -9,6 +9,7 @@ import { ProfilePage } from "../../features/profile/ProfilePage";
 import { SettingsPage } from "../../features/settings/SettingsPage";
 import { JobTargetPage } from "../../features/jobTargets/JobTargetPage";
 import { AgentRunCenterPage } from "../../features/observability/AgentRunCenterPage";
+import { ExecutionTracePage } from "../../features/observability/ExecutionTracePage";
 import { getWorkspace, type WorkspaceConfig } from "../../features/settings/settingsApi";
 import { WorkspaceSwitcher } from "../../features/settings/WorkspaceSwitcher";
 import { MobileNavigation } from "../navigation/MobileNavigation";
@@ -175,6 +176,20 @@ export function AppShell() {
                   workspaceMode
                 >
                   <AgentRunCenterPage workspace={workspace} />
+                </PageFrame>
+              }
+            />
+            <Route
+              path="/agents/executions/:runId"
+              element={
+                <PageFrame
+                  title="高级运行详情"
+                  description="查看一次 Execution 的安全运行摘要与执行过程。"
+                  health={health}
+                  workspace={workspace}
+                  workspaceMode
+                >
+                  <ExecutionTracePage workspace={workspace} />
                 </PageFrame>
               }
             />

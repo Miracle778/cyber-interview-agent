@@ -3,9 +3,11 @@ import { apiGet } from "../../shared/api/client";
 import {
   executionSummaryPageSchema,
   executionSummarySchema,
+  operationSummaryPageSchema,
   type ExecutionFilters,
   type ExecutionSummary,
   type ExecutionSummaryPage,
+  type OperationSummary,
 } from "./observabilityTypes";
 
 
@@ -54,4 +56,16 @@ export async function getObservabilityExecution(
     { signal },
   );
   return parsePayload(() => executionSummarySchema.parse(payload));
+}
+
+export async function listObservabilityOperations(
+  workspaceId: string,
+  executionId: string,
+  signal?: AbortSignal,
+): Promise<OperationSummary[]> {
+  const payload = await apiGet<unknown>(
+    `/api/agent-observability/executions/${encodeURIComponent(executionId)}/operations?workspaceId=${encodeURIComponent(workspaceId)}`,
+    { signal },
+  );
+  return parsePayload(() => operationSummaryPageSchema.parse(payload).items);
 }

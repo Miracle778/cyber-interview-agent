@@ -13,6 +13,7 @@ describe("App", () => {
     ["/review", "复习"],
     ["/knowledge", "知识库"],
     ["/agents", "Agent 运行中心"],
+    ["/agents/executions/run-1", "高级运行详情"],
     ["/settings", "设置"],
   ])("renders %s as an independent page", async (path, heading) => {
     window.history.replaceState({}, "", path);
@@ -21,7 +22,7 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findByRole("heading", { level: 1, name: heading })).toBeInTheDocument();
-    const otherHeadings = ["复习", "知识库", "Agent 运行中心", "设置"].filter((item) => item !== heading);
+    const otherHeadings = ["复习", "知识库", "Agent 运行中心", "高级运行详情", "设置"].filter((item) => item !== heading);
     otherHeadings.forEach((item) => {
       expect(screen.queryByRole("heading", { level: 1, name: item })).not.toBeInTheDocument();
     });
