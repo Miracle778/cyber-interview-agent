@@ -89,6 +89,14 @@ OBSERVABILITY_TABLES = {
     "agent_trace_events",
 }
 
+EVALUATION_TABLES = {
+    "agent_eval_runs",
+    "agent_eval_dimension_results",
+    "agent_eval_human_feedback",
+    "agent_eval_regression_cases",
+    "agent_eval_daily_counters",
+}
+
 
 def _tables(connection) -> set[str]:
     return {
@@ -195,6 +203,7 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         | R2_PROGRESSIVE_CURATION_TABLES
         | JOB_TARGET_TABLES
         | OBSERVABILITY_TABLES
+        | EVALUATION_TABLES
         <= _tables(connection)
     )
     assert [
@@ -202,7 +211,7 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-    ] == list(range(1, 39))
+    ] == list(range(1, 40))
     assert "agent_context_usage" in _tables(connection)
     assert "profile_deletion_plans" in _tables(connection)
     assert "deleted_at" in {
@@ -998,7 +1007,7 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-    ] == list(range(1, 39))
+    ] == list(range(1, 40))
     reopened.close()
 
 

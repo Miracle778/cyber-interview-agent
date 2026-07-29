@@ -32,6 +32,21 @@ class AgentDiagnosticsSettingsResource(CamelModel):
     updated_at: str
 
 
+class UpdateAgentQualityEvaluationSettingsCommand(CamelModel):
+    enabled: StrictBool
+    automatic_sample_percent: int = Field(ge=0, le=100)
+    automatic_daily_cap: int = Field(ge=0, le=1000)
+    judge_provider_model_id: str | None = None
+
+
+class AgentQualityEvaluationSettingsResource(CamelModel):
+    enabled: bool
+    automatic_sample_percent: int
+    automatic_daily_cap: int
+    judge_provider_model_id: str | None
+    updated_at: str
+
+
 class ProviderConfig(BaseModel):
     id: str
     name: str
