@@ -62,6 +62,8 @@ from app.job_targets.application import JobTargetApplication
 from app.observability.indexer import TraceLedgerIndexer
 from app.observability.repository import TraceIndexRepository
 from app.observability.service import AgentObservabilityService
+from app.evaluation.repository import AgentEvaluationRepository
+from app.evaluation.service import AgentEvaluationService
 
 
 def _compact_session_title(content: str) -> str:
@@ -218,6 +220,7 @@ class WorkspaceRuntime:
     job_targets: JobTargetService
     job_training: JobTargetApplication
     agent_observability: AgentObservabilityService
+    agent_evaluation: AgentEvaluationService | None
     publication_locks: dict[str, asyncio.Lock] = field(
         default_factory=dict, repr=False
     )
@@ -233,6 +236,7 @@ class WorkspaceRuntime:
         observability,
         validate_review_model: Callable[[str, str], None],
         advanced_diagnostics_enabled: Callable[[], bool],
+        quality_evaluation_settings: Callable[[], object] | None = None,
     ) -> "WorkspaceRuntime":
         connection = connect_thread_local_runtime_database(root)
         initialize_agent_trace_directory(root)
@@ -268,6 +272,35 @@ class WorkspaceRuntime:
         )
         holder: dict[str, HitlService] = {}
         trace_writer = getattr(graph_factory, "trace_writer", None) or AgentTraceWriter()
+        evaluation_repository = AgentEvaluationRepository(connection, workspace_id)
+        evaluation_factory = getattr(graph_factory, "create_evaluation_judge", None)
+        agent_evaluation = (
+            None
+            if evaluation_factory is None
+            else AgentEvaluationService(
+                workspace_id=workspace_id,
+                workspace_root=root,
+                repository=evaluation_repository,
+                observability=agent_observability,
+                model_bindings=model_bindings,
+                settings=quality_evaluation_settings
+                or (
+                    lambda: type(
+                        "EvaluationSettings",
+                        (),
+                        {
+                            "enabled": False,
+                            "automatic_daily_cap": 20,
+                            "judge_provider_model_id": None,
+                        },
+                    )()
+                ),
+                judge_factory=lambda provider_model_id: evaluation_factory(
+                    model_bindings=model_bindings(),
+                    provider_model_id=provider_model_id,
+                ),
+            )
+        )
 
         def build(kind: str, **dependencies):
             return graph_factory(
@@ -516,6 +549,7 @@ class WorkspaceRuntime:
             job_targets=job_targets,
             job_training=job_training,
             agent_observability=agent_observability,
+            agent_evaluation=agent_evaluation,
         )
 
     async def close(self) -> None:
@@ -542,6 +576,7 @@ class AgentApplication:
         observability_flush_timeout_ms: int = 2_000,
         validate_review_model: Callable[[str, str, str], None] | None = None,
         advanced_diagnostics_enabled: Callable[[], bool] | None = None,
+        quality_evaluation_settings: Callable[[], object] | None = None,
     ) -> None:
         self._workspace_resolver = workspace_resolver
         self._workspace_ids = workspace_ids
@@ -555,6 +590,7 @@ class AgentApplication:
         self._advanced_diagnostics_enabled = (
             advanced_diagnostics_enabled or (lambda: False)
         )
+        self._quality_evaluation_settings = quality_evaluation_settings
         self._workspaces: dict[str, WorkspaceRuntime] = {}
 
     async def create_session(
@@ -867,6 +903,12 @@ class AgentApplication:
     ) -> AgentObservabilityService:
         return self._context(workspace_id).agent_observability
 
+    def agent_evaluation(self, workspace_id: str) -> AgentEvaluationService:
+        service = self._context(workspace_id).agent_evaluation
+        if service is None:
+            raise RuntimeError("Agent 质量评估服务未配置")
+        return service
+
     def locate_review_round(self, round_id: str) -> ReviewApplication:
         for workspace_id in self._workspace_ids():
             context = self._context(workspace_id)
@@ -976,6 +1018,7 @@ class AgentApplication:
                 workspace_id, model_id, effort
             ),
             advanced_diagnostics_enabled=self._advanced_diagnostics_enabled,
+            quality_evaluation_settings=self._quality_evaluation_settings,
         )
         self._workspaces[workspace_id] = context
         return context

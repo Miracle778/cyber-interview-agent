@@ -65,6 +65,21 @@ class RegressionCaseRecord:
     created_at: str
 
 
+@dataclass(frozen=True, slots=True)
+class EvaluationDimensionRecord:
+    eval_run_id: str
+    dimension_id: str
+    source: str
+    status: str
+    score: int | None
+    confidence: float | None
+    summary: str
+    cited_event_hashes_json: str
+    cited_artifact_hashes_json: str
+    risks_json: str
+    created_at: str
+
+
 class AgentEvaluationRepository:
     def __init__(
         self, connection: sqlite3.Connection, workspace_id: str
@@ -147,6 +162,18 @@ class AgentEvaluationRepository:
             )
         )
 
+    def list_runs_for_execution(
+        self, execution_id: str
+    ) -> tuple[EvaluationRunRecord, ...]:
+        return tuple(
+            self._run(row)
+            for row in self.connection.execute(
+                "SELECT * FROM agent_eval_runs WHERE workspace_id = ? "
+                "AND execution_id = ? ORDER BY created_at DESC, id DESC",
+                (self.workspace_id, execution_id),
+            )
+        )
+
     def mark_running(self, eval_run_id: str) -> EvaluationRunRecord:
         with self._transaction():
             updated = self.connection.execute(
@@ -194,6 +221,49 @@ class AgentEvaluationRepository:
                     "completed evaluation inputs and results are immutable"
                 )
         return self._require_run(eval_run_id)
+
+    def store_dimension_results(
+        self,
+        eval_run_id: str,
+        rows: tuple[dict[str, object], ...],
+    ) -> tuple[EvaluationDimensionRecord, ...]:
+        self._require_run(eval_run_id)
+        with self._transaction():
+            for row in rows:
+                self.connection.execute(
+                    "INSERT INTO agent_eval_dimension_results "
+                    "(eval_run_id, dimension_id, source, status, score, "
+                    "confidence, summary, cited_event_hashes_json, "
+                    "cited_artifact_hashes_json, risks_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(eval_run_id, dimension_id, source) DO NOTHING",
+                    (
+                        eval_run_id,
+                        row["dimension_id"],
+                        row["source"],
+                        row["status"],
+                        row.get("score"),
+                        row.get("confidence"),
+                        row["summary"],
+                        row.get("cited_event_hashes_json", "[]"),
+                        row.get("cited_artifact_hashes_json", "[]"),
+                        row.get("risks_json", "[]"),
+                    ),
+                )
+        return self.list_dimension_results(eval_run_id)
+
+    def list_dimension_results(
+        self, eval_run_id: str
+    ) -> tuple[EvaluationDimensionRecord, ...]:
+        self._require_run(eval_run_id)
+        return tuple(
+            self._dimension(row)
+            for row in self.connection.execute(
+                "SELECT * FROM agent_eval_dimension_results "
+                "WHERE eval_run_id = ? ORDER BY source, dimension_id",
+                (eval_run_id,),
+            )
+        )
 
     def add_feedback(
         self,
@@ -403,5 +473,21 @@ class AgentEvaluationRepository:
             expected_invariants_json=row["expected_invariants_json"],
             contains_private_bodies=bool(row["contains_private_bodies"]),
             redaction_summary=row["redaction_summary"],
+            created_at=row["created_at"],
+        )
+
+    @staticmethod
+    def _dimension(row) -> EvaluationDimensionRecord:
+        return EvaluationDimensionRecord(
+            eval_run_id=row["eval_run_id"],
+            dimension_id=row["dimension_id"],
+            source=row["source"],
+            status=row["status"],
+            score=row["score"],
+            confidence=row["confidence"],
+            summary=row["summary"],
+            cited_event_hashes_json=row["cited_event_hashes_json"],
+            cited_artifact_hashes_json=row["cited_artifact_hashes_json"],
+            risks_json=row["risks_json"],
             created_at=row["created_at"],
         )

@@ -157,6 +157,9 @@ async def lifespan(application: FastAPI):
             advanced_diagnostics_enabled=lambda: (
                 workspaces.get_agent_diagnostics_settings().advanced_enabled
             ),
+            quality_evaluation_settings=(
+                workspaces.get_agent_quality_evaluation_settings
+            ),
         )
         application.state.agent_application = agent_application
         await agent_application.recover()

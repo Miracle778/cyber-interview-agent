@@ -42,6 +42,11 @@ _CUSTOM_KEYS = {
     "execution.warning": {"code", "message"},
     "review.evaluation.checking_key_points": {"roundId", "attemptId", "ordinal"},
     "review.evaluation.deciding_follow_up": {"roundId", "attemptId", "ordinal"},
+    "evaluation.started": {"evalRunId", "executionId", "trigger"},
+    "evaluation.completed": {"evalRunId", "executionId"},
+    "evaluation.failed": {"evalRunId", "executionId", "errorCode"},
+    "evaluation.cancelled": {"evalRunId", "executionId"},
+    "evaluation.inconclusive": {"evalRunId", "executionId", "reason"},
 }
 
 
