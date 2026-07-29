@@ -28,6 +28,36 @@ export interface AgentDiagnosticsSettingsResource {
   updatedAt: string;
 }
 
+export interface TraceRetentionPolicyResource {
+  workspaceId: string;
+  bodyPolicy: "permanent" | "days" | "metadata_only";
+  bodyDays: number | null;
+  metadataPolicy: "retain";
+  updatedAt: string;
+}
+
+export interface TraceCleanupPlanResource {
+  id: string;
+  workspaceId: string;
+  status: string;
+  fileCount: number;
+  eventCount: number;
+  totalBytes: number;
+  protectedActiveRuns: number;
+  errorCode: string | null;
+  createdAt: string;
+  completedAt: string | null;
+  items: Array<{
+    relativePath: string;
+    runId: string;
+    eventCount: number;
+    byteCount: number;
+    sha256: string;
+    status: string;
+    errorCode: string | null;
+  }>;
+}
+
 export function getWorkspace(): Promise<WorkspaceConfig | null> {
   return apiGet<WorkspaceConfig | null>("/api/settings/workspace");
 }
@@ -45,6 +75,49 @@ export function replaceAgentDiagnosticsSettings(
     { advancedEnabled: boolean },
     AgentDiagnosticsSettingsResource
   >("/api/settings/agent-diagnostics", { advancedEnabled });
+}
+
+export function getTraceRetentionPolicy(
+  workspaceId: string,
+): Promise<TraceRetentionPolicyResource> {
+  return apiGet<TraceRetentionPolicyResource>(
+    `/api/agent-observability/retention?workspaceId=${encodeURIComponent(workspaceId)}`,
+  );
+}
+
+export function replaceTraceRetentionPolicy(
+  workspaceId: string,
+  bodyPolicy: TraceRetentionPolicyResource["bodyPolicy"],
+): Promise<TraceRetentionPolicyResource> {
+  return apiPut<
+    { bodyPolicy: string; bodyDays: number | null },
+    TraceRetentionPolicyResource
+  >(
+    `/api/agent-observability/retention?workspaceId=${encodeURIComponent(workspaceId)}`,
+    {
+      bodyPolicy,
+      bodyDays: bodyPolicy === "days" ? 90 : null,
+    },
+  );
+}
+
+export function createTraceCleanupPlan(
+  workspaceId: string,
+): Promise<TraceCleanupPlanResource> {
+  return apiPost<undefined, TraceCleanupPlanResource>(
+    `/api/agent-observability/cleanup-plans?workspaceId=${encodeURIComponent(workspaceId)}`,
+    undefined,
+  );
+}
+
+export function confirmTraceCleanupPlan(
+  workspaceId: string,
+  cleanupId: string,
+): Promise<TraceCleanupPlanResource> {
+  return apiPost<undefined, TraceCleanupPlanResource>(
+    `/api/agent-observability/cleanup-plans/${encodeURIComponent(cleanupId)}/confirm?workspaceId=${encodeURIComponent(workspaceId)}`,
+    undefined,
+  );
 }
 
 // --- R1 provider/model API ---

@@ -10,6 +10,7 @@ import {
   createRegressionCase,
   listEvaluationRuns,
   listEvaluationFeedback,
+  listEvaluationTrends,
   listRegressionCases,
   submitEvaluationFeedback,
 } from "./evaluationApi";
@@ -17,6 +18,7 @@ import { EvaluationCompareView } from "./EvaluationCompareView";
 import { EvaluationRunList } from "./EvaluationRunList";
 import { JudgeResultPanel } from "./JudgeResultPanel";
 import { RegressionCasePanel } from "./RegressionCasePanel";
+import { EvaluationTrendsPanel } from "./EvaluationTrendsPanel";
 import "./evaluation.css";
 
 
@@ -39,6 +41,11 @@ export function EvaluationLabPage({
     queryKey: ["agent-regression-cases", workspace?.id],
     enabled: Boolean(workspace),
     queryFn: ({ signal }) => listRegressionCases(workspace!.id, signal),
+  });
+  const trendsQuery = useQuery({
+    queryKey: ["agent-evaluation-trends", workspace?.id],
+    enabled: Boolean(workspace),
+    queryFn: ({ signal }) => listEvaluationTrends(workspace!.id, undefined, undefined, signal),
   });
   const judge = useMutation({
     mutationFn: () => createEvaluationRun(workspace!.id, executionId),
@@ -126,6 +133,11 @@ export function EvaluationLabPage({
               <p className="evaluation-compare-loading"><Scale size={17} />正在准备对比…</p>
             )
           ) : null}
+          <EvaluationTrendsPanel
+            points={trendsQuery.data ?? []}
+            loading={trendsQuery.isPending}
+            error={trendsQuery.isError}
+          />
           <TaskWorkspace className="evaluation-lab__workspace">
             <TaskWorkspacePane className="evaluation-lab__runs">
               <header><h2>评估运行</h2><span>{runs.length} 条</span></header>

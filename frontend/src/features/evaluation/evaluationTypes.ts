@@ -73,8 +73,32 @@ export const comparisonSchema = z.object({
   runs: z.array(evaluationRunSchema),
 });
 
+export const evaluationTrendPointSchema = z.object({
+  bucket: z.string(),
+  graphId: z.string(),
+  evalPackId: z.string(),
+  evalPackVersion: z.number().int(),
+  judgeProviderModelId: z.string().nullable(),
+  promptVersion: z.string(),
+  schemaVersion: z.string(),
+  toolVersion: z.string(),
+  runCount: z.number().int().nonnegative(),
+  successRate: z.number(),
+  deterministicIssueRate: z.number(),
+  averageJudgeScore: z.number().nullable(),
+  humanReviewRate: z.number(),
+  averageLatencyMs: z.number().nullable(),
+  averageTokens: z.number(),
+  averageContextTokens: z.number(),
+});
+
+export const evaluationTrendListSchema = z.object({
+  items: z.array(evaluationTrendPointSchema),
+});
+
 export type EvaluationRun = z.infer<typeof evaluationRunSchema>;
 export type EvaluationDimension = z.infer<typeof evaluationDimensionSchema>;
 export type EvaluationFeedback = z.infer<typeof feedbackSchema>;
 export type RegressionCase = z.infer<typeof regressionCaseSchema>;
 export type EvaluationComparison = z.infer<typeof comparisonSchema>;
+export type EvaluationTrendPoint = z.infer<typeof evaluationTrendPointSchema>;

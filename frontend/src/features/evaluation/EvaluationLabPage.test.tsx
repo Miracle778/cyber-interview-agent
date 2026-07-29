@@ -77,6 +77,7 @@ describe("EvaluationLabPage", () => {
       const method = init?.method ?? "GET";
       requests.push({ url, method });
       if (url.includes("/feedback")) return Response.json([]);
+      if (url.includes("/trends")) return Response.json({ items: [] });
       if (url.includes("/regression-cases")) return Response.json({ items: [] });
       if (method === "POST" && url.includes("/runs?")) return Response.json(run);
       return Response.json({ items: [run] });
@@ -96,6 +97,7 @@ describe("EvaluationLabPage", () => {
   it("keeps raw Judge data hidden when backend does not disclose it", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       if (String(input).includes("/feedback")) return Response.json([]);
+      if (String(input).includes("/trends")) return Response.json({ items: [] });
       return String(input).includes("/regression-cases")
         ? Response.json({ items: [] })
         : Response.json({ items: [run] });

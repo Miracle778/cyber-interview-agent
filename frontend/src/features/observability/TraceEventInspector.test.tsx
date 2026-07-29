@@ -11,6 +11,7 @@ const event: TraceEventSummary = {
   observedAt: "2026-07-29T06:26:02Z",
   byteLength: 240000,
   sequence: 1,
+  bodyState: "available",
 };
 
 afterEach(() => {

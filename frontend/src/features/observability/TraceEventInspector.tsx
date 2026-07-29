@@ -38,7 +38,7 @@ export function TraceEventInspector({
   useEffect(() => {
     setPages([]);
     setError(null);
-    if (!event || !advancedEnabled) return;
+    if (!event || !advancedEnabled || event.bodyState !== "available") return;
     const controller = new AbortController();
     setLoading(true);
     void getTraceEventContent(
@@ -130,14 +130,21 @@ export function TraceEventInspector({
             仅展示 Provider 实际返回的数据，不推测模型思维过程。
           </p>
 
-          {!advancedEnabled ? (
+          {event.bodyState !== "available" ? (
+            <div className="execution-trace__disclosure">
+              <strong>正文已按保留策略移除</strong>
+              <p>事件类型、时间、大小和完整性哈希仍保留；元数据索引不能恢复正文。</p>
+            </div>
+          ) : null}
+
+          {!advancedEnabled && event.bodyState === "available" ? (
             <div className="execution-trace__disclosure">
               <strong>完整内容需开启高级诊断</strong>
               <p>可在设置 → 诊断中开启；关闭状态不会请求事件正文。</p>
             </div>
           ) : null}
 
-          {event.byteLength > 200 * 1024 ? (
+          {event.bodyState === "available" && event.byteLength > 200 * 1024 ? (
             <p className="trace-event-inspector__size-warning">
               <AlertTriangle size={16} aria-hidden="true" />
               <span>

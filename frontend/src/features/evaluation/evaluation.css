@@ -215,6 +215,45 @@
 .evaluation-compare-loading { align-items: center; background: var(--color-surface-subtle); border-radius: 10px; display: flex; gap: 8px; margin: 0; padding: 12px; }
 .evaluation-compare-error { color: var(--color-danger); }
 
+.evaluation-trends {
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.evaluation-trends > header {
+  align-items: end;
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+  padding: 14px 16px;
+}
+
+.evaluation-trends > header > div { align-items: center; display: flex; gap: 8px; }
+.evaluation-trends h2 { font-size: 1rem; margin: 0; }
+.evaluation-trends label { display: grid; gap: 4px; }
+.evaluation-trends label span { color: var(--color-text-secondary); font-size: .75rem; }
+.evaluation-trends select {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  color: inherit;
+  font: inherit;
+  padding: 7px 9px;
+}
+.evaluation-trends > p { align-items: center; color: var(--color-text-secondary); display: flex; gap: 8px; margin: 0; padding: 18px; }
+.evaluation-trends__table-wrap { overflow: auto; }
+.evaluation-trends table { border-collapse: collapse; min-width: 980px; width: 100%; }
+.evaluation-trends th,
+.evaluation-trends td { border-top: 1px solid var(--color-border); padding: 10px 12px; text-align: left; }
+.evaluation-trends th { color: var(--color-text-secondary); font-size: .78rem; font-weight: 600; }
+.evaluation-trends td small { color: var(--color-text-secondary); display: block; margin-top: 2px; }
+.evaluation-trend-rate { align-items: center; display: grid; gap: 3px; min-width: 72px; }
+.evaluation-trend-rate > span { background: var(--color-success); border-radius: 99px; height: 4px; max-width: 100%; }
+.evaluation-trend-rate[data-inverse="true"] > span { background: var(--color-warning); }
+.evaluation-trend-rate strong { font-size: .85rem; }
+
 .evaluation-state,
 .evaluation-empty { color: var(--color-text-secondary); padding: 32px; text-align: center; }
 .evaluation-state { align-items: center; display: flex; flex-direction: column; gap: 10px; }
@@ -238,4 +277,5 @@
   .judge-feedback { grid-template-columns: minmax(0, 1fr); }
   .judge-feedback strong { grid-column: auto; }
   .judge-dimensions dl div { grid-template-columns: 1fr; }
+  .evaluation-trends > header { align-items: stretch; flex-direction: column; }
 }

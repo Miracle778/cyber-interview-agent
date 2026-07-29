@@ -74,6 +74,9 @@ export const traceEventSummarySchema = z.object({
   observedAt: z.string().nullable(),
   byteLength: z.number().int().nonnegative(),
   sequence: z.number().int().nonnegative(),
+  bodyState: z.enum(["available", "quarantined", "deleted", "unavailable"])
+    .optional()
+    .transform((value) => value ?? "available"),
 });
 
 export const traceEventSummaryPageSchema = z.object({

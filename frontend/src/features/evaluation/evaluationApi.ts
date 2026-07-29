@@ -4,6 +4,7 @@ import {
   comparisonSchema,
   evaluationRunListSchema,
   evaluationRunSchema,
+  evaluationTrendListSchema,
   feedbackSchema,
   regressionCaseListSchema,
   regressionCaseSchema,
@@ -11,6 +12,7 @@ import {
   type EvaluationFeedback,
   type EvaluationRun,
   type RegressionCase,
+  type EvaluationTrendPoint,
 } from "./evaluationTypes";
 
 
@@ -132,4 +134,22 @@ export async function compareEvaluationRuns(
     { signal },
   );
   return parse(() => comparisonSchema.parse(payload));
+}
+
+export async function listEvaluationTrends(
+  workspaceId: string,
+  evalPackId?: string,
+  evalPackVersion?: number,
+  signal?: AbortSignal,
+): Promise<EvaluationTrendPoint[]> {
+  const query = new URLSearchParams({ workspaceId });
+  if (evalPackId) query.set("evalPackId", evalPackId);
+  if (evalPackVersion !== undefined) {
+    query.set("evalPackVersion", String(evalPackVersion));
+  }
+  const payload = await apiGet<unknown>(
+    `/api/agent-evaluations/trends?${query.toString()}`,
+    { signal },
+  );
+  return parse(() => evaluationTrendListSchema.parse(payload).items);
 }
