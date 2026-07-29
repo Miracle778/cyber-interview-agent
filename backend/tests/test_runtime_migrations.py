@@ -82,6 +82,13 @@ JOB_TARGET_TABLES = {
     "project_question_candidates",
 }
 
+OBSERVABILITY_TABLES = {
+    "agent_trace_files",
+    "agent_trace_executions",
+    "agent_trace_operations",
+    "agent_trace_events",
+}
+
 
 def _tables(connection) -> set[str]:
     return {
@@ -187,6 +194,7 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         | R2_SESSION_EXPERIENCE_TABLES
         | R2_PROGRESSIVE_CURATION_TABLES
         | JOB_TARGET_TABLES
+        | OBSERVABILITY_TABLES
         <= _tables(connection)
     )
     assert [
@@ -194,7 +202,7 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == list(range(1, 37))
+    ] == list(range(1, 38))
     assert "agent_context_usage" in _tables(connection)
     assert "profile_deletion_plans" in _tables(connection)
     assert "deleted_at" in {
@@ -990,7 +998,7 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-            ] == list(range(1, 37))
+    ] == list(range(1, 38))
     reopened.close()
 
 
@@ -1181,6 +1189,29 @@ def test_context_usage_projection_round_trips_real_token_threshold(tmp_path: Pat
         "estimated": True,
     }
     connection.close()
+
+
+def test_agent_trace_index_migration_is_repeatable(tmp_path: Path) -> None:
+    first = connect_runtime_database(tmp_path)
+    assert OBSERVABILITY_TABLES <= _tables(first)
+    versions = {
+        int(row[0])
+        for row in first.execute(
+            "SELECT version FROM runtime_schema_migrations"
+        )
+    }
+    assert 37 in versions
+    first.close()
+
+    reopened = connect_runtime_database(tmp_path)
+    assert OBSERVABILITY_TABLES <= _tables(reopened)
+    assert (
+        reopened.execute(
+            "SELECT COUNT(*) FROM runtime_schema_migrations WHERE version = 37"
+        ).fetchone()[0]
+        == 1
+    )
+    reopened.close()
 
 
 def test_session_experience_migration_preserves_existing_r2_rows(
