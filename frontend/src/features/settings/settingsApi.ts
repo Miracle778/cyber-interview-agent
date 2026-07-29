@@ -23,8 +23,28 @@ export interface WorkspaceConfig {
   vaultPath: string;
 }
 
+export interface AgentDiagnosticsSettingsResource {
+  advancedEnabled: boolean;
+  updatedAt: string;
+}
+
 export function getWorkspace(): Promise<WorkspaceConfig | null> {
   return apiGet<WorkspaceConfig | null>("/api/settings/workspace");
+}
+
+export function getAgentDiagnosticsSettings(): Promise<AgentDiagnosticsSettingsResource> {
+  return apiGet<AgentDiagnosticsSettingsResource>(
+    "/api/settings/agent-diagnostics",
+  );
+}
+
+export function replaceAgentDiagnosticsSettings(
+  advancedEnabled: boolean,
+): Promise<AgentDiagnosticsSettingsResource> {
+  return apiPut<
+    { advancedEnabled: boolean },
+    AgentDiagnosticsSettingsResource
+  >("/api/settings/agent-diagnostics", { advancedEnabled });
 }
 
 // --- R1 provider/model API ---

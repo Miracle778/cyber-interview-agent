@@ -1311,6 +1311,146 @@ pre {
 .settings-disclosure__trigger[aria-expanded="true"] .settings-disclosure__icon { transform: rotate(180deg); }
 .settings-disclosure__panel { padding: 0 var(--space-4) var(--space-4); }
 
+.agent-diagnostics-settings {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+}
+
+.agent-diagnostics-settings__summary {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.agent-diagnostics-settings__icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  color: var(--primary);
+  background: var(--surface-active);
+  border-radius: 50%;
+}
+
+.agent-diagnostics-settings h4,
+.agent-diagnostics-settings p {
+  margin: 0;
+}
+
+.agent-diagnostics-settings__summary p,
+.agent-diagnostics-settings__boundary,
+.agent-diagnostics-settings__status {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.agent-diagnostics-switch {
+  position: relative;
+  display: inline-flex;
+  width: 52px;
+  min-width: 52px;
+  height: 32px;
+  align-items: center;
+  padding: 3px;
+  background: var(--border-strong);
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 180ms ease;
+}
+
+.agent-diagnostics-switch::after {
+  position: absolute;
+  inset: -6px;
+  content: "";
+}
+
+.agent-diagnostics-switch > span:first-child {
+  width: 26px;
+  height: 26px;
+  background: var(--surface);
+  border-radius: 50%;
+  box-shadow: var(--shadow-sm);
+  transition: transform 180ms ease;
+}
+
+.agent-diagnostics-switch[aria-checked="true"] {
+  background: var(--primary);
+}
+
+.agent-diagnostics-switch[aria-checked="true"] > span:first-child {
+  transform: translateX(20px);
+}
+
+.agent-diagnostics-switch:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
+.agent-diagnostics-switch:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.agent-diagnostics-dialog {
+  display: grid;
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(680px, calc(100dvh - 32px));
+  gap: var(--space-4);
+  padding: var(--space-5);
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+}
+
+.agent-diagnostics-dialog > header,
+.agent-diagnostics-dialog > footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.agent-diagnostics-dialog h3,
+.agent-diagnostics-dialog p {
+  margin: 0;
+}
+
+.agent-diagnostics-dialog > header p,
+.agent-diagnostics-dialog li {
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+
+.agent-diagnostics-dialog ul {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding-left: var(--space-5);
+}
+
+.agent-diagnostics-dialog__notice {
+  padding: var(--space-3);
+  color: var(--warning);
+  background: var(--warning-soft);
+  border: 1px solid color-mix(in srgb, var(--warning) 28%, var(--border));
+  border-radius: var(--radius-md);
+}
+
+.agent-diagnostics-dialog > footer {
+  justify-content: flex-end;
+}
+
 .page-section__header {
   display: flex;
   min-height: 32px;
