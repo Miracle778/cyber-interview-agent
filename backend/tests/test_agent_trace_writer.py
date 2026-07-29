@@ -42,14 +42,17 @@ def test_writer_appends_parseable_ordered_events_and_resumes_sequence(tmp_path: 
     assert [row["sequence"] for row in rows] == [1, 2]
     assert rows[0]["payload"]["text"] == "完整原文"
     assert rows[1]["payload"]["text"] == "完整回答"
-    assert all(row["schema_version"] == 2 for row in rows)
+    assert all(row["schema_version"] == 3 for row in rows)
+    assert all(row["operation_kind"] == "model" for row in rows)
+    assert rows[0]["operation_id"] == rows[1]["operation_id"]
+    assert rows[0]["parent_operation_id"] == rows[1]["parent_operation_id"]
     assert all("+00:00" in row["timestamp"] for row in rows)
 
 
 def test_writer_records_utc_and_beijing_time_for_the_same_instant(tmp_path: Path) -> None:
     AgentTraceWriter().append(identity(tmp_path), "model.request", {})
     row = read_trace_rows(tmp_path, "s1", "r1")[0]
-    assert row["schema_version"] == 2
+    assert row["schema_version"] == 3
     assert row["timezone"] == "Asia/Shanghai"
     utc = datetime.fromisoformat(row["timestamp"])
     local = datetime.fromisoformat(row["local_timestamp"])
@@ -58,7 +61,7 @@ def test_writer_records_utc_and_beijing_time_for_the_same_instant(tmp_path: Path
     assert utc.timestamp() == local.timestamp()
 
 
-def test_writer_reads_handwritten_v1_before_appending_v2(tmp_path: Path) -> None:
+def test_writer_reads_handwritten_v1_before_appending_v3(tmp_path: Path) -> None:
     initialize_agent_trace_directory(tmp_path)
     trace_file = tmp_path / ".cyber-interview-agent/agent-traces/s1/r1.jsonl"
     trace_file.parent.mkdir()
@@ -70,7 +73,7 @@ def test_writer_reads_handwritten_v1_before_appending_v2(tmp_path: Path) -> None
     assert AgentTraceWriter().append(identity(tmp_path), "model.response", {})
 
     rows = read_trace_rows(tmp_path, "s1", "r1")
-    assert [row["schema_version"] for row in rows] == [1, 2]
+    assert [row["schema_version"] for row in rows] == [1, 3]
     assert [row["sequence"] for row in rows] == [1, 2]
 
 

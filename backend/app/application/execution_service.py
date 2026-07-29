@@ -2209,6 +2209,8 @@ class AgentExecutionService:
             agent_role=context.agent_role or "execution",
             agent_name="execution_runtime",
             invocation_id=context.run_id,
+            operation_id=f"execution:{context.run_id}",
+            operation_kind="execution",
         )
         try:
             written = await asyncio.to_thread(

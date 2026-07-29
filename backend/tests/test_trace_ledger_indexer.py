@@ -54,13 +54,37 @@ def _write_rows(root: Path, rows: list[dict], *, trailer: bytes = b"") -> Path:
 def test_indexes_v2_rows_idempotently_and_grows_from_saved_offset(
     tmp_path: Path,
 ) -> None:
-    writer = AgentTraceWriter()
-    writer.append(_identity(tmp_path), "model.request", {"messages": ["hello"]})
+    request = {
+        "schema_version": 2,
+        "workspace_id": "workspace-1",
+        "session_id": "session-1",
+        "run_id": "run-1",
+        "event_id": "event-v2-request",
+        "invocation_id": "invocation-1",
+        "agent_role": "answer_evaluation",
+        "agent_name": "review_answer_evaluation",
+        "event_type": "model.request",
+        "timestamp": "2026-07-29T12:00:00+00:00",
+        "sequence": 1,
+        "payload": {"messages": ["hello"]},
+    }
+    path = _write_rows(tmp_path, [request])
     indexer, repository = _indexer(tmp_path)
 
     first = indexer.sync_workspace()
     repeated = indexer.sync_workspace()
-    writer.append(_identity(tmp_path), "model.response", {"answer": "ok"})
+    response = {
+        **request,
+        "event_id": "event-v2-response",
+        "event_type": "model.response",
+        "timestamp": "2026-07-29T12:00:01+00:00",
+        "sequence": 2,
+        "payload": {"answer": "ok"},
+    }
+    with path.open("ab") as stream:
+        stream.write(
+            (json.dumps(response, ensure_ascii=False) + "\n").encode("utf-8")
+        )
     grown = indexer.sync_workspace()
 
     assert first.indexed_events == 1

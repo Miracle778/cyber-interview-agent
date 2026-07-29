@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, ClassVar, Literal, TypeAlias
-from uuid import uuid4
+from uuid import UUID, uuid4, uuid5
 from zoneinfo import ZoneInfo
 
 from langchain.agents.middleware.types import ModelResponse
@@ -30,9 +30,11 @@ TraceEventType = Literal[
     "tool.response",
     "tool.error",
 ]
+TraceOperationKind = Literal["execution", "agent", "model", "tool", "graph"]
 JSONValue: TypeAlias = None | bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"]
 
 _TRACE_SCOPE = "diagnostics.agent_traces"
+_TRACE_OPERATION_NAMESPACE = UUID("bed60f89-5eaa-46a5-b6f8-c946ef7adbf8")
 _LOCAL_TIMEZONE_NAME = "Asia/Shanghai"
 _LOCAL_TIMEZONE = ZoneInfo(_LOCAL_TIMEZONE_NAME)
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
@@ -73,6 +75,45 @@ class TraceIdentity:
     agent_role: str
     agent_name: str
     invocation_id: str
+    operation_id: str | None = None
+    parent_operation_id: str | None = None
+    operation_kind: TraceOperationKind | None = None
+
+
+def stable_trace_operation_id(*parts: str) -> str:
+    return str(uuid5(_TRACE_OPERATION_NAMESPACE, ":".join(parts)))
+
+
+def _operation_coordinates(
+    identity: TraceIdentity,
+    event_type: TraceEventType,
+) -> tuple[str, str | None, TraceOperationKind]:
+    event_family = event_type.split(".", 1)[0]
+    kind: TraceOperationKind = identity.operation_kind or (
+        event_family if event_family in {"execution", "model", "tool"} else "agent"
+    )
+    operation_id = identity.operation_id
+    parent_operation_id = identity.parent_operation_id
+    if operation_id is None:
+        if kind == "execution":
+            operation_id = f"execution:{identity.run_id}"
+        else:
+            operation_id = stable_trace_operation_id(
+                identity.run_id,
+                identity.invocation_id,
+                kind,
+            )
+    if parent_operation_id is None and kind != "execution":
+        if kind in {"model", "tool", "graph"}:
+            parent_operation_id = stable_trace_operation_id(
+                identity.run_id,
+                identity.agent_role,
+                identity.agent_name,
+                "agent",
+            )
+        else:
+            parent_operation_id = f"execution:{identity.run_id}"
+    return operation_id, parent_operation_id, kind
 
 
 def _safe_key(key: object) -> str:
@@ -228,8 +269,12 @@ class AgentTraceWriter:
                 self._discard_incomplete_trailer(path)
                 sequence = self._last_complete_sequence(path) + 1
                 observed_at = datetime.now(timezone.utc)
+                operation_id, parent_operation_id, operation_kind = _operation_coordinates(
+                    identity,
+                    event_type,
+                )
                 row = {
-                    "schema_version": 2,
+                    "schema_version": 3,
                     "timestamp": observed_at.isoformat(timespec="milliseconds"),
                     "local_timestamp": observed_at.astimezone(_LOCAL_TIMEZONE).isoformat(timespec="milliseconds"),
                     "timezone": _LOCAL_TIMEZONE_NAME,
@@ -241,6 +286,9 @@ class AgentTraceWriter:
                     "agent_role": identity.agent_role,
                     "agent_name": identity.agent_name,
                     "invocation_id": identity.invocation_id,
+                    "operation_id": operation_id,
+                    "parent_operation_id": parent_operation_id,
+                    "operation_kind": operation_kind,
                     "event_type": event_type,
                     "payload": safe_trace_value(payload),
                 }

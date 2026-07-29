@@ -6,7 +6,7 @@ from uuid import uuid4
 from langchain.agents.middleware import SummarizationMiddleware
 from langchain.agents.middleware.summarization import get_buffer_string
 
-from app.diagnostics.agent_trace import TraceIdentity
+from app.diagnostics.agent_trace import TraceIdentity, stable_trace_operation_id
 from app.middleware.agent_trace_middleware import safe_error_payload
 from app.middleware.usage_projection_middleware import ContextUsageProjection
 
@@ -85,6 +85,7 @@ class ProjectingSummarizationMiddleware(SummarizationMiddleware):
             return "Previous conversation was too long to summarize."
         formatted_messages = get_buffer_string(trimmed_messages, format="xml")
         prompt = self.summary_prompt.format(messages=formatted_messages).rstrip()
+        invocation_id = str(uuid4())
         identity = TraceIdentity(
             workspace_id=context.workspace_id,
             workspace_root=context.workspace_root,
@@ -92,7 +93,19 @@ class ProjectingSummarizationMiddleware(SummarizationMiddleware):
             run_id=context.run_id,
             agent_role="report_summarization",
             agent_name="context_summary",
-            invocation_id=str(uuid4()),
+            invocation_id=invocation_id,
+            operation_id=stable_trace_operation_id(
+                context.run_id,
+                invocation_id,
+                "model",
+            ),
+            parent_operation_id=stable_trace_operation_id(
+                context.run_id,
+                "report_summarization",
+                "context_summary",
+                "agent",
+            ),
+            operation_kind="model",
         )
         await self._append_trace(
             context,
