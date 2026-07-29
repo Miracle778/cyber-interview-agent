@@ -71,7 +71,7 @@ class JudgeDimensionResult(StrictJudgeModel):
     dimension_id: str = Field(min_length=1)
     score: int = Field(ge=0, le=100)
     cited_event_hashes: list[str] = Field(min_length=1)
-    cited_artifact_hashes: list[str] = Field(min_length=1)
+    cited_artifact_hashes: list[str]
     confidence: float = Field(ge=0, le=1)
     summary: str = Field(min_length=1)
     risks: list[str]
@@ -80,7 +80,7 @@ class JudgeDimensionResult(StrictJudgeModel):
 class JudgeResult(StrictJudgeModel):
     dimensions: list[JudgeDimensionResult] = Field(min_length=1)
     cited_event_hashes: list[str] = Field(min_length=1)
-    cited_artifact_hashes: list[str] = Field(min_length=1)
+    cited_artifact_hashes: list[str]
     confidence: float = Field(ge=0, le=1)
     summary: str = Field(min_length=1)
     risks: list[str]
