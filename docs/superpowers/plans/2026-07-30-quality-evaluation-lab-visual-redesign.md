@@ -32,7 +32,7 @@
 - Consumes: `EvaluationRun`, `EvaluationDimension`, `EvaluationFeedback`.
 - Produces: `evaluationPackLabel(id)`, `dimensionLabel(id)`, `evaluationStatusMeta(status)`, `dimensionOutcome(dimension)`, `summarizeEvaluation(run, feedback)`, and `formatEvaluationVersion(run)`.
 
-- [ ] **Step 1: Write failing presentation tests**
+- [x] **Step 1: Write failing presentation tests**
 
 Cover:
 
@@ -47,7 +47,7 @@ expect(dimensionOutcome(failedRule()).tone).toBe("danger");
 
 Also assert unknown IDs receive a readable normalized fallback rather than raw snake_case.
 
-- [ ] **Step 2: Run the presentation test and verify RED**
+- [x] **Step 2: Run the presentation test and verify RED**
 
 Run:
 
@@ -58,7 +58,7 @@ npx vitest run src/features/evaluation/evaluationPresentation.test.ts
 
 Expected: fail because the module does not exist.
 
-- [ ] **Step 3: Implement the presentation module**
+- [x] **Step 3: Implement the presentation module**
 
 Use explicit maps for current Eval Packs and dimension IDs. `summarizeEvaluation` returns only derived counts and tones:
 
@@ -74,7 +74,7 @@ interface EvaluationSummary {
 
 Score bands are display semantics only: `>= 85 success`, `>= 70 neutral`, `>= 50 warning`, otherwise danger. Deterministic failed/error statuses are always danger. Do not turn these bands into backend quality gates.
 
-- [ ] **Step 4: Run tests and TypeScript**
+- [x] **Step 4: Run tests and TypeScript**
 
 ```bash
 cd frontend
@@ -82,7 +82,7 @@ npx vitest run src/features/evaluation/evaluationPresentation.test.ts
 npx tsc --noEmit
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/features/evaluation/evaluationPresentation.ts \
