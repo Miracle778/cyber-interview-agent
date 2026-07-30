@@ -7,6 +7,7 @@ import type { PendingAction } from "../agent/hitlTypes";
 import { requestPublication } from "../knowledge/draftApi";
 import { formatBeijingTimestamp } from "../../shared/time";
 import { Button } from "../../shared/ui/Button";
+import { SelectControl } from "../../shared/ui/SelectControl";
 import type { KnowledgeSource } from "../knowledge/knowledgeTypes";
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import { bulkConfirmQuestionCandidates, bulkDeleteQuestionCandidates, deleteQuestionCandidate, listAllQuestionCandidates, rewriteQuestionCandidate, updateActiveQuestionVersion, updateQuestionCandidate } from "./reviewApi";
@@ -153,9 +154,9 @@ export function QuestionLibrary({ workspace, sources, initialCandidateId = null,
         <div className="question-library__filters" aria-label="题目筛选">
           <span className="question-library__filter-label">状态</span>
           {(["review_pending", "published", "rejected"] as const).map((value) => <button key={value} type="button" className={`question-library__status question-library__status--${value}`} aria-pressed={status === value} onClick={() => setStatus(status === value ? "" : value)}><span>{statusLabels[value]}</span><strong>{statusCounts[value]}</strong></button>)}
-          <label><span>主题</span><select aria-label="主题筛选" value={topic} onChange={(event) => setTopic(event.target.value)}><option value="">全部主题</option>{topicCounts.map(([name, count]) => <option key={name} value={name}>{name}（{count}）</option>)}</select></label>
-          <label><span>难度</span><select aria-label="难度筛选" value={difficulty} onChange={(event) => setDifficulty(event.target.value)}><option value="">全部</option><option value="easy">简单</option><option value="medium">中等</option><option value="hard">困难</option></select></label>
-          <label><span>来源</span><select aria-label="来源筛选" value={sourceId} onChange={(event) => setSourceId(event.target.value)}><option value="">全部来源</option>{sources.map((source) => <option key={source.id} value={source.id}>{source.originalFilename}</option>)}</select></label>
+          <label><span>主题</span><SelectControl controlSize="sm" aria-label="主题筛选" value={topic} onChange={(event) => setTopic(event.target.value)}><option value="">全部主题</option>{topicCounts.map(([name, count]) => <option key={name} value={name}>{name}（{count}）</option>)}</SelectControl></label>
+          <label><span>难度</span><SelectControl controlSize="sm" aria-label="难度筛选" value={difficulty} onChange={(event) => setDifficulty(event.target.value)}><option value="">全部</option><option value="easy">简单</option><option value="medium">中等</option><option value="hard">困难</option></SelectControl></label>
+          <label><span>来源</span><SelectControl controlSize="sm" aria-label="来源筛选" value={sourceId} onChange={(event) => setSourceId(event.target.value)}><option value="">全部来源</option>{sources.map((source) => <option key={source.id} value={source.id}>{source.originalFilename}</option>)}</SelectControl></label>
           <button type="button" className="question-library__clear" disabled={!hasFilters} onClick={resetFilters}><SlidersHorizontal size={15} />清除筛选</button>
           {publicationPendingCount > 0 && !approvalOpen ? <button type="button" className="question-library__approval-entry" aria-label={`打开待审批发布任务，共 ${publicationPendingCount} 项`} title="查看全部待审批题目" onClick={() => { setPublicationRequest(null); setApprovalOpen(true); }}><ShieldCheck size={16} /><span>待审批</span><strong>{publicationPendingCount}</strong></button> : null}
         </div>

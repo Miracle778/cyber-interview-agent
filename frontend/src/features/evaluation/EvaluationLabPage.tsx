@@ -13,6 +13,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { formatBeijingDateTime } from "../../shared/time";
+import { SelectControl } from "../../shared/ui/SelectControl";
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import {
   compareEvaluationRuns,
@@ -166,7 +167,7 @@ export function EvaluationLabPage({
                 <div className="evaluation-toolbar__selectors">
                   <label>
                     <span>基线评估</span>
-                    <select
+                    <SelectControl
                       aria-label="基线评估"
                       value={baselineId}
                       onChange={(event) => setBaselineId(event.target.value)}
@@ -175,12 +176,12 @@ export function EvaluationLabPage({
                       {runs.filter((item) => item.id !== selectedId).map((item) => (
                         <option key={item.id} value={item.id}>{runChoiceLabel(item)}</option>
                       ))}
-                    </select>
+                    </SelectControl>
                   </label>
                   <Scale aria-hidden="true" />
                   <label>
                     <span>候选评估</span>
-                    <select
+                    <SelectControl
                       aria-label="候选评估"
                       value={selectedId ?? ""}
                       onChange={(event) => setSelectedId(event.target.value)}
@@ -188,7 +189,7 @@ export function EvaluationLabPage({
                       {runs.map((item) => (
                         <option key={item.id} value={item.id}>{runChoiceLabel(item)}</option>
                       ))}
-                    </select>
+                    </SelectControl>
                   </label>
                 </div>
                 {executionId ? (

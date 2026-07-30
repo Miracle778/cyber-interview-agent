@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, ChevronDown, FileMinus2, X } from "lucide-react";
 import { formatBeijingTime } from "../../shared/time";
 import { Button } from "../../shared/ui/Button";
+import { SelectControl } from "../../shared/ui/SelectControl";
 import { permanentlyDeleteMaterialVersion, previewMaterialVersionDeletion } from "./profileApi";
 import { profileClaimTypeLabel } from "./profilePresentation";
 import type { MaterialVersionDeletionPreview, PermanentMaterialDeletionResult, ProfileMaterial, ProfileMaterialVersionDetail } from "./profileTypes";
@@ -224,9 +225,9 @@ export function VersionDeletionImpactDialog({ open, workspaceId, material, versi
           <dl><div><dt>受影响原文</dt><dd>{preview.affectedEvidenceCount}</dd></div><div><dt>受影响简历要点</dt><dd>{preview.affectedClaims.length}</dd></div><div><dt>将失去依据</dt><dd>{preview.unsupportedClaimIds.length}</dd></div></dl>
           {preview.isCurrentVersion ? <label className="profile-version-delete__replacement">
             <span><strong>删除后使用的当前版本</strong><small>当前删除的是正在使用的版本，请选择一个保留版本接替。</small></span>
-            <select aria-label="删除后使用的当前版本" value={replacementVersionId} onChange={(event) => setReplacementVersionId(event.target.value)}>
+            <SelectControl aria-label="删除后使用的当前版本" value={replacementVersionId} onChange={(event) => setReplacementVersionId(event.target.value)}>
               {preview.replacementVersions.map((item) => <option key={item.id} value={item.id}>v{item.versionNumber} · {item.fileName}</option>)}
-            </select>
+            </SelectControl>
           </label> : null}
           {preview.affectedClaims.length ? <section className="profile-delete-dialog__claims">
             <div className="profile-delete-dialog__claim-toolbar">
@@ -234,11 +235,11 @@ export function VersionDeletionImpactDialog({ open, workspaceId, material, versi
               <div className="profile-delete-dialog__claim-batch">
                 <label><input type="checkbox" aria-label="全选受影响简历要点" checked={allClaimsSelected} onChange={(event) => setSelectedClaimIds(event.target.checked ? affectedClaims.map((claim) => claim.claimId) : [])} /><span>{allClaimsSelected ? "取消全选" : "全选"}</span></label>
                 <span>已选择 {selectedClaims.length} 条</span>
-                <select aria-label="批量更改所选处理方式" value={selectedClaims.length ? bulkChoice : "mixed"} disabled={!selectedClaims.length} onChange={(event) => applyBulkChoice(event.target.value as ClaimDeletionAction)}>
+                <SelectControl aria-label="批量更改所选处理方式" value={selectedClaims.length ? bulkChoice : "mixed"} disabled={!selectedClaims.length} onChange={(event) => applyBulkChoice(event.target.value as ClaimDeletionAction)}>
                   <option value="mixed" disabled>批量处理所选</option>
                   <option value="retain_unsupported">所选全部保留</option>
                   <option value="delete">删除所选可删除要点</option>
-                </select>
+                </SelectControl>
               </div>
               {selectedProtectedCount ? <small>{selectedProtectedCount} 条仍被其他功能使用，批量删除时会自动保留。</small> : null}
             </div>
@@ -255,7 +256,7 @@ export function VersionDeletionImpactDialog({ open, workspaceId, material, versi
                     <small>{claim.remainingEvidenceIds.length ? `删除这个版本后，仍有 ${claim.remainingEvidenceIds.length} 条其他依据` : "删除这个版本后，这条要点将没有原文依据"}{claim.selectionIds.length ? "；仍被其他功能使用，不能同时删除" : ""}</small>
                     <ChevronDown size={17} />
                   </button>
-                  <select aria-label={`${title} 的处理方式`} value={choices[claim.claimId]} onChange={(event) => setChoices((value) => ({ ...value, [claim.claimId]: event.target.value as ClaimDeletionAction }))}><option value="retain_unsupported">保留简历要点</option><option value="delete" disabled={Boolean(claim.selectionIds.length)}>同时删除简历要点</option></select>
+                  <SelectControl aria-label={`${title} 的处理方式`} value={choices[claim.claimId]} onChange={(event) => setChoices((value) => ({ ...value, [claim.claimId]: event.target.value as ClaimDeletionAction }))}><option value="retain_unsupported">保留简历要点</option><option value="delete" disabled={Boolean(claim.selectionIds.length)}>同时删除简历要点</option></SelectControl>
                 </div>
                 {expanded ? <div className="profile-version-delete__claim-detail">
                   {rows.length ? <dl>{rows.map((row) => <div key={row.key}><dt>{row.label}</dt><dd>{row.value}</dd></div>)}</dl> : <p>这条要点没有更多可展示的字段。</p>}

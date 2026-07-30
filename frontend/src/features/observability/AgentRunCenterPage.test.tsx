@@ -81,7 +81,27 @@ const completedExecution = {
 };
 
 function page(items = [runningExecution, completedExecution]) {
-  return { items, nextCursor: null, total: items.length };
+  const statusCounts = items.reduce<Record<string, number>>((counts, item) => ({
+    ...counts,
+    [item.status]: (counts[item.status] ?? 0) + 1,
+  }), {});
+  const agentCounts = items.reduce<Record<string, Record<string, number>>>(
+    (counts, item) => ({
+      ...counts,
+      [item.displayName]: {
+        ...(counts[item.displayName] ?? {}),
+        [item.status]: (counts[item.displayName]?.[item.status] ?? 0) + 1,
+      },
+    }),
+    {},
+  );
+  return {
+    items,
+    nextCursor: null,
+    total: items.length,
+    statusCounts,
+    agentCounts,
+  };
 }
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -146,7 +166,7 @@ describe("AgentRunCenterPage", () => {
     await screen.findByRole("button", { name: /MyBatis 拦截器资料整理/ });
 
     fireEvent.change(screen.getByLabelText("运行状态"), {
-      target: { value: "failed" },
+      target: { value: "attention" },
     });
     fireEvent.change(screen.getByRole("searchbox", { name: "搜索运行" }), {
       target: { value: "MyBatis" },
@@ -155,10 +175,65 @@ describe("AgentRunCenterPage", () => {
 
     await waitFor(() => {
       const latestUrl = String(fetchSpy.mock.calls.at(-1)?.[0]);
-      expect(latestUrl).toContain("status=failed");
+      expect(latestUrl).toContain("status=attention");
       expect(latestUrl).toContain("search=MyBatis");
       expect(latestUrl).toContain("includeSystemAgents=true");
     });
+  });
+
+  it("uses summary metrics as toggleable status shortcuts", async () => {
+    const waitingExecution = {
+      ...runningExecution,
+      id: "run-waiting",
+      sessionId: "session-waiting",
+      title: "等待用户补充",
+      status: "waiting_for_input",
+    };
+    const fetchSpy = mockPage(page([
+      runningExecution,
+      waitingExecution,
+      completedExecution,
+    ]));
+
+    render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
+    await screen.findByRole("button", { name: /MyBatis 拦截器资料整理/ });
+
+    const runningShortcut = screen.getByRole("button", {
+      name: "筛选运行中，1 条",
+    });
+    expect(runningShortcut).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(runningShortcut);
+
+    await waitFor(() => {
+      expect(String(fetchSpy.mock.calls.at(-1)?.[0])).toContain("status=running");
+    });
+    expect(runningShortcut).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", {
+      name: "筛选已完成，1 条",
+    })).toBeInTheDocument();
+
+    fireEvent.click(runningShortcut);
+    await waitFor(() => {
+      expect(String(fetchSpy.mock.calls.at(-1)?.[0])).not.toContain("status=");
+    });
+
+    fireEvent.click(screen.getByRole("button", {
+      name: "筛选等待处理，1 条",
+    }));
+    await waitFor(() => {
+      expect(String(fetchSpy.mock.calls.at(-1)?.[0])).toContain("status=waiting");
+    });
+    expect(screen.getByLabelText("运行状态")).toHaveValue("waiting");
+    expect(screen.getByRole("option", { name: "需关注" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "已停止" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "排队中" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "等待输入" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "等待确认" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "已暂停" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "已取消" })).not.toBeInTheDocument();
+    expect(screen.getByText("平均耗时").closest("li")).not.toContainElement(
+      screen.queryByRole("button", { name: /平均耗时/ }),
+    );
   });
 
   it("uses a mobile filter sheet trigger without duplicating filter controls", async () => {
@@ -174,6 +249,29 @@ describe("AgentRunCenterPage", () => {
     fireEvent.click(trigger);
     expect(filters).toHaveAttribute("data-mobile-open", "true");
     expect(screen.getAllByLabelText("运行状态")).toHaveLength(1);
+  });
+
+  it("keeps every Agent overview shortcut visible after selecting one", async () => {
+    const fetchSpy = mockPage();
+
+    render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
+    const overview = await screen.findByRole("region", { name: "Agent 概览" });
+    const curationShortcut = within(overview).getByRole("button", {
+      name: /题库整理 运行中 1/,
+    });
+    const profileShortcut = within(overview).getByRole("button", {
+      name: /画像助手 运行中 0/,
+    });
+
+    fireEvent.click(profileShortcut);
+
+    await waitFor(() => {
+      expect(String(fetchSpy.mock.calls.at(-1)?.[0])).toContain(
+        "agentName=%E7%94%BB%E5%83%8F%E5%8A%A9%E6%89%8B",
+      );
+    });
+    expect(curationShortcut).toBeInTheDocument();
+    expect(profileShortcut).toHaveAttribute("aria-pressed", "true");
   });
 
   it("derives navigation actions from capabilities and registry routes", async () => {

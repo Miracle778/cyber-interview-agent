@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { ChevronDown, Send, SlidersHorizontal, Square } from "lucide-react";
 import { Button } from "../ui/Button";
+import { SelectControl } from "../ui/SelectControl";
 import { useAgentComposerKeyboard } from "./useAgentComposerKeyboard";
 
 export type AgentReasoningEffort = "none" | "low" | "medium" | "high";
@@ -94,14 +95,14 @@ export function AgentComposer({
             </summary>
             <div>
               <label htmlFor="agent-composer-model">本次执行模型</label>
-              <select id="agent-composer-model" value={modelId} disabled={busy || disabled} onChange={(event) => onModelChange(event.target.value)}>
+              <SelectControl id="agent-composer-model" controlSize="sm" value={modelId} disabled={busy || disabled} onChange={(event) => onModelChange(event.target.value)}>
                 <option value="">使用工作区默认模型</option>
                 {models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
-              </select>
+              </SelectControl>
               <label htmlFor="agent-composer-reasoning">思考强度</label>
-              <select id="agent-composer-reasoning" value={reasoningEffort} disabled={busy || disabled} onChange={(event) => onReasoningEffortChange(event.target.value as AgentReasoningEffort)}>
+              <SelectControl id="agent-composer-reasoning" controlSize="sm" value={reasoningEffort} disabled={busy || disabled} onChange={(event) => onReasoningEffortChange(event.target.value as AgentReasoningEffort)}>
                 {Object.entries(reasoningLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-              </select>
+              </SelectControl>
             </div>
           </details>
           <small>Shift+Enter 换行</small>

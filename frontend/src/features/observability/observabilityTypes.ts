@@ -39,6 +39,10 @@ export const executionSummaryPageSchema = z.object({
   items: z.array(executionSummarySchema),
   nextCursor: z.string().nullable(),
   total: z.number().int().nonnegative(),
+  statusCounts: z.record(z.number().int().nonnegative()).optional()
+    .transform((value) => value ?? {}),
+  agentCounts: z.record(z.record(z.number().int().nonnegative())).optional()
+    .transform((value) => value ?? {}),
 });
 
 export const executionChangedEventSchema = z.object({

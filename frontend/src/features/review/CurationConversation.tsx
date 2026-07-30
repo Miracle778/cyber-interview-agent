@@ -1,6 +1,7 @@
 import { Bot, ChevronDown, FileText, ListChecks, SlidersHorizontal, Square, RotateCcw, XCircle, Rocket, Send } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../shared/ui/Button";
+import { SelectControl } from "../../shared/ui/SelectControl";
 import { SessionMessage } from "./SessionMessage";
 import type { BulkPublication, CurationMessage, CurationSession, QuestionCandidate } from "./reviewTypes";
 import { elapsedSeconds, formatBeijingTime } from "../../shared/time";
@@ -204,9 +205,9 @@ export function CurationConversation({ session, candidates = {}, optimisticMessa
               </summary>
               <div className="curation-composer__settings-panel" aria-label="模型与思考强度">
                 <label htmlFor="curation-model">本次执行模型</label>
-                <select id="curation-model" aria-label="本次执行模型" value={selectedModelId} disabled={busy} onChange={(event) => onModelChange(event.target.value)}><option value="">使用工作区默认模型</option>{models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select>
+                <SelectControl id="curation-model" controlSize="sm" aria-label="本次执行模型" value={selectedModelId} disabled={busy} onChange={(event) => onModelChange(event.target.value)}><option value="">使用工作区默认模型</option>{models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</SelectControl>
                 <label htmlFor="curation-reasoning">思考强度</label>
-                <select id="curation-reasoning" aria-label="思考强度" value={reasoningEffort} disabled={busy} onChange={(event) => onReasoningEffortChange(event.target.value as "none" | "low" | "medium" | "high")}><option value="none">标准</option><option value="low">较低</option><option value="medium">中等</option><option value="high">较高</option></select>
+                <SelectControl id="curation-reasoning" controlSize="sm" aria-label="思考强度" value={reasoningEffort} disabled={busy} onChange={(event) => onReasoningEffortChange(event.target.value as "none" | "low" | "medium" | "high")}><option value="none">标准</option><option value="low">较低</option><option value="medium">中等</option><option value="high">较高</option></SelectControl>
               </div>
             </details>
             <small>Shift+Enter 换行</small>

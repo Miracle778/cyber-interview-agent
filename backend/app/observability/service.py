@@ -38,6 +38,14 @@ from app.schemas.observability import (
     TraceEventSummaryResource,
 )
 
+EXECUTION_STATUS_GROUPS = {
+    "waiting": frozenset(
+        {"queued", "waiting_for_input", "waiting_for_approval"}
+    ),
+    "attention": frozenset({"partial_success", "failed"}),
+    "stopped": frozenset({"interrupted", "cancelled"}),
+}
+
 
 class InvalidExecutionCursorError(ValueError):
     pass
@@ -139,18 +147,48 @@ class AgentObservabilityService:
                 (self.workspace_id,),
             )
         ]
-        filtered = [
+        agent_scope = [
             row
             for row in rows
             if self._matches(
                 row,
                 keyword=keyword,
-                status=status,
+                status=None,
+                agent=None,
+                started_from=started_from,
+                started_to=started_to,
+                include_system_agents=include_system_agents,
+            )
+        ]
+        agent_counts: dict[str, dict[str, int]] = {}
+        for row in agent_scope:
+            display_name = AGENT_OBSERVABILITY_REGISTRY[
+                row["graph_id"]
+            ].display_name
+            counts = agent_counts.setdefault(display_name, {})
+            counts[row["status"]] = counts.get(row["status"], 0) + 1
+        scoped = [
+            row
+            for row in rows
+            if self._matches(
+                row,
+                keyword=keyword,
+                status=None,
                 agent=agent,
                 started_from=started_from,
                 started_to=started_to,
                 include_system_agents=include_system_agents,
             )
+        ]
+        status_counts: dict[str, int] = {}
+        for row in scoped:
+            status_counts[row["status"]] = (
+                status_counts.get(row["status"], 0) + 1
+            )
+        filtered = [
+            row
+            for row in scoped
+            if self._matches_status(row["status"], status)
         ]
         total = len(filtered)
         if cursor_value is not None:
@@ -169,6 +207,8 @@ class AgentObservabilityService:
             items=[self.assembler.assemble(row) for row in selected],
             next_cursor=next_cursor,
             total=total,
+            status_counts=status_counts,
+            agent_counts=agent_counts,
         )
 
     def get_execution(self, run_id: str) -> ExecutionSummaryResource:
@@ -347,7 +387,9 @@ class AgentObservabilityService:
             registration.system or row["visibility"] == "system"
         ):
             return False
-        if status and row["status"] != status:
+        if not AgentObservabilityService._matches_status(
+            row["status"], status
+        ):
             return False
         if agent:
             normalized_agent = agent.casefold()
@@ -372,6 +414,13 @@ class AgentObservabilityService:
         if started_to and _parse_time(started_at) > _parse_time(started_to):
             return False
         return True
+
+    @staticmethod
+    def _matches_status(value: str, requested: str | None) -> bool:
+        if not requested:
+            return True
+        group = EXECUTION_STATUS_GROUPS.get(requested)
+        return value in group if group is not None else value == requested
 
 
 def _encode_cursor(created_at: str, run_id: str) -> str:

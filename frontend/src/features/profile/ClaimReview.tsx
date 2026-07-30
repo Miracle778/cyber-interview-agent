@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, ChevronRight, FileSearch, Layers3, RefreshCw, XCircle } from "lucide-react";
 import { ApiError } from "../../shared/api/client";
 import { Button } from "../../shared/ui/Button";
+import { SelectControl } from "../../shared/ui/SelectControl";
 import { batchDecideClaimProposals, consolidateDuplicateClaimProposals, decideClaimProposal, previewDuplicateClaimProposals } from "./profileApi";
 import type { ClaimDecision, DuplicateProposalPreview, ProfileClaimProposal, ProfileClaimReview, ProfileClaimWorkspace, ProfileEvidence } from "./profileTypes";
 import { formatEvidenceLocator } from "./evidenceLocator";
@@ -210,8 +211,8 @@ export function ClaimReview({ workspaceId, snapshot, loading = false, onRefresh,
       </div>
     </header>
     <div className="claim-review__filters" aria-label="简历要点筛选">
-      <label>状态<select aria-label="按状态筛选" value={status} onChange={(event) => setStatus(event.target.value)}><option value="pending">待确认</option><option value="accepted">已确认</option><option value="rejected">已忽略</option><option value="all">全部</option></select></label>
-      <label>分类<select aria-label="按分类筛选" value={category} onChange={(event) => setCategory(event.target.value)}><option value="all">全部分类</option>{categories.map((item) => <option key={item} value={item}>{profileClaimTypeLabel(item)}</option>)}</select></label>
+      <label>状态<SelectControl controlSize="sm" aria-label="按状态筛选" value={status} onChange={(event) => setStatus(event.target.value)}><option value="pending">待确认</option><option value="accepted">已确认</option><option value="rejected">已忽略</option><option value="all">全部</option></SelectControl></label>
+      <label>分类<SelectControl controlSize="sm" aria-label="按分类筛选" value={category} onChange={(event) => setCategory(event.target.value)}><option value="all">全部分类</option>{categories.map((item) => <option key={item} value={item}>{profileClaimTypeLabel(item)}</option>)}</SelectControl></label>
       {selectable.length ? <label className="claim-review__select-all"><input type="checkbox" checked={allCurrentSelected} onChange={selectCurrentFilter} />全选当前筛选</label> : null}
       <span><strong>{filtered.length}</strong> {filteredCountLabel}</span>
       <Button variant="ghost" size="sm" onClick={() => void refreshReview()}><RefreshCw size={15} />刷新</Button>

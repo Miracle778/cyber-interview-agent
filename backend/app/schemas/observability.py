@@ -69,6 +69,8 @@ class ExecutionSummaryPageResource(ObservabilityModel):
     items: list[ExecutionSummaryResource]
     next_cursor: str | None
     total: int = Field(ge=0)
+    status_counts: dict[str, int] = Field(default_factory=dict)
+    agent_counts: dict[str, dict[str, int]] = Field(default_factory=dict)
 
 
 class OperationSummaryListResource(ObservabilityModel):

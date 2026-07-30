@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, CheckCircle2, RotateCcw, Save, Workflow } from "lucide-react";
 import { toActionableError, type ActionableError } from "../../shared/api/errorAdvice";
 import { Button } from "../../shared/ui/Button";
+import { SelectControl } from "../../shared/ui/SelectControl";
 import {
   getWorkspaceModelBindings,
   listProviders,
@@ -200,7 +201,7 @@ export function ModelBindings({ workspaceId, refreshKey = 0, onBindingsChanged, 
                     <strong>{ROLE_LABELS[role]}</strong>
                     <span>{ROLE_DESCRIPTIONS[role]}</span>
                   </label>
-                  <select
+                  <SelectControl
                     id={`binding-${role}`}
                     aria-label={ROLE_LABELS[role]}
                     className="field__input"
@@ -217,7 +218,7 @@ export function ModelBindings({ workspaceId, refreshKey = 0, onBindingsChanged, 
                         {model.label}
                       </option>
                     ))}
-                  </select>
+                  </SelectControl>
                 </div>
               ))}
             </div>

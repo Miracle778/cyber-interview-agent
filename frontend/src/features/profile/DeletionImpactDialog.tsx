@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, ShieldAlert, X } from "lucide-react";
 import { formatBeijingTime } from "../../shared/time";
 import { Button } from "../../shared/ui/Button";
+import { SelectControl } from "../../shared/ui/SelectControl";
 import { permanentlyDeleteMaterial, previewMaterialDeletion } from "./profileApi";
 import type { MaterialDeletionPreview, PermanentMaterialDeletionResult, ProfileMaterial } from "./profileTypes";
 import { profileClaimTypeLabel } from "./profilePresentation";
@@ -83,17 +84,17 @@ export function DeletionImpactDialog({ open, workspaceId, material, onClose, onD
               <div><h3>选择简历要点的处理方式</h3><p>可以先统一处理，再单独调整个别要点。</p></div>
               <label>
                 <span>统一处理</span>
-                <select aria-label="批量更改处理方式" value={bulkChoice} onChange={(event) => applyBulkChoice(event.target.value as ClaimDeletionAction)}>
+                <SelectControl aria-label="批量更改处理方式" value={bulkChoice} onChange={(event) => applyBulkChoice(event.target.value as ClaimDeletionAction)}>
                   {bulkChoice === "mixed" ? <option value="mixed" disabled>多种处理方式</option> : null}
                   <option value="retain_unsupported">全部保留并标记依据不足</option>
                   <option value="delete" disabled={!deletableClaimCount}>删除所有可删除的简历要点</option>
-                </select>
+                </SelectControl>
               </label>
               {protectedClaimCount ? <small>{protectedClaimCount} 条仍被其他功能使用，会继续保留；其余 {deletableClaimCount} 条可批量更改。</small> : null}
             </div>
             {preview.affectedClaims.map((claim) => {
               const claimTypeLabel = profileClaimTypeLabel(claim.claimType);
-              return <label key={claim.claimId}><span><strong>{claimTypeLabel}</strong><small>{claim.remainingEvidenceIds.length ? `仍有 ${claim.remainingEvidenceIds.length} 条其他依据` : "删除简历后将没有原文依据"}{claim.selectionIds.length ? "；这条信息仍被其他功能使用，暂时不能同时删除" : ""}</small></span><select aria-label={`${claimTypeLabel} 的处理方式`} value={choices[claim.claimId]} onChange={(event) => setChoices((value) => ({ ...value, [claim.claimId]: event.target.value as ClaimDeletionAction }))}><option value="retain_unsupported">保留并标记为依据不足</option><option value="delete" disabled={Boolean(claim.selectionIds.length)}>同时删除简历要点</option></select></label>;
+              return <label key={claim.claimId}><span><strong>{claimTypeLabel}</strong><small>{claim.remainingEvidenceIds.length ? `仍有 ${claim.remainingEvidenceIds.length} 条其他依据` : "删除简历后将没有原文依据"}{claim.selectionIds.length ? "；这条信息仍被其他功能使用，暂时不能同时删除" : ""}</small></span><SelectControl aria-label={`${claimTypeLabel} 的处理方式`} value={choices[claim.claimId]} onChange={(event) => setChoices((value) => ({ ...value, [claim.claimId]: event.target.value as ClaimDeletionAction }))}><option value="retain_unsupported">保留并标记为依据不足</option><option value="delete" disabled={Boolean(claim.selectionIds.length)}>同时删除简历要点</option></SelectControl></label>;
             })}
           </section> : null}
           {hasActiveDependency ? <p className="profile-delete-dialog__revoke" role="alert"><AlertTriangle size={17} /><span><strong>这份简历仍被其他功能使用</strong><small>当前无法永久删除。请先保留材料，后续在使用它的功能中解除关联。</small></span></p> : null}

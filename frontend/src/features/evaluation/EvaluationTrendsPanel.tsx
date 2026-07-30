@@ -1,5 +1,6 @@
 import { Activity, AlertTriangle, BarChart3 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { SelectControl } from "../../shared/ui/SelectControl";
 import type { EvaluationTrendPoint } from "./evaluationTypes";
 
 
@@ -26,10 +27,10 @@ export function EvaluationTrendsPanel({
         <div><BarChart3 size={18} /><h2 id="evaluation-trends-title">长期质量趋势</h2></div>
         <label>
           <span>Eval Pack 版本</span>
-          <select value={selected} onChange={(event) => setSelected(event.target.value)}>
+          <SelectControl value={selected} onChange={(event) => setSelected(event.target.value)}>
             <option value="">全部（分版本展示）</option>
             {versions.map((version) => <option key={version} value={version}>{version}</option>)}
-          </select>
+          </SelectControl>
         </label>
       </header>
       {loading ? <p role="status"><Activity />正在汇总不可变评估结果…</p> : null}

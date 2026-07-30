@@ -3,6 +3,7 @@ import { Activity, AlertTriangle, Bot, CheckCircle2, Clock3, LoaderCircle, Searc
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { TaskWorkspace, TaskWorkspacePane } from "../../shared/ui/TaskWorkspace";
+import { SelectControl } from "../../shared/ui/SelectControl";
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import { ExecutionList, formatDuration } from "./ExecutionList";
 import { ExecutionPreview } from "./ExecutionPreview";
@@ -29,12 +30,27 @@ const EMPTY_FILTERS: ExecutionFilters = {
   includeSystemAgents: false,
 };
 
+const STATUS_GROUPS: Record<string, Set<string>> = {
+  waiting: new Set([
+    "queued",
+    "waiting_for_input",
+    "waiting_for_approval",
+  ]),
+  attention: new Set(["partial_success", "failed"]),
+  stopped: new Set(["interrupted", "cancelled"]),
+};
+
 function matchesFilters(
   execution: ExecutionSummary,
   filters: ExecutionFilters,
 ) {
   if (!filters.includeSystemAgents && execution.system) return false;
-  if (filters.status && execution.status !== filters.status) return false;
+  if (
+    filters.status &&
+    (STATUS_GROUPS[filters.status]
+      ? !STATUS_GROUPS[filters.status].has(execution.status)
+      : execution.status !== filters.status)
+  ) return false;
   if (
     filters.agentName &&
     execution.displayName !== filters.agentName &&
@@ -125,18 +141,32 @@ export function AgentRunCenterPage({
     executions.find((execution) => execution.id === selectedId) ?? null;
   const returnTo =
     `/agents${searchParams.size ? `?${searchParams.toString()}` : ""}`;
-  const agentNames = useMemo(
-    () => [...new Set((query.data?.items ?? []).map((item) => item.displayName))].sort(),
-    [query.data?.items],
-  );
+  const agentNames = useMemo(() => {
+    const summarized = Object.keys(query.data?.agentCounts ?? {});
+    return (summarized.length
+      ? summarized
+      : [...new Set((query.data?.items ?? []).map((item) => item.displayName))]
+    ).sort();
+  }, [query.data?.agentCounts, query.data?.items]);
   const metrics = useMemo(() => {
-    const running = executions.filter((item) => item.status === "running").length;
-    const waiting = executions.filter((item) =>
-      ["queued", "waiting_for_input", "waiting_for_approval"].includes(item.status)
-    ).length;
-    const completed = executions.filter((item) => item.status === "completed").length;
-    const partial = executions.filter((item) => item.status === "partial_success").length;
-    const failed = executions.filter((item) => item.status === "failed").length;
+    const fallbackCounts = executions.reduce<Record<string, number>>(
+      (counts, item) => ({
+        ...counts,
+        [item.status]: (counts[item.status] ?? 0) + 1,
+      }),
+      {},
+    );
+    const statusCounts = Object.keys(query.data?.statusCounts ?? {}).length
+      ? query.data!.statusCounts
+      : fallbackCounts;
+    const running = statusCounts.running ?? 0;
+    const waiting = [...STATUS_GROUPS.waiting].reduce(
+      (count, status) => count + (statusCounts[status] ?? 0),
+      0,
+    );
+    const completed = statusCounts.completed ?? 0;
+    const partial = statusCounts.partial_success ?? 0;
+    const failed = statusCounts.failed ?? 0;
     const latencies = executions
       .map((item) => item.latencyMs)
       .filter((value): value is number => value !== null);
@@ -145,8 +175,24 @@ export function AgentRunCenterPage({
         ? Math.round(latencies.reduce((sum, value) => sum + value, 0) / latencies.length)
         : null;
     return { running, waiting, completed, partial, failed, average };
-  }, [executions]);
+  }, [executions, query.data]);
+  const exactAttentionStatus = ["partial_success", "failed"].includes(filters.status)
+    ? filters.status
+    : "";
+  const exactStoppedStatus = ["interrupted", "cancelled"].includes(filters.status)
+    ? filters.status
+    : "";
   const agentOverview = useMemo(() => {
+    const serverCounts = query.data?.agentCounts ?? {};
+    if (Object.keys(serverCounts).length > 0) {
+      return Object.entries(serverCounts).map(([name, counts]) => ({
+        name,
+        running: counts.running ?? 0,
+        completed: counts.completed ?? 0,
+        attention:
+          (counts.partial_success ?? 0) + (counts.failed ?? 0),
+      }));
+    }
     const groups = new Map<string, ExecutionSummary[]>();
     for (const execution of executions) {
       groups.set(execution.displayName, [
@@ -162,7 +208,13 @@ export function AgentRunCenterPage({
         ["failed", "partial_success"].includes(item.status)
       ).length,
     }));
-  }, [executions]);
+  }, [executions, query.data?.agentCounts]);
+  const toggleStatusFilter = (status: string) => {
+    setFilters((current) => ({
+      ...current,
+      status: current.status === status ? "" : status,
+    }));
+  };
 
   return (
     <section aria-label="Agent 运行中心" className="agent-run-center">
@@ -210,11 +262,46 @@ export function AgentRunCenterPage({
           labelledBy="agent-run-center-title"
         >
           <ul className="agent-run-metrics" aria-label="运行汇总">
-            <Metric icon={<Activity />} label="运行中" value={metrics.running} tone="primary" />
-            <Metric icon={<Clock3 />} label="等待处理" value={metrics.waiting} tone="neutral" />
-            <Metric icon={<CheckCircle2 />} label="已完成" value={metrics.completed} tone="success" />
-            <Metric icon={<AlertTriangle />} label="部分成功" value={metrics.partial} tone="warning" />
-            <Metric icon={<XCircle />} label="失败" value={metrics.failed} tone="danger" />
+            <Metric
+              icon={<Activity />}
+              label="运行中"
+              value={metrics.running}
+              tone="primary"
+              pressed={filters.status === "running"}
+              onClick={() => toggleStatusFilter("running")}
+            />
+            <Metric
+              icon={<Clock3 />}
+              label="等待处理"
+              value={metrics.waiting}
+              tone="neutral"
+              pressed={filters.status === "waiting"}
+              onClick={() => toggleStatusFilter("waiting")}
+            />
+            <Metric
+              icon={<CheckCircle2 />}
+              label="已完成"
+              value={metrics.completed}
+              tone="success"
+              pressed={filters.status === "completed"}
+              onClick={() => toggleStatusFilter("completed")}
+            />
+            <Metric
+              icon={<AlertTriangle />}
+              label="部分成功"
+              value={metrics.partial}
+              tone="warning"
+              pressed={filters.status === "partial_success"}
+              onClick={() => toggleStatusFilter("partial_success")}
+            />
+            <Metric
+              icon={<XCircle />}
+              label="失败"
+              value={metrics.failed}
+              tone="danger"
+              pressed={filters.status === "failed"}
+              onClick={() => toggleStatusFilter("failed")}
+            />
             <Metric icon={<Clock3 />} label="平均耗时" value={formatDuration(metrics.average)} tone="neutral" />
           </ul>
 
@@ -279,45 +366,56 @@ export function AgentRunCenterPage({
                 <X size={18} aria-hidden="true" />
               </button>
             </header>
-            <label>
-              <span>Agent</span>
-              <select
-                aria-label="Agent"
-                value={filters.agentName}
-                onChange={(event) =>
-                  setFilters((current) => ({
-                    ...current,
-                    agentName: event.target.value,
-                  }))
-                }
-              >
-                <option value="">全部 Agent</option>
-                {agentNames.map((name) => <option key={name}>{name}</option>)}
-              </select>
-            </label>
-            <label>
-              <span>状态</span>
-              <select
-                aria-label="运行状态"
-                value={filters.status}
-                onChange={(event) =>
-                  setFilters((current) => ({
-                    ...current,
-                    status: event.target.value,
-                  }))
-                }
-              >
-                <option value="">全部状态</option>
-                <option value="running">运行中</option>
-                <option value="waiting_for_input">等待输入</option>
-                <option value="waiting_for_approval">等待确认</option>
-                <option value="completed">已完成</option>
-                <option value="partial_success">部分成功</option>
-                <option value="failed">失败</option>
-                <option value="interrupted">已暂停</option>
-                <option value="cancelled">已取消</option>
-              </select>
-            </label>
+            <SelectControl
+              containerClassName="agent-run-filters__select"
+              icon={<Bot size={17} />}
+              label="Agent 类型"
+              aria-label="Agent"
+              value={filters.agentName}
+              onChange={(event) =>
+                setFilters((current) => ({
+                  ...current,
+                  agentName: event.target.value,
+                }))
+              }
+            >
+              <option value="">全部 Agent</option>
+              {agentNames.map((name) => <option key={name}>{name}</option>)}
+            </SelectControl>
+            <SelectControl
+              containerClassName="agent-run-filters__select"
+              icon={<Activity size={17} />}
+              label="运行状态"
+              aria-label="运行状态"
+              value={filters.status}
+              onChange={(event) =>
+                setFilters((current) => ({
+                  ...current,
+                  status: event.target.value,
+                }))
+              }
+            >
+              <option value="">全部状态</option>
+              <option value="running">运行中</option>
+              <option value="waiting">等待处理</option>
+              <option value="completed">已完成</option>
+              <option value="attention">需关注</option>
+              {exactAttentionStatus ? (
+                <option value={exactAttentionStatus}>
+                  {exactAttentionStatus === "partial_success"
+                    ? "需关注 · 部分成功"
+                    : "需关注 · 失败"}
+                </option>
+              ) : null}
+              <option value="stopped">已停止</option>
+              {exactStoppedStatus ? (
+                <option value={exactStoppedStatus}>
+                  {exactStoppedStatus === "interrupted"
+                    ? "已停止 · 暂停"
+                    : "已停止 · 取消"}
+                </option>
+              ) : null}
+            </SelectControl>
             <label className="agent-run-filters__search">
               <Search size={16} aria-hidden="true" />
               <span className="sr-only">搜索运行</span>
@@ -400,16 +498,37 @@ function Metric({
   label,
   value,
   tone,
+  pressed,
+  onClick,
 }: {
   icon: ReactElement;
   label: string;
   value: number | string;
   tone: string;
+  pressed?: boolean;
+  onClick?: () => void;
 }) {
-  return (
-    <li data-tone={tone}>
+  const content = (
+    <>
       <span aria-hidden="true">{icon}</span>
       <div><small>{label}</small><strong>{value}</strong></div>
+    </>
+  );
+  return (
+    <li data-tone={tone}>
+      {onClick ? (
+        <button
+          type="button"
+          className="agent-run-metric"
+          aria-label={`筛选${label}，${value} 条`}
+          aria-pressed={pressed}
+          onClick={onClick}
+        >
+          {content}
+        </button>
+      ) : (
+        <div className="agent-run-metric">{content}</div>
+      )}
     </li>
   );
 }

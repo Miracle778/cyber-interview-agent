@@ -4,6 +4,7 @@ import { Badge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
 import { Field } from "../../shared/ui/Field";
+import { SelectControl } from "../../shared/ui/SelectControl";
 import { ApiError } from "../../shared/api/client";
 import { toActionableError, type ActionableError } from "../../shared/api/errorAdvice";
 import {
@@ -154,7 +155,7 @@ export function ProviderManager({ onProvidersChanged }: ProviderManagerProps = {
           <label className="field__label" htmlFor="new-provider-format">
             协议
           </label>
-          <select
+          <SelectControl
             id="new-provider-format"
             name="new-provider-format"
             className="field__input"
@@ -163,7 +164,7 @@ export function ProviderManager({ onProvidersChanged }: ProviderManagerProps = {
           >
             <option value="openai-compatible">OpenAI 兼容</option>
             <option value="anthropic-compatible">Anthropic 兼容</option>
-          </select>
+          </SelectControl>
         </div>
         <Field
           label="Base URL"
@@ -439,7 +440,7 @@ function ProviderCard({ provider, expanded, onToggle, onUpdated, onRemoved }: Pr
           <Field label="服务名称" name={`edit-name-${provider.id}`} value={editName} onChange={(e) => setEditName(e.target.value)} />
           <div className="field">
             <label className="field__label" htmlFor={`edit-format-${provider.id}`}>协议</label>
-            <select
+            <SelectControl
               id={`edit-format-${provider.id}`}
               name={`edit-format-${provider.id}`}
               className="field__input"
@@ -448,7 +449,7 @@ function ProviderCard({ provider, expanded, onToggle, onUpdated, onRemoved }: Pr
             >
               <option value="openai-compatible">OpenAI 兼容</option>
               <option value="anthropic-compatible">Anthropic 兼容</option>
-            </select>
+            </SelectControl>
           </div>
           <Field label="Base URL" name={`edit-base-url-${provider.id}`} value={editBaseUrl} onChange={(e) => setEditBaseUrl(e.target.value)} />
           <Field

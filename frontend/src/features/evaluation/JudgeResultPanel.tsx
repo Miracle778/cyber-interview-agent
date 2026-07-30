@@ -1,4 +1,5 @@
 import { AlertTriangle, ShieldCheck } from "lucide-react";
+import { SelectControl } from "../../shared/ui/SelectControl";
 import type { EvaluationFeedback, EvaluationRun } from "./evaluationTypes";
 
 
@@ -95,11 +96,11 @@ function FeedbackForm({
       }}
     >
       <strong>人工反馈</strong>
-      <select name="verdict" aria-label="反馈结论" defaultValue="accurate">
+      <SelectControl name="verdict" aria-label="反馈结论" defaultValue="accurate">
         <option value="accurate">评估准确</option>
         <option value="incorrect">评估不准确</option>
         <option value="uncertain">暂不确定</option>
-      </select>
+      </SelectControl>
       <input name="reason" aria-label="反馈说明" placeholder="补充证据或说明（可选）" />
       <button type="submit" disabled={pending}>{pending ? "正在保存…" : "提交反馈"}</button>
     </form>

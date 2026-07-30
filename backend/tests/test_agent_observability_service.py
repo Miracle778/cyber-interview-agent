@@ -228,6 +228,7 @@ def test_cursor_filters_and_system_agent_visibility_are_stable(
     first = service.list_executions(limit=2)
     second = service.list_executions(limit=2, cursor=first.next_cursor)
     failed = service.list_executions(status="failed", limit=50)
+    curation = service.list_executions(agent="题库整理", limit=50)
     searched = service.list_executions(keyword="画像助手", limit=50)
     system = service.list_executions(include_system_agents=True, limit=50)
     time_window = service.list_executions(
@@ -240,6 +241,9 @@ def test_cursor_filters_and_system_agent_visibility_are_stable(
     assert [item.id for item in second.items] == ["run-failed", "run-cancelled"]
     assert first.total == second.total == 6
     assert [item.id for item in failed.items] == ["run-failed"]
+    assert {item.display_name for item in curation.items} == {"题库整理"}
+    assert "画像助手" in curation.agent_counts
+    assert "复习助手" in curation.agent_counts
     assert [item.id for item in searched.items] == ["run-missing"]
     assert system.total == 7
     assert system.items[0].id == "run-system"
@@ -257,3 +261,44 @@ def test_cursor_filters_and_system_agent_visibility_are_stable(
 
     with pytest.raises(AgentExecutionNotFoundError):
         service.get_execution("run-publication")
+
+
+def test_status_filters_group_internal_runtime_states(
+    tmp_path: Path,
+) -> None:
+    service, connection = _service(tmp_path)
+    for index, status in enumerate(
+        (
+            "queued",
+            "waiting_for_input",
+            "waiting_for_approval",
+            "failed",
+            "interrupted",
+            "cancelled",
+            "running",
+        )
+    ):
+        _insert_run(
+            connection,
+            run_id=f"run-{status}",
+            graph_id="question.curate",
+            status=status,
+            created_at=f"2026-07-29T12:00:0{index}+00:00",
+        )
+
+    waiting = service.list_executions(status="waiting", limit=50)
+    attention = service.list_executions(status="attention", limit=50)
+    stopped = service.list_executions(status="stopped", limit=50)
+
+    assert {item.status for item in waiting.items} == {
+        "queued",
+        "waiting_for_input",
+        "waiting_for_approval",
+    }
+    assert {item.status for item in attention.items} == {"failed"}
+    assert {item.status for item in stopped.items} == {
+        "interrupted",
+        "cancelled",
+    }
+    assert waiting.status_counts == attention.status_counts == stopped.status_counts
+    assert waiting.status_counts["running"] == 1
