@@ -268,11 +268,11 @@ git commit -m "feat(agent-evaluation): redesign quality evaluation workbench"
 - Consumes: approved reference, production page, real development evaluation data.
 - Produces: same-state 1440 reference/implementation comparison, four-width overflow evidence, interaction evidence, and a passing design QA report.
 
-- [ ] **Step 1: Start the isolated development backend and frontend**
+- [x] **Step 1: Start the isolated development backend and frontend**
 
 Use the documented development commands and development app-data path. Do not start the main-worktree backend on the feature ports.
 
-- [ ] **Step 2: Capture and compare 1440 report state**
+- [x] **Step 2: Capture and compare 1440 report state**
 
 Open a real completed evaluation. Compare:
 
@@ -285,7 +285,7 @@ Open a real completed evaluation. Compare:
 
 Record P0/P1/P2/P3 findings in `design-qa.md`.
 
-- [ ] **Step 3: Fix all P0/P1/P2 findings**
+- [x] **Step 3: Fix all P0/P1/P2 findings**
 
 Repeat capture and comparison until `design-qa.md` states:
 
@@ -293,15 +293,15 @@ Repeat capture and comparison until `design-qa.md` states:
 final result: passed
 ```
 
-- [ ] **Step 4: Verify interactions**
+- [x] **Step 4: Verify interactions**
 
 Check baseline/candidate selection, compatible comparison, incompatible comparison explanation, report/trends tabs, Judge launch availability, feedback submit, regression-case confirmation, and advanced raw disclosure.
 
-- [ ] **Step 5: Verify 390/768/1024/1440**
+- [x] **Step 5: Verify 390/768/1024/1440**
 
 For `/agents/evaluations`, record `scrollWidth`, `clientWidth`, primary action reachability, and report/rail order at each width. All widths must have no page-level horizontal overflow.
 
-- [ ] **Step 6: Run final affected regression**
+- [x] **Step 6: Run final affected regression**
 
 ```bash
 cd frontend
@@ -313,7 +313,7 @@ cd ..
 git diff --check
 ```
 
-- [ ] **Step 7: Commit QA corrections**
+- [x] **Step 7: Commit QA corrections**
 
 Commit only tracked product/design files:
 

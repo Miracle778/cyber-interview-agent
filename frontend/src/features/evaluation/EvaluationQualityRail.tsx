@@ -91,7 +91,7 @@ export function EvaluationQualityRail({
           <div><dt>质量包</dt><dd>{evaluationPackLabel(run.evalPackId)}</dd></div>
           <div><dt>版本</dt><dd>v{run.evalPackVersion}</dd></div>
           <div><dt>触发方式</dt><dd>{run.trigger === "manual" ? "手动评估" : run.trigger === "automatic" ? "自动评估" : "回归验证"}</dd></div>
-          <div><dt>Judge 模型</dt><dd>{run.judgeProviderModelId ?? "未启用"}</dd></div>
+          <div><dt>Judge 模型</dt><dd>{run.judgeProviderModelId ? "已配置" : "未启用"}</dd></div>
         </dl>
         <p>原始正文默认不进入回归样例；这里只展示冻结证据与评估结论。</p>
       </section>

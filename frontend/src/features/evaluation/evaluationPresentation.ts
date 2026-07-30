@@ -74,6 +74,7 @@ const STATUS_META: Record<string, EvaluationStatusMeta> = {
 
 const SUCCESS_STATUSES = new Set(["passed", "pass", "ok", "valid"]);
 const FAILURE_STATUSES = new Set(["failed", "fail", "error", "invalid", "missing"]);
+const ATTENTION_STATUSES = new Set(["inconclusive", "uncertain", "partial", "warning"]);
 
 function readableIdentifier(value: string): string {
   const normalized = value
@@ -106,6 +107,9 @@ export function dimensionOutcome(dimension: EvaluationDimension): DimensionOutco
   const normalizedStatus = dimension.status.toLowerCase();
   if (FAILURE_STATUSES.has(normalizedStatus)) {
     return { label: "未通过", tone: "danger" };
+  }
+  if (ATTENTION_STATUSES.has(normalizedStatus)) {
+    return { label: "证据不足", tone: "warning" };
   }
   if (dimension.score !== null) {
     if (dimension.score >= 85) return { label: "表现良好", tone: "success" };

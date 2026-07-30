@@ -43,5 +43,7 @@ describe("EvaluationQualityRail", () => {
     expect(screen.getByText("人工反馈")).toBeInTheDocument();
     expect(screen.getByText("1 项稳定")).toBeInTheDocument();
     expect(screen.getByText("复习评价质量")).toBeInTheDocument();
+    expect(screen.getByText("已配置")).toBeInTheDocument();
+    expect(screen.queryByText("judge-model")).not.toBeInTheDocument();
   });
 });

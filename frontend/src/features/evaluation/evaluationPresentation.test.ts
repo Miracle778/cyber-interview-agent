@@ -67,6 +67,10 @@ describe("evaluation presentation semantics", () => {
     expect(dimensionOutcome(dimension(61)).tone).toBe("warning");
     expect(dimensionOutcome(dimension(40)).tone).toBe("danger");
     expect(dimensionOutcome(dimension(null, "failed")).tone).toBe("danger");
+    expect(dimensionOutcome(dimension(null, "inconclusive"))).toEqual({
+      label: "证据不足",
+      tone: "warning",
+    });
   });
 
   it("summarizes only observed results and the latest human verdict", () => {
