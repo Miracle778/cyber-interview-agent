@@ -21,6 +21,37 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _skip_symlink_tests_without_windows_privilege(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Skip only symlink cases when Windows has not enabled symlink creation."""
+    if os.name != "nt":
+        yield
+        return
+
+    original = Path.symlink_to
+
+    def guarded_symlink_to(self, target, target_is_directory=False):
+        try:
+            return original(
+                self,
+                target,
+                target_is_directory=target_is_directory,
+            )
+        except NotImplementedError:
+            pytest.skip("this Windows environment does not support symlinks")
+        except OSError as error:
+            if getattr(error, "winerror", None) == 1314:
+                pytest.skip(
+                    "Windows Developer Mode or symlink privilege is required"
+                )
+            raise
+
+    monkeypatch.setattr(Path, "symlink_to", guarded_symlink_to)
+    yield
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _isolated_app_data_dir() -> Path:
     original = os.environ.get("CYBER_INTERVIEW_AGENT_DATA_DIR")

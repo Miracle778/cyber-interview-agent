@@ -7,6 +7,8 @@ from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
 
+from app.infrastructure.file_descriptors import binary_open_flags
+
 
 class ExternalDocumentChangedError(RuntimeError):
     pass
@@ -30,45 +32,44 @@ def quarantine_remove_owned_file(
     """Remove only the same regular file that was opened and hashed."""
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     try:
-        descriptor = os.open(target, os.O_RDONLY | nofollow)
+        opened, opened_hash = _read_regular_file_snapshot(
+            target,
+            flags=os.O_RDONLY | nofollow,
+        )
     except FileNotFoundError:
         return "missing"
     except OSError:
         return "conflict"
+    if opened_hash != expected_hash:
+        return "conflict"
+    identity = (opened.st_dev, opened.st_ino)
     try:
-        opened = os.fstat(descriptor)
-        if not stat.S_ISREG(opened.st_mode):
+        if path_hash_func(target) != expected_hash:
             return "conflict"
-        digest = sha256()
-        while True:
-            chunk = os.read(descriptor, 64 * 1024)
-            if not chunk:
-                break
-            digest.update(chunk)
-        if digest.hexdigest() != expected_hash:
+        current = os.stat(target, follow_symlinks=False)
+        if (current.st_dev, current.st_ino) != identity:
             return "conflict"
-        try:
-            if path_hash_func(target) != expected_hash:
-                return "conflict"
-            if quarantine.exists() or quarantine.is_symlink():
-                return "conflict"
-            os.replace(target, quarantine)
-        except FileNotFoundError:
-            return "missing"
-        except OSError:
+        if quarantine.exists() or quarantine.is_symlink():
             return "conflict"
-        moved = os.stat(quarantine, follow_symlinks=False)
-        if (moved.st_dev, moved.st_ino) != (opened.st_dev, opened.st_ino):
-            _restore_quarantine(
-                quarantine,
-                target,
-                expected_identity=(moved.st_dev, moved.st_ino),
-            )
-            return "conflict"
+        os.replace(target, quarantine)
+    except FileNotFoundError:
+        return "missing"
+    except OSError:
+        return "conflict"
+    moved = os.stat(quarantine, follow_symlinks=False)
+    moved_identity = (moved.st_dev, moved.st_ino)
+    if moved_identity != identity or hash_file(quarantine) != expected_hash:
+        _restore_quarantine(
+            quarantine,
+            target,
+            expected_identity=moved_identity,
+        )
+        return "conflict"
+    try:
         quarantine.unlink()
-        return "removed"
-    finally:
-        os.close(descriptor)
+    except OSError:
+        return "conflict"
+    return "removed"
 
 
 def reconcile_quarantined_file(
@@ -79,29 +80,20 @@ def reconcile_quarantined_file(
     """Reconcile a deterministic quarantine left by an interrupted removal."""
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     try:
-        descriptor = os.open(quarantine, os.O_RDONLY | nofollow)
+        opened, opened_hash = _read_regular_file_snapshot(
+            quarantine,
+            flags=os.O_RDONLY | nofollow,
+        )
     except FileNotFoundError:
         return "missing"
     except OSError:
         return "conflict"
     try:
-        opened = os.fstat(descriptor)
-        if not stat.S_ISREG(opened.st_mode):
-            return "conflict"
-        digest = sha256()
-        while True:
-            chunk = os.read(descriptor, 64 * 1024)
-            if not chunk:
-                break
-            digest.update(chunk)
         identity = (opened.st_dev, opened.st_ino)
-        try:
-            current = os.stat(quarantine, follow_symlinks=False)
-        except OSError:
-            return "conflict"
+        current = os.stat(quarantine, follow_symlinks=False)
         if (current.st_dev, current.st_ino) != identity:
             return "conflict"
-        if digest.hexdigest() == expected_hash:
+        if opened_hash == expected_hash:
             target_conflict = target.exists() or target.is_symlink()
             try:
                 quarantine.unlink()
@@ -115,6 +107,27 @@ def reconcile_quarantined_file(
         ):
             return "external_restored"
         return "conflict"
+    except OSError:
+        return "conflict"
+
+
+def _read_regular_file_snapshot(
+    path: Path,
+    *,
+    flags: int,
+) -> tuple[os.stat_result, str]:
+    descriptor = os.open(path, binary_open_flags(flags))
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            raise OSError("path is not a regular file")
+        digest = sha256()
+        while True:
+            chunk = os.read(descriptor, 64 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+        return opened, digest.hexdigest()
     finally:
         os.close(descriptor)
 

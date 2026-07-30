@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -50,7 +50,7 @@ def _service(tmp_path, *, workspace_id="workspace-1", status="completed"):
         connection=connection,
         workspace_id=workspace_id,
         workspace_root=tmp_path,
-        now=lambda: datetime(2026, 7, 30, tzinfo=timezone.utc),
+        now=lambda: datetime.now(timezone.utc) + timedelta(minutes=1),
     )
     return connection, service
 

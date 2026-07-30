@@ -1,0 +1,23 @@
+$ErrorActionPreference = "Stop"
+
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$backend = Join-Path $repoRoot "backend"
+$frontend = Join-Path $repoRoot "frontend"
+$dataDir = Join-Path $env:LOCALAPPDATA "cyber-interview-agent-dev"
+
+Write-Host "Cyber Interview Agent - feature workspace"
+Write-Host ""
+Write-Host "Create the isolated application-data directory once:"
+Write-Host "  New-Item -ItemType Directory -Force '$dataDir'"
+Write-Host ""
+Write-Host "Terminal 1 (backend, port 8001, isolated application data):"
+Write-Host "  `$env:CYBER_INTERVIEW_AGENT_DATA_DIR = '$dataDir'"
+Write-Host "  Set-Location '$backend'"
+Write-Host "  uv run uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload"
+Write-Host ""
+Write-Host "Terminal 2 (frontend, port 5174):"
+Write-Host "  `$env:CYBER_API_TARGET = 'http://127.0.0.1:8001'"
+Write-Host "  Set-Location '$frontend'"
+Write-Host "  pnpm dev -- --host 127.0.0.1 --port 5174"
+Write-Host ""
+Write-Host "Open http://127.0.0.1:5174"

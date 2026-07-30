@@ -253,10 +253,25 @@ async def test_restart_reconciles_run_scoped_quarantine_after_rename_crash(
     monkeypatch.setattr(service._drafts, "mark_published", fail_mark)
     with monkeypatch.context() as crash:
         crash.setattr(os, "replace", crash_after_quarantine_rename)
-        with pytest.raises(
-            RuntimeError, match="simulated crash after quarantine rename"
-        ):
-            await service.publish_approved_action(action)
+        if swap_external_replacement:
+            with pytest.raises(
+                DraftVersionChangedError, match="forced mark failure"
+            ):
+                await service.publish_approved_action(action)
+        else:
+            with pytest.raises(
+                RuntimeError, match="simulated crash after quarantine rename"
+            ):
+                await service.publish_approved_action(action)
+
+    if swap_external_replacement:
+        assert target.read_text(encoding="utf-8") == "external replacement"
+        assert not quarantine.exists()
+        failed = await repository.latest_for_draft(draft.id)
+        assert failed is not None
+        assert failed.state == "failed"
+        assert failed.error_code == "publication_compensation_conflict"
+        return
 
     assert not target.exists()
     assert quarantine.is_file()
@@ -272,14 +287,9 @@ async def test_restart_reconciles_run_scoped_quarantine_after_rename_crash(
     latest = await repository.latest_for_draft(draft.id)
     assert latest is not None
     assert not quarantine.exists()
-    if swap_external_replacement:
-        assert target.read_text(encoding="utf-8") == "external replacement"
-        assert latest.state == "failed"
-        assert latest.error_code == "publication_compensation_conflict"
-    else:
-        assert not target.exists()
-        assert latest.state == "prepared"
-        assert latest.result_hash is None
+    assert not target.exists()
+    assert latest.state == "prepared"
+    assert latest.result_hash is None
 
 
 @pytest.mark.asyncio

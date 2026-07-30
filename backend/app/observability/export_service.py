@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from app.infrastructure.file_descriptors import binary_open_flags
 from app.observability.content_reader import TraceContentReader
 from app.observability.repository import TraceIndexRepository
 from app.security.workspace_paths import PathPolicyError, WorkspacePathPolicy
@@ -325,7 +326,7 @@ def _create_private_file(path: Path) -> int:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
-    return os.open(path, flags, 0o600)
+    return os.open(path, binary_open_flags(flags), 0o600)
 
 
 def _write_member(

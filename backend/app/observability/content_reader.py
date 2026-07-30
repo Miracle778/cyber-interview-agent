@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from app.infrastructure.file_descriptors import binary_open_flags
 from app.observability.repository import TraceIndexRepository
 from app.security.workspace_paths import PathPolicyError, WorkspacePathPolicy
 
@@ -133,9 +134,7 @@ class TraceContentReader:
             flags = os.O_RDONLY
             if hasattr(os, "O_NOFOLLOW"):
                 flags |= os.O_NOFOLLOW
-            if hasattr(os, "O_BINARY"):
-                flags |= os.O_BINARY
-            descriptor = os.open(path, flags)
+            descriptor = os.open(path, binary_open_flags(flags))
             try:
                 file_stat = os.fstat(descriptor)
                 if not stat.S_ISREG(file_stat.st_mode):

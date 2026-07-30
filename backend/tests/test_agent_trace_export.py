@@ -19,6 +19,7 @@ from app.observability.service import (
     TraceExportGenerationError,
     TraceExportNotFoundError,
 )
+from app.observability.export_service import _create_private_file
 
 
 def _service(
@@ -105,8 +106,9 @@ def test_trace_export_is_idempotent_and_manifest_is_immutable(
     assert repeated.artifact_sha256 == first.artifact_sha256
     assert loaded.id == first.id
     assert before == after
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+    if os.name != "nt":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+        assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
     with zipfile.ZipFile(path) as archive:
         assert set(archive.namelist()) == {
             "manifest.json",
@@ -142,6 +144,29 @@ def test_trace_export_same_key_with_different_request_conflicts(
             )
     finally:
         connection.close()
+
+
+def test_private_export_file_uses_binary_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "export.tmp"
+    binary_flag = 1 << 29
+    real_open = os.open
+    observed_flags: list[int] = []
+
+    monkeypatch.setattr(os, "O_BINARY", binary_flag, raising=False)
+
+    def tracked_open(open_path, flags, mode=0o777):
+        observed_flags.append(flags)
+        return real_open(open_path, flags & ~binary_flag, mode)
+
+    monkeypatch.setattr(os, "open", tracked_open)
+
+    descriptor = _create_private_file(path)
+    os.close(descriptor)
+
+    assert observed_flags[-1] & binary_flag
 
 
 def test_trace_export_with_bodies_requires_advanced_mode(
