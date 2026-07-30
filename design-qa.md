@@ -1,39 +1,35 @@
-# R3 Profile Material UI — Design QA
+# Agent Quality Evaluation Lab — Design QA
 
-- Source visual truth: `docs/superpowers/assets/r3/resume-version-reference.png`
-- Implementation screenshots: `docs/verification/assets/r3/profile-versions-390.jpg`, `profile-versions-768.jpg`, `profile-versions-1024.jpg`, `profile-versions-1440.jpg`
+- Source visual truth: `docs/superpowers/assets/agent-observability/quality-evaluation-lab-reference.png`
+- Route: `/agents/evaluations`
 - Viewports: 390×844, 768×900, 1024×900, 1440×1000 CSS px
-- Density normalization: source 1488×1058 and desktop implementation 1440×1000 were compared as full desktop views at deviceScaleFactor 1; responsive captures use their named CSS width at deviceScaleFactor 1.
-- State: one active résumé, version 1 selected, ingest stopped because the profile extraction model is not configured.
+- State: development workspace with one completed question-curation evaluation, one incompatible failed evaluation, one human feedback record, and one metadata-only regression case.
 
-**Findings**
+## Findings
 
-- No actionable P0/P1/P2 mismatch remains. The desktop view preserves the reference hierarchy: fixed product sidebar, page tabs, version list, largest document/status region, and a narrow action rail. The failed execution replaces the reference's completed preview and diff data intentionally, using the same grid rather than inventing unavailable product data.
-- Fonts and typography: existing Inter/system stack, 28 px page title level, 16–18 px section hierarchy, and 12–14 px dense metadata match the product reference and remain readable.
-- Spacing and layout rhythm: desktop three-column proportions track the reference; 768–1024 collapse the action rail without losing the primary task; 390 becomes a single labeled-card flow. Measured page `scrollWidth === clientWidth` at all four widths.
-- Colors and tokens: existing blue-gray surfaces, primary blue selection, green completion, and semantic red failure tokens are used consistently. Red is limited to a real terminal failure, not an in-progress stage.
-- Image and icon fidelity: the screen contains no raster content from the reference. UI icons use the existing Lucide library used throughout the product; no placeholder artwork or handcrafted SVG/CSS illustration was introduced.
-- Copy and content: upload, retry, privacy, and failure text explain what happened and how to recover. Internal paths, Tool arguments, and model reasoning are not exposed.
+- No actionable P0/P1/P2 mismatch remains. The page now follows the reference hierarchy: comparison toolbar, evaluation report, baseline/candidate metric matrix, quality-gate rail, source strip, and regression-case table.
+- Baseline/candidate comparison is the primary task. Trends are hidden behind a secondary tab and no longer displace the report.
+- Internal Pack and dimension IDs are translated into business labels. Unknown identifiers receive readable fallbacks; `inconclusive` is shown as “证据不足” rather than an English enum.
+- The quality rail separates release policy from observed results. Deterministic checks, Judge signals, human feedback, current result counts, and privacy/configuration boundaries are visually distinct.
+- Raw model identifiers are not primary UI text. The rail only indicates whether a Judge model is configured; raw Judge input/output remains inside advanced diagnostics.
+- 1440 uses a fixed report + 320 px rail workbench with internal report scrolling. At 1024 and 768 the rail moves below the report inside a bounded workbench scroller, preserving the full metric matrix. At 390 the matrix becomes labeled stacked rows.
+- Measured `scrollWidth === clientWidth` at 390, 768, 1024, and 1440. Browser console warning/error count was zero at all four widths.
+- The incompatible baseline path displays an inline explanation while keeping the candidate report and metric evidence usable.
 
-**Open Questions**
+## Comparison History
 
-- Populated Evidence preview and successful multi-version comparison depend on a configured `profile_extraction` model and later R3 Claim/diff APIs. Their empty and failure states are implemented now; populated claim review belongs to the next tasks.
+1. Initial implementation exposed the raw `Inconclusive` status and a UUID-like Judge model ID, and kept the rail beside a too-narrow report at 1024.
+2. The final pass translated the status to “证据不足,” replaced the raw model ID with configuration state, moved the rail below the report under 1200 px, and changed tablet workbenches to bounded internal scrolling.
+3. Final screenshots at 1440 and 390 preserve the reference’s dense report rhythm without page-level horizontal overflow.
 
-**Comparison History**
+## Implementation Checklist
 
-1. Initial browser pass found a P1 state mismatch: a graph-construction failure left the material marked as processing, causing indefinite polling. The execution failure path now persists a retryable material terminal status, and the page explains that the uploaded file is retained.
-2. Post-fix screenshots show the terminal state inline in the version workspace, with retry guidance and no page-level horizontal overflow at 390, 768, 1024, or 1440 px.
-
-**Implementation Checklist**
-
-- [x] Desktop reference hierarchy preserved.
-- [x] Mobile controls remain reachable and at least 44 px high.
-- [x] Keyboard-selectable version rows and visible focus styles retained.
-- [x] Failure, loading, empty, upload, retry, archive/restore, primary-version, and Evidence locator behavior covered by focused tests or browser evidence.
+- [x] Comparison-centered desktop hierarchy matches the approved reference.
+- [x] Business labels replace internal IDs and enums as primary text.
+- [x] Evidence details, feedback, raw diagnostics, trends, and regression cases remain reachable.
+- [x] 390 / 768 / 1024 / 1440 responsive measurements pass without horizontal overflow.
+- [x] Primary mobile controls are at least 44 px high.
 - [x] Browser console has no warning or error entries.
-
-**Follow-up Polish**
-
-- P3: compare the populated document/Evidence view again after a development profile model is configured and Task 10 exposes real Claim proposals.
+- [x] Incompatible comparison remains safe and understandable.
 
 final result: passed

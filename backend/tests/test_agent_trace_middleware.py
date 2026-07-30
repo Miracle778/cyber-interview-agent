@@ -57,6 +57,10 @@ async def test_model_error_preserves_pairing_and_full_request(tmp_path: Path):
         "model.error",
     ]
     assert rows[0]["invocation_id"] == rows[1]["invocation_id"]
+    assert rows[0]["operation_id"] == rows[1]["operation_id"]
+    assert rows[0]["operation_kind"] == rows[1]["operation_kind"] == "model"
+    assert rows[0]["parent_operation_id"] == rows[1]["parent_operation_id"]
+    assert rows[0]["parent_operation_id"] is not None
     assert rows[0]["agent_name"] == "question_discovery"
     assert rows[0]["payload"]["messages"][0]["content"] == "完整来源"
     assert "sk-hidden" not in str(rows[1])
@@ -117,6 +121,9 @@ async def test_tool_success_records_full_args_and_result(tmp_path: Path):
     assert rows[0]["payload"]["args"] == {"evidence_id": "ev-1"}
     assert rows[1]["payload"]["result"]["content"] == "完整证据"
     assert rows[0]["invocation_id"] == rows[1]["invocation_id"] == "call-1"
+    assert rows[0]["operation_id"] == rows[1]["operation_id"]
+    assert rows[0]["operation_kind"] == rows[1]["operation_kind"] == "tool"
+    assert rows[0]["parent_operation_id"] == rows[1]["parent_operation_id"]
     assert rows[1]["payload"]["duration_ms"] >= 0
 
 

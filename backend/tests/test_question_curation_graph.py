@@ -18,6 +18,7 @@ from app.agents.prompts.question_curation_prompts import (
 )
 from app.agents.question_curation_agent import (
     ModelOutputTruncatedError,
+    ModelStructuredOutputMissingError,
     QuestionCurationAgents,
 )
 from app.agents.question_curation_contracts import (
@@ -546,6 +547,62 @@ async def test_concrete_agents_report_truncated_reasoning_as_recoverable(
     assert failure.value.code == "output_truncated"
 
 
+@pytest.mark.asyncio
+async def test_concrete_agents_accept_explicit_zero_question_prose(
+    tmp_path: Path,
+) -> None:
+    class Runnable:
+        async def ainvoke(self, _input, config=None, *, context=None):
+            return {
+                "messages": [
+                    AIMessage(content="这些片段未包含可识别的面试题。")
+                ],
+                "structured_response": None,
+            }
+
+    runnable = Runnable()
+    agents = QuestionCurationAgents(runnable, runnable, runnable)
+    sections = (
+        SourceSection("s1", "s1#section-0001", 1, "普通随手记录", "a" * 64),
+    )
+
+    result = await agents.discover(
+        sections, context=context(tmp_path), config={}, unit_index=0
+    )
+
+    assert result.seeds == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "content",
+    [
+        "我无法按格式输出，请稍后重试。",
+        "这里可能包含一道题：线程池应该如何实现？",
+    ],
+)
+async def test_concrete_agents_do_not_silently_drop_unstructured_content(
+    tmp_path: Path, content: str
+) -> None:
+    class Runnable:
+        async def ainvoke(self, _input, config=None, *, context=None):
+            return {
+                "messages": [AIMessage(content=content)],
+                "structured_response": None,
+            }
+
+    runnable = Runnable()
+    agents = QuestionCurationAgents(runnable, runnable, runnable)
+    sections = (
+        SourceSection("s1", "s1#section-0001", 1, "普通随手记录", "a" * 64),
+    )
+
+    with pytest.raises(ModelStructuredOutputMissingError):
+        await agents.discover(
+            sections, context=context(tmp_path), config={}, unit_index=0
+        )
+
+
 @pytest.mark.parametrize("_transport_failure", ["429", "5xx", "network"])
 def test_curation_transport_failures_have_at_most_one_retry(
     _transport_failure: str,
@@ -821,7 +878,7 @@ async def test_graph_emits_monotonic_progress_after_each_bounded_wave(
 
 
 @pytest.mark.asyncio
-async def test_discovery_wave_commits_siblings_before_reporting_one_failure(
+async def test_discovery_wave_keeps_siblings_and_reports_one_failed_block(
     repository: ReviewRepository, batch, tmp_path: Path
 ):
     class PartialFailureAgents(RecordingCurationAgents):
@@ -839,22 +896,57 @@ async def test_discovery_wave_commits_siblings_before_reporting_one_failure(
                 source_refs=[section.ref for section in sections],
             )])
 
+        async def enrich(
+            self, seeds, *, sections, known_questions, context, config, unit_index
+        ):
+            self.enrichment_calls.append(EnrichmentCall(
+                unit_index, tuple(seeds), tuple(sections), tuple(known_questions)
+            ))
+            return QuestionCandidateChunk(candidates=[
+                QuestionCandidate(
+                    title=f"题目 {item.seed_ordinal + 1}",
+                    question_text=item.question_text,
+                    reference_answer="答案",
+                    topics=["topic"],
+                    difficulty="medium",
+                    key_points=["关键点"],
+                    follow_ups=[],
+                    source_refs=list(item.source_refs),
+                    correction_note="结构化整理",
+                )
+                for item in seeds
+            ])
+
     agents = PartialFailureAgents()
     graph = create_question_curation_graph(agents, repository=repository)
 
-    with pytest.raises(Exception):
-        await graph.ainvoke(
-            persist_graph_input(repository, {
-                **curation_input(batch.id),
-                "source_excerpts": plain_sources(3),
-            }),
-            context=context(tmp_path),
-        )
+    result = await graph.ainvoke(
+        persist_graph_input(repository, {
+            **curation_input(batch.id),
+            "source_excerpts": plain_sources(3),
+        }),
+        context=context(tmp_path),
+    )
 
     items = repository.list_curation_work_items(batch.id, stage="discovery")
     assert [item.status for item in items] == ["completed", "failed", "completed"]
+    assert [item.attempt_count for item in items] == [1, 2, 1]
+    assert agents.discovery_call_indexes.count(1) == 2
     assert items[0].output is not None
     assert items[2].output is not None
+    assert len(result["candidates"]) == 2
+    assert result["warnings"] == [{
+        "code": "curation_discovery_block_failed",
+        "stage": "discovery",
+        "unitIndex": 1,
+        "sourceId": "plain-1",
+        "sourceRefs": [
+            "plain-1#section-0001",
+            "plain-1#section-0002",
+            "plain-1#section-0003",
+        ],
+        "errorCode": "provider_error",
+    }]
 
 
 @pytest.mark.asyncio
@@ -862,7 +954,7 @@ async def test_discovery_wave_commits_siblings_before_reporting_one_failure(
     "failure_type",
     [FakeRateLimitedError, FakeRetryAfterError, FakeAnthropicOverloadError],
 )
-async def test_final_rate_limit_reduces_only_the_current_batch_to_one(
+async def test_rate_limited_block_is_skipped_and_reduces_current_batch_to_one(
     repository: ReviewRepository, batch, tmp_path: Path, failure_type
 ):
     class RateLimitedAgents(RecordingCurationAgents):
@@ -880,25 +972,78 @@ async def test_final_rate_limit_reduces_only_the_current_batch_to_one(
                 source_refs=[section.ref for section in sections],
             )])
 
+        async def enrich(
+            self, seeds, *, sections, known_questions, context, config, unit_index
+        ):
+            return QuestionCandidateChunk(candidates=[
+                QuestionCandidate(
+                    title=f"题目 {item.seed_ordinal + 1}",
+                    question_text=item.question_text,
+                    reference_answer="答案",
+                    topics=["topic"],
+                    difficulty="medium",
+                    key_points=["关键点"],
+                    follow_ups=[],
+                    source_refs=list(item.source_refs),
+                    correction_note="结构化整理",
+                )
+                for item in seeds
+            ])
+
     agents = RateLimitedAgents()
     graph = create_question_curation_graph(agents, repository=repository)
 
-    with pytest.raises(Exception) as failure:
-        await graph.ainvoke(
-            persist_graph_input(repository, {
-                **curation_input(batch.id),
-                "source_excerpts": plain_sources(3),
-            }),
-            context=context(tmp_path),
-        )
+    result = await graph.ainvoke(
+        persist_graph_input(repository, {
+            **curation_input(batch.id),
+            "source_excerpts": plain_sources(3),
+        }),
+        context=context(tmp_path),
+    )
 
-    assert getattr(failure.value, "code", None) == "rate_limited"
-    assert "provider overload" not in str(failure.value)
     assert repository.get_batch(batch.id).concurrency_limit == 1
     assert [
         item.status
         for item in repository.list_curation_work_items(batch.id, stage="discovery")
     ] == ["completed", "failed", "completed"]
+    assert agents.discovery_call_indexes.count(1) == 2
+    assert len(result["candidates"]) == 2
+    assert result["warnings"][0]["errorCode"] == "rate_limited"
+
+
+@pytest.mark.asyncio
+async def test_enrichment_provider_failure_retries_then_skips_without_losing_results(
+    repository: ReviewRepository, batch, tmp_path: Path
+):
+    agents = RecordingCurationAgents(
+        enrichment_outputs=[
+            FakeProviderError("private provider body"),
+            FakeProviderError("private provider body"),
+        ],
+    )
+    graph = create_question_curation_graph(agents, repository=repository)
+
+    result = await graph.ainvoke(
+        persist_graph_input(
+            repository, curation_input(batch.id, section_count=1)
+        ),
+        context=context(tmp_path),
+    )
+
+    seed_tasks = repository.list_curation_seed_tasks(batch.id)
+    assert len(agents.enrichment_calls) == 2
+    assert len(seed_tasks) == 1
+    assert seed_tasks[0].status == "skipped"
+    assert seed_tasks[0].last_error_code == "provider_error"
+    assert result["candidates"] == []
+    assert result["warnings"] == [{
+        "code": "curation_enrichment_item_skipped",
+        "stage": "enrichment",
+        "seedOrdinal": 0,
+        "sourceId": "s1",
+        "sourceRefs": ["s1#section-0001"],
+        "errorCode": "provider_error",
+    }]
 
 
 @pytest.mark.asyncio
@@ -1238,20 +1383,27 @@ async def test_retry_reuses_completed_discovery_item(
         **curation_input(batch.id),
         "source_excerpts": plain_sources(2),
     })
-    with pytest.raises(Exception):
-        await graph.ainvoke(
-            graph_input, context=context(tmp_path)
-        )
-    await graph.ainvoke(
-        graph_input,
-        context=replace(context(tmp_path), run_id="r2"),
+    result = await graph.ainvoke(
+        graph_input, context=context(tmp_path)
     )
 
+    assert len(repository.list_curation_seed_tasks(batch.id)) == 2
+    assert result["warnings"] == []
     assert agents.discovery_call_indexes.count(0) == 1
     assert agents.discovery_call_indexes.count(1) == 2
-    assert repository.list_curation_work_items(
-        batch.id, stage="discovery"
-    )[0].attempt_count == 1
+    attempts = [
+        item.attempt_count
+        for item in repository.list_curation_work_items(
+            batch.id, stage="discovery"
+        )
+    ]
+    assert attempts == [1, 2]
+    assert all(
+        item.status == "completed"
+        for item in repository.list_curation_work_items(
+            batch.id, stage="discovery"
+        )
+    )
 
 
 @pytest.mark.asyncio

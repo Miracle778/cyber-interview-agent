@@ -18,7 +18,7 @@ const ITEMS: ReadonlyArray<{
   { section: "overview", label: "配置概览", description: "查看当前状态", icon: LayoutDashboard },
   { section: "workspace", label: "工作区", description: "切换与数据管理", icon: FolderCog },
   { section: "models", label: "模型服务", description: "服务与任务分配", icon: ServerCog },
-  { section: "diagnostics", label: "运行诊断", description: "Runtime 与安全检查", icon: ShieldCheck },
+  { section: "diagnostics", label: "运行诊断", description: "高级 Trace、Runtime 与安全", icon: ShieldCheck },
 ];
 
 export function SettingsNavigation({

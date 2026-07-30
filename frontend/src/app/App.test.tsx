@@ -12,6 +12,8 @@ describe("App", () => {
   it.each([
     ["/review", "复习"],
     ["/knowledge", "知识库"],
+    ["/agents", "Agent 运行中心"],
+    ["/agents/executions/run-1", "高级运行详情"],
     ["/settings", "设置"],
   ])("renders %s as an independent page", async (path, heading) => {
     window.history.replaceState({}, "", path);
@@ -20,7 +22,7 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findByRole("heading", { level: 1, name: heading })).toBeInTheDocument();
-    const otherHeadings = ["复习", "知识库", "设置"].filter((item) => item !== heading);
+    const otherHeadings = ["复习", "知识库", "Agent 运行中心", "高级运行详情", "设置"].filter((item) => item !== heading);
     otherHeadings.forEach((item) => {
       expect(screen.queryByRole("heading", { level: 1, name: item })).not.toBeInTheDocument();
     });
@@ -36,6 +38,24 @@ describe("App", () => {
     expect(window.location.pathname).toBe("/review");
   });
 
+  it.each([
+    ["/agents", "Agent 运行中心"],
+    ["/agents/executions/run-1", "高级运行详情"],
+  ])("gives %s a shared viewport-owned task workspace shell", async (path, heading) => {
+    window.history.replaceState({}, "", path);
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("Failed to fetch"));
+
+    render(<App />);
+
+    const pageHeading = await screen.findByRole("heading", {
+      level: 1,
+      name: heading,
+    });
+    expect(pageHeading.closest(".page-shell")).toHaveClass(
+      "page-shell--task-workspace",
+    );
+  });
+
   it("exposes only implemented destinations and marks the current page", async () => {
     window.history.replaceState({}, "", "/knowledge");
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("Failed to fetch"));
@@ -46,6 +66,7 @@ describe("App", () => {
     expect(navigation).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "知识库" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "复习" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Agent 运行中心" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "设置" })).toBeInTheDocument();
     expect(screen.queryByText("模拟面试")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "跳到主内容" })).toHaveAttribute("href", "#main-content");

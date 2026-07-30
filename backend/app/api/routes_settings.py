@@ -11,6 +11,8 @@ from app.api.dependencies import (
 from app.application.workspace_runtime import AgentApplication
 from app.core.errors import WorkspaceConflictError
 from app.schemas.settings import (
+    AgentDiagnosticsSettingsResource,
+    AgentQualityEvaluationSettingsResource,
     CreateProviderCommand,
     CreateProviderModelCommand,
     ProviderModelResource,
@@ -19,6 +21,8 @@ from app.schemas.settings import (
     RelinkWorkspaceCommand,
     UpdateProviderCommand,
     UpdateProviderModelCommand,
+    UpdateAgentDiagnosticsSettingsCommand,
+    UpdateAgentQualityEvaluationSettingsCommand,
     UpdateWorkspaceCommand,
     UpdateWorkspaceModelBindingsCommand,
     WorkspaceConfig,
@@ -35,6 +39,55 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 class LegacyWorkspaceCommand(BaseModel):
     workspace_path: str = Field(alias="workspacePath")
     model_config = {"populate_by_name": True}
+
+
+@router.get(
+    "/agent-diagnostics",
+    response_model=AgentDiagnosticsSettingsResource,
+)
+def get_agent_diagnostics_settings(
+    service: WorkspaceService = Depends(get_workspace_service),
+) -> AgentDiagnosticsSettingsResource:
+    return service.get_agent_diagnostics_settings()
+
+
+@router.put(
+    "/agent-diagnostics",
+    response_model=AgentDiagnosticsSettingsResource,
+)
+def replace_agent_diagnostics_settings(
+    command: UpdateAgentDiagnosticsSettingsCommand,
+    service: WorkspaceService = Depends(get_workspace_service),
+) -> AgentDiagnosticsSettingsResource:
+    return service.replace_agent_diagnostics_settings(
+        advanced_enabled=command.advanced_enabled
+    )
+
+
+@router.get(
+    "/agent-quality-evaluation",
+    response_model=AgentQualityEvaluationSettingsResource,
+)
+def get_agent_quality_evaluation_settings(
+    service: WorkspaceService = Depends(get_workspace_service),
+) -> AgentQualityEvaluationSettingsResource:
+    return service.get_agent_quality_evaluation_settings()
+
+
+@router.put(
+    "/agent-quality-evaluation",
+    response_model=AgentQualityEvaluationSettingsResource,
+)
+def replace_agent_quality_evaluation_settings(
+    command: UpdateAgentQualityEvaluationSettingsCommand,
+    service: WorkspaceService = Depends(get_workspace_service),
+) -> AgentQualityEvaluationSettingsResource:
+    return service.replace_agent_quality_evaluation_settings(
+        enabled=command.enabled,
+        automatic_sample_percent=command.automatic_sample_percent,
+        automatic_daily_cap=command.automatic_daily_cap,
+        judge_provider_model_id=command.judge_provider_model_id,
+    )
 
 
 @router.get("/providers", response_model=list[ProviderResource])

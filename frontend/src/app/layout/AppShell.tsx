@@ -8,6 +8,9 @@ import type { ReviewQuestion } from "../../features/review/reviewTypes";
 import { ProfilePage } from "../../features/profile/ProfilePage";
 import { SettingsPage } from "../../features/settings/SettingsPage";
 import { JobTargetPage } from "../../features/jobTargets/JobTargetPage";
+import { AgentRunCenterPage } from "../../features/observability/AgentRunCenterPage";
+import { ExecutionTracePage } from "../../features/observability/ExecutionTracePage";
+import { EvaluationLabPage } from "../../features/evaluation/EvaluationLabPage";
 import { getWorkspace, type WorkspaceConfig } from "../../features/settings/settingsApi";
 import { WorkspaceSwitcher } from "../../features/settings/WorkspaceSwitcher";
 import { MobileNavigation } from "../navigation/MobileNavigation";
@@ -164,6 +167,51 @@ export function AppShell() {
               }
             />
             <Route
+              path="/agents"
+              element={
+                <PageFrame
+                  title="Agent 运行中心"
+                  description="统一查看项目内所有 Agent 的运行、异常、上下文与质量。"
+                  health={health}
+                  workspace={workspace}
+                  workspaceMode
+                  taskWorkspaceMode
+                >
+                  <AgentRunCenterPage workspace={workspace} />
+                </PageFrame>
+              }
+            />
+            <Route
+              path="/agents/executions/:runId"
+              element={
+                <PageFrame
+                  title="高级运行详情"
+                  description="查看一次 Execution 的安全运行摘要与执行过程。"
+                  health={health}
+                  workspace={workspace}
+                  workspaceMode
+                  taskWorkspaceMode
+                >
+                  <ExecutionTracePage workspace={workspace} />
+                </PageFrame>
+              }
+            />
+            <Route
+              path="/agents/evaluations"
+              element={
+                <PageFrame
+                  title="Agent 质量实验室"
+                  description="基于冻结证据评估 Agent 输出并沉淀回归样例。"
+                  health={health}
+                  workspace={workspace}
+                  workspaceMode
+                  taskWorkspaceMode
+                >
+                  <EvaluationLabPage workspace={workspace} />
+                </PageFrame>
+              }
+            />
+            <Route
               path="/settings"
               element={
                 <PageFrame
@@ -199,14 +247,16 @@ interface PageFrameProps {
   workspace: WorkspaceConfig | null;
   children: ReactNode;
   workspaceMode?: boolean;
+  taskWorkspaceMode?: boolean;
   contained?: boolean;
   revealWorkspacePath?: boolean;
 }
 
-function PageFrame({ title, description, health, workspace, children, workspaceMode = false, contained = false, revealWorkspacePath = false }: PageFrameProps) {
+function PageFrame({ title, description, health, workspace, children, workspaceMode = false, taskWorkspaceMode = false, contained = false, revealWorkspacePath = false }: PageFrameProps) {
   const shellClassName = [
     "page-shell",
     workspaceMode ? "page-shell--workspace" : "",
+    taskWorkspaceMode ? "page-shell--task-workspace" : "",
     contained ? "page-shell--contained" : "",
   ].filter(Boolean).join(" ");
 

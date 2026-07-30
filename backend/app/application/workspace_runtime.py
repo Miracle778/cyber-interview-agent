@@ -34,7 +34,7 @@ from app.infrastructure.runtime_database import (
     ThreadLocalRuntimeConnection,
     connect_thread_local_runtime_database,
 )
-from app.infrastructure.observability import NoopObservabilitySink
+from app.infrastructure.observability import NoopObservabilitySink, OtelMetadataExporter
 from app.knowledge.drafts import (
     DraftNotEditableError,
     DraftNotFoundError,
@@ -59,6 +59,14 @@ from app.profile.storage import MaterialStorage
 from app.job_targets.repository import JobTargetRepository
 from app.job_targets.service import JobTargetService
 from app.job_targets.application import JobTargetApplication
+from app.observability.indexer import TraceLedgerIndexer
+from app.observability.repository import TraceIndexRepository
+from app.observability.service import AgentObservabilityService
+from app.evaluation.repository import AgentEvaluationRepository
+from app.evaluation.service import AgentEvaluationService
+from app.observability.retention import TraceRetentionService
+from app.observability.cleanup import TraceCleanupService
+from app.observability.projection import TraceMetadataProjector
 
 
 def _compact_session_title(content: str) -> str:
@@ -214,6 +222,11 @@ class WorkspaceRuntime:
     profile: ProfileService
     job_targets: JobTargetService
     job_training: JobTargetApplication
+    agent_observability: AgentObservabilityService
+    agent_evaluation: AgentEvaluationService | None
+    trace_retention: TraceRetentionService
+    trace_cleanup: TraceCleanupService
+    trace_projection: TraceMetadataProjector
     publication_locks: dict[str, asyncio.Lock] = field(
         default_factory=dict, repr=False
     )
@@ -228,10 +241,42 @@ class WorkspaceRuntime:
         graph_factory: GraphFactory,
         observability,
         validate_review_model: Callable[[str, str], None],
+        advanced_diagnostics_enabled: Callable[[], bool],
+        quality_evaluation_settings: Callable[[], object] | None = None,
     ) -> "WorkspaceRuntime":
         connection = connect_thread_local_runtime_database(root)
         initialize_agent_trace_directory(root)
         repository = ProductRepository(connection)
+        trace_repository = TraceIndexRepository(connection)
+        trace_indexer = TraceLedgerIndexer(
+            workspace_id=workspace_id,
+            workspace_root=root,
+            repository=trace_repository,
+        )
+        agent_observability = AgentObservabilityService(
+            workspace_id=workspace_id,
+            workspace_root=root,
+            connection=connection,
+            trace_repository=trace_repository,
+            indexer=trace_indexer,
+            advanced_diagnostics_enabled=advanced_diagnostics_enabled,
+        )
+        agent_observability.sync()
+        trace_retention = TraceRetentionService(
+            connection=connection,
+            workspace_id=workspace_id,
+            workspace_root=root,
+        )
+        trace_cleanup = TraceCleanupService(
+            retention=trace_retention,
+            repository=trace_repository,
+        )
+        trace_cleanup.resume_incomplete()
+        trace_projection = TraceMetadataProjector(
+            connection=connection,
+            workspace_id=workspace_id,
+            exporter=OtelMetadataExporter(observability),
+        )
         events = ProductEventStream(repository, workspace_root=root)
         sessions = AgentSessionService(repository, events)
         actions = PendingActionRepository(root)
@@ -248,6 +293,36 @@ class WorkspaceRuntime:
         )
         holder: dict[str, HitlService] = {}
         trace_writer = getattr(graph_factory, "trace_writer", None) or AgentTraceWriter()
+        evaluation_repository = AgentEvaluationRepository(connection, workspace_id)
+        evaluation_factory = getattr(graph_factory, "create_evaluation_judge", None)
+        agent_evaluation = (
+            None
+            if evaluation_factory is None
+            else AgentEvaluationService(
+                workspace_id=workspace_id,
+                workspace_root=root,
+                repository=evaluation_repository,
+                observability=agent_observability,
+                model_bindings=model_bindings,
+                settings=quality_evaluation_settings
+                or (
+                    lambda: type(
+                        "EvaluationSettings",
+                        (),
+                        {
+                            "enabled": False,
+                            "automatic_daily_cap": 20,
+                            "judge_provider_model_id": None,
+                        },
+                    )()
+                ),
+                judge_factory=lambda provider_model_id: evaluation_factory(
+                    model_bindings=model_bindings(),
+                    provider_model_id=provider_model_id,
+                ),
+                advanced_diagnostics_enabled=advanced_diagnostics_enabled,
+            )
+        )
 
         def build(kind: str, **dependencies):
             return graph_factory(
@@ -495,6 +570,11 @@ class WorkspaceRuntime:
             profile=profile,
             job_targets=job_targets,
             job_training=job_training,
+            agent_observability=agent_observability,
+            agent_evaluation=agent_evaluation,
+            trace_retention=trace_retention,
+            trace_cleanup=trace_cleanup,
+            trace_projection=trace_projection,
         )
 
     async def close(self) -> None:
@@ -520,6 +600,8 @@ class AgentApplication:
         observability=None,
         observability_flush_timeout_ms: int = 2_000,
         validate_review_model: Callable[[str, str, str], None] | None = None,
+        advanced_diagnostics_enabled: Callable[[], bool] | None = None,
+        quality_evaluation_settings: Callable[[], object] | None = None,
     ) -> None:
         self._workspace_resolver = workspace_resolver
         self._workspace_ids = workspace_ids
@@ -530,6 +612,10 @@ class AgentApplication:
         self._validate_review_model = validate_review_model or (
             lambda _workspace, _model, _effort: None
         )
+        self._advanced_diagnostics_enabled = (
+            advanced_diagnostics_enabled or (lambda: False)
+        )
+        self._quality_evaluation_settings = quality_evaluation_settings
         self._workspaces: dict[str, WorkspaceRuntime] = {}
 
     async def create_session(
@@ -837,6 +923,23 @@ class AgentApplication:
     def job_training(self, workspace_id: str) -> JobTargetApplication:
         return self._context(workspace_id).job_training
 
+    def agent_observability(
+        self, workspace_id: str
+    ) -> AgentObservabilityService:
+        return self._context(workspace_id).agent_observability
+
+    def agent_evaluation(self, workspace_id: str) -> AgentEvaluationService:
+        service = self._context(workspace_id).agent_evaluation
+        if service is None:
+            raise RuntimeError("Agent 质量评估服务未配置")
+        return service
+
+    def trace_retention(self, workspace_id: str) -> TraceRetentionService:
+        return self._context(workspace_id).trace_retention
+
+    def trace_cleanup(self, workspace_id: str) -> TraceCleanupService:
+        return self._context(workspace_id).trace_cleanup
+
     def locate_review_round(self, round_id: str) -> ReviewApplication:
         for workspace_id in self._workspace_ids():
             context = self._context(workspace_id)
@@ -945,6 +1048,8 @@ class AgentApplication:
             validate_review_model=lambda model_id, effort: self._validate_review_model(
                 workspace_id, model_id, effort
             ),
+            advanced_diagnostics_enabled=self._advanced_diagnostics_enabled,
+            quality_evaluation_settings=self._quality_evaluation_settings,
         )
         self._workspaces[workspace_id] = context
         return context

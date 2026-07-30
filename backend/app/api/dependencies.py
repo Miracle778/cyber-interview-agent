@@ -1,7 +1,8 @@
 import sqlite3
 from collections.abc import Iterator
+from typing import Annotated
 
-from fastapi import Depends, Request
+from fastapi import Depends, Query, Request
 
 from app.db.app_database import connect_app_database
 from app.providers.anthropic_compatible import AnthropicCompatibleAdapter
@@ -14,10 +15,42 @@ from app.services.secrets import (
 )
 from app.services.workspace_service import WorkspaceService
 from app.application.workspace_runtime import AgentApplication
+from app.observability.service import AgentObservabilityService
+from app.evaluation.service import AgentEvaluationService
+from app.observability.retention import TraceRetentionService
+from app.observability.cleanup import TraceCleanupService
 
 
 def get_agent_application(request: Request) -> AgentApplication:
     return request.app.state.agent_application
+
+
+def get_agent_observability_service(
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    application: AgentApplication = Depends(get_agent_application),
+) -> AgentObservabilityService:
+    return application.agent_observability(workspace_id)
+
+
+def get_agent_evaluation_service(
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    application: AgentApplication = Depends(get_agent_application),
+) -> AgentEvaluationService:
+    return application.agent_evaluation(workspace_id)
+
+
+def get_trace_retention_service(
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    application: AgentApplication = Depends(get_agent_application),
+) -> TraceRetentionService:
+    return application.trace_retention(workspace_id)
+
+
+def get_trace_cleanup_service(
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    application: AgentApplication = Depends(get_agent_application),
+) -> TraceCleanupService:
+    return application.trace_cleanup(workspace_id)
 
 
 def get_app_connection() -> Iterator[sqlite3.Connection]:

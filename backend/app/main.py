@@ -13,6 +13,8 @@ from app.api.routes_hitl import router as hitl_router
 from app.api.routes_knowledge import router as knowledge_router
 from app.api.routes_profile import router as profile_router
 from app.api.routes_job_targets import router as job_targets_router
+from app.api.routes_observability import router as observability_router
+from app.api.routes_agent_evaluations import router as evaluations_router
 from app.api.routes_review import router as review_router
 from app.api.routes_settings import router as settings_router
 from app.agents.agent_factory import AgentFactory
@@ -153,6 +155,12 @@ async def lifespan(application: FastAPI):
                 provider_model_id=model_id,
                 reasoning_effort=effort,
             ),
+            advanced_diagnostics_enabled=lambda: (
+                workspaces.get_agent_diagnostics_settings().advanced_enabled
+            ),
+            quality_evaluation_settings=(
+                workspaces.get_agent_quality_evaluation_settings
+            ),
         )
         application.state.agent_application = agent_application
         await agent_application.recover()
@@ -172,6 +180,8 @@ app.include_router(drafts_router)
 app.include_router(review_router)
 app.include_router(profile_router)
 app.include_router(job_targets_router)
+app.include_router(observability_router)
+app.include_router(evaluations_router)
 
 
 def _error(status_code: int, code: str, message: str) -> JSONResponse:
@@ -197,6 +207,9 @@ async def invalid_request(
         path.startswith("/api/workspaces/") and "/profile/" in path
     )
     is_job_target_path = "/job-targets" in path
+    is_settings_path = path.startswith("/api/settings/")
+    if is_settings_path:
+        return _error(422, "invalid_request", "请求参数不完整或格式错误")
     if not is_profile_path and not is_job_target_path:
         return JSONResponse(
             status_code=422,

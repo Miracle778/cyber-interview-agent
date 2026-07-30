@@ -1,5 +1,6 @@
 import { Archive, BriefcaseBusiness, PanelLeftClose, PanelLeftOpen, Plus } from "lucide-react";
 import { Button } from "../../shared/ui/Button";
+import { SelectControl } from "../../shared/ui/SelectControl";
 import type { JobTarget } from "./jobTargetTypes";
 
 interface JobTargetListProps {
@@ -34,9 +35,9 @@ export function JobTargetList({
     </header>
     <label className="job-target-list__mobile-picker">
       <span>当前目标</span>
-      <select aria-label="当前求职目标" value={selectedId ?? targets[0]?.id ?? ""} onChange={(event) => onSelect(event.target.value)}>
+      <SelectControl aria-label="当前求职目标" value={selectedId ?? targets[0]?.id ?? ""} onChange={(event) => onSelect(event.target.value)}>
         {targets.map((target) => <option key={target.id} value={target.id}>{target.roleName || "岗位信息待补充"}{target.companyName ? ` · ${target.companyName}` : ""}</option>)}
-      </select>
+      </SelectControl>
     </label>
     <div>
       {targets.map((target) => {

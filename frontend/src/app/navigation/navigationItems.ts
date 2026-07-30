@@ -1,8 +1,8 @@
-import { BookOpenText, BrainCircuit, BriefcaseBusiness, Settings, UserRound, type LucideIcon } from "lucide-react";
+import { Activity, BookOpenText, BrainCircuit, BriefcaseBusiness, Settings, UserRound, type LucideIcon } from "lucide-react";
 
 export interface NavigationItem {
   label: string;
-  to: "/review" | "/knowledge" | "/profile" | "/targets" | "/settings";
+  to: "/review" | "/knowledge" | "/profile" | "/targets" | "/agents" | "/settings";
   icon: LucideIcon;
 }
 
@@ -19,6 +19,7 @@ export const NAVIGATION_GROUPS: NavigationGroup[] = [
       { label: "知识库", to: "/knowledge", icon: BookOpenText },
       { label: "个人画像", to: "/profile", icon: UserRound },
       { label: "求职目标", to: "/targets", icon: BriefcaseBusiness },
+      { label: "Agent 运行中心", to: "/agents", icon: Activity },
     ],
   },
   {

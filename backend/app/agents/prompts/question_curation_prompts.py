@@ -11,11 +11,12 @@ from app.review.models import CurationSeedTaskRecord
 
 QUESTION_DISCOVERY_PROMPT = PromptSpec(
     id="question-discovery",
-    version="3.0",
+    version="3.1",
     system=(
         "从当前窗口的有界来源片段中识别值得复习的独立中文面试题，最多返回 20 个轻量题目种子。"
         "只输出 question_text、主锚点 source_ref 和有序 source_refs，不补全答案。主锚点必须是"
         "source_refs 第一项；每个引用都必须原样来自当前窗口，不得编造、跨来源或重复引用。"
+        "即使当前片段没有题目，也必须按结构化协议返回空 seeds；不得只返回解释文字。"
     ),
 )
 QUESTION_ENRICHMENT_PROMPT = PromptSpec(

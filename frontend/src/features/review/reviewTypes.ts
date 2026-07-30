@@ -224,7 +224,16 @@ export interface CurationSession {
   sourceWarnings?: { sourceId: string; code: string }[];
   summary: { items: CurationSummaryItem[] };
   summaryVersion: number;
-  warnings: { sourceId?: string; code: string; limit?: number }[];
+  warnings: {
+    sourceId?: string;
+    code: string;
+    limit?: number;
+    stage?: "discovery" | "enrichment";
+    unitIndex?: number;
+    seedOrdinal?: number;
+    sourceRefs?: string[];
+    errorCode?: string;
+  }[];
   preferredModelId: string | null;
   preferredReasoningEffort: "none" | "low" | "medium" | "high";
   latestCommand: {
@@ -315,6 +324,12 @@ export interface ReviewInput {
   resolvedAt: string | null;
 }
 
+export interface ReviewKeyPointCoverage {
+  point: string;
+  status: "uncovered" | "partial" | "covered";
+  evidence: string[];
+}
+
 export interface ReviewAttempt {
   id: string;
   roundId: string;
@@ -334,11 +349,7 @@ export interface ReviewAttempt {
   evaluationErrorCode: string | null;
   evaluationStartedAt: string | null;
   evaluationCompletedAt: string | null;
-  coverage?: {
-    point: string;
-    status: "uncovered" | "partial" | "covered";
-    evidence: string[];
-  }[];
+  coverage?: ReviewKeyPointCoverage[];
   resultKind?: "independent_mastery" | "assisted_mastery" | "revealed" | "skipped" | null;
   hintLevel?: number;
   answerRevisions?: string[];

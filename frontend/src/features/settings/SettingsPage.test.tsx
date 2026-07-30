@@ -48,6 +48,12 @@ function installSettingsFetch() {
     if (url === "/api/agent/actions?workspaceId=w1&status=pending") {
       return Response.json([]);
     }
+    if (url === "/api/settings/agent-diagnostics") {
+      return Response.json({
+        advancedEnabled: false,
+        updatedAt: "2026-07-30 00:00:00",
+      });
+    }
     return Response.json({ code: "unexpected", message: url }, { status: 500 });
   });
 }
@@ -77,6 +83,12 @@ describe("SettingsPage", () => {
     expect(await screen.findByRole("heading", { name: "模型服务" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "任务使用的模型" })).toBeInTheDocument();
     expect(screen.queryByText("Agent Runtime")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "运行诊断" }));
+    expect(
+      await screen.findByRole("switch", { name: "高级诊断模式" }),
+    ).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByText("Agent Runtime")).toBeInTheDocument();
   });
 
   it("initializes workspace and reports it to AppShell", async () => {

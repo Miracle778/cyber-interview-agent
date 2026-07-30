@@ -5,7 +5,10 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
-from app.agents.agent_factory import AgentFactory, ModelOverride
+from app.agents.agent_factory import AgentFactory, AgentSpec, ModelOverride
+from app.agents.prompts.prompt_spec import PromptSpec
+from app.evaluation.contracts import JudgeResult
+from app.evaluation.judge_agent import StructuredJudgeAgent
 from app.agents.question_curation_agent import QuestionCurationAgents
 from app.agents.curation_command_agents import CurationCommandAgents
 from app.agents.context_assembly import model_token_counter
@@ -32,6 +35,27 @@ from app.tools.profile_tools import (
     ProfileToolBudgetMiddleware,
     create_profile_tools,
 )
+from app.observability.registry import assert_registry_complete
+
+
+PRODUCTION_GRAPH_KINDS = frozenset(
+    {
+        "profile.ingest",
+        "profile.assess",
+        "profile.manage",
+        "question.curate",
+        "question.revise",
+        "review.round",
+        "review.discussion",
+        "review.single",
+        "knowledge.publish",
+        "job.analysis",
+        "project.deep_dive",
+        "diagnostic.echo",
+        "diagnostic.approval",
+        "diagnostic.security",
+    }
+)
 
 
 class DiagnosticState(TypedDict, total=False):
@@ -45,11 +69,41 @@ class ProductionGraphFactory:
     """Explicit product graph selection; this is not a dynamic graph registry."""
 
     def __init__(self, agents: AgentFactory) -> None:
+        assert_registry_complete(PRODUCTION_GRAPH_KINDS)
         self._agents = agents
 
     @property
     def trace_writer(self):
         return getattr(self._agents, "trace_writer", None)
+
+    def create_evaluation_judge(
+        self,
+        *,
+        model_bindings,
+        provider_model_id: str,
+    ) -> StructuredJudgeAgent:
+        runnable = self._agents.create(
+            AgentSpec(
+                role="answer_evaluation",
+                execution_name="quality_evaluation_judge",
+                prompt=PromptSpec(
+                    id="quality-evaluation-judge",
+                    version="1",
+                    system=(
+                        "你是独立质量评估 Judge。只根据输入的冻结快照、证据哈希和 "
+                        "Eval Pack 评分。不得假设缺失证据，不得提出或执行任何业务修改，"
+                        "不得输出思维过程。事件哈希必须引用；只有存在 Artifact 时才引用"
+                        " Artifact 哈希，否则返回空数组。严格返回约定的结构化结果。"
+                    ),
+                ),
+                tools=(),
+                response_format=JudgeResult,
+                structured_output_handle_errors=False,
+            ),
+            model_bindings=model_bindings,
+            model_override=ModelOverride(provider_model_id),
+        )
+        return StructuredJudgeAgent(runnable)
 
     def create_curation_command_agents(
         self,

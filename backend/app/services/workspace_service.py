@@ -14,6 +14,8 @@ from app.infrastructure.runtime_database import runtime_database_path
 from app.repositories.provider_repository import ProviderRepository
 from app.repositories.workspace_repository import WorkspaceRecord, WorkspaceRepository
 from app.schemas.settings import (
+    AgentDiagnosticsSettingsResource,
+    AgentQualityEvaluationSettingsResource,
     MODEL_ROLES,
     WorkspaceDeletionImpactResource,
     WorkspaceModelBindingsResource,
@@ -76,6 +78,78 @@ class WorkspaceService:
     def get_current(self) -> WorkspaceResource | None:
         record = self.workspaces.get_current()
         return None if record is None else self._to_resource(record)
+
+    def get_agent_diagnostics_settings(
+        self,
+    ) -> AgentDiagnosticsSettingsResource:
+        row = self._connection.execute(
+            "SELECT advanced_enabled, updated_at "
+            "FROM agent_diagnostics_settings WHERE singleton = 1"
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("agent diagnostics singleton is missing")
+        return AgentDiagnosticsSettingsResource(
+            advanced_enabled=bool(row["advanced_enabled"]),
+            updated_at=row["updated_at"],
+        )
+
+    def replace_agent_diagnostics_settings(
+        self, *, advanced_enabled: bool
+    ) -> AgentDiagnosticsSettingsResource:
+        with self._transaction():
+            self._connection.execute(
+                "UPDATE agent_diagnostics_settings "
+                "SET advanced_enabled = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE singleton = 1",
+                (int(advanced_enabled),),
+            )
+        return self.get_agent_diagnostics_settings()
+
+    def get_agent_quality_evaluation_settings(
+        self,
+    ) -> AgentQualityEvaluationSettingsResource:
+        row = self._connection.execute(
+            "SELECT enabled, automatic_sample_percent, automatic_daily_cap, "
+            "judge_provider_model_id, updated_at "
+            "FROM agent_quality_eval_settings WHERE singleton = 1"
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("agent quality evaluation singleton is missing")
+        return AgentQualityEvaluationSettingsResource(
+            enabled=bool(row["enabled"]),
+            automatic_sample_percent=row["automatic_sample_percent"],
+            automatic_daily_cap=row["automatic_daily_cap"],
+            judge_provider_model_id=row["judge_provider_model_id"],
+            updated_at=row["updated_at"],
+        )
+
+    def replace_agent_quality_evaluation_settings(
+        self,
+        *,
+        enabled: bool,
+        automatic_sample_percent: int,
+        automatic_daily_cap: int,
+        judge_provider_model_id: str | None,
+    ) -> AgentQualityEvaluationSettingsResource:
+        if (
+            judge_provider_model_id is not None
+            and self.providers.get_model(judge_provider_model_id) is None
+        ):
+            raise ProviderModelNotFoundError(judge_provider_model_id)
+        with self._transaction():
+            self._connection.execute(
+                "UPDATE agent_quality_eval_settings SET enabled = ?, "
+                "automatic_sample_percent = ?, automatic_daily_cap = ?, "
+                "judge_provider_model_id = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE singleton = 1",
+                (
+                    int(enabled),
+                    automatic_sample_percent,
+                    automatic_daily_cap,
+                    judge_provider_model_id,
+                ),
+            )
+        return self.get_agent_quality_evaluation_settings()
 
     def resolve_root(self, workspace_id: str) -> Path:
         record = self._require_workspace(workspace_id)

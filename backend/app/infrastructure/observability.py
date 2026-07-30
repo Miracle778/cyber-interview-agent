@@ -138,6 +138,33 @@ class SafeObservabilitySink:
             return False
 
 
+class OtelMetadataExporter:
+    """Adapter for allowlisted long-term metadata projection."""
+
+    def __init__(self, sink) -> None:
+        self._sink = sink
+
+    def export(self, payload: dict[str, object]) -> None:
+        context = TraceContext(
+            workspace_id=str(payload["workspaceIdHash"]),
+            session_id=str(payload["sessionIdHash"]),
+            execution_id=str(payload["runIdHash"]),
+            graph_id=str(payload.get("graphId") or "unknown"),
+            graph_version=1,
+        )
+        attributes = {
+            f"cyber.projection.{key}": value
+            for key, value in payload.items()
+            if isinstance(value, (str, int, float, bool))
+        }
+        with self._sink.span(
+            "agent.metadata.projection",
+            context=context,
+            attributes=attributes,
+        ):
+            pass
+
+
 @dataclass(frozen=True, slots=True)
 class ObservabilitySettings:
     enabled: bool = False

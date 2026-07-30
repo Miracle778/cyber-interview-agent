@@ -126,16 +126,6 @@ async def test_messy_notes_preserve_partial_results_and_block_unsafe_publication
             source_refs=(messy.id, unusable.id)
         )
         execution = await app.wait_execution(str(created["execution_id"]))
-        assert execution.status == "failed"
-        interrupted_batch = review.repository.get_batch(
-            str(created["active_batch_id"])
-        )
-        resumed = await review.resume_curation_session(
-            str(created["id"]),
-            expected_batch_version=interrupted_batch.version,
-            idempotency_key="messy-notes-resume-0001",
-        )
-        execution = await app.wait_execution(str(resumed["execution_id"]))
         assert execution.status == "completed"
 
         resource = await review.curation_resource(str(created["id"]))

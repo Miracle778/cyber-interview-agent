@@ -82,6 +82,25 @@ JOB_TARGET_TABLES = {
     "project_question_candidates",
 }
 
+OBSERVABILITY_TABLES = {
+    "agent_trace_files",
+    "agent_trace_executions",
+    "agent_trace_operations",
+    "agent_trace_events",
+    "agent_trace_retention_policy",
+    "agent_trace_cleanup_runs",
+    "agent_trace_cleanup_items",
+    "agent_trace_projection_deliveries",
+}
+
+EVALUATION_TABLES = {
+    "agent_eval_runs",
+    "agent_eval_dimension_results",
+    "agent_eval_human_feedback",
+    "agent_eval_regression_cases",
+    "agent_eval_daily_counters",
+}
+
 
 def _tables(connection) -> set[str]:
     return {
@@ -187,6 +206,8 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         | R2_SESSION_EXPERIENCE_TABLES
         | R2_PROGRESSIVE_CURATION_TABLES
         | JOB_TARGET_TABLES
+        | OBSERVABILITY_TABLES
+        | EVALUATION_TABLES
         <= _tables(connection)
     )
     assert [
@@ -194,7 +215,7 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == list(range(1, 37))
+        ] == list(range(1, 41))
     assert "agent_context_usage" in _tables(connection)
     assert "profile_deletion_plans" in _tables(connection)
     assert "deleted_at" in {
@@ -990,7 +1011,7 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-            ] == list(range(1, 37))
+        ] == list(range(1, 41))
     reopened.close()
 
 
@@ -1181,6 +1202,64 @@ def test_context_usage_projection_round_trips_real_token_threshold(tmp_path: Pat
         "estimated": True,
     }
     connection.close()
+
+
+def test_agent_trace_index_migration_is_repeatable(tmp_path: Path) -> None:
+    first = connect_runtime_database(tmp_path)
+    assert OBSERVABILITY_TABLES <= _tables(first)
+    versions = {
+        int(row[0])
+        for row in first.execute(
+            "SELECT version FROM runtime_schema_migrations"
+        )
+    }
+    assert 37 in versions
+    first.close()
+
+    reopened = connect_runtime_database(tmp_path)
+    assert OBSERVABILITY_TABLES <= _tables(reopened)
+    assert (
+        reopened.execute(
+            "SELECT COUNT(*) FROM runtime_schema_migrations WHERE version = 37"
+        ).fetchone()[0]
+        == 1
+    )
+    reopened.close()
+
+
+def test_agent_trace_export_migration_creates_receipt_table(
+    tmp_path: Path,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+    try:
+        columns = {
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(agent_trace_exports)"
+            )
+        }
+        migration = connection.execute(
+            "SELECT name FROM runtime_schema_migrations WHERE version = 38"
+        ).fetchone()
+    finally:
+        connection.close()
+
+    assert {
+        "id",
+        "workspace_id",
+        "run_id",
+        "idempotency_key",
+        "request_hash",
+        "status",
+        "artifact_relative_path",
+        "artifact_sha256",
+        "metadata_only",
+        "includes_bodies",
+        "error_code",
+        "created_at",
+        "completed_at",
+    } <= columns
+    assert migration["name"] == "038_agent_trace_exports.sql"
 
 
 def test_session_experience_migration_preserves_existing_r2_rows(

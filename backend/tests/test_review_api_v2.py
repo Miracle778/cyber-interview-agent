@@ -632,7 +632,7 @@ async def test_public_question_batch_reaches_real_graph_without_checkpointing_co
 
 
 @pytest.mark.asyncio
-async def test_public_question_batch_graph_failure_terminalizes_without_session_projection(
+async def test_public_question_batch_reports_failed_discovery_without_failing_execution(
     tmp_path: Path, caplog
 ) -> None:
     application, api, workspace = _real_curation_application(
@@ -659,12 +659,11 @@ async def test_public_question_batch_graph_failure_terminalizes_without_session_
         batch = response.json()
         terminal = await application.wait_execution(batch["runId"])
         review = application.review("w1")
-        assert terminal.status == "failed"
-        assert review.repository.get_batch(batch["id"]).status == "failed"
-        assert {
-            item.status
-            for item in review.repository.list_curation_work_items(batch["id"])
-        } == {"failed"}
+        items = review.repository.list_curation_work_items(batch["id"])
+        assert terminal.status == "completed"
+        assert review.repository.get_batch(batch["id"]).status == "completed"
+        assert {item.status for item in items} == {"failed"}
+        assert all(item.attempt_count == 2 for item in items)
         assert "failed to persist agent execution failure" not in caplog.text
     finally:
         await application.close()
@@ -709,7 +708,10 @@ async def test_empty_curation_session_reports_completion_without_confirmation(
             for message in value["messages"]
             if message["messageKind"] == "curation_summary"
         ]
-        assert summaries == ["未从本次材料中识别到可整理的题目，无需确认。"]
+        assert summaries == [
+            "未从本次材料中识别到可整理的题目；"
+            "1 个处理单元未完成，已记录原因，可在运行提示中查看。"
+        ]
         assert all("请确认" not in content for content in summaries)
     finally:
         await application.close()

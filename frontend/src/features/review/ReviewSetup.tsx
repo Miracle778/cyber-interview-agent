@@ -3,6 +3,7 @@ import { BookOpenCheck, ChevronDown, ChevronUp, Play, Search, SlidersHorizontal,
 import { useMemo, useState } from "react";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
+import { SelectControl } from "../../shared/ui/SelectControl";
 import { listSources } from "../knowledge/knowledgeApi";
 import { getWorkspaceModelBindings, listProviders } from "../settings/settingsApi";
 import type { WorkspaceConfig } from "../settings/settingsApi";
@@ -69,12 +70,12 @@ export function ReviewSetup({ workspace, questions, onCreate, onCatalog, busy }:
   return (
     <Card title="创建复习轮次" icon={<SlidersHorizontal size={18} />}>
       <div className="review-setup-grid">
-        <label className="field"><span className="field__label">复习模式</span><select className="field__input" value={mode} onChange={(event) => setMode(event.target.value as ReviewMode)}><option value="random-mixed">随机混合</option><option value="weak-point">薄弱优先</option><option value="topic-focused">专题复习</option><option value="recent-mistake">最近错题</option><option value="source-file">按资料复习</option></select></label>
-        {mode === "source-file" ? <label className="field"><span className="field__label">选择资料</span><select className="field__input" aria-label="选择复习资料" value={selectedSourceId} onChange={(event) => setSelectedSourceId(event.target.value)}><option value="">{sources.isPending ? "正在读取资料…" : "请选择一份资料"}</option>{reviewSources.map((source) => <option key={source.id} value={source.id}>{source.originalFilename}（{source.questionCount} 道）</option>)}</select><small className="field__hint">只复习这份资料关联的已入库题目，不会混入其他资料。</small></label> : null}
-        <label className="field"><span className="field__label">难度</span><select className="field__input" value={difficulty} onChange={(event) => setDifficulty(event.target.value as Difficulty)}><option value="easy">简单</option><option value="medium">中等</option><option value="hard">困难</option></select></label>
+        <label className="field"><span className="field__label">复习模式</span><SelectControl className="field__input" value={mode} onChange={(event) => setMode(event.target.value as ReviewMode)}><option value="random-mixed">随机混合</option><option value="weak-point">薄弱优先</option><option value="topic-focused">专题复习</option><option value="recent-mistake">最近错题</option><option value="source-file">按资料复习</option></SelectControl></label>
+        {mode === "source-file" ? <label className="field"><span className="field__label">选择资料</span><SelectControl className="field__input" aria-label="选择复习资料" value={selectedSourceId} onChange={(event) => setSelectedSourceId(event.target.value)}><option value="">{sources.isPending ? "正在读取资料…" : "请选择一份资料"}</option>{reviewSources.map((source) => <option key={source.id} value={source.id}>{source.originalFilename}（{source.questionCount} 道）</option>)}</SelectControl><small className="field__hint">只复习这份资料关联的已入库题目，不会混入其他资料。</small></label> : null}
+        <label className="field"><span className="field__label">难度</span><SelectControl className="field__input" value={difficulty} onChange={(event) => setDifficulty(event.target.value as Difficulty)}><option value="easy">简单</option><option value="medium">中等</option><option value="hard">困难</option></SelectControl></label>
         <label className="field"><span className="field__label">题量</span><input className="field__input" type="number" min={1} max={50} value={count} onChange={(event) => setCount(Number(event.target.value))} /></label>
-        <label className="field"><span className="field__label">回答评价模型</span><select className="field__input" value={effectiveModel} onChange={(event) => setSelectedModel(event.target.value)}><option value="">请选择模型</option>{models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select></label>
-        <label className="field"><span className="field__label">思考强度</span><select className="field__input" value={reasoning} onChange={(event) => setReasoning(event.target.value as CreateReviewRoundRequest["reasoningEffort"])}><option value="none">默认</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label>
+        <label className="field"><span className="field__label">回答评价模型</span><SelectControl className="field__input" value={effectiveModel} onChange={(event) => setSelectedModel(event.target.value)}><option value="">请选择模型</option>{models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</SelectControl></label>
+        <label className="field"><span className="field__label">思考强度</span><SelectControl className="field__input" value={reasoning} onChange={(event) => setReasoning(event.target.value as CreateReviewRoundRequest["reasoningEffort"])}><option value="none">默认</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option></SelectControl></label>
       </div>
       {mode !== "source-file" ? <fieldset className="topic-picker">
         <legend>复习主题</legend>

@@ -7,7 +7,11 @@ from uuid import uuid4
 
 from langchain.agents.middleware import AgentMiddleware
 
-from app.diagnostics.agent_trace import AgentTraceWriter, TraceIdentity
+from app.diagnostics.agent_trace import (
+    AgentTraceWriter,
+    TraceIdentity,
+    stable_trace_operation_id,
+)
 
 
 _SENSITIVE_TEXT = (
@@ -54,7 +58,7 @@ class AgentTraceMiddleware(AgentMiddleware):
     async def awrap_model_call(self, request, handler):
         invocation_id = str(uuid4())
         context = request.runtime.context
-        identity = self._identity(context, invocation_id)
+        identity = self._identity(context, invocation_id, "model")
         await self._append(
             context,
             identity,
@@ -99,7 +103,7 @@ class AgentTraceMiddleware(AgentMiddleware):
         tool_call = request.tool_call
         invocation_id = str(tool_call.get("id") or uuid4())
         context = request.runtime.context
-        identity = self._identity(context, invocation_id)
+        identity = self._identity(context, invocation_id, "tool")
         await self._append(
             context,
             identity,
@@ -136,7 +140,12 @@ class AgentTraceMiddleware(AgentMiddleware):
         )
         return result
 
-    def _identity(self, context, invocation_id: str) -> TraceIdentity:
+    def _identity(
+        self,
+        context,
+        invocation_id: str,
+        operation_kind: str,
+    ) -> TraceIdentity:
         return TraceIdentity(
             workspace_id=context.workspace_id,
             workspace_root=context.workspace_root,
@@ -145,6 +154,18 @@ class AgentTraceMiddleware(AgentMiddleware):
             agent_role=self._agent_role,
             agent_name=self._agent_name,
             invocation_id=invocation_id,
+            operation_id=stable_trace_operation_id(
+                context.run_id,
+                invocation_id,
+                operation_kind,
+            ),
+            parent_operation_id=stable_trace_operation_id(
+                context.run_id,
+                self._agent_role,
+                self._agent_name,
+                "agent",
+            ),
+            operation_kind=operation_kind,
         )
 
     async def _append(

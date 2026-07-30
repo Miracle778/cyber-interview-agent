@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { AlertCircle, AlertTriangle, CheckCircle2, FileText, Trash2, X } from "lucide-react";
 import { Button } from "../../shared/ui/Button";
+import { SelectControl } from "../../shared/ui/SelectControl";
 import type { ProfileCardCategory, ProfileCardCommand, UnifiedProfileCard } from "./profileTypes";
 
 type FieldSpec = { key: string; label: string; required?: boolean; multiline?: boolean; list?: boolean; placeholder?: string; type?: "url" };
@@ -142,9 +143,9 @@ export function ProfileCardEditor({
             </div> : <small>当前没有可用于核对的简历原文。你可以保留为本人确认，或修改、删除这条资料。</small>}
           </section> : null}
           {!card ? <label className="profile-card-editor__category">添加什么
-            <select value={category} onChange={(event) => changeCategory(event.target.value as ProfileCardCategory)}>
+            <SelectControl value={category} onChange={(event) => changeCategory(event.target.value as ProfileCardCategory)}>
               {(["project", "experience", "skill", "education", "certification", "achievement", "direction", "highlight", "summary", "link"] as ProfileCardCategory[]).map((item) => <option key={item} value={item}>{categoryLabels[item]}</option>)}
-            </select>
+            </SelectControl>
           </label> : null}
           <div className="profile-card-editor__fields">{specs.map((field) => <label key={field.key} data-field={field.key} data-multiline={field.multiline || undefined}>
             <span>{field.label}{field.required ? <em>必填</em> : null}</span>

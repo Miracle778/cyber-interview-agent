@@ -18,6 +18,8 @@ import { SettingsNavigation, type SettingsSection } from "./SettingsNavigation";
 import { SettingsOverview, type SettingsStatusItem } from "./SettingsOverview";
 import { SettingsDisclosure } from "./SettingsDisclosure";
 import { WorkspaceManager } from "./WorkspaceManager";
+import { AgentDiagnosticsSettings } from "./AgentDiagnosticsSettings";
+import { AgentTraceRetentionSettings } from "./AgentTraceRetentionSettings";
 
 const REQUIRED_MODEL_ROLE_COUNT = 8;
 
@@ -200,6 +202,15 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
 
           {section === "diagnostics" && workspaceId ? (
             <div className="settings-stack">
+              <SettingsDisclosure
+                id="agent-diagnostics"
+                title="Agent 运行与诊断"
+                description="控制本机高级 Trace 正文查看"
+                defaultExpanded
+              >
+                <AgentDiagnosticsSettings />
+                <AgentTraceRetentionSettings workspaceId={workspaceId} />
+              </SettingsDisclosure>
               <SettingsDisclosure id="runtime" title="Agent Runtime" description="运行 Runtime 自检并查看事件流">
                 <RuntimeDiagnostics workspaceId={workspaceId} />
               </SettingsDisclosure>

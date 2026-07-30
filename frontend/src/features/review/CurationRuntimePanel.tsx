@@ -40,6 +40,27 @@ function tokenLabel(value: number) {
   return `${(value / 1000).toFixed(precision).replace(/\.0+$|(?<=\.[0-9])0+$/, "")}k`;
 }
 
+function partialFailureReason(code?: string) {
+  if (code === "structured_output_missing") return "模型返回了说明文字，但没有按约定返回题目结构";
+  if (code === "output_truncated") return "模型输出被截断";
+  if (code === "provider_timeout") return "模型响应超时";
+  if (code === "rate_limited") return "模型服务繁忙";
+  if (code === "network_error") return "连接模型服务时中断";
+  if (code === "provider_server_error" || code === "provider_error") return "模型服务本次调用失败";
+  return "本处理单元没有得到有效结果";
+}
+
+function sourceRangeLabel(sourceRefs?: string[]) {
+  const sectionNumbers = (sourceRefs ?? [])
+    .map((ref) => ref.match(/#section-(\d+)$/)?.[1])
+    .filter((value): value is string => Boolean(value))
+    .map(Number);
+  if (sectionNumbers.length === 0) return "";
+  const start = Math.min(...sectionNumbers);
+  const end = Math.max(...sectionNumbers);
+  return start === end ? `原文片段 ${start}` : `原文片段 ${start}–${end}`;
+}
+
 type CandidateStatus = QuestionCandidate["status"];
 
 interface CurationRuntimePanelProps {
@@ -118,6 +139,8 @@ export function CurationRuntimePanel({ session, candidates = null, activeModelLa
     .sort((left, right) => (ordinalByCandidate.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (ordinalByCandidate.get(right.id) ?? Number.MAX_SAFE_INTEGER) || parseApiTimestamp(right.updatedAt).getTime() - parseApiTimestamp(left.updatedAt).getTime()) : [];
   const generationLabel = session?.progress?.phase === "discovery" ? "正在识别题目" : session?.progress?.phase === "enrichment" ? "正在补全候选" : null;
   const candidateLimitReached = session?.warnings?.some((warning) => warning.code === "candidate_limit_reached") ?? false;
+  const partialFailures = session?.warnings?.filter((warning) => warning.code === "curation_discovery_block_failed" || warning.code === "curation_enrichment_item_skipped") ?? [];
+  const generalWarningCount = (session?.warnings?.length ?? 0) - partialFailures.length;
   const activeFilterLabel = statusFilter ? candidateStatusLabels[statusFilter] : qualityFilter === "ai_primary" ? "主要由 AI 生成" : qualityFilter === "insufficient_support" ? "材料支持不足" : qualityFilter === "needs_review" ? "需要人工复核" : null;
   const sourceLabelById = new Map(session?.sources?.map((source) => [source.id, source.filename]) ?? []);
   const serverCurrentElapsed = session?.timing?.currentElapsedMs ?? 0;
@@ -246,7 +269,7 @@ export function CurationRuntimePanel({ session, candidates = null, activeModelLa
         {session.stage === "failed" ? <section className="curation-retry" role="status" aria-live="polite"><TriangleAlert size={17} /><div><strong>本次整理未完成</strong><p>{failureMessage(session.executionErrorCode, session.executionErrorMessage)}</p></div></section> : null}
         {!session.batchStatus && session.stage === "generating" && generationLabel ? <section className="curation-progress" role="status" aria-live="polite" aria-atomic="true"><Activity size={17} /><div><strong>{generationLabel}</strong><p>{session.progress?.completed ?? 0} / {session.progress?.total ?? 0}</p></div></section> : null}
         <details className="curation-runtime-disclosure" open={runtimeOpen}><summary onClick={(event) => { event.preventDefault(); setRuntimeOpen((current) => !current); }}><span><Activity size={16} />运行详情</span><small>{session.usage.callCount} 次调用</small><ChevronDown size={16} /></summary><div className="curation-runtime-disclosure__body"><dl><div><dt>执行状态</dt><dd>{executionStatusLabels[session.executionStatus ?? ""] ?? "尚未启动"}</dd></div>{activeModelLabel ? <div><dt>执行模型</dt><dd title={activeModelLabel}>{activeModelLabel}</dd></div> : null}<div><dt>Token</dt><dd>{tokenLabel(session.usage.totalTokens)}</dd></div></dl><div className="curation-context-compact"><div className="curation-context-ring" style={{ "--context-progress": `${contextPercentage * 3.6}deg` } as CSSProperties}><span>{contextPercentage}%</span></div><div><small>当前上下文 / 压缩阈值</small><strong>{tokenLabel(currentContextTokens)} / {contextThresholdTokens > 0 ? tokenLabel(contextThresholdTokens) : "—"}</strong></div></div></div></details>
-        {(session.warnings?.length ?? 0) > 0 ? <details className="curation-runtime-warning" open={warningsOpen}><summary onClick={(event) => { event.preventDefault(); setWarningsOpen((current) => !current); }}><TriangleAlert size={16} />提示 <span>{session.warnings?.length ?? 0}</span></summary><p>{candidateLimitReached ? "已生成前 200 道候选题，请先审核当前结果" : "包含重复或正在整理的资料。题匠会保留全部来源，并在候选生成后合并高置信相似题。"}</p></details> : null}
+        {(session.warnings?.length ?? 0) > 0 ? <details className="curation-runtime-warning" open={warningsOpen}><summary onClick={(event) => { event.preventDefault(); setWarningsOpen((current) => !current); }}><TriangleAlert size={16} />{partialFailures.length > 0 ? "部分资料未完成" : "提示"} <span>{session.warnings?.length ?? 0}</span></summary>{partialFailures.length > 0 ? <><p>已跳过 {partialFailures.length} 个未完成的处理单元，其他资料和已生成题目不受影响。</p><ul>{partialFailures.map((warning, index) => <li key={`${warning.code}-${warning.unitIndex ?? warning.seedOrdinal ?? index}`}><strong>{sourceLabelById.get(warning.sourceId ?? "") ?? "所选资料"}</strong><span>{warning.stage === "discovery" ? `第 ${(warning.unitIndex ?? 0) + 1} 个识别块` : `第 ${(warning.seedOrdinal ?? 0) + 1} 道待补全题目`}{sourceRangeLabel(warning.sourceRefs) ? ` · ${sourceRangeLabel(warning.sourceRefs)}` : ""}</span><small>{partialFailureReason(warning.errorCode)}</small></li>)}</ul></> : null}{generalWarningCount > 0 ? <p>{candidateLimitReached ? "已生成前 200 道候选题，请先审核当前结果" : "包含重复或正在整理的资料。系统会保留全部来源，并在候选生成后合并高置信相似题。"}</p> : null}</details> : null}
         </>}
       </>}
     </aside>
