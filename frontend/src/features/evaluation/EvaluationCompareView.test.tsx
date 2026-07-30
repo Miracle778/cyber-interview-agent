@@ -20,7 +20,7 @@ function run(id: string, score: number): EvaluationRun {
     startedAt: null,
     completedAt: null,
     dimensions: [{
-      dimensionId: "correctness",
+      dimensionId: "source_fidelity",
       source: "judge",
       status: "scored",
       score,
@@ -40,13 +40,13 @@ describe("EvaluationCompareView", () => {
     const comparison: EvaluationComparison = {
       evalPackId: "review.v1",
       evalPackVersion: 1,
-      dimensionIds: ["correctness"],
+      dimensionIds: ["source_fidelity"],
       runs: [run("eval-one", 72), run("eval-two", 91)],
     };
     render(<EvaluationCompareView comparison={comparison} />);
-    expect(screen.getByText("correctness")).toBeInTheDocument();
+    expect(screen.getByText("来源忠实度")).toBeInTheDocument();
     expect(screen.getByText("72")).toBeInTheDocument();
     expect(screen.getByText("91")).toBeInTheDocument();
-    expect(screen.getAllByText(/评分/)).toHaveLength(2);
+    expect(screen.getByText("+19")).toBeInTheDocument();
   });
 });

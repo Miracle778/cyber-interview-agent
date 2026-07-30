@@ -1,4 +1,10 @@
 import { AlertTriangle, ShieldCheck } from "lucide-react";
+import {
+  dimensionLabel,
+  dimensionOutcome,
+  evaluationStatusMeta,
+  formatEvaluationVersion,
+} from "./evaluationPresentation";
 import type { EvaluationFeedback, EvaluationRun } from "./evaluationTypes";
 
 
@@ -23,14 +29,15 @@ export function JudgeResultPanel({
   }
   const summary = run.judgeSummary?.summary;
   const confidence = run.judgeSummary?.confidence;
+  const status = evaluationStatusMeta(run.status);
   return (
     <div className="judge-result">
       <header>
         <div>
-          <span>Eval Pack</span>
-          <h2>{run.evalPackId} · v{run.evalPackVersion}</h2>
+          <span>评估配置</span>
+          <h2>{formatEvaluationVersion(run)}</h2>
         </div>
-        <span data-status={run.status}>{run.status}</span>
+        <span data-tone={status.tone}>{status.label}</span>
       </header>
       {run.errorCode ? (
         <p className="judge-result__warning">
@@ -54,8 +61,10 @@ export function JudgeResultPanel({
         {run.dimensions.map((dimension) => (
           <article key={`${dimension.source}:${dimension.dimensionId}`}>
             <header>
-              <strong>{dimension.dimensionId}</strong>
-              <span>{dimension.score === null ? dimension.status : `${dimension.score} 分`}</span>
+              <strong>{dimensionLabel(dimension.dimensionId)}</strong>
+              <span data-tone={dimensionOutcome(dimension).tone}>
+                {dimension.score === null ? dimensionOutcome(dimension).label : `${dimension.score} 分`}
+              </span>
             </header>
             <p>{dimension.summary}</p>
             <dl>

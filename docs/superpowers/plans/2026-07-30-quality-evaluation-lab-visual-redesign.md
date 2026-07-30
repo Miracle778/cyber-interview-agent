@@ -104,7 +104,7 @@ git commit -m "feat(agent-evaluation): add report presentation semantics"
 - Consumes: one selected `EvaluationRun`, optional compatible `EvaluationComparison`, optional baseline/candidate selection callbacks.
 - Produces: a report header with business label/status/version metadata and a metric matrix with explicit baseline, candidate, delta, trend direction, and expandable evidence detail.
 
-- [ ] **Step 1: Write failing metric-matrix tests**
+- [x] **Step 1: Write failing metric-matrix tests**
 
 Assert that:
 
@@ -117,7 +117,7 @@ expect(screen.getByText("+19")).toBeInTheDocument();
 
 Clicking a metric row must reveal summary, cited event hashes, artifact hashes, confidence, and risks. A single-run report renders a candidate value and a visible “尚未选择兼容基线”, never a fabricated baseline.
 
-- [ ] **Step 2: Run RED tests**
+- [x] **Step 2: Run RED tests**
 
 ```bash
 cd frontend
@@ -126,7 +126,7 @@ npx vitest run \
   src/features/evaluation/EvaluationCompareView.test.tsx
 ```
 
-- [ ] **Step 3: Implement the report components**
+- [x] **Step 3: Implement the report components**
 
 `EvaluationReportHeader` displays Pack business name, status icon/text, case count when known, Beijing timestamp through `shared/time.ts`, and Pack version.
 
@@ -140,7 +140,7 @@ Scores include compact progress bars and tabular numerals. Lower-is-better dimen
 
 Move verbose Judge summary, evidence and feedback into the selected metric detail/report detail below the matrix. Do not render every dimension as an equal full-width card.
 
-- [ ] **Step 4: Run tests and TypeScript**
+- [x] **Step 4: Run tests and TypeScript**
 
 ```bash
 cd frontend
@@ -151,7 +151,7 @@ npx vitest run \
 npx tsc --noEmit
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/features/evaluation/EvaluationReportHeader.tsx \
