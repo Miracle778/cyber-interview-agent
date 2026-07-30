@@ -103,6 +103,31 @@ const failedExecution: ExecutionSummary = {
   errorCode: "provider_unavailable",
 };
 
+const recoveredCurationFailure: ExecutionSummary = {
+  ...runningExecution,
+  id: "run-curation-failed",
+  sessionId: "session-curation-recovered",
+  title: "题库整理任务",
+  status: "failed",
+  traceHealth: "complete",
+  capabilities: ["open_business", "retry"],
+  errorCode: "curation_work_item_failed",
+  createdAt: "2026-07-29T00:29:00Z",
+  startedAt: "2026-07-29T00:29:00Z",
+  finishedAt: "2026-07-29T00:29:04Z",
+};
+
+const recoveredCurationCurrent: ExecutionSummary = {
+  ...recoveredCurationFailure,
+  id: "run-curation-recovered",
+  status: "completed",
+  capabilities: ["open_business"],
+  errorCode: null,
+  createdAt: "2026-07-29T00:51:00Z",
+  startedAt: "2026-07-29T00:51:00Z",
+  finishedAt: "2026-07-29T00:51:04Z",
+};
+
 function page(items = [runningExecution, completedExecution]) {
   const statusCounts = items.reduce<Record<string, number>>((counts, item) => ({
     ...counts,
@@ -408,6 +433,50 @@ describe("AgentRunCenterPage", () => {
       "/agents/executions/run-failed",
     );
     expect(within(preview).queryByRole("link", { name: "查看并处理" })).not.toBeInTheDocument();
+  });
+
+  it("keeps recovered failures in history without treating them as current action items", async () => {
+    mockPage(page([
+      recoveredCurationFailure,
+      waitingExecution,
+      recoveredCurationCurrent,
+    ]));
+
+    render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
+
+    const tabs = await screen.findByRole("navigation", { name: "任务状态" });
+    await waitFor(() => {
+      expect(within(tabs).getByRole("button", { name: "需要我 1" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+    });
+    expect(screen.getByRole("button", {
+      name: "查看需要你处理的 1 个任务",
+    })).toBeInTheDocument();
+    expect(within(taskList()).queryByRole("button", {
+      name: /题库整理任务/,
+    })).not.toBeInTheDocument();
+
+    fireEvent.click(within(tabs).getByRole("button", { name: "失败 1" }));
+
+    const historicalRow = within(taskList()).getByRole("button", {
+      name: /题库整理任务/,
+    });
+    expect(historicalRow).toHaveTextContent("历史失败·已恢复");
+    expect(historicalRow).toHaveTextContent("当前为“已完成”");
+
+    const preview = screen.getByRole("complementary", { name: "任务详情" });
+    expect(preview).toHaveTextContent("历史失败·会话已恢复");
+    expect(preview).toHaveTextContent("当前会话状态为“已完成”");
+    expect(within(preview).getByRole("link", { name: "查看当前会话" })).toHaveAttribute(
+      "href",
+      "/review?section=catalog&curationSessionId=session-curation-recovered&returnTo=%2Fagents%3Fstatus%3Dfailed",
+    );
+    expect(within(preview).getByRole("link", { name: "查看失败详情" })).toHaveAttribute(
+      "href",
+      "/agents/executions/run-curation-failed",
+    );
   });
 
   it("replaces synthetic trace filenames with a readable task name", async () => {

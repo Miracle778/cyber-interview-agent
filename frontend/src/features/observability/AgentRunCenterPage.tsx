@@ -71,10 +71,19 @@ const STATUS_GROUPS: Record<string, Set<string>> = {
 function matchesFilters(
   execution: ExecutionSummary,
   filters: ExecutionFilters,
+  currentExecutionIds: ReadonlySet<string>,
 ) {
   if (!filters.includeSystemAgents && execution.system) return false;
   if (
+    filters.status === "needs_me"
+    && (
+      !currentExecutionIds.has(execution.id)
+      || !STATUS_GROUPS.needs_me.has(execution.status)
+    )
+  ) return false;
+  if (
     filters.status &&
+    filters.status !== "needs_me" &&
     (STATUS_GROUPS[filters.status]
       ? !STATUS_GROUPS[filters.status].has(execution.status)
       : execution.status !== filters.status)
@@ -92,6 +101,24 @@ function matchesFilters(
       .includes(search)
   ) return false;
   return true;
+}
+
+function latestExecutionsBySession(executions: ExecutionSummary[]) {
+  const latestBySession = new Map<string, ExecutionSummary>();
+  for (const execution of executions) {
+    const current = latestBySession.get(execution.sessionId);
+    if (
+      !current
+      || execution.createdAt > current.createdAt
+      || (
+        execution.createdAt === current.createdAt
+        && execution.id > current.id
+      )
+    ) {
+      latestBySession.set(execution.sessionId, execution);
+    }
+  }
+  return latestBySession;
 }
 
 function countStatuses(
@@ -196,13 +223,27 @@ export function AgentRunCenterPage({
     );
   }, [filters.includeSystemAgents, liveById, query.data?.items]);
 
+  const currentExecutionBySession = useMemo(
+    () => latestExecutionsBySession(allExecutions),
+    [allExecutions],
+  );
+  const currentExecutionIds = useMemo(
+    () => new Set(
+      [...currentExecutionBySession.values()].map((execution) => execution.id),
+    ),
+    [currentExecutionBySession],
+  );
   const executions = useMemo(
-    () => allExecutions.filter((execution) => matchesFilters(execution, filters)),
-    [allExecutions, filters],
+    () => allExecutions.filter((execution) =>
+      matchesFilters(execution, filters, currentExecutionIds)
+    ),
+    [allExecutions, currentExecutionIds, filters],
   );
   const actionItems = useMemo(
-    () => allExecutions.filter(executionNeedsAction),
-    [allExecutions],
+    () => allExecutions.filter((execution) =>
+      currentExecutionIds.has(execution.id) && executionNeedsAction(execution)
+    ),
+    [allExecutions, currentExecutionIds],
   );
   const totalPages = Math.max(1, Math.ceil(executions.length / PAGE_SIZE));
   const visibleExecutions = executions.slice(
@@ -244,6 +285,9 @@ export function AgentRunCenterPage({
 
   const selected =
     allExecutions.find((execution) => execution.id === selectedId) ?? null;
+  const currentSessionExecution = selected
+    ? currentExecutionBySession.get(selected.sessionId) ?? selected
+    : null;
   const returnTo =
     `/agents${searchParams.size ? `?${searchParams.toString()}` : ""}`;
   const agentNames = useMemo(
@@ -252,11 +296,11 @@ export function AgentRunCenterPage({
   );
   const counts = useMemo(() => ({
     all: allExecutions.length,
-    needsMe: countStatuses(allExecutions, STATUS_GROUPS.needs_me),
+    needsMe: actionItems.length,
     running: countStatuses(allExecutions, "running"),
     completed: countStatuses(allExecutions, "completed"),
     failed: countStatuses(allExecutions, "failed"),
-  }), [allExecutions]);
+  }), [actionItems.length, allExecutions]);
   const exactAttentionStatus = ["partial_success", "failed"].includes(filters.status)
     ? filters.status
     : "";
@@ -541,6 +585,7 @@ export function AgentRunCenterPage({
                   >
                     <ExecutionList
                       executions={visibleExecutions}
+                      currentExecutionBySession={currentExecutionBySession}
                       selectedId={previewOpen ? selectedId : null}
                       onSelect={selectExecution}
                       returnTo={returnTo}
@@ -590,6 +635,7 @@ export function AgentRunCenterPage({
             >
               <ExecutionPreview
                 execution={selected}
+                currentSessionExecution={currentSessionExecution}
                 onClose={() => setPreviewOpen(false)}
                 returnTo={returnTo}
               />

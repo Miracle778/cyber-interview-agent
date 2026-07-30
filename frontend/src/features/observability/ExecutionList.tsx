@@ -19,6 +19,9 @@ export const STATUS_LABELS: Record<string, string> = {
   partial_success: "需要关注",
   failed: "失败待处理",
   cancelled: "已取消",
+  recovered: "历史失败·已恢复",
+  historical_failed: "历史失败",
+  historical_partial: "历史异常",
 };
 
 export function statusLabel(status: string) {
@@ -118,6 +121,7 @@ export function formatRunUpdatedAt(value: string) {
 function StatusIcon({ status }: { status: string }) {
   if (status === "running") return <LoaderCircle size={16} aria-hidden="true" />;
   if (status === "completed") return <CheckCircle2 size={16} aria-hidden="true" />;
+  if (status === "recovered") return <CheckCircle2 size={16} aria-hidden="true" />;
   if (status === "failed") return <XCircle size={16} aria-hidden="true" />;
   if (status === "partial_success") return <AlertTriangle size={16} aria-hidden="true" />;
   if (status === "interrupted") return <PauseCircle size={16} aria-hidden="true" />;
@@ -126,6 +130,7 @@ function StatusIcon({ status }: { status: string }) {
 
 interface ExecutionListProps {
   executions: ExecutionSummary[];
+  currentExecutionBySession: ReadonlyMap<string, ExecutionSummary>;
   selectedId: string | null;
   onSelect: (executionId: string) => void;
   returnTo: string;
@@ -133,6 +138,7 @@ interface ExecutionListProps {
 
 export function ExecutionList({
   executions,
+  currentExecutionBySession,
   selectedId,
   onSelect,
   returnTo,
@@ -141,15 +147,36 @@ export function ExecutionList({
     <div className="execution-list" aria-label="Execution 列表">
       <div className="execution-list__header" aria-hidden="true">
         <span>任务</span>
-        <span>当前状态</span>
+        <span>运行状态</span>
         <span>结果摘要</span>
         <span>最近更新</span>
       </div>
-      {executions.map((execution) => (
+      {executions.map((execution) => {
+        const currentSessionExecution =
+          currentExecutionBySession.get(execution.sessionId) ?? execution;
+        const isHistorical =
+          currentSessionExecution.id !== execution.id;
+        const isHistoricalProblem = isHistorical
+          && ["failed", "partial_success"].includes(execution.status);
+        const sessionRecovered = isHistoricalProblem
+          && !["failed", "partial_success"].includes(currentSessionExecution.status);
+        const displayStatus = sessionRecovered
+          ? "recovered"
+          : isHistoricalProblem
+            ? execution.status === "failed"
+              ? "historical_failed"
+              : "historical_partial"
+            : execution.status;
+        const resultSummary = sessionRecovered
+          ? `这次运行曾出现问题；会话后续已更新，当前为“${statusLabel(currentSessionExecution.status)}”。`
+          : isHistoricalProblem
+            ? "这是较早的一次异常记录，请以同一会话的最新状态为准。"
+            : executionResultSummary(execution);
+        return (
         <div className="execution-row-card" key={execution.id}>
           <button
             className="execution-row"
-            data-status={execution.status}
+            data-status={displayStatus}
             aria-pressed={execution.id === selectedId}
             type="button"
             onClick={() => onSelect(execution.id)}
@@ -163,12 +190,12 @@ export function ExecutionList({
                 <small>{execution.displayName}</small>
               </span>
             </span>
-            <span className="execution-status" data-status={execution.status}>
-              <StatusIcon status={execution.status} />
-              {statusLabel(execution.status)}
+            <span className="execution-status" data-status={displayStatus}>
+              <StatusIcon status={displayStatus} />
+              {statusLabel(displayStatus)}
             </span>
             <span className="execution-row__summary">
-              {executionResultSummary(execution)}
+              {resultSummary}
             </span>
             <time dateTime={execution.finishedAt ?? execution.startedAt ?? execution.createdAt}>
               {formatRunUpdatedAt(
@@ -185,7 +212,8 @@ export function ExecutionList({
             详情
           </Link>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

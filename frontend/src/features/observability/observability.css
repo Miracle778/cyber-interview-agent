@@ -506,6 +506,11 @@ button.agent-run-metric[aria-pressed="true"] {
   background: var(--success-soft);
 }
 
+.execution-status[data-status="recovered"] {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
 .execution-status[data-status="failed"] {
   color: var(--danger);
   background: var(--danger-soft);
@@ -514,6 +519,12 @@ button.agent-run-metric[aria-pressed="true"] {
 .execution-status[data-status="partial_success"] {
   color: var(--warning);
   background: var(--warning-soft);
+}
+
+.execution-status[data-status="historical_failed"],
+.execution-status[data-status="historical_partial"] {
+  color: var(--text-muted);
+  background: var(--surface-subtle);
 }
 
 .execution-row__metric,

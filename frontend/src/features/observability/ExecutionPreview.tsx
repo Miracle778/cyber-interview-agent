@@ -28,11 +28,20 @@ import { executionBusinessDestination } from "./observabilityNavigation";
 
 interface ExecutionPreviewProps {
   execution: ExecutionSummary | null;
+  currentSessionExecution: ExecutionSummary | null;
   onClose: () => void;
   returnTo: string;
 }
 
-function nextStepCopy(execution: ExecutionSummary) {
+function nextStepCopy(
+  execution: ExecutionSummary,
+  currentSessionExecution: ExecutionSummary,
+) {
+  if (execution.id !== currentSessionExecution.id) {
+    return ["failed", "partial_success"].includes(execution.status)
+      ? "先查看当前会话的最新结果；如需排查这次异常，可打开本次失败详情。"
+      : "先查看当前会话的最新结果；本次历史运行仍可从运行详情追溯。";
+  }
   if (execution.status === "waiting_for_input") {
     return "回到原任务补充信息，Agent 会从当前步骤继续。";
   }
@@ -51,7 +60,13 @@ function nextStepCopy(execution: ExecutionSummary) {
   return "可以回到原业务页面查看本次任务生成或更新的内容。";
 }
 
-function primaryActionLabel(execution: ExecutionSummary) {
+function primaryActionLabel(
+  execution: ExecutionSummary,
+  currentSessionExecution: ExecutionSummary,
+) {
+  if (execution.id !== currentSessionExecution.id) {
+    return "查看当前会话";
+  }
   if (["waiting_for_input", "waiting_for_approval"].includes(execution.status)) {
     return "继续处理";
   }
@@ -64,14 +79,31 @@ function primaryActionLabel(execution: ExecutionSummary) {
 
 export function ExecutionPreview({
   execution,
+  currentSessionExecution,
   onClose,
   returnTo,
 }: ExecutionPreviewProps) {
-  const businessDestination = execution
-    ? executionBusinessDestination(execution, returnTo)
+  const activeSessionExecution = currentSessionExecution ?? execution;
+  const isHistorical = Boolean(
+    execution
+    && activeSessionExecution
+    && execution.id !== activeSessionExecution.id,
+  );
+  const isHistoricalProblem = Boolean(
+    isHistorical
+    && execution
+    && ["failed", "partial_success"].includes(execution.status),
+  );
+  const sessionRecovered = Boolean(
+    isHistoricalProblem
+    && activeSessionExecution
+    && !["failed", "partial_success"].includes(activeSessionExecution.status),
+  );
+  const businessDestination = activeSessionExecution
+    ? executionBusinessDestination(activeSessionExecution, returnTo)
     : null;
   const hasBusinessDestination = Boolean(
-    execution?.capabilities.includes("open_business")
+    activeSessionExecution?.capabilities.includes("open_business")
     && businessDestination?.to,
   );
   const runDetailLabel = execution
@@ -105,17 +137,43 @@ export function ExecutionPreview({
 
           <section className="execution-preview__outcome">
             <span
-              data-tone={executionNeedsAction(execution) ? "attention" : "success"}
+              data-tone={
+                sessionRecovered
+                  ? "success"
+                  : executionNeedsAction(activeSessionExecution ?? execution)
+                    ? "attention"
+                    : "success"
+              }
               aria-hidden="true"
             >
-              {executionNeedsAction(execution)
+              {sessionRecovered
+                ? <CheckCircle2 size={21} />
+                : executionNeedsAction(activeSessionExecution ?? execution)
                 ? <CircleAlert size={21} />
                 : <CheckCircle2 size={21} />}
             </span>
             <div>
-              <small>当前情况</small>
-              <h3>{statusLabel(execution.status)}</h3>
-              <p>{executionResultSummary(execution)}</p>
+              <small>{isHistorical ? "历史记录" : "当前情况"}</small>
+              <h3>
+                {sessionRecovered
+                  ? "历史失败·会话已恢复"
+                  : isHistoricalProblem
+                    ? execution.status === "failed"
+                      ? "历史失败"
+                      : "历史异常"
+                    : isHistorical
+                      ? `历史运行·${statusLabel(execution.status)}`
+                    : statusLabel(execution.status)}
+              </h3>
+              <p>
+                {isHistoricalProblem && activeSessionExecution
+                  ? sessionRecovered
+                    ? `这次运行曾失败，但同一会话已有后续运行；当前会话状态为“${statusLabel(activeSessionExecution.status)}”。`
+                    : `这是较早的一次异常记录；当前会话状态为“${statusLabel(activeSessionExecution.status)}”。`
+                  : isHistorical && activeSessionExecution
+                    ? `这是较早的一次运行；当前会话状态为“${statusLabel(activeSessionExecution.status)}”。`
+                  : executionResultSummary(execution)}
+              </p>
             </div>
           </section>
 
@@ -146,7 +204,7 @@ export function ExecutionPreview({
             <span aria-hidden="true"><ArrowRight size={18} /></span>
             <div>
               <h3>接下来可以这样做</h3>
-              <p>{nextStepCopy(execution)}</p>
+              <p>{nextStepCopy(execution, activeSessionExecution ?? execution)}</p>
             </div>
           </section>
 
@@ -158,7 +216,10 @@ export function ExecutionPreview({
                 state={{ from: returnTo }}
               >
                 {businessDestination!.exact
-                  ? primaryActionLabel(execution)
+                  ? primaryActionLabel(
+                    execution,
+                    activeSessionExecution ?? execution,
+                  )
                   : "打开业务页面"}
                 <ArrowUpRight size={15} aria-hidden="true" />
               </Link>
