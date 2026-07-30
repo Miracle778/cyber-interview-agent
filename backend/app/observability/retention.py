@@ -207,11 +207,7 @@ class TraceRetentionService:
     def _eligible_files(self, policy: TraceRetentionPolicy):
         if policy.body_policy == "permanent":
             return [], self._active_count()
-        cutoff = (
-            self._now() + timedelta(seconds=1)
-            if policy.body_policy == "metadata_only"
-            else self._now() - timedelta(days=policy.body_days or 90)
-        )
+        cutoff = self._now() - timedelta(days=policy.body_days or 90)
         rows = []
         protected = 0
         for trace_file in self.connection.execute(
@@ -235,6 +231,9 @@ class TraceRetentionService:
                 (trace_file["relative_path"],),
             ).fetchone()[0]
             if newest is None:
+                continue
+            if policy.body_policy == "metadata_only":
+                rows.append(dict(trace_file))
                 continue
             try:
                 observed = datetime.fromisoformat(str(newest).replace("Z", "+00:00"))

@@ -2,6 +2,11 @@ node_modules/
 /frontend/node_modules
 dist/
 .vite/
+coverage/
+coverage.xml
+.coverage
+.coverage.*
+.scannerwork/
 test-results/
 playwright-report/
 .playwright-mcp/
