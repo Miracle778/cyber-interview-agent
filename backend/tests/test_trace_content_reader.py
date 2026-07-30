@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -112,6 +113,25 @@ def test_trace_content_validates_pointer_and_returns_reasoning_only_when_stored(
     assert page.complete is True
     assert page.next_offset is None
     assert page.redactions_applied is True
+
+
+def test_trace_content_supports_platforms_without_pread(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delattr(os, "pread", raising=False)
+    service, connection, _path, event_id = _trace_service(
+        tmp_path,
+        payload={"messages": ["Windows Python"]},
+    )
+    try:
+        page = service.get_event_content(
+            "run-1", event_id, offset=0, limit=65536
+        )
+    finally:
+        connection.close()
+
+    assert json.loads(page.content)["messages"] == ["Windows Python"]
 
 
 def test_trace_content_omits_absent_reasoning(tmp_path: Path) -> None:

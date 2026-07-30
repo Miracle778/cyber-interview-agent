@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 import zipfile
 from pathlib import Path
@@ -159,7 +160,11 @@ def test_trace_export_with_bodies_requires_advanced_mode(
         connection.close()
 
 
-def test_trace_export_body_bundle_has_no_secret_fields(tmp_path: Path) -> None:
+def test_trace_export_body_bundle_has_no_secret_fields(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delattr(os, "pread", raising=False)
     service, connection = _service(tmp_path)
     try:
         export = service.create_export(

@@ -133,6 +133,8 @@ class TraceContentReader:
             flags = os.O_RDONLY
             if hasattr(os, "O_NOFOLLOW"):
                 flags |= os.O_NOFOLLOW
+            if hasattr(os, "O_BINARY"):
+                flags |= os.O_BINARY
             descriptor = os.open(path, flags)
             try:
                 file_stat = os.fstat(descriptor)
@@ -150,7 +152,16 @@ class TraceContentReader:
                     raise TraceContentUnavailableError(
                         "trace event pointer is outside its source"
                     )
-                raw = os.pread(descriptor, byte_length, byte_start)
+                os.lseek(descriptor, byte_start, os.SEEK_SET)
+                chunks: list[bytes] = []
+                remaining = byte_length
+                while remaining:
+                    chunk = os.read(descriptor, remaining)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                raw = b"".join(chunks)
             finally:
                 os.close(descriptor)
         except (OSError, PathPolicyError, KeyError, TypeError, ValueError) as error:
