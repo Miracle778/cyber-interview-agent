@@ -1,4 +1,9 @@
 import { CheckCircle2, CircleAlert, LoaderCircle } from "lucide-react";
+import { formatBeijingDateTime } from "../../shared/time";
+import {
+  evaluationPackLabel,
+  evaluationStatusMeta,
+} from "./evaluationPresentation";
 import type { EvaluationRun } from "./evaluationTypes";
 
 
@@ -29,8 +34,12 @@ export function EvaluationRunList({
               {run.status === "completed" ? <CheckCircle2 /> : run.status === "running" ? <LoaderCircle /> : <CircleAlert />}
             </span>
             <span>
-              <strong>{run.evalPackId}</strong>
-              <small>v{run.evalPackVersion} · {run.trigger === "manual" ? "手动" : run.trigger === "automatic" ? "自动" : "回归"} · {run.status}</small>
+              <strong>{evaluationPackLabel(run.evalPackId)}</strong>
+              <small>
+                v{run.evalPackVersion} · {run.trigger === "manual" ? "手动" : run.trigger === "automatic" ? "自动" : "回归"}
+                {" · "}{evaluationStatusMeta(run.status).label}
+                {" · "}{formatBeijingDateTime(run.createdAt) ?? "时间未知"}
+              </small>
             </span>
           </button>
           <label>

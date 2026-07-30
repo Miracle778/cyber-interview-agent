@@ -29,7 +29,7 @@ const run = {
   completedAt: "2026-07-30T00:00:02Z",
   dimensions: [
     {
-      dimensionId: "correctness",
+      dimensionId: "key_point_coverage",
       source: "judge",
       status: "scored",
       score: 86,
@@ -84,8 +84,18 @@ describe("EvaluationLabPage", () => {
     });
     renderPage();
     expect(await screen.findByText("整体质量稳定")).toBeInTheDocument();
-    expect(screen.getByText("86 分")).toBeInTheDocument();
-    expect(screen.getByText(/event-has/)).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "评估报告" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "长期趋势" })).toBeInTheDocument();
+    expect(screen.getByLabelText("基线评估")).toBeInTheDocument();
+    expect(screen.getByLabelText("候选评估")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "质量门禁" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "回归案例" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "长期质量趋势" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "长期趋势" }));
+    expect(screen.getByRole("heading", { name: "长期质量趋势" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "评估报告" }));
+    fireEvent.click(screen.getByRole("button", { name: /关键点覆盖/ }));
+    expect(screen.getByText(/event-hash/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "发起 Judge" }));
     await waitFor(() => expect(
       requests.some((request) =>
@@ -106,5 +116,33 @@ describe("EvaluationLabPage", () => {
     await screen.findByText("整体质量稳定");
     expect(screen.queryByText("高级诊断：Judge 原始输入与输出")).not.toBeInTheDocument();
     expect(screen.queryByText(/cost/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps the candidate report usable when a baseline is incompatible", async () => {
+    const baseline = {
+      ...run,
+      id: "eval-2",
+      executionId: "execution-2",
+      evalPackId: "profile.v1",
+      createdAt: "2026-07-29T00:00:00Z",
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/feedback")) return Response.json([]);
+      if (url.includes("/trends")) return Response.json({ items: [] });
+      if (url.includes("/regression-cases")) return Response.json({ items: [] });
+      if (url.includes("/comparisons")) {
+        return Response.json({ detail: "incompatible" }, { status: 409 });
+      }
+      return Response.json({ items: [run, baseline] });
+    });
+
+    renderPage();
+    await screen.findByText("整体质量稳定");
+    fireEvent.change(screen.getByLabelText("基线评估"), { target: { value: "eval-2" } });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("候选报告仍可查看");
+    expect(screen.getByRole("heading", { name: "核心指标对比" })).toBeInTheDocument();
+    expect(screen.getAllByText("86").length).toBeGreaterThan(0);
   });
 });

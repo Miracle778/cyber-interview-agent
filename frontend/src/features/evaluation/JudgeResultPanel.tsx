@@ -1,10 +1,4 @@
 import { AlertTriangle, ShieldCheck } from "lucide-react";
-import {
-  dimensionLabel,
-  dimensionOutcome,
-  evaluationStatusMeta,
-  formatEvaluationVersion,
-} from "./evaluationPresentation";
 import type { EvaluationFeedback, EvaluationRun } from "./evaluationTypes";
 
 
@@ -29,15 +23,13 @@ export function JudgeResultPanel({
   }
   const summary = run.judgeSummary?.summary;
   const confidence = run.judgeSummary?.confidence;
-  const status = evaluationStatusMeta(run.status);
   return (
     <div className="judge-result">
       <header>
         <div>
-          <span>评估配置</span>
-          <h2>{formatEvaluationVersion(run)}</h2>
+          <span>结论校准</span>
+          <h2>评估说明与人工反馈</h2>
         </div>
-        <span data-tone={status.tone}>{status.label}</span>
       </header>
       {run.errorCode ? (
         <p className="judge-result__warning">
@@ -57,30 +49,6 @@ export function JudgeResultPanel({
           </div>
         </section>
       ) : null}
-      <div className="judge-dimensions">
-        {run.dimensions.map((dimension) => (
-          <article key={`${dimension.source}:${dimension.dimensionId}`}>
-            <header>
-              <strong>{dimensionLabel(dimension.dimensionId)}</strong>
-              <span data-tone={dimensionOutcome(dimension).tone}>
-                {dimension.score === null ? dimensionOutcome(dimension).label : `${dimension.score} 分`}
-              </span>
-            </header>
-            <p>{dimension.summary}</p>
-            <dl>
-              <div>
-                <dt>事件证据</dt>
-                <dd>{dimension.citedEventHashes.length ? dimension.citedEventHashes.map((hash) => hash.slice(0, 10)).join("、") : "无"}</dd>
-              </div>
-              <div>
-                <dt>产物证据</dt>
-                <dd>{dimension.citedArtifactHashes.length ? dimension.citedArtifactHashes.map((hash) => hash.slice(0, 10)).join("、") : "无"}</dd>
-              </div>
-            </dl>
-            {dimension.risks.length ? <p className="judge-dimension__risk">{dimension.risks.join("；")}</p> : null}
-          </article>
-        ))}
-      </div>
       {run.rawSnapshot || run.rawJudgeResult ? (
         <details className="judge-result__raw">
           <summary>高级诊断：Judge 原始输入与输出</summary>

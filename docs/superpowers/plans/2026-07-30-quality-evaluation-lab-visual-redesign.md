@@ -178,7 +178,7 @@ git commit -m "feat(agent-evaluation): build comparison report surface"
 - Consumes: existing runs, selected run, feedback, regression cases, comparison query, Judge mutation, and trends query.
 - Produces: report/trends tabs, explicit baseline and candidate selectors, quality-gate summary rail, evaluation-source strip, regression-case table, and responsive workbench layout.
 
-- [ ] **Step 1: Write failing page-composition tests**
+- [x] **Step 1: Write failing page-composition tests**
 
 The report view must expose:
 
@@ -196,7 +196,7 @@ screen.getByText("人工反馈");
 
 Assert that trends are absent until the trends tab is selected. Assert that incompatible comparison returns a visible inline explanation while the selected-run report remains usable.
 
-- [ ] **Step 2: Run RED tests**
+- [x] **Step 2: Run RED tests**
 
 ```bash
 cd frontend
@@ -205,7 +205,7 @@ npx vitest run \
   src/features/evaluation/EvaluationQualityRail.test.tsx
 ```
 
-- [ ] **Step 3: Implement the workbench composition**
+- [x] **Step 3: Implement the workbench composition**
 
 Desktop structure:
 
@@ -230,14 +230,14 @@ The run list becomes a compact selector source rather than a permanent third scr
 
 The trends panel renders only in the secondary tab. Preserve Judge launch, feedback submit, raw advanced disclosure and regression-case creation.
 
-- [ ] **Step 4: Implement responsive behavior**
+- [x] **Step 4: Implement responsive behavior**
 
 - 1440: report + 320px rail, one viewport-height workbench.
 - 1024: report + 280px rail; matrix remains readable and secondary summaries compact.
 - 768: rail moves below report; report toolbar wraps without hiding selectors.
 - 390: one column, selectors and primary action full width, metric matrix becomes stacked metric rows with baseline/candidate/delta labels, no page-level horizontal overflow.
 
-- [ ] **Step 5: Run focused frontend validation**
+- [x] **Step 5: Run focused frontend validation**
 
 ```bash
 cd frontend
@@ -251,7 +251,7 @@ npx tsc --noEmit
 npm run build
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add frontend/src/features/evaluation

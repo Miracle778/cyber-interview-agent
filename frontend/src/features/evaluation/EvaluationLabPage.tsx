@@ -1,8 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, Bot, LoaderCircle, Scale } from "lucide-react";
+import {
+  AlertTriangle,
+  BarChart3,
+  Bot,
+  ClipboardCheck,
+  FlaskConical,
+  LoaderCircle,
+  Scale,
+  ShieldCheck,
+  UserCheck,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { TaskWorkspace, TaskWorkspacePane } from "../../shared/ui/TaskWorkspace";
+import { formatBeijingDateTime } from "../../shared/time";
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import {
   compareEvaluationRuns,
@@ -14,8 +24,14 @@ import {
   listRegressionCases,
   submitEvaluationFeedback,
 } from "./evaluationApi";
-import { EvaluationCompareView } from "./EvaluationCompareView";
-import { EvaluationRunList } from "./EvaluationRunList";
+import { EvaluationMetricMatrix } from "./EvaluationMetricMatrix";
+import {
+  evaluationPackLabel,
+  evaluationStatusMeta,
+} from "./evaluationPresentation";
+import { EvaluationQualityRail } from "./EvaluationQualityRail";
+import { EvaluationReportHeader } from "./EvaluationReportHeader";
+import type { EvaluationRun } from "./evaluationTypes";
 import { JudgeResultPanel } from "./JudgeResultPanel";
 import { RegressionCasePanel } from "./RegressionCasePanel";
 import { EvaluationTrendsPanel } from "./EvaluationTrendsPanel";
@@ -30,7 +46,8 @@ export function EvaluationLabPage({
   const [searchParams] = useSearchParams();
   const executionId = searchParams.get("executionId") ?? "";
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [compareIds, setCompareIds] = useState<string[]>([]);
+  const [baselineId, setBaselineId] = useState<string>("");
+  const [activeView, setActiveView] = useState<"report" | "trends">("report");
   const queryClient = useQueryClient();
   const runsQuery = useQuery({
     queryKey: ["agent-evaluations", workspace?.id],
@@ -71,10 +88,10 @@ export function EvaluationLabPage({
     }),
   });
   const compareQuery = useQuery({
-    queryKey: ["agent-evaluation-comparison", workspace?.id, compareIds],
-    enabled: Boolean(workspace && compareIds.length === 2),
+    queryKey: ["agent-evaluation-comparison", workspace?.id, baselineId, selectedId],
+    enabled: Boolean(workspace && baselineId && selectedId && baselineId !== selectedId),
     queryFn: ({ signal }) =>
-      compareEvaluationRuns(workspace!.id, compareIds, signal),
+      compareEvaluationRuns(workspace!.id, [baselineId, selectedId!], signal),
   });
   const runs = runsQuery.data ?? [];
   useEffect(() => {
@@ -85,6 +102,13 @@ export function EvaluationLabPage({
     () => runs.find((item) => item.id === selectedId) ?? null,
     [runs, selectedId],
   );
+  useEffect(() => {
+    if (baselineId === selectedId || !runs.some((item) => item.id === baselineId)) {
+      setBaselineId("");
+    }
+  }, [baselineId, runs, selectedId]);
+  const comparedBaseline = compareQuery.data?.runs.find((item) => item.id === baselineId) ?? null;
+  const comparedCandidate = compareQuery.data?.runs.find((item) => item.id === selectedId) ?? selected;
   const feedbackQuery = useQuery({
     queryKey: ["agent-evaluation-feedback", workspace?.id, selectedId],
     enabled: Boolean(workspace && selectedId),
@@ -104,6 +128,24 @@ export function EvaluationLabPage({
           <Link to="/agents/evaluations" aria-current="page">质量评估</Link>
         </nav>
       </header>
+      <div className="evaluation-lab__tabs" role="tablist" aria-label="质量实验室视图">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeView === "report"}
+          onClick={() => setActiveView("report")}
+        >
+          <ClipboardCheck />评估报告
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeView === "trends"}
+          onClick={() => setActiveView("trends")}
+        >
+          <BarChart3 />长期趋势
+        </button>
+      </div>
       {!workspace ? (
         <div className="evaluation-state"><Bot /><strong>请先选择工作区。</strong></div>
       ) : runsQuery.isPending ? (
@@ -112,73 +154,119 @@ export function EvaluationLabPage({
         <div className="evaluation-state evaluation-state--error"><AlertTriangle /><strong>无法读取质量评估</strong></div>
       ) : (
         <>
-          {executionId ? (
-            <aside className="evaluation-launch">
-              <Activity size={18} />
-              <span>已选择 Execution <code>{executionId}</code></span>
-              <button type="button" disabled={judge.isPending} onClick={() => judge.mutate()}>
-                {judge.isPending ? "Judge 评估中…" : "发起 Judge"}
-              </button>
-              {judge.isError ? <small role="alert">{judge.error.message}</small> : null}
-            </aside>
-          ) : null}
-          {compareIds.length === 2 ? (
-            compareQuery.isError ? (
-              <p className="evaluation-compare-error" role="alert">
-                这两次评估的 Eval Pack 版本或维度不兼容，不能直接比较。
-              </p>
-            ) : compareQuery.data ? (
-              <EvaluationCompareView comparison={compareQuery.data} />
-            ) : (
-              <p className="evaluation-compare-loading"><Scale size={17} />正在准备对比…</p>
-            )
-          ) : null}
-          <EvaluationTrendsPanel
-            points={trendsQuery.data ?? []}
-            loading={trendsQuery.isPending}
-            error={trendsQuery.isError}
-          />
-          <TaskWorkspace className="evaluation-lab__workspace">
-            <TaskWorkspacePane className="evaluation-lab__runs">
-              <header><h2>评估运行</h2><span>{runs.length} 条</span></header>
-              <EvaluationRunList
-                runs={runs}
-                selectedId={selectedId}
-                compareIds={compareIds}
-                onSelect={setSelectedId}
-                onToggleCompare={(id) => setCompareIds((current) =>
-                  current.includes(id)
-                    ? current.filter((item) => item !== id)
-                    : [...current, id].slice(-2)
-                )}
-              />
-            </TaskWorkspacePane>
-            <TaskWorkspacePane className="evaluation-lab__result">
-              <JudgeResultPanel
-                run={selected}
-                feedbackPending={feedback.isPending}
-                feedback={feedbackQuery.data ?? []}
-                onFeedback={(verdict, reason) => feedback.mutate(
-                  { verdict, reason },
-                  {
-                    onSuccess: () => void queryClient.invalidateQueries({
-                      queryKey: ["agent-evaluation-feedback", workspace?.id, selectedId],
-                    }),
-                  },
-                )}
-              />
-            </TaskWorkspacePane>
-            <TaskWorkspacePane className="evaluation-lab__cases">
-              <RegressionCasePanel
-                run={selected}
-                cases={casesQuery.data ?? []}
-                pending={createCase.isPending}
-                onCreate={(includeBodies) => createCase.mutate(includeBodies)}
-              />
-            </TaskWorkspacePane>
-          </TaskWorkspace>
+          {activeView === "trends" ? (
+            <EvaluationTrendsPanel
+              points={trendsQuery.data ?? []}
+              loading={trendsQuery.isPending}
+              error={trendsQuery.isError}
+            />
+          ) : selected ? (
+            <>
+              <section className="evaluation-toolbar" aria-label="评估对比设置">
+                <div className="evaluation-toolbar__selectors">
+                  <label>
+                    <span>基线评估</span>
+                    <select
+                      aria-label="基线评估"
+                      value={baselineId}
+                      onChange={(event) => setBaselineId(event.target.value)}
+                    >
+                      <option value="">选择兼容基线</option>
+                      {runs.filter((item) => item.id !== selectedId).map((item) => (
+                        <option key={item.id} value={item.id}>{runChoiceLabel(item)}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <Scale aria-hidden="true" />
+                  <label>
+                    <span>候选评估</span>
+                    <select
+                      aria-label="候选评估"
+                      value={selectedId ?? ""}
+                      onChange={(event) => setSelectedId(event.target.value)}
+                    >
+                      {runs.map((item) => (
+                        <option key={item.id} value={item.id}>{runChoiceLabel(item)}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                {executionId ? (
+                  <div className="evaluation-toolbar__judge">
+                    <small>当前来源运行 <code>{executionId.slice(0, 12)}</code></small>
+                    <button type="button" disabled={judge.isPending} onClick={() => judge.mutate()}>
+                      {judge.isPending ? <LoaderCircle className="evaluation-spin" /> : <FlaskConical />}
+                      {judge.isPending ? "Judge 评估中…" : "发起 Judge"}
+                    </button>
+                  </div>
+                ) : null}
+                {judge.isError ? <small role="alert">{judge.error.message}</small> : null}
+              </section>
+
+              {baselineId && compareQuery.isError ? (
+                <p className="evaluation-compare-error" role="alert">
+                  这两次评估的质量包版本或维度不兼容。候选报告仍可查看，请改选同版本基线。
+                </p>
+              ) : baselineId && compareQuery.isPending ? (
+                <p className="evaluation-compare-loading"><Scale size={17} />正在校验基线兼容性…</p>
+              ) : null}
+
+              <div className="evaluation-workbench">
+                <main className="evaluation-report">
+                  <EvaluationReportHeader run={selected} caseCount={casesQuery.data?.length ?? 0} />
+                  <EvaluationMetricMatrix
+                    baseline={comparedBaseline}
+                    candidate={comparedCandidate ?? selected}
+                    dimensionIds={compareQuery.data?.dimensionIds}
+                  />
+                  <section className="evaluation-sources" aria-labelledby="evaluation-sources-title">
+                    <header>
+                      <span>可信度来源</span>
+                      <h2 id="evaluation-sources-title">评估来源</h2>
+                    </header>
+                    <div>
+                      <article><ShieldCheck /><span><strong>确定性规则</strong><small>结构、终态与证据完整性</small></span></article>
+                      <article><Bot /><span><strong>独立 Judge</strong><small>基于冻结证据的质量评分</small></span></article>
+                      <article><UserCheck /><span><strong>人工反馈</strong><small>纠偏并沉淀真实判断</small></span></article>
+                    </div>
+                  </section>
+                  <JudgeResultPanel
+                    run={selected}
+                    feedbackPending={feedback.isPending}
+                    feedback={feedbackQuery.data ?? []}
+                    onFeedback={(verdict, reason) => feedback.mutate(
+                      { verdict, reason },
+                      {
+                        onSuccess: () => void queryClient.invalidateQueries({
+                          queryKey: ["agent-evaluation-feedback", workspace?.id, selectedId],
+                        }),
+                      },
+                    )}
+                  />
+                  <RegressionCasePanel
+                    run={selected}
+                    cases={casesQuery.data ?? []}
+                    pending={createCase.isPending}
+                    onCreate={(includeBodies) => createCase.mutate(includeBodies)}
+                  />
+                </main>
+                <EvaluationQualityRail run={selected} feedback={feedbackQuery.data ?? []} />
+              </div>
+            </>
+          ) : (
+            <p className="evaluation-empty">还没有质量评估，可从一次 Agent 运行发起 Judge。</p>
+          )}
         </>
       )}
     </section>
   );
+}
+
+function runChoiceLabel(run: EvaluationRun) {
+  return [
+    evaluationPackLabel(run.evalPackId),
+    `v${run.evalPackVersion}`,
+    evaluationStatusMeta(run.status).label,
+    formatBeijingDateTime(run.createdAt) ?? "时间未知",
+  ].join(" · ");
 }
