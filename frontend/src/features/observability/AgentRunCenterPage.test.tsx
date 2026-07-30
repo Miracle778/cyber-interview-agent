@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import { AgentRunCenterPage } from "./AgentRunCenterPage";
+import type { ExecutionSummary } from "./observabilityTypes";
 
 
 class FakeEventSource {
@@ -37,7 +38,7 @@ const workspace: WorkspaceConfig = {
   vaultPath: "/tmp/interview/vault",
 };
 
-const runningExecution = {
+const runningExecution: ExecutionSummary = {
   id: "run-running",
   sessionId: "session-running",
   workspaceId: "workspace-1",
@@ -62,7 +63,7 @@ const runningExecution = {
   errorCode: null,
 };
 
-const completedExecution = {
+const completedExecution: ExecutionSummary = {
   ...runningExecution,
   id: "run-completed",
   sessionId: "session-completed",
@@ -78,6 +79,28 @@ const completedExecution = {
   createdAt: "2026-07-29T06:24:00Z",
   startedAt: "2026-07-29T06:24:00Z",
   finishedAt: "2026-07-29T06:24:42Z",
+};
+
+const waitingExecution: ExecutionSummary = {
+  ...runningExecution,
+  id: "run-waiting",
+  sessionId: "session-waiting",
+  title: "补充项目背景",
+  status: "waiting_for_input",
+  capabilities: ["open_business", "resume"],
+};
+
+const failedExecution: ExecutionSummary = {
+  ...runningExecution,
+  id: "run-failed",
+  sessionId: "session-failed",
+  graphId: "review.discussion",
+  title: "项目深入讨论",
+  displayName: "深入讨论",
+  status: "failed",
+  traceHealth: "partial",
+  capabilities: ["open_business", "retry", "manual_judge"],
+  errorCode: "provider_unavailable",
 };
 
 function page(items = [runningExecution, completedExecution]) {
@@ -124,6 +147,10 @@ function mockPage(payload: unknown = page()) {
   );
 }
 
+function taskList() {
+  return screen.getByRole("region", { name: "任务列表" });
+}
+
 describe("AgentRunCenterPage", () => {
   beforeEach(() => {
     FakeEventSource.instances = [];
@@ -136,162 +163,264 @@ describe("AgentRunCenterPage", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders real execution summaries with Beijing time and compact token values", async () => {
+  it("renders the task-first layout with stable status tabs and friendly details", async () => {
     mockPage();
 
-    const view = render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
+    render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
 
-    expect(screen.getByRole("heading", { level: 1, name: "Agent 运行中心" })).toBeInTheDocument();
-    const summary = await screen.findByRole("list", { name: "运行汇总" });
-    expect(summary).toHaveTextContent("运行中1");
-    expect(summary).toHaveTextContent("已完成1");
-    expect(view.container.querySelector(".agent-run-center > .task-workspace")).not.toBeNull();
-    expect(screen.getByRole("region", { name: "Execution 列表" })).toHaveClass(
-      "task-workspace__pane",
+    expect(screen.getByRole("heading", { level: 1, name: "任务运行" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "运行质量" })).toHaveAttribute(
+      "href",
+      "/agents/evaluations",
     );
-    const row = screen.getByRole("button", { name: /MyBatis 拦截器资料整理/ });
+    const tabs = await screen.findByRole("navigation", { name: "任务状态" });
+    expect(within(tabs).getByRole("button", { name: "全部 2" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(within(tabs).getByRole("button", { name: "进行中 1" })).toBeInTheDocument();
+    expect(within(tabs).getByRole("button", { name: "已完成 1" })).toBeInTheDocument();
+
+    const row = within(taskList()).getByRole("button", {
+      name: /MyBatis 拦截器资料整理/,
+    });
     expect(row).toHaveTextContent("题库整理");
-    expect(row).toHaveTextContent("12.8k");
-    expect(row).toHaveTextContent("14:26");
+    expect(row).toHaveTextContent("任务正在处理中");
     expect(row).toHaveTextContent("运行中");
-    expect(screen.getByRole("link", {
+    expect(within(taskList()).getByRole("link", {
       name: "查看“MyBatis 拦截器资料整理”运行详情",
     })).toHaveAttribute("href", "/agents/executions/run-running");
+
+    const preview = screen.getByRole("complementary", { name: "任务详情" });
+    expect(preview).toHaveTextContent("接下来可以这样做");
+    expect(preview).toHaveTextContent("12.8k");
   });
 
-  it("filters by status, search text, and explicit system-agent inclusion", async () => {
-    const fetchSpy = mockPage();
-
-    render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
-    await screen.findByRole("button", { name: /MyBatis 拦截器资料整理/ });
-
-    fireEvent.change(screen.getByLabelText("运行状态"), {
-      target: { value: "attention" },
-    });
-    fireEvent.change(screen.getByRole("searchbox", { name: "搜索运行" }), {
-      target: { value: "MyBatis" },
-    });
-    fireEvent.click(screen.getByRole("checkbox", { name: "包含系统 Agent" }));
-
-    await waitFor(() => {
-      const latestUrl = String(fetchSpy.mock.calls.at(-1)?.[0]);
-      expect(latestUrl).toContain("status=attention");
-      expect(latestUrl).toContain("search=MyBatis");
-      expect(latestUrl).toContain("includeSystemAgents=true");
-    });
-  });
-
-  it("uses summary metrics as toggleable status shortcuts", async () => {
-    const waitingExecution = {
-      ...runningExecution,
-      id: "run-waiting",
-      sessionId: "session-waiting",
-      title: "等待用户补充",
-      status: "waiting_for_input",
-    };
-    const fetchSpy = mockPage(page([
+  it("prioritizes waiting and failed tasks in the action center", async () => {
+    mockPage(page([
       runningExecution,
       waitingExecution,
+      failedExecution,
       completedExecution,
     ]));
 
     render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
-    await screen.findByRole("button", { name: /MyBatis 拦截器资料整理/ });
 
-    const runningShortcut = screen.getByRole("button", {
-      name: "筛选运行中，1 条",
-    });
-    expect(runningShortcut).toHaveAttribute("aria-pressed", "false");
-    fireEvent.click(runningShortcut);
-
+    const actionCenter = await screen.findByRole("region", { name: "需要你处理" });
     await waitFor(() => {
-      expect(String(fetchSpy.mock.calls.at(-1)?.[0])).toContain("status=running");
+      expect(screen.getByRole("button", {
+        name: "查看需要你处理的 2 个任务",
+      })).toHaveAttribute("aria-pressed", "true");
     });
-    expect(runningShortcut).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", {
-      name: "筛选已完成，1 条",
+    expect(actionCenter).toHaveTextContent("补充项目背景");
+    expect(actionCenter).toHaveTextContent("项目深入讨论");
+    expect(within(actionCenter).getByRole("button", {
+      name: "继续处理",
     })).toBeInTheDocument();
-
-    fireEvent.click(runningShortcut);
-    await waitFor(() => {
-      expect(String(fetchSpy.mock.calls.at(-1)?.[0])).not.toContain("status=");
-    });
-
-    fireEvent.click(screen.getByRole("button", {
-      name: "筛选等待处理，1 条",
+    fireEvent.click(within(actionCenter).getByRole("button", {
+      name: "查看并处理",
     }));
-    await waitFor(() => {
-      expect(String(fetchSpy.mock.calls.at(-1)?.[0])).toContain("status=waiting");
-    });
-    expect(screen.getByLabelText("运行状态")).toHaveValue("waiting");
-    expect(screen.getByRole("option", { name: "需关注" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "已停止" })).toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "排队中" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "等待输入" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "等待确认" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "已暂停" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "已取消" })).not.toBeInTheDocument();
-    expect(screen.getByText("平均耗时").closest("li")).not.toContainElement(
-      screen.queryByRole("button", { name: /平均耗时/ }),
+    expect(screen.getByRole("complementary", { name: "任务详情" })).toHaveTextContent(
+      "本次任务没有完成",
     );
   });
 
-  it("uses a mobile filter sheet trigger without duplicating filter controls", async () => {
-    mockPage();
+  it("defaults to actionable tasks and lets the yellow summary restore that filter", async () => {
+    mockPage(page([
+      completedExecution,
+      waitingExecution,
+      failedExecution,
+    ]));
 
     render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
-    await screen.findByRole("button", { name: /MyBatis 拦截器资料整理/ });
+    const tabs = await screen.findByRole("navigation", { name: "任务状态" });
 
-    const trigger = screen.getByRole("button", { name: "筛选运行" });
-    const filters = screen.getByRole("region", { name: "运行筛选" });
-    expect(filters).toHaveAttribute("data-mobile-open", "false");
+    await waitFor(() => {
+      expect(within(tabs).getByRole("button", { name: "需要我 2" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+    });
+    expect(within(taskList()).queryByRole("button", {
+      name: /简历 v3 画像建议/,
+    })).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("complementary", { name: "任务详情" })).toHaveTextContent(
+        "补充项目背景",
+      );
+    });
 
-    fireEvent.click(trigger);
-    expect(filters).toHaveAttribute("data-mobile-open", "true");
-    expect(screen.getAllByLabelText("运行状态")).toHaveLength(1);
+    fireEvent.click(within(tabs).getByRole("button", { name: "全部 3" }));
+    expect(within(taskList()).getByRole("button", {
+      name: /简历 v3 画像建议/,
+    })).toBeInTheDocument();
+
+    const summary = screen.getByRole("button", {
+      name: "查看需要你处理的 2 个任务",
+    });
+    expect(summary).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(summary);
+    expect(summary).toHaveAttribute("aria-pressed", "true");
+    expect(within(taskList()).queryByRole("button", {
+      name: /简历 v3 画像建议/,
+    })).not.toBeInTheDocument();
   });
 
-  it("keeps every Agent overview shortcut visible after selecting one", async () => {
+  it("filters locally through stable task-status tabs without hiding other tabs", async () => {
+    const fetchSpy = mockPage(page([
+      runningExecution,
+      waitingExecution,
+      failedExecution,
+      completedExecution,
+    ]));
+
+    render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
+    const tabs = await screen.findByRole("navigation", { name: "任务状态" });
+
+    fireEvent.click(within(tabs).getByRole("button", { name: "需要我 2" }));
+    expect(within(taskList()).queryByRole("button", {
+      name: /MyBatis 拦截器资料整理/,
+    })).not.toBeInTheDocument();
+    expect(within(taskList()).getByRole("button", {
+      name: /补充项目背景/,
+    })).toBeInTheDocument();
+    expect(within(tabs).getByRole("button", { name: "全部 4" })).toBeInTheDocument();
+    expect(within(tabs).getByRole("button", { name: "已完成 1" })).toBeInTheDocument();
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(within(tabs).getByRole("button", { name: "已完成 1" }));
+    expect(within(taskList()).getByRole("button", {
+      name: /简历 v3 画像建议/,
+    })).toBeInTheDocument();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses one responsive filter panel for Agent, detailed status, and system tasks", async () => {
     const fetchSpy = mockPage();
 
     render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
-    const overview = await screen.findByRole("region", { name: "Agent 概览" });
-    const curationShortcut = within(overview).getByRole("button", {
-      name: /题库整理 运行中 1/,
-    });
-    const profileShortcut = within(overview).getByRole("button", {
-      name: /画像助手 运行中 0/,
-    });
+    await screen.findByRole("button", { name: "筛选" });
 
-    fireEvent.click(profileShortcut);
+    const trigger = screen.getByRole("button", { name: "筛选" });
+    fireEvent.click(trigger);
+    const filters = screen.getByRole("region", { name: "运行筛选" });
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getAllByLabelText("运行状态")).toHaveLength(1);
+    expect(within(filters).getByRole("option", { name: "需要我处理" })).toBeInTheDocument();
+    expect(within(filters).getByRole("option", { name: "已停止" })).toBeInTheDocument();
 
+    fireEvent.change(within(filters).getByLabelText("Agent"), {
+      target: { value: "画像助手" },
+    });
+    expect(within(taskList()).getByRole("button", {
+      name: /简历 v3 画像建议/,
+    })).toBeInTheDocument();
+
+    fireEvent.click(within(filters).getByRole("checkbox", {
+      name: "包含系统 Agent",
+    }));
     await waitFor(() => {
       expect(String(fetchSpy.mock.calls.at(-1)?.[0])).toContain(
-        "agentName=%E7%94%BB%E5%83%8F%E5%8A%A9%E6%89%8B",
+        "includeSystemAgents=true",
       );
     });
-    expect(curationShortcut).toBeInTheDocument();
-    expect(profileShortcut).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("derives navigation actions from capabilities and registry routes", async () => {
+  it("searches tasks and provides a clear-filter recovery state", async () => {
     mockPage();
 
     render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
-    const running = await screen.findByRole("button", {
-      name: /MyBatis 拦截器资料整理/,
+    await screen.findByRole("searchbox", { name: "搜索运行" });
+    fireEvent.change(screen.getByRole("searchbox", { name: "搜索运行" }), {
+      target: { value: "不存在的任务" },
     });
-    fireEvent.click(running);
+    expect(screen.getByText("没有找到符合条件的任务")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
+    expect(within(taskList()).getByRole("button", {
+      name: /MyBatis 拦截器资料整理/,
+    })).toBeInTheDocument();
+  });
 
-    const preview = screen.getByRole("complementary", { name: "本次运行" });
+  it("keeps the preview closed until another task is selected", async () => {
+    mockPage();
+
+    render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
+    await screen.findByRole("complementary", { name: "任务详情" });
+    fireEvent.click(screen.getByRole("button", { name: "关闭任务详情" }));
+    expect(screen.queryByRole("complementary", { name: "任务详情" })).not.toBeInTheDocument();
+
+    fireEvent.click(within(taskList()).getByRole("button", {
+      name: /简历 v3 画像建议/,
+    }));
+    expect(screen.getByRole("complementary", { name: "任务详情" })).toHaveTextContent(
+      "简历 v3 画像建议",
+    );
+  });
+
+  it("derives real navigation actions from capabilities and registry routes", async () => {
+    mockPage();
+
+    render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
+    await screen.findByRole("complementary", { name: "任务详情" });
+    let preview = screen.getByRole("complementary", { name: "任务详情" });
+    expect(within(preview).getByRole("link", { name: "查看任务页面" })).toHaveAttribute(
+      "href",
+      "/review?section=catalog&curationSessionId=session-running&returnTo=%2Fagents",
+    );
     expect(within(preview).getByRole("link", { name: "查看运行详情" })).toHaveAttribute(
       "href",
       "/agents/executions/run-running",
     );
-    expect(within(preview).getByRole("link", { name: "打开业务页面" })).toHaveAttribute("href", "/review");
+    expect(within(preview).queryByRole("link", { name: "检查运行质量" })).not.toBeInTheDocument();
+    expect(
+      within(screen.getByText("查看技术详情").closest("details")!)
+        .queryByRole("link", { name: /运行详情/ }),
+    ).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /简历 v3 画像建议/ }));
-    expect(within(preview).queryByRole("link", { name: "打开业务页面" })).not.toBeInTheDocument();
+    fireEvent.click(within(taskList()).getByRole("button", {
+      name: /简历 v3 画像建议/,
+    }));
+    preview = screen.getByRole("complementary", { name: "任务详情" });
+    expect(within(preview).getByRole("link", { name: "查看运行详情" })).toHaveAttribute(
+      "href",
+      "/agents/executions/run-completed",
+    );
+    expect(within(preview).getByRole("link", { name: "检查运行质量" })).toHaveAttribute(
+      "href",
+      "/agents/evaluations?executionId=run-completed",
+    );
+  });
+
+  it("labels a generic Agent landing route honestly when no session deep link exists", async () => {
+    mockPage(page([failedExecution]));
+
+    render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
+
+    const preview = await screen.findByRole("complementary", { name: "任务详情" });
+    await waitFor(() => {
+      expect(within(preview).getByRole("link", { name: "打开业务页面" })).toHaveAttribute(
+        "href",
+        "/review?returnTo=%2Fagents%3Fstatus%3Dneeds_me",
+      );
+    });
+    expect(within(preview).getByRole("link", { name: "查看失败详情" })).toHaveAttribute(
+      "href",
+      "/agents/executions/run-failed",
+    );
+    expect(within(preview).queryByRole("link", { name: "查看并处理" })).not.toBeInTheDocument();
+  });
+
+  it("replaces synthetic trace filenames with a readable task name", async () => {
+    mockPage(page([{
+      ...completedExecution,
+      title: "source_aabbcc.md",
+    }]));
+
+    render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
+
+    expect(await within(await screen.findByRole("region", { name: "任务列表" }))
+      .findByRole("button", { name: /画像助手任务/ })).toBeInTheDocument();
+    expect(screen.queryByText("source_aabbcc.md")).not.toBeInTheDocument();
   });
 
   it("shows loading, empty, API error, and malformed-payload states without fake zeroes", async () => {
@@ -304,7 +433,7 @@ describe("AgentRunCenterPage", () => {
     const first = render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
     expect(screen.getByRole("status")).toHaveTextContent("正在读取 Agent 运行");
     resolveRequest?.(Response.json(page([])));
-    expect(await screen.findByText("当前还没有 Agent 运行记录")).toBeInTheDocument();
+    expect(await screen.findByText("当前还没有 Agent 任务")).toBeInTheDocument();
     first.unmount();
 
     vi.restoreAllMocks();
@@ -320,14 +449,12 @@ describe("AgentRunCenterPage", () => {
     expect(screen.queryByText(/^0$/)).not.toBeInTheDocument();
   });
 
-  it("applies live execution summary changes without reloading the page", async () => {
+  it("applies live summaries and keeps system tasks hidden until requested", async () => {
     mockPage(page([runningExecution]));
 
     render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
-    const row = await screen.findByRole("button", {
-      name: /MyBatis 拦截器资料整理/,
-    });
-    expect(row).toHaveTextContent("运行中");
+    const row = await within(await screen.findByRole("region", { name: "任务列表" }))
+      .findByRole("button", { name: /MyBatis 拦截器资料整理/ });
     expect(FakeEventSource.instances[0].url).toBe(
       "/api/agent-observability/events?workspaceId=workspace-1",
     );
@@ -342,18 +469,7 @@ describe("AgentRunCenterPage", () => {
         finishedAt: "2026-07-29T06:27:36Z",
       },
     });
-
     await waitFor(() => expect(row).toHaveTextContent("已完成"));
-    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps system-agent live events out until system agents are included", async () => {
-    mockPage(page([runningExecution]));
-
-    render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
-    await screen.findByRole("button", {
-      name: /MyBatis 拦截器资料整理/,
-    });
 
     await act(async () => {
       FakeEventSource.instances[0].emit("execution.summary.changed", {
@@ -370,10 +486,13 @@ describe("AgentRunCenterPage", () => {
         },
       });
     });
-
     expect(screen.queryByRole("button", { name: /系统画像任务/ })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "筛选" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "包含系统 Agent" }));
-    expect(await screen.findByRole("button", { name: /系统画像任务/ })).toBeInTheDocument();
+    expect(await within(taskList()).findByRole("button", {
+      name: /系统画像任务/,
+    })).toBeInTheDocument();
   });
 
   it("does not query without a selected workspace", () => {

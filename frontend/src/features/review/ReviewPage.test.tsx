@@ -31,6 +31,12 @@ function wrapper({ children }: { children: ReactNode }) {
   return <MemoryRouter><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{children}</QueryClientProvider></MemoryRouter>;
 }
 
+function wrapperAt(entry: string) {
+  return function RouteWrapper({ children }: { children: ReactNode }) {
+    return <MemoryRouter initialEntries={[entry]}><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{children}</QueryClientProvider></MemoryRouter>;
+  };
+}
+
 function activeQuestions(count: number): ActiveQuestion[] {
   return Array.from({ length: count }, (_, index) => ({
     id: `q-${index}`,
@@ -101,6 +107,23 @@ describe("R2 ReviewPage", () => {
     expect(screen.getByRole("navigation", { name: "本轮题目进度" })).toHaveTextContent("MVCC");
     expect(screen.queryByRole("navigation", { name: "复习轮次历史" })).not.toBeInTheDocument();
     expect(screen.queryByText("待确认操作")).toBeNull();
+  });
+
+  it("opens a run-center deep link at the exact review round and offers a quick return", async () => {
+    mockApi([waitingRound]);
+    render(<ReviewPage workspace={workspace} />, {
+      wrapper: wrapperAt(
+        "/review?section=practice&reviewSessionId=session-1&returnTo=%2Fagents%3Fstatus%3Dneeds_me",
+      ),
+    });
+
+    expect(await screen.findByRole("region", { name: "当前复习轮次" })).toHaveTextContent(
+      "Read View 如何判断可见性？",
+    );
+    expect(screen.getByRole("link", { name: "返回任务运行" })).toHaveAttribute(
+      "href",
+      "/agents?status=needs_me",
+    );
   });
 
   it("opens completed and skipped questions in read-only review mode and returns to the active question", async () => {

@@ -1,18 +1,23 @@
 import { AlertTriangle, Bot, CheckCircle2, Clock3, LoaderCircle, PauseCircle, XCircle } from "lucide-react";
 import { Link } from "react-router-dom";
-import { formatBeijingTime } from "../../shared/time";
+import {
+  BEIJING_TIME_ZONE,
+  formatBeijingDateTime,
+  formatBeijingTime,
+  parseApiTimestamp,
+} from "../../shared/time";
 import type { ExecutionSummary } from "./observabilityTypes";
 
 
 export const STATUS_LABELS: Record<string, string> = {
   queued: "等待处理",
   running: "运行中",
-  waiting_for_input: "等待输入",
-  waiting_for_approval: "等待确认",
+  waiting_for_input: "等待处理",
+  waiting_for_approval: "需要确认",
   interrupted: "已暂停",
   completed: "已完成",
-  partial_success: "部分成功",
-  failed: "失败",
+  partial_success: "需要关注",
+  failed: "失败待处理",
   cancelled: "已取消",
 };
 
@@ -32,6 +37,82 @@ export function formatDuration(milliseconds: number | null) {
   if (seconds < 60) return `${seconds} 秒`;
   const minutes = Math.floor(seconds / 60);
   return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+export function executionTaskTitle(execution: ExecutionSummary) {
+  const title = execution.title.trim();
+  if (/^source_[0-9a-f-]+\.[a-z0-9]+$/i.test(title)) {
+    return `${execution.displayName}任务`;
+  }
+  return title.replace(/\.(md|markdown|txt)$/i, "");
+}
+
+export function executionResultSummary(execution: ExecutionSummary) {
+  switch (execution.status) {
+    case "queued":
+      return "任务已进入队列，正在等待开始。";
+    case "running":
+      return "任务正在处理中，完成后会自动更新结果。";
+    case "waiting_for_input":
+      return "当前步骤已经完成，正在等待你继续回答或补充信息。";
+    case "waiting_for_approval":
+      return "结果已经准备好，需要你确认后才能继续。";
+    case "partial_success":
+      return "部分内容已经完成，仍有问题需要你确认。";
+    case "failed":
+      return "本次任务没有完成，可以查看原因后继续处理。";
+    case "interrupted":
+      return "任务已暂停，已完成的内容仍然保留。";
+    case "cancelled":
+      return "任务已取消，取消前完成的内容仍然保留。";
+    default:
+      if (execution.traceHealth !== "complete") {
+        return "任务已经完成，但部分诊断信息不完整。";
+      }
+      if (execution.displayName === "题库整理") {
+        return "资料整理已经完成，可以查看生成结果。";
+      }
+      if (execution.displayName === "复习助手") {
+        return "本轮复习已经完成，结果已保存。";
+      }
+      if (execution.displayName === "深入讨论") {
+        return "讨论已经完成，可以回看结论与过程。";
+      }
+      if (execution.displayName === "画像助手") {
+        return "画像处理已经完成，相关建议已保存。";
+      }
+      if (execution.displayName === "项目深挖") {
+        return "项目分析已经完成，可以查看问题与回答思路。";
+      }
+      return "任务已经完成，结果已保存。";
+  }
+}
+
+export function executionNeedsAction(execution: ExecutionSummary) {
+  return [
+    "queued",
+    "waiting_for_input",
+    "waiting_for_approval",
+    "partial_success",
+    "failed",
+  ].includes(execution.status);
+}
+
+export function formatRunUpdatedAt(value: string) {
+  const date = parseApiTimestamp(value);
+  if (Number.isNaN(date.getTime())) return "时间未知";
+  const dayKey = (target: Date) => new Intl.DateTimeFormat("en-CA", {
+    timeZone: BEIJING_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(target);
+  const now = new Date();
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const time = formatBeijingTime(value, false) ?? "—";
+  if (dayKey(date) === dayKey(now)) return `今天 ${time}`;
+  if (dayKey(date) === dayKey(yesterday)) return `昨天 ${time}`;
+  return formatBeijingDateTime(value) ?? "时间未知";
 }
 
 function StatusIcon({ status }: { status: string }) {
@@ -59,11 +140,10 @@ export function ExecutionList({
   return (
     <div className="execution-list" aria-label="Execution 列表">
       <div className="execution-list__header" aria-hidden="true">
-        <span>Agent / 运行任务</span>
-        <span>状态</span>
-        <span className="execution-list__duration">耗时</span>
-        <span className="execution-list__tokens">Token</span>
-        <span className="execution-list__started">开始时间</span>
+        <span>任务</span>
+        <span>当前状态</span>
+        <span>结果摘要</span>
+        <span>最近更新</span>
       </div>
       {executions.map((execution) => (
         <div className="execution-row-card" key={execution.id}>
@@ -79,7 +159,7 @@ export function ExecutionList({
                 <Bot size={17} />
               </span>
               <span>
-                <strong>{execution.title}</strong>
+                <strong>{executionTaskTitle(execution)}</strong>
                 <small>{execution.displayName}</small>
               </span>
             </span>
@@ -87,17 +167,13 @@ export function ExecutionList({
               <StatusIcon status={execution.status} />
               {statusLabel(execution.status)}
             </span>
-            <span className="execution-row__metric execution-row__duration">
-              {formatDuration(execution.latencyMs)}
+            <span className="execution-row__summary">
+              {executionResultSummary(execution)}
             </span>
-            <span className="execution-row__metric execution-row__tokens">
-              {formatCompactNumber(execution.totalTokens)}
-            </span>
-            <time dateTime={execution.startedAt ?? execution.createdAt}>
-              {formatBeijingTime(
-                execution.startedAt ?? execution.createdAt,
-                false,
-              ) ?? "—"}
+            <time dateTime={execution.finishedAt ?? execution.startedAt ?? execution.createdAt}>
+              {formatRunUpdatedAt(
+                execution.finishedAt ?? execution.startedAt ?? execution.createdAt,
+              )}
             </time>
           </button>
           <Link

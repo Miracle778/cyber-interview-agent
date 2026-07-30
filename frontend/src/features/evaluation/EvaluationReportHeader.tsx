@@ -25,11 +25,11 @@ export function EvaluationReportHeader({
   return (
     <header className="evaluation-report-header">
       <div>
-        <span className="evaluation-report-header__eyebrow">评估报告</span>
+        <span className="evaluation-report-header__eyebrow">质量报告</span>
         <h1>{formatEvaluationVersion(run)}</h1>
         <p>
           {formatBeijingDateTime(run.completedAt ?? run.createdAt) ?? "时间未知"}
-          {caseCount !== undefined ? ` · ${caseCount} 个回归案例` : ""}
+          {caseCount !== undefined ? ` · ${caseCount} 个复测案例` : ""}
         </p>
       </div>
       <span className="evaluation-report-header__status" data-tone={status.tone}>

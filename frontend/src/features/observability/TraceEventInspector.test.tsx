@@ -36,7 +36,7 @@ describe("TraceEventInspector", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("shows labelled request sections and warns before paging a large body", async () => {
+  it("pretty prints a complete paged JSON body", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(Response.json({
         eventId: "event-1",
@@ -72,13 +72,62 @@ describe("TraceEventInspector", () => {
 
     expect(await screen.findByText("正文超过 200 KB")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "继续加载" }));
-    expect(await screen.findByRole("heading", { name: "请求消息" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "工具定义" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "模型参数" })).toBeInTheDocument();
+    const formatted = await screen.findByLabelText("可读 JSON");
+    expect(formatted).toHaveTextContent('"messages"');
+    expect(formatted).toHaveTextContent('"tools"');
+    expect(formatted).toHaveTextContent('"temperature": 0.2');
     expect(fetchSpy).toHaveBeenLastCalledWith(
       expect.stringContaining("offset=64"),
       expect.anything(),
     );
+  });
+
+  it("pretty prints parsed JSON without building message cards", async () => {
+    const escapedQuestions = JSON.stringify([{
+      seed_key: "seed-1",
+      question_text: "SQLite 出现 database is locked 时应该怎样治理？",
+      source_refs: ["source#section-001", "source#section-002"],
+    }]).replaceAll("\"", "\\\"");
+    const content = JSON.stringify({
+      messages: [{
+        role: "user",
+        content: `题目种子：\n\n${escapedQuestions}\n\n对应来源：source#section-001`,
+      }],
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({
+      eventId: "event-1",
+      eventType: "model.request",
+      content,
+      contentEncoding: "utf-8-json",
+      offset: 0,
+      nextOffset: null,
+      complete: true,
+      sha256: "abc",
+      redactionsApplied: true,
+    }));
+
+    render(
+      <TraceEventInspector
+        workspaceId="workspace-1"
+        runId="run-1"
+        event={{ ...event, byteLength: content.length }}
+        advancedEnabled
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: "格式化" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    const formatted = screen.getByLabelText("可读 JSON");
+    expect(formatted).toHaveTextContent("题目种子：");
+    expect(formatted.textContent).toContain("题目种子：\n\n");
+    expect(formatted.textContent).not.toContain("题目种子：\\n\\n");
+    expect(screen.queryByText("用户消息")).not.toBeInTheDocument();
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "原文" }));
+    expect(screen.getByText(content)).toBeInTheDocument();
   });
 
   it("falls back to raw text and reports copy success and failure", async () => {
@@ -136,9 +185,10 @@ describe("TraceEventInspector", () => {
       />,
     );
     expect(await screen.findByRole("heading", { name: "Provider 返回的 reasoning" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "结构化响应" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "原始响应" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "响应元数据" })).toBeInTheDocument();
+    const formatted = screen.getByLabelText("可读 JSON");
+    expect(formatted).toHaveTextContent('"structured_response"');
+    expect(formatted).toHaveTextContent('"result": "raw"');
+    expect(formatted).toHaveTextContent('"duration_ms": 120');
     unmount();
 
     vi.restoreAllMocks();
@@ -161,7 +211,7 @@ describe("TraceEventInspector", () => {
         advancedEnabled
       />,
     );
-    await screen.findByRole("heading", { name: "结构化响应" });
+    await screen.findByLabelText("可读 JSON");
     expect(screen.queryByText(/reasoning/i)).not.toBeInTheDocument();
     expect(screen.queryByText("Provider 未返回可展示的思维过程")).not.toBeInTheDocument();
   });

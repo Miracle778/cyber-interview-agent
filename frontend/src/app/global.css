@@ -3769,6 +3769,30 @@ select:disabled {
   font-size: 1.35rem;
 }
 
+.review-run-center-return {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  color: var(--primary);
+  font-size: .88rem;
+  font-weight: 650;
+  text-decoration: none;
+  background: var(--primary-soft);
+  border: 1px solid color-mix(in srgb, var(--primary) 22%, var(--border));
+  border-radius: var(--radius-md);
+}
+
+.review-run-center-return:hover {
+  background: color-mix(in srgb, var(--primary) 14%, var(--surface));
+}
+
+.review-run-center-return:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--primary) 24%, transparent);
+  outline-offset: 2px;
+}
+
 .review-primary-tabs {
   display: inline-flex;
   width: fit-content;

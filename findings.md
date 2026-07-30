@@ -1,5 +1,24 @@
 # Agent Runtime 框架收敛关键发现
 
+## 2026-07-29：项目级 Agent 可观测与质量评估设计
+
+- 当前 per-Execution JSONL 已能保存模型和 Tool 的真实交换，但 UUID 文件布局、无查询索引和无产品化 UI 使其仍是诊断基础设施，不是产品级可观测能力。
+- Product Event、Usage Projection、JSONL Trace、Checkpoint、领域表和 OTel 的职责不同，不能合并成单一“日志”或互相替代。
+- 项目级入口必须覆盖全部 Agent；业务页只保留当前运行摘要和下钻入口，不能把全局运行中心放在复习或题库子页面。
+- 采用本地 Trace Ledger：JSONL 是完整正文，SQLite 是可重建索引，大型正文使用受控 Artifact；不建设第二 Runtime 或独立 Gateway。
+- 高级查看允许读取 Prompt、上下文、Tool 和 Provider 原始响应，但 secret 永不保存；思维过程只展示 Provider 实际返回字段。
+- 质量评估采用共用内核与角色专用版本化 Eval Pack；确定性规则可阻断，Judge 不自动阻断，评估失败不影响业务。
+- 默认长期保留元数据、完整正文保留 90 天；Workspace 可配置永久、定期清理或不保存正文。
+- 当前产品没有账号或权限系统；高级正文使用本地高级诊断开关，Workspace 和路径校验仍由 API 强制执行。
+- 当前生产 Trace 写入 v2，Reader 只需兼容可能存在的 v1；完整父子树通过下一版 Schema 实现，不能把“兼容”误写成“本地已经存在两版数据”。
+- 顶层运行统计以业务 Execution 为单位，内部 Agent 和系统模型组件进入执行树；Registry 是覆盖新增 Agent、能力按钮和 Eval Pack 的强制入口。
+- Judge 是独立评估模型，不是业务 Agent 自我反思；失败/部分成功/降级等自动触发，普通成功默认采样 5%，每 Workspace 每日自动上限 20。
+- 产品展示 Token、上下文和延迟，不展示费用，也不维护 Provider 价格表。
+- 实施计划采用一个总索引与四个纵向 Slice：运行中心、高级 Trace、质量评估、保留与安全投影；每个 Slice 都包含真实后端、API、前端与浏览器验收，禁止用 mock 页面提前宣称交付。
+- 为避免再次触发 SQLite 写锁，Trace Writer 热路径只追加 JSONL；查询索引由工作区增量扫描器在启动、查询和 SSE 轮询时短事务同步，并可从 JSONL 全量重建。
+- 当前后端依赖已经包含 OTel/OTLP，但没有 Langfuse SDK；保留与投影 Slice 明确交付 OTel 安全元数据投影，不把 Langfuse 宣称为已实现功能。
+- 当前应用数据库没有独立迁移测试，计划在高级诊断 Slice 新建 `test_app_migrations.py`，覆盖本地高级开关和后续 Judge 设置迁移。
+
 ## 2026-07-28：画像依据不足误判
 
 - `profile_claim_versions.evidence_ids_json` 只包含接受当前建议时的 Evidence，

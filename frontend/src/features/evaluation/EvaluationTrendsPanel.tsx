@@ -1,6 +1,7 @@
 import { Activity, AlertTriangle, BarChart3 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { SelectControl } from "../../shared/ui/SelectControl";
+import { evaluationPackLabel } from "./evaluationPresentation";
 import type { EvaluationTrendPoint } from "./evaluationTypes";
 
 
@@ -26,14 +27,14 @@ export function EvaluationTrendsPanel({
       <header>
         <div><BarChart3 size={18} /><h2 id="evaluation-trends-title">长期质量趋势</h2></div>
         <label>
-          <span>Eval Pack 版本</span>
+          <span>检查标准版本</span>
           <SelectControl value={selected} onChange={(event) => setSelected(event.target.value)}>
             <option value="">全部（分版本展示）</option>
             {versions.map((version) => <option key={version} value={version}>{version}</option>)}
           </SelectControl>
         </label>
       </header>
-      {loading ? <p role="status"><Activity />正在汇总不可变评估结果…</p> : null}
+      {loading ? <p role="status"><Activity />正在汇总历史检查结果…</p> : null}
       {error ? <p role="alert"><AlertTriangle />无法读取质量趋势。</p> : null}
       {!loading && !error && visible.length === 0 ? (
         <p>还没有足够的评估数据形成趋势。</p>
@@ -44,7 +45,7 @@ export function EvaluationTrendsPanel({
             <thead>
               <tr>
                 <th>日期</th><th>Agent / 版本</th><th>运行</th><th>成功率</th>
-                <th>确定性问题</th><th>Judge 均分</th><th>人工复核</th>
+                <th>规则问题</th><th>AI 检查均分</th><th>人工复核</th>
                 <th>平均耗时</th><th>Token / 上下文</th>
               </tr>
             </thead>
@@ -61,7 +62,7 @@ export function EvaluationTrendsPanel({
                   point.toolVersion,
                 ].join(":")}>
                   <td>{point.bucket}</td>
-                  <td><strong>{point.graphId}</strong><small>{point.evalPackId} · v{point.evalPackVersion}</small></td>
+                  <td><strong>{evaluationPackLabel(point.evalPackId)}</strong><small>标准版本 v{point.evalPackVersion}</small></td>
                   <td>{point.runCount}</td>
                   <td><Rate value={point.successRate} /></td>
                   <td><Rate value={point.deterministicIssueRate} inverse /></td>

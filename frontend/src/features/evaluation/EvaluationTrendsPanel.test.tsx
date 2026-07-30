@@ -31,7 +31,7 @@ describe("EvaluationTrendsPanel", () => {
     const table = screen.getByRole("table");
     expect(within(table).getByText("82.0")).toBeInTheDocument();
     expect(within(table).getByText("91.0")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Eval Pack 版本"), {
+    fireEvent.change(screen.getByLabelText("检查标准版本"), {
       target: { value: "review.v1@2" },
     });
     expect(within(table).queryByText("82.0")).not.toBeInTheDocument();

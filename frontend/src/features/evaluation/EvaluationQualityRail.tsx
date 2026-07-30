@@ -28,32 +28,32 @@ export function EvaluationQualityRail({
 }) {
   const summary = summarizeEvaluation(run, feedback);
   return (
-    <aside className="evaluation-quality-rail" aria-labelledby="quality-gate-title">
+    <aside className="evaluation-quality-rail" aria-labelledby="quality-result-title">
       <section className="evaluation-quality-rail__policy">
         <header>
-          <span>发布策略</span>
-          <h2 id="quality-gate-title">质量门禁</h2>
+          <span>结果说明</span>
+          <h2 id="quality-result-title">检查结论</h2>
         </header>
         <ol>
           <li>
             <span><ShieldCheck /></span>
             <div>
-              <strong>确定性规则</strong>
-              <p>硬规则失败会阻止自动通过。</p>
+              <strong>基础规则检查</strong>
+              <p>明确的结构和状态问题可以直接识别。</p>
             </div>
           </li>
           <li>
             <span><Bot /></span>
             <div>
-              <strong>独立 Judge</strong>
-              <p>提供质量信号，不单独替代业务决策。</p>
+              <strong>AI 质量检查</strong>
+              <p>提供质量建议，不替代你的最终判断。</p>
             </div>
           </li>
           <li>
             <span><UserCheck /></span>
             <div>
-              <strong>人工反馈</strong>
-              <p>高风险或不确定结果由人工确认。</p>
+              <strong>你的判断</strong>
+              <p>重要或不确定的结果由你最终确认。</p>
             </div>
           </li>
         </ol>
@@ -62,7 +62,6 @@ export function EvaluationQualityRail({
       <section className="evaluation-quality-rail__result">
         <header>
           <h3>本次结果</h3>
-          {summary.averageScore !== null ? <strong>{summary.averageScore}</strong> : null}
         </header>
         <ul>
           <li data-tone="success">
@@ -86,14 +85,14 @@ export function EvaluationQualityRail({
       </section>
 
       <section className="evaluation-quality-rail__config">
-        <h3>评估配置</h3>
+        <h3>检查设置</h3>
         <dl>
-          <div><dt>质量包</dt><dd>{evaluationPackLabel(run.evalPackId)}</dd></div>
+          <div><dt>检查标准</dt><dd>{evaluationPackLabel(run.evalPackId)}</dd></div>
           <div><dt>版本</dt><dd>v{run.evalPackVersion}</dd></div>
-          <div><dt>触发方式</dt><dd>{run.trigger === "manual" ? "手动评估" : run.trigger === "automatic" ? "自动评估" : "回归验证"}</dd></div>
-          <div><dt>Judge 模型</dt><dd>{run.judgeProviderModelId ? "已配置" : "未启用"}</dd></div>
+          <div><dt>检查方式</dt><dd>{run.trigger === "manual" ? "手动检查" : run.trigger === "automatic" ? "自动检查" : "复测验证"}</dd></div>
+          <div><dt>AI 检查</dt><dd>{run.judgeProviderModelId ? "已配置" : "未启用"}</dd></div>
         </dl>
-        <p>原始正文默认不进入回归样例；这里只展示冻结证据与评估结论。</p>
+        <p>运行正文默认不进入复测案例；这里只展示检查依据与结论。</p>
       </section>
     </aside>
   );

@@ -1,5 +1,33 @@
 # Cyber Interview Agent 当前任务规划
 
+## 当前设计：Agent 可观测与质量评估工作台
+
+状态：三张高保真概念图、正式规格、架构决策、总实施索引与四个纵向 Slice 计划均已完成；尚未进入业务代码。
+
+- 独立一级入口“Agent 运行中心”统一覆盖题目整理、复习助手、画像助手、岗位分析和项目深挖等全部 Agent；
+- “高级运行详情”按 Execution → Operation → Event 展示输入、输出、上下文、配置和事件；
+- “质量评估实验室”使用冻结真实案例比较 Prompt、模型、Tool 与 Schema 版本；
+- 本地 JSONL 保留完整正文，SQLite 只做可重建查询索引，OTel/Langfuse 只做可选安全投影；
+- 确定性规则可以阻断，LLM Judge 只提示或要求人工复核；
+- 设计包含前后端契约、本地高级诊断开关、保留与隐私、失败降级、性能预算、视觉 Token、布局尺寸和 390/768/1024/1440 响应式验收；
+- 经逐项核查补齐业务/系统 Agent 分层、Observability Registry、能力声明、统一 ExecutionSummary、人工 Judge、自动采样、回归案例隐私、评估隔离和纵向交付门禁；
+- 已确认产品不展示费用、不维护价格表，首版 Eval Pack 由代码/Git 定义，UI 不提供任意 Prompt 编辑。
+
+正式输入：
+
+- `docs/superpowers/specs/2026-07-29-agent-observability-and-quality-workbench-design.md`
+- `docs/superpowers/architecture-decisions/2026-07-29-agent-trace-ledger-and-evaluation-boundaries.md`
+
+实施计划：
+
+- `docs/superpowers/plans/2026-07-29-agent-observability-and-quality-workbench.md`
+- `docs/superpowers/plans/2026-07-29-agent-observability-slice-1-run-center.md`
+- `docs/superpowers/plans/2026-07-29-agent-observability-slice-2-advanced-trace.md`
+- `docs/superpowers/plans/2026-07-29-agent-observability-slice-3-quality-evaluation.md`
+- `docs/superpowers/plans/2026-07-29-agent-observability-slice-4-retention-and-projection.md`
+
+下一步：从 Slice 1 的 Registry、Trace 元数据索引和全局运行中心开始实施；Slice 1 浏览器验收通过后再进入高级正文查看。
+
 ## 当前增量：删除简历后的画像依据重算
 
 状态：实现与定向验证完成，等待页面刷新后的真实数据验收。
