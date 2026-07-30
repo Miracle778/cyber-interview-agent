@@ -163,3 +163,20 @@ def test_writer_is_fail_open_for_append_os_errors(tmp_path: Path, monkeypatch: p
     initialize_agent_trace_directory(tmp_path)
     monkeypatch.setattr(os, "open", lambda *args: (_ for _ in ()).throw(OSError("disk full")))
     assert not AgentTraceWriter().append(identity(tmp_path), "model.request", {})
+
+
+def test_writer_supports_platforms_without_fchmod(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delattr(os, "fchmod", raising=False)
+
+    assert AgentTraceWriter().append(
+        identity(tmp_path),
+        "model.request",
+        {"text": "Windows Python 3.12"},
+        terminal=True,
+    )
+
+    rows = read_trace_rows(tmp_path, "s1", "r1")
+    assert rows[0]["payload"]["text"] == "Windows Python 3.12"
