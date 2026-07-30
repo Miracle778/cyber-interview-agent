@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -153,3 +154,34 @@ async def test_trace_failure_warns_once_without_changing_agent_result(tmp_path: 
 
     assert result.content == "ok"
     assert warnings == ["agent_trace_write_failed"]
+
+
+@pytest.mark.asyncio
+async def test_missing_fchmod_writes_trace_without_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    warnings: list[str] = []
+    monkeypatch.delattr(os, "fchmod", raising=False)
+    middleware = AgentTraceMiddleware(
+        AgentTraceWriter(),
+        agent_role="agent_chat",
+        agent_name="review_discussion",
+        provider_model_id="provider-model-1",
+    )
+    request = SimpleNamespace(
+        tool_call={"id": "call-1", "name": "echo", "args": {}},
+        runtime=SimpleNamespace(context=_context(tmp_path, warning=warnings.append)),
+    )
+
+    async def succeed(_request):
+        return ToolMessage(content="ok", tool_call_id="call-1")
+
+    result = await middleware.awrap_tool_call(request, succeed)
+
+    assert result.content == "ok"
+    assert warnings == []
+    assert [row["event_type"] for row in read_trace_rows(tmp_path, "s1", "r1")] == [
+        "tool.request",
+        "tool.response",
+    ]

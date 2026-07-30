@@ -296,11 +296,15 @@ class AgentTraceWriter:
                 flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
                 if hasattr(os, "O_NOFOLLOW"):
                     flags |= os.O_NOFOLLOW
+                if hasattr(os, "O_BINARY"):
+                    flags |= os.O_BINARY
                 descriptor = os.open(path, flags, 0o600)
                 try:
                     if not stat.S_ISREG(os.fstat(descriptor).st_mode):
                         raise OSError("agent trace target is not a regular file")
-                    os.fchmod(descriptor, 0o600)
+                    fchmod = getattr(os, "fchmod", None)
+                    if fchmod is not None:
+                        fchmod(descriptor, 0o600)
                     remaining = memoryview(encoded)
                     while remaining:
                         written = os.write(descriptor, remaining)
