@@ -8,6 +8,8 @@
 
 **Tech Stack:** FastAPI, Pydantic v2, SQLite/WAL migrations, LangChain/LangGraph middleware, OpenTelemetry, React 19, TypeScript, TanStack Query, React Router, Vitest, Playwright.
 
+> **2026-07-31 maturity note:** Slice 3 delivered v1 historical-result review, not candidate business-Agent replay. Evaluation v2 and real regression are planned separately in `2026-07-31-agent-evaluation-v2-migration.md`.
+
 ## Global Constraints
 
 - Formal product contract: `docs/superpowers/specs/2026-07-29-agent-observability-and-quality-workbench-design.md`.
@@ -147,4 +149,3 @@ python3 scripts/check_stage_docs.py \
   --learning docs/learning/agent-observability-and-quality-workbench/ \
   --plan docs/superpowers/plans/2026-07-29-agent-observability-and-quality-workbench.md
 ```
-

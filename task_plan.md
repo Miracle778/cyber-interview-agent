@@ -1,14 +1,34 @@
 # Cyber Interview Agent 当前任务规划
 
+## 当前设计修订：Agent Evaluation v2
+
+状态：现有 5 类 Pack、21 个维度、Rule、Judge 与回归 API 已完成逐项代码审计；32 项产品与架构边界已确认。当前只修正文档与 README，不修改业务代码或 v1 数据。
+
+- v1 正式定位为“初版质检 / 历史结果复检”，不是候选业务 Agent 回归；
+- 评估主对象改为最终业务结果包，Trace 只解释形成过程；
+- v1 事件存在性检查改称“评估证据完整性检查”，不再宣称可阻断业务；
+- v2 使用 `applicable / not_applicable / insufficient_evidence` 与有锚点等级，不展示跨 Pack 综合百分制；
+- Eval Pack 按单一业务目标拆分，Judge 只读取任务所需的最小评估视图；
+- 真实回归必须在隔离环境重新运行基线和候选 Agent，并区分基础设施失败与内容质量退化；
+- v1 历史结果保持不可变，v2 采用增量契约和新 Pack 版本。
+
+正式输入：
+
+- `docs/superpowers/architecture-decisions/2026-07-31-agent-evaluation-outcome-and-regression-boundaries.md`
+- `docs/superpowers/specs/2026-07-31-agent-evaluation-v2-design.md`
+- `docs/superpowers/plans/2026-07-31-agent-evaluation-v2-migration.md`
+
+下一产品任务：单独启动 Evaluation v2 Phase 1，先建设业务结果投影、适用性等级和最小 Judge 视图；本次 README 工作不夹带代码重构。
+
 ## 当前设计：Agent 可观测与质量评估工作台
 
-状态：三张高保真概念图、正式规格、架构决策、总实施索引与四个纵向 Slice 计划均已完成；尚未进入业务代码。
+状态：四个 Slice 已进入代码；运行与 Trace 能力已落地，质量评估为 v1 历史结果复检。下列内容保留为 2026-07-29 初始目标态，评估边界由上方 v2 修订。
 
 - 独立一级入口“Agent 运行中心”统一覆盖题目整理、复习助手、画像助手、岗位分析和项目深挖等全部 Agent；
 - “高级运行详情”按 Execution → Operation → Event 展示输入、输出、上下文、配置和事件；
-- “质量评估实验室”使用冻结真实案例比较 Prompt、模型、Tool 与 Schema 版本；
+- “质量评估实验室”当前冻结历史业务结果并比较 Eval Pack / Judge 结论，不重新运行 Prompt、模型、Tool 候选版本；
 - 本地 JSONL 保留完整正文，SQLite 只做可重建查询索引，OTel/Langfuse 只做可选安全投影；
-- 确定性规则可以阻断，LLM Judge 只提示或要求人工复核；
+- 当前确定性检查只验证评估证据事件是否完整；业务不变量和阻断规则留待 v2 校准；
 - 设计包含前后端契约、本地高级诊断开关、保留与隐私、失败降级、性能预算、视觉 Token、布局尺寸和 390/768/1024/1440 响应式验收；
 - 经逐项核查补齐业务/系统 Agent 分层、Observability Registry、能力声明、统一 ExecutionSummary、人工 Judge、自动采样、回归案例隐私、评估隔离和纵向交付门禁；
 - 已确认产品不展示费用、不维护价格表，首版 Eval Pack 由代码/Git 定义，UI 不提供任意 Prompt 编辑。
@@ -26,7 +46,7 @@
 - `docs/superpowers/plans/2026-07-29-agent-observability-slice-3-quality-evaluation.md`
 - `docs/superpowers/plans/2026-07-29-agent-observability-slice-4-retention-and-projection.md`
 
-下一步：从 Slice 1 的 Registry、Trace 元数据索引和全局运行中心开始实施；Slice 1 浏览器验收通过后再进入高级正文查看。
+下一步：保留现有 v1 能力与历史数据，按 v2 迁移计划分阶段演进。
 
 ## 当前增量：删除简历后的画像依据重算
 

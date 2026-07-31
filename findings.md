@@ -1,5 +1,16 @@
 # Agent Runtime 框架收敛关键发现
 
+## 2026-07-31：Evaluation v1 实现审计与 v2 边界
+
+- 当前 5 个 Pack 的 21 个维度由 Judge 统一输出 0–100 分，没有 N/A 或证据不足状态；宽泛 Pack 被多个业务目标复用，存在任务不匹配。
+- `evaluate_deterministic_rules()` 只判断所需 Trace 事件是否存在，`blocking` 字段没有接入领域门禁，因此只能称为评估证据完整性检查。
+- 回归案例虽然保存 `snapshot_json`，但回归端点仍调用 `evaluate(case.execution_id)`；它会重新构建并 Judge 原 Execution，不会用案例输入运行候选业务 Agent。
+- 当前 Judge 读取完整 `FrozenEvaluationSnapshot`，外部模型可能得到超出任务需要的私有 Trace；v2 必须先构建任务级最小 `EvaluationView`。
+- 题目整理已经有 `source_answer`、`supplemental_answer` 和 `answer_basis`，但最终候选合并为 `reference_answer` 后会丢失字段级来源语义；来源忠实度不能用来惩罚明确标记的模型补全。
+- 相似度阈值只适合召回疑似重复项，不能替代 exact/same-core/parent-child/related 等关系判断和用户合并决定。
+- 画像、JD 和项目评估都需要把“未记录/未评估/推断/本人确认”与“直接来源”分开；没有证据不能推断用户没有某项经历。
+- 真正回归必须冻结输入与必要领域状态，在隔离环境分别运行基线和候选 Agent，再比较最终业务结果；重新 Judge 历史结果只能验证评估标准变化。
+
 ## 2026-07-29：项目级 Agent 可观测与质量评估设计
 
 - 当前 per-Execution JSONL 已能保存模型和 Tool 的真实交换，但 UUID 文件布局、无查询索引和无产品化 UI 使其仍是诊断基础设施，不是产品级可观测能力。
@@ -7,7 +18,7 @@
 - 项目级入口必须覆盖全部 Agent；业务页只保留当前运行摘要和下钻入口，不能把全局运行中心放在复习或题库子页面。
 - 采用本地 Trace Ledger：JSONL 是完整正文，SQLite 是可重建索引，大型正文使用受控 Artifact；不建设第二 Runtime 或独立 Gateway。
 - 高级查看允许读取 Prompt、上下文、Tool 和 Provider 原始响应，但 secret 永不保存；思维过程只展示 Provider 实际返回字段。
-- 质量评估采用共用内核与角色专用版本化 Eval Pack；确定性规则可阻断，Judge 不自动阻断，评估失败不影响业务。
+- 初始目标设想为共用内核与角色专用版本化 Eval Pack；2026-07-31 审计确认当前 v1 规则不能阻断，后续按任务级 Pack 与真实业务不变量迁移。
 - 默认长期保留元数据、完整正文保留 90 天；Workspace 可配置永久、定期清理或不保存正文。
 - 当前产品没有账号或权限系统；高级正文使用本地高级诊断开关，Workspace 和路径校验仍由 API 强制执行。
 - 当前生产 Trace 写入 v2，Reader 只需兼容可能存在的 v1；完整父子树通过下一版 Schema 实现，不能把“兼容”误写成“本地已经存在两版数据”。

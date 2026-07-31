@@ -8,6 +8,8 @@
 
 **Tech Stack:** FastAPI, Pydantic v2, SQLite, existing model registry/resolver, LangChain ToolStrategy, React 19, TypeScript, Vitest, Playwright.
 
+> **2026-07-31 implementation audit:** This completed plan describes Evaluation v1. It freezes and re-judges an existing Execution. The current regression endpoint does not execute baseline/candidate business Agents, and current deterministic checks validate required Trace-event availability rather than domain invariants. Preserve these checkboxes as historical delivery evidence; use `2026-07-31-agent-evaluation-v2-migration.md` for the corrected next stage.
+
 ## Global Constraints
 
 - Slices 1 and 2 must be complete.
@@ -284,4 +286,3 @@ npx tsc --noEmit
 cd ..
 git diff --check
 ```
-
