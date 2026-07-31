@@ -19,6 +19,10 @@
 - Phase 3 的公共 Adapter 可以统一投影 ID、终态、计数、来源和用户决定，但任务不变量必须继续由领域语义解释：例如 `review.currentIndex` 只能与通过/跳过结果比较，画像更新/拒绝必须有 expected version，JD quote 必须满足 `body[start:end] == quote`。
 - 最终快照不能证明“讨论前后题号完全没变”、迟到 Provider 结果是否曾尝试回写等时序事实；这类规则保持 `inconclusive`，后续需补前后状态快照或 Receipt，而不是让 Judge 推断。
 - 题目答案过去只保留合并后的 `reference_answer`；迁移 043 新增 `source_answer` 与 `supplemental_answer`，新候选可以分别评价原文忠实度和模型补全质量，旧候选仍保留兼容读取并显式暴露证据缺口。
+- 真正可恢复的回归快照必须在 `run_prepared/run_background` 启动前冻结，而不是 `prepare` 结束时冻结；题目批次、画像材料等领域关联可能在两者之间才完成绑定。
+- 对话 Agent 回归除 runtime DB 与材料外还必须冻结 `checkpoints.sqlite`，否则只能重放单轮输入，不能复现当时的会话上下文。
+- 当前进程能够真实比较“来源模型配置”和“当前模型配置”，但没有旧代码制品加载器；结果会明确记录 `codeMode=current_process`，不能宣传为任意 Git 历史提交回放。
+- 质量门禁只接受经过真实案例校准并显式批准的确定性 rule ID；Judge 胜负、语义等级、Token 和延迟不能自动阻断。当前批准集合为空，因此门禁保持默认关闭。
 
 ## 2026-07-29：项目级 Agent 可观测与质量评估设计
 

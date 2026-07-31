@@ -1,6 +1,6 @@
 # Agent Evaluation v2 Migration Plan
 
-**Status:** Phase 1–2 completed; Phase 3 task Pack、Outcome Adapter、答案来源拆分与只读领域规则已完成，代表案例集与浏览器验收待阶段收口统一补齐。
+**Status:** Phase 1–3 completed; Phase 4 execution-before snapshots, two isolated business reruns and blind pairwise comparison are implemented; Phase 5 trends and a default-off deterministic-only gate boundary are implemented. Real Provider browser calibration and final stage gates remain.
 
 **Goal:** Preserve v1 history while moving evaluation from Trace-centric scoring to outcome-centric, task-specific quality evidence and then adding real candidate-version regression.
 
@@ -165,9 +165,13 @@ Exit condition per slice: representative real inputs, an evidence-insufficient c
 
 ### Task 8: Versioned EvalCase
 
+**Status:** Implemented 2026-08-01. New explicitly enabled runs freeze runtime DB, conversation checkpoints and local artifacts immediately before Graph execution. Historical runs without that capture remain non-runnable archives.
+
 Freeze sanitized task input, required domain snapshot, expected invariants, privacy manifest and source execution. Record Graph, Prompt, model, reasoning, Tool, Schema, context, code, Pack and Judge versions.
 
 ### Task 9: Isolated business runner
+
+**Status:** Implemented 2026-08-01. Source model bindings and current bindings run through the product Workspace Runtime in separate temporary roots; production writes are excluded and infrastructure failures are classified separately.
 
 - Restore each case into a disposable evaluation Workspace.
 - Run baseline and candidate business Agents independently.
@@ -177,12 +181,16 @@ Freeze sanitized task input, required domain snapshot, expected invariants, priv
 
 ### Task 10: Pairwise comparison
 
+**Status:** Implemented 2026-08-01. A/B order is deterministic-randomized per run and remapped only after the no-Tool Judge returns. Runtime integration covers one question-curation and one conversation case without Provider calls.
+
 - Judge receives anonymized A/B outcomes in random order.
 - Run deterministic rules before the Judge.
 - Default to one run; high-risk or unstable cases may run three times.
 - Preserve ties, uncertainty and human overrides.
 
 ### Task 11: Product terminology and UX
+
+**Status:** Implemented 2026-08-01. The UI separates history-only cases from private local runnable cases, requires explicit confirmation, and only offers the rerun action for a restorable snapshot with both implementations registered.
 
 - Existing action: “重新质检历史结果”.
 - New action: “使用当前 Agent 版本运行回归案例”.
@@ -192,6 +200,8 @@ Freeze sanitized task input, required domain snapshot, expected invariants, priv
 Exit condition: one real question-curation case and one conversational Agent case rerun baseline/candidate code in isolation and produce comparable outcome evidence.
 
 ## Phase 5: Trends and optional quality gates
+
+**Implementation status (2026-08-01):** Compatible Pack/contract/run-kind grouping and v2 review/severe, Judge-human agreement, user edit/reject, infrastructure, latency and Token metrics are implemented. The gate evaluator accepts only explicitly validated deterministic rule IDs, is disabled by default, ignores Judge scores/preferences, and becomes inconclusive on infrastructure or evidence gaps. No rule is approved for blocking yet, so scheduled sampling and CI/release blocking remain intentionally disabled pending real-case calibration and a separate ADR.
 
 - Compare only the same task Pack and compatible contract versions.
 - Trend deterministic failure, review/severe rates, Judge–human agreement, user edit/reject, latency and Token.

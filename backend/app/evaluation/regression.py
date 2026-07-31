@@ -4,7 +4,7 @@ import hashlib
 import json
 import sqlite3
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Protocol
@@ -28,6 +28,7 @@ from app.infrastructure.runtime_database import connect_runtime_database
 class RegressionExecutionResult:
     execution_id: str
     outcome: BusinessOutcomeProjection
+    implementation_versions: Mapping[str, object] | None = None
 
 
 class RegressionImplementation(Protocol):
@@ -43,6 +44,22 @@ class RegressionImplementation(Protocol):
 
 class RegressionImplementationUnavailable(LookupError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class CallableRegressionImplementation:
+    implementation_id: str
+    executor: Callable[
+        [RegressionCaseRecord, Path], Awaitable[RegressionExecutionResult]
+    ]
+
+    async def execute(
+        self,
+        *,
+        case: RegressionCaseRecord,
+        sandbox_root: Path,
+    ) -> RegressionExecutionResult:
+        return await self.executor(case, sandbox_root)
 
 
 class RegressionImplementationCatalog:
@@ -256,6 +273,12 @@ class IsolatedAgentRegressionRunner:
                         "productionWrites": False,
                         "separateSandboxes": True,
                         "snapshotHash": case.snapshot_hash,
+                        "baselineVersions": (
+                            baseline_result.implementation_versions or {}
+                        ),
+                        "candidateVersions": (
+                            candidate_result.implementation_versions or {}
+                        ),
                         "blindOrderHash": hashlib.sha256(
                             f"{run.id}:{int(swap)}".encode()
                         ).hexdigest(),

@@ -23,6 +23,7 @@ def test_quality_eval_settings_defaults_bounds_and_nullable_model(tmp_path) -> N
             assert response.status_code == 200
             assert response.json() == {
                 "enabled": False,
+                "captureRegressionInputs": False,
                 "automaticSamplePercent": 5,
                 "automaticDailyCap": 20,
                 "judgeProviderModelId": None,
@@ -32,6 +33,7 @@ def test_quality_eval_settings_defaults_bounds_and_nullable_model(tmp_path) -> N
                 "/api/settings/agent-quality-evaluation",
                 json={
                     "enabled": True,
+                    "captureRegressionInputs": True,
                     "automaticSamplePercent": 101,
                     "automaticDailyCap": 20,
                     "judgeProviderModelId": None,
@@ -78,6 +80,7 @@ def test_quality_eval_settings_validate_model_and_persist_restart(tmp_path) -> N
                 "/api/settings/agent-quality-evaluation",
                 json={
                     "enabled": True,
+                    "captureRegressionInputs": True,
                     "automaticSamplePercent": 10,
                     "automaticDailyCap": 30,
                     "judgeProviderModelId": model.id,
@@ -85,6 +88,7 @@ def test_quality_eval_settings_validate_model_and_persist_restart(tmp_path) -> N
             )
             assert saved.status_code == 200
             assert saved.json()["judgeProviderModelId"] == model.id
+            assert saved.json()["captureRegressionInputs"] is True
     finally:
         app.dependency_overrides.clear()
         connection.close()
@@ -95,6 +99,7 @@ def test_quality_eval_settings_validate_model_and_persist_restart(tmp_path) -> N
             reopened
         ).get_agent_quality_evaluation_settings()
         assert resource.enabled is True
+        assert resource.capture_regression_inputs is True
         assert resource.automatic_sample_percent == 10
         assert resource.automatic_daily_cap == 30
         assert resource.judge_provider_model_id == model.id

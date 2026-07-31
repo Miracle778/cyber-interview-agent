@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import sqlite3
 from collections.abc import AsyncIterator, Callable, Mapping
@@ -64,6 +65,15 @@ from app.observability.repository import TraceIndexRepository
 from app.observability.service import AgentObservabilityService
 from app.evaluation.repository import AgentEvaluationRepository
 from app.evaluation.service import AgentEvaluationService
+from app.evaluation.regression import (
+    CallableRegressionImplementation,
+    RegressionExecutionResult,
+    RegressionImplementationCatalog,
+)
+from app.evaluation.outcome_adapters.question_curation import (
+    QuestionCurationOutcomeAdapter,
+)
+from app.evaluation.outcome_adapters.domain import create_sqlite_outcome_adapter
 from app.observability.retention import TraceRetentionService
 from app.observability.cleanup import TraceCleanupService
 from app.observability.projection import TraceMetadataProjector
@@ -243,6 +253,7 @@ class WorkspaceRuntime:
         validate_review_model: Callable[[str, str], None],
         advanced_diagnostics_enabled: Callable[[], bool],
         quality_evaluation_settings: Callable[[], object] | None = None,
+        enable_agent_evaluation: bool = True,
     ) -> "WorkspaceRuntime":
         connection = connect_thread_local_runtime_database(root)
         initialize_agent_trace_directory(root)
@@ -297,7 +308,7 @@ class WorkspaceRuntime:
         evaluation_factory = getattr(graph_factory, "create_evaluation_judge", None)
         agent_evaluation = (
             None
-            if evaluation_factory is None
+            if evaluation_factory is None or not enable_agent_evaluation
             else AgentEvaluationService(
                 workspace_id=workspace_id,
                 workspace_root=root,
@@ -311,6 +322,7 @@ class WorkspaceRuntime:
                         (),
                         {
                             "enabled": False,
+                            "capture_regression_inputs": False,
                             "automatic_daily_cap": 20,
                             "judge_provider_model_id": None,
                         },
@@ -354,6 +366,11 @@ class WorkspaceRuntime:
             profile_storage=profile_storage,
             trace_writer=trace_writer,
             trace_warning=projection.warning,
+            capture_pre_execution=(
+                None
+                if agent_evaluation is None
+                else agent_evaluation.capture_pre_execution_snapshot
+            ),
         )
         projection_service = ReviewDomainService(
             repository=reviews,
@@ -555,6 +572,118 @@ class WorkspaceRuntime:
                 create_job_agents if job_agents_available else None
             ),
         )
+        if agent_evaluation is not None:
+            async def execute_regression(
+                case,
+                sandbox_root: Path,
+                *,
+                use_source_bindings: bool,
+                implementation_id: str,
+            ) -> RegressionExecutionResult:
+                if use_source_bindings:
+                    baseline = json.loads(case.baseline_versions_json)
+                    selected_bindings = baseline.get("modelBindings")
+                    if not isinstance(selected_bindings, dict) or not selected_bindings:
+                        raise RuntimeError("source_model_bindings_unavailable")
+                    bindings = {
+                        str(key): str(value)
+                        for key, value in selected_bindings.items()
+                    }
+                else:
+                    bindings = dict(model_bindings())
+                sandbox_runtime = cls.create(
+                    workspace_id=workspace_id,
+                    root=sandbox_root,
+                    model_bindings=lambda: bindings,
+                    graph_factory=graph_factory,
+                    observability=NoopObservabilitySink(),
+                    validate_review_model=validate_review_model,
+                    advanced_diagnostics_enabled=lambda: False,
+                    quality_evaluation_settings=None,
+                    enable_agent_evaluation=False,
+                )
+                try:
+                    execution = sandbox_runtime.repository.get_execution(
+                        case.execution_id
+                    )
+                    if execution.status != "running":
+                        raise RuntimeError(
+                            "pre_execution_snapshot_is_not_runnable"
+                        )
+                    sandbox_runtime.executions.run_prepared(
+                        execution,
+                        graph_input=execution.input,
+                    )
+                    completed = await sandbox_runtime.executions.wait(execution.id)
+                    if completed.status not in {
+                        "completed",
+                        "waiting_for_input",
+                        "waiting_for_approval",
+                    }:
+                        raise RuntimeError(
+                            completed.error_code or "agent_execution_failed"
+                        )
+                    if case.task_type in {"question_curation", "question_revision"}:
+                        adapter = QuestionCurationOutcomeAdapter(
+                            sandbox_runtime.connection,
+                            workspace_id,
+                            task_type=case.task_type,
+                        )
+                    else:
+                        adapter = create_sqlite_outcome_adapter(
+                            case.task_type,
+                            sandbox_runtime.connection,
+                            workspace_id,
+                        )
+                    outcome = adapter.build(execution.id)
+                    session = sandbox_runtime.repository.get_session(
+                        execution.session_id
+                    )
+                    graph_version_row = sandbox_runtime.connection.execute(
+                        "SELECT graph_version FROM agent_sessions WHERE id = ?",
+                        (execution.session_id,),
+                    ).fetchone()
+                    return RegressionExecutionResult(
+                        execution_id=execution.id,
+                        outcome=outcome,
+                        implementation_versions={
+                            "implementationId": implementation_id,
+                            "graph": (
+                                f"{session.kind}@{graph_version_row['graph_version']}"
+                            ),
+                            "modelBindings": bindings,
+                            "codeMode": "current_process",
+                        },
+                    )
+                finally:
+                    await sandbox_runtime.close()
+
+            agent_evaluation.set_regression_implementations(
+                RegressionImplementationCatalog(
+                    (
+                        CallableRegressionImplementation(
+                            "source-model-config@current-code",
+                            lambda case, root: execute_regression(
+                                case,
+                                root,
+                                use_source_bindings=True,
+                                implementation_id=(
+                                    "source-model-config@current-code"
+                                ),
+                            ),
+                        ),
+                        CallableRegressionImplementation(
+                            "current-runtime",
+                            lambda case, root: execute_regression(
+                                case,
+                                root,
+                                use_source_bindings=False,
+                                implementation_id="current-runtime",
+                            ),
+                        ),
+                    )
+                )
+            )
         return cls(
             workspace_id=workspace_id,
             root=root,

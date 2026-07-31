@@ -33,6 +33,7 @@ from app.evaluation.snapshot import (
     FrozenTraceEvent,
 )
 from app.infrastructure.runtime_database import connect_runtime_database
+from app.application.session_service import ProductRepository
 
 
 class FakeObservability:
@@ -196,6 +197,39 @@ def _service(tmp_path, *, status="completed", judge=None, settings=None):
         judge_factory=lambda _model_id: judge or FakeJudge(),
     )
     return connection, observability, service
+
+
+def test_enabled_evaluation_captures_supported_execution_before_graph(tmp_path) -> None:
+    connection, _observability, service = _service(
+        tmp_path,
+        settings=SimpleNamespace(
+            enabled=True,
+            capture_regression_inputs=True,
+            automatic_daily_cap=20,
+            judge_provider_model_id=None,
+        ),
+    )
+    product = ProductRepository(connection)
+    session = product.create_session(
+        workspace_id="workspace-1",
+        kind="review.discussion",
+        title="Discussion",
+    )
+    execution = product.create_execution(
+        session.id,
+        input={"message": "explain"},
+        model_bindings={"answer_evaluation": "model-1"},
+    )
+    try:
+        service.capture_pre_execution_snapshot(execution)
+        snapshot = service.pre_execution_snapshot(execution.id)
+
+        assert snapshot is not None
+        assert snapshot["mode"] == "restorable"
+        assert snapshot["capturePoint"] == "before_graph_execution"
+        assert snapshot["sourceExecutionId"] == execution.id
+    finally:
+        connection.close()
 
 
 @pytest.mark.asyncio

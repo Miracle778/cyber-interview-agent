@@ -13,6 +13,10 @@ from uuid import uuid4
 from app.agents.context import AgentContext
 from app.evaluation.contracts import JudgeResult, JudgeResultV2
 from app.evaluation.business_rules import evaluate_business_rules
+from app.evaluation.case_snapshot import (
+    create_pre_execution_snapshot,
+    load_pre_execution_snapshot,
+)
 from app.evaluation.judge_agent import JudgeInvoker
 from app.evaluation.outcome_adapters.question_curation import (
     QuestionCurationOutcomeAdapter,
@@ -107,6 +111,38 @@ class AgentEvaluationService:
     @property
     def regression_implementation_ids(self) -> tuple[str, ...]:
         return self._regression_implementations.ids()
+
+    def set_regression_implementations(
+        self, implementations: RegressionImplementationCatalog
+    ) -> None:
+        self._regression_implementations = implementations
+
+    def capture_pre_execution_snapshot(self, execution) -> None:
+        configured = self._settings()
+        if not bool(getattr(configured, "capture_regression_inputs", False)):
+            return
+        graph_id = self.repository.connection.execute(
+            "SELECT session.graph_id FROM agent_runs run "
+            "JOIN agent_sessions session ON session.id = run.session_id "
+            "WHERE run.id = ? AND session.workspace_id = ?",
+            (execution.id, self.workspace_id),
+        ).fetchone()
+        if graph_id is None or graph_id["graph_id"] not in _COMPATIBLE_PACKS_BY_GRAPH:
+            return
+        create_pre_execution_snapshot(
+            workspace_root=self.workspace_root,
+            execution_id=execution.id,
+            connection=self.repository.connection,
+        )
+
+    def pre_execution_snapshot(self, execution_id: str) -> dict[str, object] | None:
+        try:
+            return load_pre_execution_snapshot(
+                workspace_root=self.workspace_root,
+                execution_id=execution_id,
+            )
+        except FileNotFoundError:
+            return None
 
     async def run_regression_case(
         self,

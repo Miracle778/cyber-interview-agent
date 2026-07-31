@@ -1,7 +1,7 @@
 # Agent 质量评估 v2 设计
 
 - 日期：2026-07-31
-- 状态：Confirmed design；Phase 1 基础契约、首个业务结果评估链路和 v1/v2 共存已实现
+- 状态：Implemented through isolated regression foundations；真实 Provider 浏览器校准与最终阶段门禁待完成
 - 适用范围：质量实验室、全部业务 Agent、公共 Runtime 不变量和真实回归案例
 - 关联 ADR：`../architecture-decisions/2026-07-31-agent-evaluation-outcome-and-regression-boundaries.md`
 - 迁移计划：`../plans/2026-07-31-agent-evaluation-v2-migration.md`

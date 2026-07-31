@@ -31,20 +31,31 @@ export function RegressionCasePanel({
           <h2>评估案例</h2>
         </div>
         {run ? (
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => {
-              if (window.confirm("确认创建不含运行正文的复测案例？")) onCreate(false);
-            }}
-          >
-            {pending ? <Archive className="evaluation-spin" /> : <Plus />}
-            {pending ? "正在保存…" : "保存历史结果案例"}
-          </button>
+          <div className="regression-panel__actions">
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => {
+                if (window.confirm("确认创建不含运行正文的历史结果案例？")) onCreate(false);
+              }}
+            >
+              <Archive />保存历史结果案例
+            </button>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => {
+                if (window.confirm("可回归案例会在本机保留该次 Agent 执行前的任务正文、领域数据和会话状态，仅用于隔离回归。确认保存吗？")) onCreate(true);
+              }}
+            >
+              {pending ? <Archive className="evaluation-spin" /> : <Plus />}
+              {pending ? "正在保存…" : "保存可回归案例"}
+            </button>
+          </div>
         ) : null}
       </header>
       <p className="regression-panel__privacy">
-        <LockKeyhole />默认案例只用于重新质检历史结果；只有冻结了执行前领域状态且同时注册基线、候选实现时，才可运行真实 Agent 回归。
+        <LockKeyhole />历史结果案例不含正文，只能重新质检；可回归案例会保留本机执行前快照，并在两个隔离沙箱中重新生成业务结果，不会写入正式工作区。
       </p>
       <div className="regression-panel__table-wrap">
         <table>

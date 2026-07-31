@@ -18,7 +18,7 @@
 - `docs/superpowers/specs/2026-07-31-agent-evaluation-v2-design.md`
 - `docs/superpowers/plans/2026-07-31-agent-evaluation-v2-migration.md`
 
-当前执行：Evaluation v2 Phase 1–2 已完成；Phase 3 已接通 12 个任务级 Pack、全业务 Outcome Adapter、最小 Judge View 与领域只读规则，题目原文答案和 AI 补充已分开持久化及展示。下一步完成代表案例集后进入版本化 EvalCase 与隔离回归运行器；现阶段仍只称“历史结果复检”，不把当前回归按钮误称为候选 Agent 重跑。
+当前执行：Evaluation v2 Phase 1–3 已完成；Phase 4 已接通执行前数据库/checkpoint/材料快照、版本化 EvalCase、来源/当前模型配置实现、双沙箱业务重跑、确定性规则和匿名 A/B Judge，题目整理与对话 Agent 的 Runtime 集成用例均已通过。Phase 5 趋势指标已接通；质量门禁边界已代码化但默认关闭且没有已批准规则。下一步完成真实 Provider 浏览器案例、最终回归和文档门禁。
 
 ## 当前设计：Agent 可观测与质量评估工作台
 

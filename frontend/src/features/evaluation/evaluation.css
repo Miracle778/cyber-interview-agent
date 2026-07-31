@@ -622,6 +622,14 @@
 .judge-feedback-history li p { margin: 3px 0 0; }
 
 .regression-panel > header button { min-height: 36px; }
+.regression-panel__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.regression-panel__actions button:first-child {
+  color: var(--primary);
+  background: var(--surface);
+}
+.regression-panel__actions button:first-child:hover:not(:disabled) {
+  color: white;
+}
 
 .regression-panel__privacy {
   display: flex;
@@ -962,6 +970,7 @@
   .judge-feedback input,
   .judge-feedback button { min-height: 44px; }
   .regression-panel > header { align-items: stretch; flex-direction: column; }
+  .regression-panel__actions { display: grid; }
   .regression-panel > header button { min-height: 44px; }
   .evaluation-quality-rail { grid-template-columns: minmax(0, 1fr); }
   .evaluation-quality-rail > section + section { padding-top: 20px; border-top: 1px solid var(--border); }

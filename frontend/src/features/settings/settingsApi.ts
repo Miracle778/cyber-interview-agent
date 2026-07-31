@@ -28,6 +28,15 @@ export interface AgentDiagnosticsSettingsResource {
   updatedAt: string;
 }
 
+export interface AgentQualityEvaluationSettingsResource {
+  enabled: boolean;
+  captureRegressionInputs: boolean;
+  automaticSamplePercent: number;
+  automaticDailyCap: number;
+  judgeProviderModelId: string | null;
+  updatedAt: string;
+}
+
 export interface TraceRetentionPolicyResource {
   workspaceId: string;
   bodyPolicy: "permanent" | "days" | "metadata_only";
@@ -75,6 +84,21 @@ export function replaceAgentDiagnosticsSettings(
     { advancedEnabled: boolean },
     AgentDiagnosticsSettingsResource
   >("/api/settings/agent-diagnostics", { advancedEnabled });
+}
+
+export function getAgentQualityEvaluationSettings(): Promise<AgentQualityEvaluationSettingsResource> {
+  return apiGet<AgentQualityEvaluationSettingsResource>(
+    "/api/settings/agent-quality-evaluation",
+  );
+}
+
+export function replaceAgentQualityEvaluationSettings(
+  resource: Omit<AgentQualityEvaluationSettingsResource, "updatedAt">,
+): Promise<AgentQualityEvaluationSettingsResource> {
+  return apiPut<
+    Omit<AgentQualityEvaluationSettingsResource, "updatedAt">,
+    AgentQualityEvaluationSettingsResource
+  >("/api/settings/agent-quality-evaluation", resource);
 }
 
 export function getTraceRetentionPolicy(

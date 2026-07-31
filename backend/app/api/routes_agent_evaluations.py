@@ -307,11 +307,13 @@ async def create_regression_case(
         return _error(404, "evaluation_run_not_found", "评估运行不存在或无权访问")
     snapshot = _json(record.snapshot_json) or {}
     execution_row = service.repository.connection.execute(
-        "SELECT input_json, configuration_json FROM agent_runs WHERE id = ?",
+        "SELECT input_json, configuration_json, model_bindings_json "
+        "FROM agent_runs WHERE id = ?",
         (record.execution_id,),
     ).fetchone()
     raw_input = _json(execution_row["input_json"]) if execution_row else {}
     configuration = _json(execution_row["configuration_json"]) if execution_row else {}
+    model_bindings = _json(execution_row["model_bindings_json"]) if execution_row else {}
     sanitized_input = _redact_case_value(
         raw_input or {}, include_private_bodies=command.include_private_bodies
     )
@@ -332,17 +334,25 @@ async def create_regression_case(
         ),
     }
     if command.include_private_bodies:
-        restorable = create_restorable_case_snapshot(
-            workspace_root=service.workspace_root,
-            case_id=case_id,
-            connection=service.repository.connection,
-        )
-        required_domain_snapshot = {
-            **restorable,
-            "mode": "post_execution_archive",
-            "identity": required_domain_snapshot["identity"],
-            "sourceRefs": required_domain_snapshot["sourceRefs"],
-        }
+        pre_execution = service.pre_execution_snapshot(record.execution_id)
+        if pre_execution is not None:
+            required_domain_snapshot = {
+                **pre_execution,
+                "identity": required_domain_snapshot["identity"],
+                "sourceRefs": required_domain_snapshot["sourceRefs"],
+            }
+        else:
+            restorable = create_restorable_case_snapshot(
+                workspace_root=service.workspace_root,
+                case_id=case_id,
+                connection=service.repository.connection,
+            )
+            required_domain_snapshot = {
+                **restorable,
+                "mode": "post_execution_archive",
+                "identity": required_domain_snapshot["identity"],
+                "sourceRefs": required_domain_snapshot["sourceRefs"],
+            }
     baseline_versions = {
         "evalPack": f"{record.eval_pack_id}@{record.eval_pack_version}",
         "evaluationContract": record.evaluation_contract_version,
@@ -352,6 +362,7 @@ async def create_regression_case(
             else {}
         ),
         "executionConfiguration": configuration or {},
+        "modelBindings": model_bindings or {},
     }
     privacy_manifest = {
         "containsPrivateBodies": command.include_private_bodies,

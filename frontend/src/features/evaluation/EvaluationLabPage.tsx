@@ -127,12 +127,21 @@ export function EvaluationLabPage({
     }),
   });
   const runRegression = useMutation({
-    mutationFn: (item: RegressionCase) => runRegressionCase(
-      workspace!.id,
-      item.id,
-      item.availableImplementationIds[0]!,
-      item.availableImplementationIds[item.availableImplementationIds.length - 1]!,
-    ),
+    mutationFn: (item: RegressionCase) => {
+      const source = item.availableImplementationIds.find((id) =>
+        id.startsWith("source-model-config"));
+      const current = item.availableImplementationIds.find((id) =>
+        id === "current-runtime");
+      if (!source || !current) {
+        throw new Error("该案例缺少来源配置或当前运行时实现");
+      }
+      return runRegressionCase(
+        workspace!.id,
+        item.id,
+        source,
+        current,
+      );
+    },
     onSuccess: () => void queryClient.invalidateQueries({
       queryKey: ["agent-regression-runs", workspace?.id],
     }),
