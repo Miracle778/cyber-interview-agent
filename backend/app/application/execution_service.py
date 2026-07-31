@@ -55,7 +55,9 @@ from app.tools.profile_tools import PROFILE_TOOL_NAMES, PROFILE_TOOL_SCOPES
 logger = logging.getLogger(__name__)
 
 
-def _seed_quality_for_candidate(seed_tasks, raw: dict[str, Any]) -> dict[str, object]:
+def _seed_quality_for_candidate(
+    seed_tasks, raw: dict[str, Any]
+) -> dict[str, object]:
     for task in seed_tasks:
         if task.candidate == raw:
             return {
@@ -122,7 +124,9 @@ class ExecutionCancellation:
             raise asyncio.CancelledError()
 
 
-ExecutionHandler = Callable[[ExecutionRecord, ExecutionCancellation], Awaitable[None]]
+ExecutionHandler = Callable[
+    [ExecutionRecord, ExecutionCancellation], Awaitable[None]
+]
 
 
 def _classify_interrupt(value: Mapping[str, Any]) -> Literal["input", "approval"]:
@@ -152,10 +156,7 @@ class AgentExecutionService:
         mark_draft_review_pending: Callable[..., Awaitable[KnowledgeDraftRecord]],
         review_repository: ReviewRepository | None = None,
         get_draft: Callable[[str], Awaitable[KnowledgeDraftRecord]] | None = None,
-        update_draft: Callable[
-            [str, UpdateDraftCommand], Awaitable[KnowledgeDraftRecord]
-        ]
-        | None = None,
+        update_draft: Callable[[str, UpdateDraftCommand], Awaitable[KnowledgeDraftRecord]] | None = None,
         profile_repository: ProfileRepository | None = None,
         profile_storage: MaterialStorage | None = None,
         trace_writer: AgentTraceWriter | None = None,
@@ -275,7 +276,9 @@ class AgentExecutionService:
         )
         return execution
 
-    def run_prepared(self, execution: ExecutionRecord, *, graph_input: object) -> None:
+    def run_prepared(
+        self, execution: ExecutionRecord, *, graph_input: object
+    ) -> None:
         if execution.status != "running":
             raise ValueError("prepared execution must be running")
         self._spawn(execution.id, graph_input=graph_input)
@@ -301,7 +304,7 @@ class AgentExecutionService:
     async def resume_approval(
         self, execution_id: str, decision: dict[str, Any], _receipt_id: str
     ) -> None:
-        await self.wait_for_approval_ready(execution_id)
+        await self._wait_for_inflight_interrupt(execution_id)
         execution = self._repository.transition_execution(
             execution_id,
             expected=("waiting_for_approval", "interrupted"),
@@ -315,11 +318,6 @@ class AgentExecutionService:
             {"executionId": execution.id, "resumed": True},
         )
         self._spawn(execution.id, graph_input=Command(resume=decision))
-        await self.wait(execution.id)
-
-    async def wait_for_approval_ready(self, execution_id: str) -> None:
-        """Wait until the active graph has persisted its approval interrupt."""
-        await self._wait_for_inflight_interrupt(execution_id)
 
     async def _wait_for_inflight_interrupt(self, execution_id: str) -> None:
         """Wait until the active graph has persisted its interrupt state."""
@@ -517,7 +515,9 @@ class AgentExecutionService:
             return requested
         return await self._finish_cancel(execution_id)
 
-    async def interrupt_review_evaluation(self, execution_id: str) -> ExecutionRecord:
+    async def interrupt_review_evaluation(
+        self, execution_id: str
+    ) -> ExecutionRecord:
         current = self._repository.get_execution(execution_id)
         if current.status == "interrupted":
             return current
@@ -569,7 +569,9 @@ class AgentExecutionService:
             await task
         return self._repository.get_execution(execution_id)
 
-    async def complete_background_execution(self, execution_id: str) -> ExecutionRecord:
+    async def complete_background_execution(
+        self, execution_id: str
+    ) -> ExecutionRecord:
         current = self._repository.get_execution(execution_id)
         if current.status != "running":
             return current
@@ -697,7 +699,9 @@ class AgentExecutionService:
     def _round_model_override(self, session_id: str) -> ModelOverride:
         if self._review_repository is None:
             raise RuntimeError("review model override is not configured")
-        settings = self._review_repository.get_round_by_session(session_id).settings
+        settings = self._review_repository.get_round_by_session(
+            session_id
+        ).settings
         return ModelOverride(
             provider_model_id=settings.answer_model_id,
             reasoning_effort=settings.reasoning_effort,
@@ -731,7 +735,9 @@ class AgentExecutionService:
     ) -> None:
         execution = self._repository.get_execution(execution_id)
         context = self._execution_context(execution)
-        await self._trace_execution(context, "execution.started", {"status": "running"})
+        await self._trace_execution(
+            context, "execution.started", {"status": "running"}
+        )
         try:
             cancellation.raise_if_requested()
             await handler(execution, cancellation)
@@ -751,7 +757,9 @@ class AgentExecutionService:
                     execution_id,
                     expected=("running",),
                     target="failed",
-                    error_code=str(getattr(error, "code", "agent_execution_failed")),
+                    error_code=str(
+                        getattr(error, "code", "agent_execution_failed")
+                    ),
                     error_message="Agent 执行失败",
                 )
                 await self._events.publish(
@@ -849,7 +857,9 @@ class AgentExecutionService:
                 bound, code
             ),
         )
-        await self._trace_execution(context, "execution.started", {"status": "running"})
+        await self._trace_execution(
+            context, "execution.started", {"status": "running"}
+        )
 
         async def project_profile_card(
             assessment_id: str,
@@ -975,7 +985,8 @@ class AgentExecutionService:
                 relation_refs=round_record.settings.topics,
             )
             entries = {
-                entry.subject_id: entry for entry in round_record.mastery_before.entries
+                entry.subject_id: entry
+                for entry in round_record.mastery_before.entries
             }
             evidence_refs = list(round_record.mastery_before.evidence_refs)
             for attempt in attempts:
@@ -984,7 +995,9 @@ class AgentExecutionService:
                 entries[attempt.question_snapshot.question_id] = MasteryEntry(
                     subject_id=attempt.question_snapshot.question_id,
                     state=attempt.mastery_suggestion,
-                    recent_mistake=(attempt.mastery_suggestion in {"weak", "partial"}),
+                    recent_mistake=(
+                        attempt.mastery_suggestion in {"weak", "partial"}
+                    ),
                     evidence_refs=(attempt.id,),
                 )
                 if attempt.id not in evidence_refs:
@@ -996,7 +1009,8 @@ class AgentExecutionService:
                 evidence_refs=tuple(evidence_refs),
             )
             mastery_markdown = (
-                f"# {report.title} · 掌握度更新\n\n{report.mastery_explanation}\n"
+                f"# {report.title} · 掌握度更新\n\n"
+                f"{report.mastery_explanation}\n"
             )
             mastery_draft = await create_draft(
                 document_type="mastery_report",
@@ -1056,7 +1070,8 @@ class AgentExecutionService:
                 },
                 editable_fields=("title", "markdown"),
                 idempotency_key=(
-                    f"knowledge.publish:{draft.id}:{draft.version}:{draft.content_hash}"
+                    f"knowledge.publish:{draft.id}:{draft.version}:"
+                    f"{draft.content_hash}"
                 ),
             )
 
@@ -1064,29 +1079,38 @@ class AgentExecutionService:
             if self._review_repository is None:
                 raise RuntimeError("question curation is not configured")
             batch_id = str(
-                execution.input.get("batch_id") or execution.input.get("batchId", "")
+                execution.input.get("batch_id")
+                or execution.input.get("batchId", "")
             )
             if not batch_id:
                 raise ValueError("question curation batch is missing")
             batch = self._review_repository.get_batch(batch_id)
 
-            def rejected_outcome() -> Literal["cancelled", "interrupted", "failed"]:
+            def rejected_outcome() -> Literal[
+                "cancelled", "interrupted", "failed"
+            ]:
                 current_batch = self._review_repository.get_batch(batch_id)
-                if current_batch.control_intent in {
-                    "pause",
-                    "terminate",
-                } or current_batch.status in {"paused", "terminated"}:
+                if (
+                    current_batch.control_intent in {"pause", "terminate"}
+                    or current_batch.status in {"paused", "terminated"}
+                ):
                     return "cancelled"
                 has_curation_projection = True
                 try:
-                    active_batch_id = self._review_repository.get_curation_session(
-                        session.id
-                    ).active_batch_id
+                    active_batch_id = (
+                        self._review_repository.get_curation_session(
+                            session.id
+                        ).active_batch_id
+                    )
                 except LookupError:
                     has_curation_projection = False
                     active_batch_id = None
-                if current_batch.run_id != execution.id or (
-                    has_curation_projection and active_batch_id != batch_id
+                if (
+                    current_batch.run_id != execution.id
+                    or (
+                        has_curation_projection
+                        and active_batch_id != batch_id
+                    )
                 ):
                     return "interrupted"
                 return "failed"
@@ -1106,12 +1130,18 @@ class AgentExecutionService:
             )
             timeline = SessionTimelineProjector(self._repository, self._events)
             try:
-                curation = self._review_repository.get_curation_session(session.id)
+                curation = self._review_repository.get_curation_session(
+                    session.id
+                )
             except LookupError:
                 curation = None
             raw_candidates = tuple(state.get("candidates", ()))
-            seed_tasks = self._review_repository.list_curation_seed_tasks(batch_id)
-            active = self._review_repository.list_active_questions(self._workspace_id)
+            seed_tasks = self._review_repository.list_curation_seed_tasks(
+                batch_id
+            )
+            active = self._review_repository.list_active_questions(
+                self._workspace_id
+            )
             from app.review.question_similarity import same_question
 
             def similar_active(raw: dict[str, Any]) -> str | None:
@@ -1125,11 +1155,11 @@ class AgentExecutionService:
                     ):
                         return item.snapshot.question_id
                 return None
-
             candidate_specs: list[dict[str, object]] = []
-            revision_candidate_id = execution.input.get(
-                "revision_candidate_id"
-            ) or execution.input.get("revisionCandidateId")
+            revision_candidate_id = (
+                execution.input.get("revision_candidate_id")
+                or execution.input.get("revisionCandidateId")
+            )
             for index, raw in enumerate(raw_candidates, start=1):
                 markdown = (
                     f"# {raw['title']}\n\n"
@@ -1142,9 +1172,7 @@ class AgentExecutionService:
                 if revision_candidate_id:
                     if index > 1:
                         break
-                    original = self._review_repository.get_candidate(
-                        str(revision_candidate_id)
-                    )
+                    original = self._review_repository.get_candidate(str(revision_candidate_id))
                     if original.draft_id is None or self._get_draft is None:
                         raise RuntimeError("question revision draft is not configured")
                     expected_revision_draft_id = str(
@@ -1169,7 +1197,9 @@ class AgentExecutionService:
                         raise ReviewConflictError(
                             "revision execution is missing its immutable base"
                         )
-                    current_draft = await self._get_draft(expected_revision_draft_id)
+                    current_draft = await self._get_draft(
+                        expected_revision_draft_id
+                    )
                     draft_id = str(
                         uuid5(
                             NAMESPACE_URL,
@@ -1215,7 +1245,9 @@ class AgentExecutionService:
                         {
                             "candidate_id": original.id,
                             "revision_candidate_id": original.id,
-                            "expected_revision_draft_id": (expected_revision_draft_id),
+                            "expected_revision_draft_id": (
+                                expected_revision_draft_id
+                            ),
                             "expected_revision_draft_version": (
                                 expected_revision_draft_version
                             ),
@@ -1237,12 +1269,15 @@ class AgentExecutionService:
                 identity = f"review-curation:{batch_id}:{execution.id}:{index}"
                 question_id = str(uuid5(NAMESPACE_URL, f"{identity}:question"))
                 draft_id = str(uuid5(NAMESPACE_URL, f"{identity}:draft"))
-                candidate_id = str(uuid5(NAMESPACE_URL, f"{identity}:candidate"))
+                candidate_id = str(
+                    uuid5(NAMESPACE_URL, f"{identity}:candidate")
+                )
                 proposed_refs = tuple(
                     str(ref)
                     for ref in raw["source_refs"]
                     if any(
-                        str(ref) == source_id or str(ref).startswith(f"{source_id}#")
+                        str(ref) == source_id
+                        or str(ref).startswith(f"{source_id}#")
                         for source_id in batch.source_refs
                     )
                 )
@@ -1332,7 +1367,9 @@ class AgentExecutionService:
                     str(error), outcome=rejected_outcome()
                 ) from error
             if curation is not None:
-                curation = self._review_repository.get_curation_session(session.id)
+                curation = self._review_repository.get_curation_session(
+                    session.id
+                )
             if curation is not None:
                 for warning in state.get("warnings", ()):
                     if isinstance(warning, dict):
@@ -1476,7 +1513,9 @@ class AgentExecutionService:
         projected_progress: tuple[int, str] | None = None
         projected_curation_progress: tuple[str, int, int, int] | None = None
         projector = AgentEventProjector()
-        review_timeline = SessionTimelineProjector(self._repository, self._events)
+        review_timeline = SessionTimelineProjector(
+            self._repository, self._events
+        )
         try:
             async with self._checkpointer.open() as saver:
                 graph = self._graph_factory(
@@ -1514,10 +1553,7 @@ class AgentExecutionService:
                             repository=self._profile_repository,
                             storage=self._profile_storage,
                             product_repository=self._repository,
-                            publish_event=lambda session_id,
-                            run_id,
-                            event_type,
-                            payload: self._repository.append_event(
+                            publish_event=lambda session_id, run_id, event_type, payload: self._repository.append_event(
                                 session_id, run_id, event_type, payload
                             ),
                         )
@@ -1528,7 +1564,9 @@ class AgentExecutionService:
                     ),
                     project_profile_action_plan_card=project_profile_action_plan_card,
                 )
-                if session.kind == "profile.manage" and isinstance(graph_input, dict):
+                if session.kind == "profile.manage" and isinstance(
+                    graph_input, dict
+                ):
                     graph_input = {
                         **graph_input,
                         "message": _user_content(graph_input),
@@ -1595,9 +1633,7 @@ class AgentExecutionService:
                                                     "phase": progress[0],
                                                     "completed": progress[1],
                                                     "total": progress[2],
-                                                    "generatedCandidateCount": progress[
-                                                        3
-                                                    ],
+                                                    "generatedCandidateCount": progress[3],
                                                 },
                                             )
                             if session.kind == "review.round":
@@ -1605,10 +1641,7 @@ class AgentExecutionService:
                                     attempt = self._review_repository.get_attempt(
                                         attempt_id
                                     )
-                                    if (
-                                        projected_attempts.get(attempt_id)
-                                        == attempt.status
-                                    ):
+                                    if projected_attempts.get(attempt_id) == attempt.status:
                                         continue
                                     projected_attempts[attempt_id] = attempt.status
                                     if attempt.status not in {
@@ -1634,10 +1667,8 @@ class AgentExecutionService:
                                     )
                                     existing_card = any(
                                         message.message_kind == "evaluation_card"
-                                        and message.payload.get("attemptId")
-                                        == attempt_id
-                                        and message.payload.get("status")
-                                        == attempt.status
+                                        and message.payload.get("attemptId") == attempt_id
+                                        and message.payload.get("status") == attempt.status
                                         for message in self._repository.list_messages(
                                             session.id
                                         )
@@ -1650,8 +1681,7 @@ class AgentExecutionService:
                                             message_kind="evaluation_card",
                                             content=(
                                                 "评价完成，Agent 需要一次必要追问。"
-                                                if attempt.status
-                                                == "waiting_for_follow_up"
+                                                if attempt.status == "waiting_for_follow_up"
                                                 else "本题评价已完成。"
                                             ),
                                             payload={
@@ -1682,7 +1712,9 @@ class AgentExecutionService:
                                             "status": progress[1],
                                         },
                                     )
-                                for draft_id in data.get("report_draft_ids", ()):
+                                for draft_id in data.get(
+                                    "report_draft_ids", ()
+                                ):
                                     if draft_id in projected_drafts:
                                         continue
                                     projected_drafts.add(draft_id)
@@ -1716,17 +1748,14 @@ class AgentExecutionService:
                                     request_id = str(value["inputRequestId"])
                                     already_projected = any(
                                         message.message_kind == "review_prompt"
-                                        and message.payload.get("inputRequestId")
-                                        == request_id
+                                        and message.payload.get("inputRequestId") == request_id
                                         for message in self._repository.list_messages(
                                             session.id
                                         )
                                     )
                                     if not already_projected:
-                                        request = (
-                                            self._review_repository.get_input_request(
-                                                request_id
-                                            )
+                                        request = self._review_repository.get_input_request(
+                                            request_id
                                         )
                                         await review_timeline.append(
                                             session_id=session.id,
@@ -1779,9 +1808,10 @@ class AgentExecutionService:
             ):
                 await persist_question_candidates(final_state)
 
-            manual_seed_task_id = execution.input.get(
-                "manual_seed_task_id"
-            ) or execution.input.get("manualSeedTaskId")
+            manual_seed_task_id = (
+                execution.input.get("manual_seed_task_id")
+                or execution.input.get("manualSeedTaskId")
+            )
             if manual_seed_task_id and self._review_repository is not None:
                 seed_task = self._review_repository.get_curation_seed_task(
                     str(manual_seed_task_id)
@@ -1795,7 +1825,9 @@ class AgentExecutionService:
                         "batchId": seed_task.batch_id,
                         "seedTaskId": seed_task.id,
                         "status": seed_task.status,
-                        "automaticAttemptCount": (seed_task.automatic_attempt_count),
+                        "automaticAttemptCount": (
+                            seed_task.automatic_attempt_count
+                        ),
                         "manualAttemptCount": seed_task.manual_attempt_count,
                         "answerBasis": seed_task.answer_basis,
                         "materialSupport": seed_task.material_support,
@@ -1810,7 +1842,9 @@ class AgentExecutionService:
                 and final_state.get("proposal_ids")
                 and not final_state.get("assessment_id")
             ):
-                proposal_ids = [str(item) for item in final_state["proposal_ids"]]
+                proposal_ids = [
+                    str(item) for item in final_state["proposal_ids"]
+                ]
                 self._repository.append_message(
                     session.id,
                     execution_id=execution.id,
@@ -1876,12 +1910,15 @@ class AgentExecutionService:
             raise
         except CurationFinalizationRejected as error:
             batch_id = str(
-                execution.input.get("batch_id") or execution.input.get("batchId", "")
+                execution.input.get("batch_id")
+                or execution.input.get("batchId", "")
             )
             if batch_id:
                 await KnowledgeDraftService(
                     self._workspace_root, workspace_id=self._workspace_id
-                ).cleanup_curation_staging(batch_id=batch_id, execution_id=execution.id)
+                ).cleanup_curation_staging(
+                    batch_id=batch_id, execution_id=execution.id
+                )
             if error.outcome == "failed" and self._review_repository is not None:
                 self._review_repository.fail_curation_batch(
                     batch_id, expected_run_id=execution.id
@@ -1932,13 +1969,10 @@ class AgentExecutionService:
                 if batch_id:
                     await KnowledgeDraftService(
                         self._workspace_root, workspace_id=self._workspace_id
-                    ).cleanup_curation_staging(
-                        batch_id=batch_id, execution_id=execution.id
-                    )
-            if (
-                session.kind == "profile.ingest"
-                and self._profile_repository is not None
-            ):
+                        ).cleanup_curation_staging(
+                            batch_id=batch_id, execution_id=execution.id
+                        )
+            if session.kind == "profile.ingest" and self._profile_repository is not None:
                 try:
                     version_id = str(
                         execution.input.get("versionId")
@@ -1988,9 +2022,9 @@ class AgentExecutionService:
                     ]
                     if evaluating:
                         attempt = evaluating[-1]
-                        error_code = str(getattr(error, "code", "evaluation_failed"))[
-                            :100
-                        ]
+                        error_code = str(
+                            getattr(error, "code", "evaluation_failed")
+                        )[:100]
                         self._review_repository.fail_attempt_evaluation(
                             attempt.id, error_code=error_code
                         )
@@ -2063,7 +2097,9 @@ class AgentExecutionService:
                 extra={
                     "execution_id": execution.id,
                     "session_id": session.id,
-                    "error_code": str(getattr(error, "code", "agent_execution_failed")),
+                    "error_code": str(
+                        getattr(error, "code", "agent_execution_failed")
+                    ),
                 },
             )
             try:
@@ -2076,7 +2112,8 @@ class AgentExecutionService:
                     )
                 ):
                     curation_batch_id = str(
-                        execution.input.get("batch_id") or execution.input["batchId"]
+                        execution.input.get("batch_id")
+                        or execution.input["batchId"]
                     )
                     normalized_error_code = curation_error_code(error)
                     if is_curation_overload_error(normalized_error_code):
@@ -2103,7 +2140,11 @@ class AgentExecutionService:
                         session.id,
                         execution.id,
                         "execution.failed",
-                        {"code": str(getattr(error, "code", "agent_execution_failed"))},
+                        {
+                            "code": str(
+                                getattr(error, "code", "agent_execution_failed")
+                            )
+                        },
                     )
                     await self._trace_execution(
                         context,

@@ -65,16 +65,6 @@ class BlockingResume(RecordingResume):
         await self.release.wait()
 
 
-class BlockingPrepare:
-    def __init__(self) -> None:
-        self.started = asyncio.Event()
-        self.release = asyncio.Event()
-
-    async def __call__(self, _run_id: str) -> None:
-        self.started.set()
-        await self.release.wait()
-
-
 def _database(workspace: Path):
     connection = connect_runtime_database(workspace)
     runtime = ProductRepository(connection)
@@ -110,14 +100,7 @@ def _service(
     workspace: Path,
     *,
     resume: RecordingResume | None = None,
-    prepare_resolution: BlockingPrepare | None = None,
-) -> tuple[
-    HitlService,
-    PendingActionRepository,
-    RecordingHandler,
-    RecordingEvents,
-    RecordingResume,
-]:
+) -> tuple[HitlService, PendingActionRepository, RecordingHandler, RecordingEvents, RecordingResume]:
     repository = PendingActionRepository(workspace)
     handler = RecordingHandler()
     registry = ActionHandlerRegistry()
@@ -130,41 +113,12 @@ def _service(
             handlers=registry,
             event_stream=events,
             resume_action=resume_callback,
-            prepare_resolution=prepare_resolution,
         ),
         repository,
         handler,
         events,
         resume_callback,
     )
-
-
-@pytest.mark.asyncio
-async def test_resolution_waits_for_execution_interrupt_before_writing(
-    tmp_path: Path,
-) -> None:
-    connection = _database(tmp_path)
-    prepare = BlockingPrepare()
-    service, repository, _handler, _events, _resume = _service(
-        tmp_path,
-        prepare_resolution=prepare,
-    )
-    action = await service.create_action(_request())
-    command = ResolveActionCommand(
-        version=action.version,
-        idempotency_key="approve-1",
-    )
-
-    approving = asyncio.create_task(service.approve(action.id, command))
-    await prepare.started.wait()
-
-    assert (await repository.get(action.id)).status == "pending"
-
-    prepare.release.set()
-    approved = await approving
-
-    assert approved.status == "approved"
-    connection.close()
 
 
 def test_handler_registry_rejects_duplicate_and_unknown_types() -> None:
@@ -269,7 +223,9 @@ async def test_editing_non_editable_field_keeps_action_pending(tmp_path: Path) -
 async def test_failed_delivery_is_retried_with_same_receipt(tmp_path: Path) -> None:
     connection = _database(tmp_path)
     resume = RecordingResume(fail_once=True)
-    service, repository, handler, events, _resume = _service(tmp_path, resume=resume)
+    service, repository, handler, events, _resume = _service(
+        tmp_path, resume=resume
+    )
     action = await service.create_action(_request())
     command = ResolveActionCommand(
         version=action.version,
@@ -304,7 +260,9 @@ async def test_concurrent_duplicate_resolution_claims_delivery_once(
 ) -> None:
     connection = _database(tmp_path)
     resume = BlockingResume()
-    service, repository, handler, events, _resume = _service(tmp_path, resume=resume)
+    service, repository, handler, events, _resume = _service(
+        tmp_path, resume=resume
+    )
     action = await service.create_action(_request())
     command = ResolveActionCommand(
         version=action.version,
