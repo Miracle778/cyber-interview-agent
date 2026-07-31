@@ -26,12 +26,18 @@ class EvaluationDimensionResource(EvaluationModel):
     dimension_id: str
     source: str
     status: str
+    applicability: Literal[
+        "applicable", "not_applicable", "insufficient_evidence"
+    ]
+    rating: Literal["meets", "usable", "needs_review", "severe"] | None
+    severity: Literal["none", "low", "medium", "high", "critical"] | None
     score: int | None
     confidence: float | None
     summary: str
     cited_event_hashes: list[str]
     cited_artifact_hashes: list[str]
     risks: list[str]
+    evidence_gaps: list[str]
 
 
 class EvaluationRunResource(EvaluationModel):
@@ -40,9 +46,14 @@ class EvaluationRunResource(EvaluationModel):
     execution_id: str
     eval_pack_id: str
     eval_pack_version: int
+    evaluation_contract_version: int
+    task_type: str
+    run_kind: Literal["historical_review", "agent_regression"]
     trigger: str
     status: str
     frozen_input_hash: str
+    business_outcome_hash: str | None
+    judge_data_scope: dict[str, Any]
     judge_provider_model_id: str | None
     error_code: str | None
     created_at: str

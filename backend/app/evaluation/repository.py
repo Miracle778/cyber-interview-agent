@@ -20,10 +20,15 @@ class EvaluationRunRecord:
     execution_id: str
     eval_pack_id: str
     eval_pack_version: int
+    evaluation_contract_version: int
+    task_type: str
+    run_kind: str
     trigger: str
     status: str
     frozen_input_hash: str
+    business_outcome_hash: str | None
     snapshot_json: str
+    judge_data_scope_json: str
     deterministic_result_json: str | None
     judge_provider_model_id: str | None
     judge_trace_run_id: str | None
@@ -71,12 +76,16 @@ class EvaluationDimensionRecord:
     dimension_id: str
     source: str
     status: str
+    applicability: str
+    rating: str | None
+    severity: str | None
     score: int | None
     confidence: float | None
     summary: str
     cited_event_hashes_json: str
     cited_artifact_hashes_json: str
     risks_json: str
+    evidence_gaps_json: str
     created_at: str
 
 
@@ -109,6 +118,11 @@ class AgentEvaluationRepository:
         snapshot_json: str,
         idempotency_key: str,
         judge_provider_model_id: str | None = None,
+        evaluation_contract_version: int = 1,
+        task_type: str = "legacy",
+        run_kind: str = "historical_review",
+        business_outcome_hash: str | None = None,
+        judge_data_scope_json: str = "{}",
     ) -> EvaluationRunRecord:
         existing = self._by_idempotency_key(idempotency_key)
         if existing is not None:
@@ -118,6 +132,12 @@ class AgentEvaluationRepository:
                 or existing.eval_pack_version != eval_pack_version
                 or existing.trigger != trigger
                 or existing.frozen_input_hash != frozen_input_hash
+                or existing.evaluation_contract_version
+                != evaluation_contract_version
+                or existing.task_type != task_type
+                or existing.run_kind != run_kind
+                or existing.business_outcome_hash != business_outcome_hash
+                or existing.judge_data_scope_json != judge_data_scope_json
             ):
                 raise EvaluationIdempotencyConflictError(
                     "evaluation idempotency key conflict"
@@ -127,18 +147,25 @@ class AgentEvaluationRepository:
             self.connection.execute(
                 "INSERT INTO agent_eval_runs "
                 "(id, workspace_id, execution_id, eval_pack_id, "
-                "eval_pack_version, trigger, frozen_input_hash, snapshot_json, "
-                "judge_provider_model_id, idempotency_key) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "eval_pack_version, evaluation_contract_version, task_type, "
+                "run_kind, trigger, frozen_input_hash, business_outcome_hash, "
+                "snapshot_json, judge_data_scope_json, judge_provider_model_id, "
+                "idempotency_key) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     eval_run_id,
                     self.workspace_id,
                     execution_id,
                     eval_pack_id,
                     eval_pack_version,
+                    evaluation_contract_version,
+                    task_type,
+                    run_kind,
                     trigger,
                     frozen_input_hash,
+                    business_outcome_hash,
                     snapshot_json,
+                    judge_data_scope_json,
                     judge_provider_model_id,
                     idempotency_key,
                 ),
@@ -233,9 +260,10 @@ class AgentEvaluationRepository:
                 self.connection.execute(
                     "INSERT INTO agent_eval_dimension_results "
                     "(eval_run_id, dimension_id, source, status, score, "
-                    "confidence, summary, cited_event_hashes_json, "
-                    "cited_artifact_hashes_json, risks_json) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "applicability, rating, severity, confidence, summary, "
+                    "cited_event_hashes_json, cited_artifact_hashes_json, "
+                    "risks_json, evidence_gaps_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                     "ON CONFLICT(eval_run_id, dimension_id, source) DO NOTHING",
                     (
                         eval_run_id,
@@ -243,11 +271,15 @@ class AgentEvaluationRepository:
                         row["source"],
                         row["status"],
                         row.get("score"),
+                        row.get("applicability", "applicable"),
+                        row.get("rating"),
+                        row.get("severity"),
                         row.get("confidence"),
                         row["summary"],
                         row.get("cited_event_hashes_json", "[]"),
                         row.get("cited_artifact_hashes_json", "[]"),
                         row.get("risks_json", "[]"),
+                        row.get("evidence_gaps_json", "[]"),
                     ),
                 )
         return self.list_dimension_results(eval_run_id)
@@ -429,10 +461,15 @@ class AgentEvaluationRepository:
             execution_id=row["execution_id"],
             eval_pack_id=row["eval_pack_id"],
             eval_pack_version=row["eval_pack_version"],
+            evaluation_contract_version=row["evaluation_contract_version"],
+            task_type=row["task_type"],
+            run_kind=row["run_kind"],
             trigger=row["trigger"],
             status=row["status"],
             frozen_input_hash=row["frozen_input_hash"],
+            business_outcome_hash=row["business_outcome_hash"],
             snapshot_json=row["snapshot_json"],
+            judge_data_scope_json=row["judge_data_scope_json"],
             deterministic_result_json=row["deterministic_result_json"],
             judge_provider_model_id=row["judge_provider_model_id"],
             judge_trace_run_id=row["judge_trace_run_id"],
@@ -483,11 +520,15 @@ class AgentEvaluationRepository:
             dimension_id=row["dimension_id"],
             source=row["source"],
             status=row["status"],
+            applicability=row["applicability"],
+            rating=row["rating"],
+            severity=row["severity"],
             score=row["score"],
             confidence=row["confidence"],
             summary=row["summary"],
             cited_event_hashes_json=row["cited_event_hashes_json"],
             cited_artifact_hashes_json=row["cited_artifact_hashes_json"],
             risks_json=row["risks_json"],
+            evidence_gaps_json=row["evidence_gaps_json"],
             created_at=row["created_at"],
         )

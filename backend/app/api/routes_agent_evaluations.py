@@ -80,12 +80,16 @@ def _run_resource(service: AgentEvaluationService, record) -> EvaluationRunResou
                 "dimension_id": item.dimension_id,
                 "source": item.source,
                 "status": item.status,
+                "applicability": item.applicability,
+                "rating": item.rating,
+                "severity": item.severity,
                 "score": item.score,
                 "confidence": item.confidence,
                 "summary": item.summary,
                 "cited_event_hashes": _json(item.cited_event_hashes_json) or [],
                 "cited_artifact_hashes": _json(item.cited_artifact_hashes_json) or [],
                 "risks": _json(item.risks_json) or [],
+                "evidence_gaps": _json(item.evidence_gaps_json) or [],
             }
         )
     judged = _json(record.judge_result_json)
@@ -102,8 +106,10 @@ def _run_resource(service: AgentEvaluationService, record) -> EvaluationRunResou
         }
     values = asdict(record)
     values.pop("judge_trace_run_id", None)
+    values.pop("judge_data_scope_json", None)
     return EvaluationRunResource(
         **values,
+        judge_data_scope=_json(record.judge_data_scope_json) or {},
         dimensions=dimensions,
         deterministic_result=_json(record.deterministic_result_json),
         judge_summary=judge_summary,

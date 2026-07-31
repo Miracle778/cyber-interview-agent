@@ -35,6 +35,8 @@ Exit condition: repository documentation no longer claims the existing code reru
 
 ### Task 1: Add additive schemas
 
+**Status:** Completed 2026-08-01.
+
 Introduce:
 
 - `evaluation_contract_version`;
@@ -44,6 +46,8 @@ Introduce:
 - explicit `historical_review` and `agent_regression` run kinds.
 
 Keep all v1 fields readable. New code writes v2 rows only for v2 Packs.
+
+Implemented as runtime migration 041 plus additive repository/API contracts. Current v1 service calls are explicitly labeled `historical_review` and persist their actual `legacy_full_snapshot` Judge data scope; no existing rows were rewritten.
 
 ### Task 2: Build `BusinessOutcomeProjection`
 

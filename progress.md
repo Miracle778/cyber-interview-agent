@@ -1,5 +1,13 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-08-01：Evaluation v2 Phase 1 Task 1
+
+- 新增 runtime migration 041，以增量字段保存契约版本、任务类型、运行类型、业务结果 hash、Judge 数据范围，以及维度适用性、等级、严重度和证据缺口。
+- v1 创建路径保留默认契约并明确标为 `historical_review`；当前 Judge 的真实数据范围记录为 `legacy_full_snapshot`，没有伪装成最小视图。
+- 新增 `JudgeDimensionResultV2`，强制适用维度提供等级/严重度/置信度，不适用或证据不足维度不得携带质量评级。
+- 迁移验证覆盖 v1 运行和维度行原值保留；Repository/API/Judge 受影响定向回归共 `54 passed`，Python 测试耗时 3.77 秒。
+- 本任务没有改前端、没有迁移现有 v1 评估结果、没有启用阻断规则，也没有运行全量测试。
+
 ## 2026-07-31：Evaluation v2 文档边界完成
 
 - 逐项审计 5 类 v1 Eval Pack、21 个维度、确定性检查、Judge 输入与回归 API，并与用户完成 32 项口径确认。

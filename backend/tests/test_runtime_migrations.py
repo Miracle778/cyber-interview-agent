@@ -215,7 +215,7 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == list(range(1, 41))
+        ] == list(range(1, 42))
     assert "agent_context_usage" in _tables(connection)
     assert "profile_deletion_plans" in _tables(connection)
     assert "deleted_at" in {
@@ -243,6 +243,44 @@ def test_migration_034_repairs_review_assistance_tables_missing_from_applied_031
         "SELECT name FROM runtime_schema_migrations WHERE version = 34"
     ).fetchone()[0] == "034_repair_review_assistance_tables.sql"
     repaired.close()
+
+
+def test_migration_041_adds_v2_evaluation_fields_without_rewriting_v1_rows(
+    tmp_path: Path,
+) -> None:
+    legacy = _create_runtime_at_version(tmp_path, 40)
+    legacy.execute(
+        "INSERT INTO agent_eval_runs "
+        "(id, workspace_id, execution_id, eval_pack_id, eval_pack_version, "
+        "trigger, frozen_input_hash, snapshot_json, idempotency_key) "
+        "VALUES ('eval-v1', 'workspace-1', 'execution-1', 'review.v1', 1, "
+        "'manual', ?, '{\"safe\":true}', 'manual-v1')",
+        ("a" * 64,),
+    )
+    legacy.execute(
+        "INSERT INTO agent_eval_dimension_results "
+        "(eval_run_id, dimension_id, source, status, score, confidence, summary) "
+        "VALUES ('eval-v1', 'key_point_coverage', 'judge', 'scored', 80, 0.8, "
+        "'legacy result')"
+    )
+    legacy.commit()
+    legacy.close()
+
+    migrated = connect_runtime_database(tmp_path)
+    run = migrated.execute(
+        "SELECT evaluation_contract_version, task_type, run_kind, "
+        "business_outcome_hash, judge_data_scope_json "
+        "FROM agent_eval_runs WHERE id = 'eval-v1'"
+    ).fetchone()
+    dimension = migrated.execute(
+        "SELECT applicability, rating, severity, evidence_gaps_json "
+        "FROM agent_eval_dimension_results WHERE eval_run_id = 'eval-v1'"
+    ).fetchone()
+
+    assert tuple(run) == (1, "legacy", "historical_review", None, "{}")
+    assert tuple(dimension) == ("applicable", None, None, "[]")
+    assert migrated.execute("PRAGMA foreign_key_check").fetchall() == []
+    migrated.close()
 
 
 def test_current_runtime_schema_opens_while_another_writer_is_active(
@@ -1011,7 +1049,7 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == list(range(1, 41))
+        ] == list(range(1, 42))
     reopened.close()
 
 

@@ -18,7 +18,7 @@
 - `docs/superpowers/specs/2026-07-31-agent-evaluation-v2-design.md`
 - `docs/superpowers/plans/2026-07-31-agent-evaluation-v2-migration.md`
 
-下一产品任务：单独启动 Evaluation v2 Phase 1，先建设业务结果投影、适用性等级和最小 Judge 视图；本次 README 工作不夹带代码重构。
+当前执行：Evaluation v2 Phase 1 Task 1 已完成增量契约与 v1 兼容迁移；下一步建设 `BusinessOutcomeProjection` 公共契约与首个题目整理适配器。
 
 ## 当前设计：Agent 可观测与质量评估工作台
 

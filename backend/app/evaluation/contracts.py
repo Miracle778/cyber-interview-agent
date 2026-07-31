@@ -3,7 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+EvaluationApplicability = Literal[
+    "applicable", "not_applicable", "insufficient_evidence"
+]
+EvaluationRating = Literal["meets", "usable", "needs_review", "severe"]
+EvaluationSeverity = Literal["none", "low", "medium", "high", "critical"]
+EvaluationRunKind = Literal["historical_review", "agent_regression"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +59,8 @@ class EvalPack:
     rules: tuple[DeterministicRule, ...]
     judge: JudgeContract
     trigger_policy: EvaluationTriggerPolicy = EvaluationTriggerPolicy()
+    evaluation_contract_version: int = 1
+    task_type: str = "legacy"
 
 
 def _to_camel(value: str) -> str:
@@ -82,6 +92,44 @@ class JudgeResult(StrictJudgeModel):
     cited_event_hashes: list[str] = Field(min_length=1)
     cited_artifact_hashes: list[str]
     confidence: float = Field(ge=0, le=1)
+    summary: str = Field(min_length=1)
+    risks: list[str]
+    human_review_required: bool
+
+
+class JudgeDimensionResultV2(StrictJudgeModel):
+    dimension_id: str = Field(min_length=1)
+    applicability: EvaluationApplicability
+    rating: EvaluationRating | None
+    severity: EvaluationSeverity | None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    cited_event_hashes: list[str]
+    cited_artifact_hashes: list[str]
+    evidence_gaps: list[str]
+    summary: str = Field(min_length=1)
+    risks: list[str]
+
+    @model_validator(mode="after")
+    def validate_applicability_rating(self):
+        if self.applicability == "applicable":
+            if (
+                self.rating is None
+                or self.severity is None
+                or self.confidence is None
+            ):
+                raise ValueError(
+                    "applicable dimensions require rating, severity, and confidence"
+                )
+            return self
+        if self.rating is not None or self.severity is not None:
+            raise ValueError(
+                "non-applicable dimensions cannot carry a quality rating or severity"
+            )
+        return self
+
+
+class JudgeResultV2(StrictJudgeModel):
+    dimensions: list[JudgeDimensionResultV2] = Field(min_length=1)
     summary: str = Field(min_length=1)
     risks: list[str]
     human_review_required: bool

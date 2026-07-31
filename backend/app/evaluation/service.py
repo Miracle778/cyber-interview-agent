@@ -123,6 +123,25 @@ class AgentEvaluationService:
             ),
             idempotency_key=key,
             judge_provider_model_id=provider_model_id,
+            evaluation_contract_version=pack.evaluation_contract_version,
+            task_type=pack.task_type,
+            run_kind="historical_review",
+            business_outcome_hash=None,
+            judge_data_scope_json=json.dumps(
+                {
+                    "mode": "legacy_full_snapshot",
+                    "providerModelId": provider_model_id,
+                    "categories": [
+                        "executionMetadata",
+                        "traceEvents",
+                        "traceEventBodies",
+                        "artifactMetadata",
+                    ],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
         )
         if record.status != "pending":
             return record
