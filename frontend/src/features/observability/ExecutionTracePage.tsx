@@ -3,23 +3,21 @@ import {
   AlertTriangle,
   ArrowLeft,
   Bot,
+  CircleAlert,
   Clock3,
   Cpu,
   Database,
   Download,
-  ExternalLink,
   LoaderCircle,
   RotateCcw,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
-import { formatBeijingTime } from "../../shared/time";
 import { TaskWorkspace, TaskWorkspacePane } from "../../shared/ui/TaskWorkspace";
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import { getAgentDiagnosticsSettings } from "../settings/settingsApi";
 import {
   getObservabilityExecution,
-  listObservabilityExecutions,
   listObservabilityEvents,
   listObservabilityOperations,
   ObservabilityPayloadError,
@@ -27,12 +25,22 @@ import {
 import {
   formatCompactNumber,
   formatDuration,
+  formatRunUpdatedAt,
+  executionResultSummary,
+  executionTaskTitle,
   statusLabel,
 } from "./ExecutionList";
 import { OperationTree } from "./OperationTree";
 import { TraceEventInspector } from "./TraceEventInspector";
 import { TraceExportDialog } from "./TraceExportDialog";
-import type { OperationSummary } from "./observabilityTypes";
+import {
+  friendlyOperationName,
+  isFailureEventType,
+  operationKindLabel,
+  operationStatusLabel,
+} from "./observabilityLabels";
+import { executionBusinessDestination } from "./observabilityNavigation";
+import type { ExecutionSummary } from "./observabilityTypes";
 import "./observability.css";
 
 
@@ -40,13 +48,30 @@ interface ExecutionTracePageProps {
   workspace: WorkspaceConfig | null;
 }
 
-const OPERATION_KIND_LABELS: Record<OperationSummary["kind"], string> = {
-  execution: "完整运行",
-  agent: "Agent 步骤",
-  model: "模型调用",
-  tool: "工具调用",
-  graph: "流程节点",
-};
+function failureGuidance(execution: ExecutionSummary) {
+  if (
+    ["question.curate", "question.revise"].includes(execution.graphId)
+    && execution.errorCode === "curation_work_item_failed"
+  ) {
+    return {
+      what: "有一项资料没有完成处理，题库整理因此提前停止。",
+      impact: "已完成的模型响应和诊断记录仍然保留，但本次题目整理没有形成完整结果。",
+      next: "返回这次整理会话查看已保留内容，再决定继续处理或重新整理。",
+    };
+  }
+  if (execution.status === "partial_success") {
+    return {
+      what: "任务只完成了部分处理，仍有步骤没有成功结束。",
+      impact: "已经生成的结果会保留；未完成部分需要确认后再继续。",
+      next: "先回到原任务核对已有结果，再查看下方失败步骤定位原因。",
+    };
+  }
+  return {
+    what: "Agent 在处理过程中停止，本次任务没有生成完整结果。",
+    impact: "失败前已经保存的业务结果和诊断记录仍然保留。",
+    next: "先返回原任务查看保留结果；需要排查时再从下方执行过程查看失败位置。",
+  };
+}
 
 export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
   const { runId = "" } = useParams();
@@ -61,6 +86,8 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
   const [mobileView, setMobileView] = useState<"process" | "detail">("process");
   const [exportOpen, setExportOpen] = useState(false);
   const [narrowScreen, setNarrowScreen] = useState(false);
+  const defaultFailureSelectionRun = useRef<string | null>(null);
+  const userSelectionRun = useRef<string | null>(null);
   const executionQuery = useQuery({
     queryKey: ["agent-observability", "execution", workspace?.id, runId],
     enabled: Boolean(workspace && runId),
@@ -84,21 +111,6 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
     enabled: Boolean(workspace),
     queryFn: getAgentDiagnosticsSettings,
   });
-  const runIndexQuery = useQuery({
-    queryKey: ["agent-observability", "execution-index", workspace?.id],
-    enabled: Boolean(workspace),
-    queryFn: ({ signal }) =>
-      listObservabilityExecutions(
-        workspace!.id,
-        {
-          search: "",
-          status: "",
-          agentName: "",
-          includeSystemAgents: false,
-        },
-        signal,
-      ),
-  });
   const operations = operationsQuery.data ?? [];
   const events = eventsQuery.data ?? [];
 
@@ -106,6 +118,24 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
     if (selectedId && operations.some((item) => item.id === selectedId)) return;
     setSelectedId(operations[0]?.id ?? null);
   }, [operations, selectedId]);
+
+  useEffect(() => {
+    if (
+      !["failed", "partial_success"].includes(executionQuery.data?.status ?? "")
+      || eventsQuery.isPending
+      || defaultFailureSelectionRun.current === runId
+      || userSelectionRun.current === runId
+    ) {
+      return;
+    }
+    defaultFailureSelectionRun.current = runId;
+    const failureEvent = [...events]
+      .reverse()
+      .find((event) => isFailureEventType(event.eventType));
+    if (!failureEvent) return;
+    setSelectedId(failureEvent.operationId);
+    setSelectedEventId(failureEvent.eventId);
+  }, [events, eventsQuery.isPending, executionQuery.data?.status, runId]);
 
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
@@ -170,10 +200,9 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
   }
 
   const execution = executionQuery.data;
-  const indexedExecutions =
-    runIndexQuery.data?.items.some((item) => item.id === execution.id)
-      ? runIndexQuery.data.items
-      : [execution, ...(runIndexQuery.data?.items ?? [])];
+  const businessDestination = executionBusinessDestination(execution, returnTo);
+  const needsRecovery = ["failed", "partial_success"].includes(execution.status);
+  const guidance = needsRecovery ? failureGuidance(execution) : null;
   const traceWarning =
     execution.traceHealth === "missing" ||
     execution.traceHealth === "unavailable"
@@ -190,33 +219,69 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
         </Link>
         <div>
           <span>{execution.displayName}</span>
-          <h1>{execution.title}</h1>
+          <h1 title={execution.title}>{executionTaskTitle(execution)}</h1>
           <p>
             {statusLabel(execution.status)}
             {" · "}
-            {formatBeijingTime(execution.startedAt ?? execution.createdAt, true) ?? "—"}
+            {needsRecovery ? "失败于 " : "更新于 "}
+            {formatRunUpdatedAt(
+              execution.finishedAt ?? execution.startedAt ?? execution.createdAt,
+            )}
           </p>
         </div>
         <div className="execution-trace__actions">
+          {execution.capabilities.includes("open_business") && businessDestination.to ? (
+            <Link
+              className="execution-trace__business-link"
+              to={businessDestination.to}
+              state={{ from: returnTo }}
+            >
+              {needsRecovery
+                ? businessDestination.exact ? "返回任务处理" : "打开业务页面"
+                : businessDestination.exact ? "查看业务结果" : "打开业务页面"}
+            </Link>
+          ) : null}
           {execution.capabilities.includes("manual_judge") ? (
             <Link
+              className="execution-trace__quality-link"
               to={`/agents/evaluations?executionId=${encodeURIComponent(execution.id)}`}
             >
-              发起 Judge
+              检查运行质量
             </Link>
           ) : null}
           <button type="button" onClick={() => setExportOpen(true)}>
             <Download size={15} aria-hidden="true" />
             导出诊断包
           </button>
-          {execution.capabilities.includes("open_business") && execution.route ? (
-            <a className="execution-trace__business-link" href={execution.route}>
-              打开业务页面
-              <ExternalLink size={15} aria-hidden="true" />
-            </a>
-          ) : null}
         </div>
       </header>
+
+      {guidance ? (
+        <section className="execution-trace__outcome" aria-label="失败处理建议">
+          <header>
+            <span aria-hidden="true"><CircleAlert size={20} /></span>
+            <div>
+              <h2>{execution.status === "partial_success" ? "这次任务只完成了一部分" : "这次任务没有完成"}</h2>
+              <p>{executionResultSummary(execution)}</p>
+            </div>
+          </header>
+          <div className="execution-trace__guidance">
+            <article>
+              <small>发生了什么</small>
+              <p>{guidance.what}</p>
+              {execution.errorCode ? <code>{execution.errorCode}</code> : null}
+            </article>
+            <article>
+              <small>影响范围</small>
+              <p>{guidance.impact}</p>
+            </article>
+            <article>
+              <small>建议处理</small>
+              <p>{guidance.next}</p>
+            </article>
+          </div>
+        </section>
+      ) : null}
 
       {traceWarning ? (
         <p className="execution-trace__warning">
@@ -255,33 +320,6 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
       </nav>
 
       <TaskWorkspace className="execution-trace__workspace">
-        <TaskWorkspacePane className="execution-trace__index">
-          <nav aria-label="运行索引">
-            <header>
-              <h2>运行索引</h2>
-              <span>{indexedExecutions.length} 条</span>
-            </header>
-            <div className="execution-trace__index-list">
-              {indexedExecutions.map((item) => (
-                <Link
-                  key={item.id}
-                  to={`/agents/executions/${encodeURIComponent(item.id)}`}
-                  state={{ from: returnTo }}
-                  aria-current={item.id === execution.id ? "page" : undefined}
-                >
-                  <span>{item.displayName}</span>
-                  <strong>{item.title}</strong>
-                  <small>
-                    {statusLabel(item.status)}
-                    {" · "}
-                    {formatBeijingTime(item.startedAt ?? item.createdAt, false) ?? "—"}
-                  </small>
-                </Link>
-              ))}
-            </div>
-          </nav>
-        </TaskWorkspacePane>
-
         <TaskWorkspacePane
           className="execution-trace__process"
           aria-label="执行过程面板"
@@ -289,7 +327,7 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
         >
           <header>
             <h2>执行过程</h2>
-            <span>{operations.length} 个 Operation</span>
+            <span>{operations.length} 个步骤</span>
           </header>
           {operations.length > 0 ? (
             <OperationTree
@@ -297,12 +335,15 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
               events={events}
               selectedId={selectedId}
               selectedEventId={selectedEventId}
+              executionStatus={execution.status}
               onSelect={(operationId) => {
+                userSelectionRun.current = runId;
                 setSelectedId(operationId);
                 setSelectedEventId(null);
                 setMobileView("detail");
               }}
               onSelectEvent={(eventId) => {
+                userSelectionRun.current = runId;
                 const event = events.find((item) => item.eventId === eventId);
                 setSelectedEventId(eventId);
                 if (event) setSelectedId(event.operationId);
@@ -320,11 +361,11 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
 
         <TaskWorkspacePane
           className="execution-trace__detail"
-          aria-label="Operation 详情"
+          aria-label="步骤详情"
           data-mobile-active={mobileView === "detail"}
         >
           <header>
-            <h2>{selectedEvent ? "事件详情" : "Operation 详情"}</h2>
+            <h2>{selectedEvent ? "事件详情" : "步骤详情"}</h2>
           </header>
           {selectedEvent ? (
             <TraceEventInspector
@@ -341,15 +382,24 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
           ) : selected ? (
             <>
               <div className="execution-trace__detail-title">
-                <span>{OPERATION_KIND_LABELS[selected.kind]}</span>
-                <strong>{selected.name}</strong>
+                <span>{operationKindLabel(selected.kind)}</span>
+                <strong>{friendlyOperationName(selected)}</strong>
               </div>
               <dl>
-                <div><dt>状态</dt><dd>{statusLabel(selected.status)}</dd></div>
+                <div>
+                  <dt>状态</dt>
+                  <dd>
+                    {operationStatusLabel(selected.status, execution.status)
+                      ?? statusLabel(selected.status)}
+                  </dd>
+                </div>
                 <div><dt>耗时</dt><dd>{formatDuration(selected.latencyMs)}</dd></div>
                 <div><dt>事件数</dt><dd>{selected.eventCount}</dd></div>
                 <div><dt>重试</dt><dd>{selected.retryCount}</dd></div>
-                {selected.agentRole ? <div><dt>Agent 角色</dt><dd>{selected.agentRole}</dd></div> : null}
+                {friendlyOperationName(selected) !== selected.name ? (
+                  <div><dt>技术名称</dt><dd>{selected.name}</dd></div>
+                ) : null}
+                {selected.agentRole ? <div><dt>内部角色</dt><dd>{selected.agentRole}</dd></div> : null}
                 {selected.errorCode ? <div><dt>错误码</dt><dd>{selected.errorCode}</dd></div> : null}
               </dl>
               <div className="execution-trace__disclosure">
@@ -359,7 +409,7 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
               </div>
             </>
           ) : (
-            <p className="execution-preview__empty">选择一个 Operation 查看安全摘要。</p>
+            <p className="execution-preview__empty">选择一个步骤查看安全摘要。</p>
           )}
         </TaskWorkspacePane>
       </TaskWorkspace>

@@ -20,7 +20,7 @@ export function JudgeResultPanel({
   onFeedback,
 }: JudgeResultPanelProps) {
   if (!run) {
-    return <p className="evaluation-empty">选择一次评估查看维度证据。</p>;
+    return <p className="evaluation-empty">选择一次结果查看检查依据。</p>;
   }
   const summary = run.judgeSummary?.summary;
   const confidence = run.judgeSummary?.confidence;
@@ -28,21 +28,21 @@ export function JudgeResultPanel({
     <div className="judge-result">
       <header>
         <div>
-          <span>结论校准</span>
-          <h2>评估说明与人工反馈</h2>
+          <span>你的判断</span>
+          <h2>检查说明与结果确认</h2>
         </div>
       </header>
       {run.errorCode ? (
         <p className="judge-result__warning">
           <AlertTriangle size={17} />
-          Judge 调用失败：{run.errorCode}。确定性检查结果仍已保留。
+          AI 质量检查未完成：{run.errorCode}。基础规则检查结果仍已保留。
         </p>
       ) : null}
       {typeof summary === "string" ? (
         <section className="judge-result__summary">
           <ShieldCheck size={19} />
           <div>
-            <strong>Judge 摘要</strong>
+            <strong>AI 质量检查摘要</strong>
             <p>{summary}</p>
             <small>
               置信度 {typeof confidence === "number" ? `${Math.round(confidence * 100)}%` : "未提供"}
@@ -52,7 +52,7 @@ export function JudgeResultPanel({
       ) : null}
       {run.rawSnapshot || run.rawJudgeResult ? (
         <details className="judge-result__raw">
-          <summary>高级诊断：Judge 原始输入与输出</summary>
+          <summary>高级诊断：AI 检查原始输入与输出</summary>
           {run.rawSnapshot ? <pre>{JSON.stringify(run.rawSnapshot, null, 2)}</pre> : null}
           {run.rawJudgeResult ? <pre>{JSON.stringify(run.rawJudgeResult, null, 2)}</pre> : null}
         </details>
@@ -95,14 +95,14 @@ function FeedbackForm({
         event.currentTarget.reset();
       }}
     >
-      <strong>人工反馈</strong>
+      <strong>你的判断</strong>
       <SelectControl name="verdict" aria-label="反馈结论" defaultValue="accurate">
-        <option value="accurate">评估准确</option>
-        <option value="incorrect">评估不准确</option>
+        <option value="accurate">检查结论准确</option>
+        <option value="incorrect">检查结论不准确</option>
         <option value="uncertain">暂不确定</option>
       </SelectControl>
       <input name="reason" aria-label="反馈说明" placeholder="补充证据或说明（可选）" />
-      <button type="submit" disabled={pending}>{pending ? "正在保存…" : "提交反馈"}</button>
+      <button type="submit" disabled={pending}>{pending ? "正在保存…" : "确认判断"}</button>
     </form>
   );
 }

@@ -7,118 +7,41 @@ interface TraceJsonViewerProps {
   complete: boolean;
 }
 
-interface TraceSection {
-  label: string;
-  value: unknown;
-}
-
-const MODEL_PARAMETER_KEYS = new Set([
-  "temperature",
-  "top_p",
-  "max_tokens",
-  "max_output_tokens",
-  "model",
-  "response_format",
-  "response_schema",
-]);
-
-function objectEntries(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
-}
-
-function select(record: Record<string, unknown>, keys: string[]) {
-  return Object.fromEntries(
-    keys.filter((key) => key in record).map((key) => [key, record[key]]),
-  );
-}
-
-function hasValues(value: Record<string, unknown>) {
-  return Object.keys(value).length > 0;
-}
-
-function sectionsFor(eventType: string, value: unknown): TraceSection[] {
-  const record = objectEntries(value);
-  if (!record) return [{ label: "事件正文", value }];
-
-  if (eventType === "model.request") {
-    const parameters = Object.fromEntries(
-      Object.entries(record).filter(([key]) => MODEL_PARAMETER_KEYS.has(key)),
-    );
-    return [
-      { label: "请求消息", value: record.messages ?? record.prompt ?? record.input },
-      { label: "工具定义", value: record.tools },
-      { label: "模型参数", value: parameters },
-      {
-        label: "请求上下文",
-        value: select(record, ["system_prompt", "context", "instructions"]),
-      },
-    ].filter((section) => section.value !== undefined &&
-      (!objectEntries(section.value) || hasValues(objectEntries(section.value)!)));
+function readableJsonString(value: string) {
+  let result = "\"";
+  for (const character of value) {
+    if (character === "\n" || character === "\r" || character === "\t") {
+      result += character;
+    } else {
+      result += JSON.stringify(character).slice(1, -1);
+    }
   }
-
-  if (eventType === "model.response") {
-    const providerResponse = objectEntries(record.response);
-    const response = providerResponse ?? record;
-    return [
-      {
-        label: "结构化响应",
-        value: response.structured_response ?? response.parsed,
-      },
-      {
-        label: "原始响应",
-        value: response.raw_response ?? response.result ?? response.output ?? response.content,
-      },
-      {
-        label: "响应元数据",
-        value: {
-          ...select(record, ["duration_ms", "latency_ms"]),
-          ...select(response, ["model", "finish_reason", "response_id"]),
-        },
-      },
-      {
-        label: "Token 用量",
-        value: response.usage ??
-          record.usage ??
-          select(response, ["input_tokens", "output_tokens", "total_tokens"]),
-      },
-      {
-        label: "错误",
-        value: response.error ?? record.error ?? record.error_code,
-      },
-    ].filter((section) => section.value !== undefined &&
-      (!objectEntries(section.value) || hasValues(objectEntries(section.value)!)));
-  }
-
-  if (eventType.startsWith("tool.")) {
-    return [
-      {
-        label: eventType.endsWith(".request") ? "Tool 参数" : "Tool 结果",
-        value: eventType.endsWith(".request")
-          ? record.arguments ?? record.args ?? record.input ?? record
-          : record.result ?? record.output ?? record.error ?? record,
-      },
-      {
-        label: "Tool 元数据",
-        value: select(record, ["tool_name", "duration_ms", "retry_count", "error_code"]),
-      },
-    ].filter((section) =>
-      !objectEntries(section.value) || hasValues(objectEntries(section.value)!));
-  }
-
-  return [{ label: "事件正文", value }];
+  return `${result}\"`;
 }
 
-function renderValue(value: unknown) {
-  return typeof value === "string"
-    ? value
-    : JSON.stringify(value, null, 2);
+function readableJson(value: unknown, depth = 0): string {
+  const indent = "  ".repeat(depth);
+  const childIndent = "  ".repeat(depth + 1);
+  if (typeof value === "string") return readableJsonString(value);
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? String(value);
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "[]";
+    return `[\n${value
+      .map((item) => `${childIndent}${readableJson(item, depth + 1)}`)
+      .join(",\n")}\n${indent}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length === 0) return "{}";
+  return `{\n${entries
+    .map(([key, item]) =>
+      `${childIndent}${JSON.stringify(key)}: ${readableJson(item, depth + 1)}`)
+    .join(",\n")}\n${indent}}`;
 }
 
 export function TraceJsonViewer({
   content,
-  eventType,
   complete,
 }: TraceJsonViewerProps) {
   const [raw, setRaw] = useState(false);
@@ -131,10 +54,9 @@ export function TraceJsonViewer({
       return { value: content, failed: true };
     }
   }, [complete, content]);
-  const sections = useMemo(
-    () => sectionsFor(eventType, parsed.value),
-    [eventType, parsed.value],
-  );
+  const formattedContent = parsed.failed
+    ? content
+    : readableJson(parsed.value);
 
   async function copy() {
     try {
@@ -159,7 +81,7 @@ export function TraceJsonViewer({
       <div className="trace-json-viewer__toolbar">
         <div role="group" aria-label="正文显示方式">
           <button type="button" aria-pressed={!raw} onClick={() => setRaw(false)}>
-            分段
+            格式化
           </button>
           <button type="button" aria-pressed={raw} onClick={() => setRaw(true)}>
             原文
@@ -186,14 +108,7 @@ export function TraceJsonViewer({
       {raw || parsed.failed ? (
         <pre>{content}</pre>
       ) : (
-        <div className="trace-json-viewer__sections">
-          {sections.map((section) => (
-            <section key={section.label}>
-              <h3>{section.label}</h3>
-              <pre>{renderValue(section.value)}</pre>
-            </section>
-          ))}
-        </div>
+        <pre aria-label="可读 JSON">{formattedContent}</pre>
       )}
     </div>
   );

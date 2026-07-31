@@ -1,5 +1,26 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-07-29：Agent 可观测与质量评估实施计划完成
+
+- 根据已确认规格与 ADR，完成一个总索引和四个纵向 Slice 计划，共 1,268 行：
+  - Slice 1：Observability Registry、Trace v3 层级、可重建 SQLite 元数据索引、ExecutionSummary、API/SSE、全局运行中心与只读执行详情；
+  - Slice 2：本地高级诊断开关、受控 Trace 正文读取、复制反馈与隐私标注导出；
+  - Slice 3：版本化 Eval Pack、隔离 Evaluation Runtime、人工/自动 Judge、人工反馈、回归案例与版本比较；
+  - Slice 4：90 天默认保留、两阶段清理 Receipt、索引修复脚本、OTel 安全投影和长期质量趋势。
+- 计划明确不在 `AgentTraceWriter.append()` 热路径同步写 SQLite，避免可观测能力重新制造数据库锁竞争。
+- 自审确认正式计划无未决 TODO/TBD，所有引用文件存在或明确标注为 Create；`git diff --check` 通过。
+- 本轮只更新正式文档和本地 current-state 记录，没有修改业务代码、数据库或前端。
+
+## 2026-07-29：Agent 可观测与质量评估设计确认
+
+- 用户确认三张高保真方向：项目级 Agent 运行中心、单次运行高级详情和质量评估实验室。
+- 纠正第一版误放在“复习”子功能的信息架构；运行中心提升为独立一级入口并覆盖所有 Agent。
+- 新增完整设计规格，定义前后端能力、Trace Ledger、API、Event 契约、上下文追踪、本地高级诊断开关、保留、Eval Pack、质量门禁、三页布局、设计 Token、响应式和验收标准。
+- ADR 已从 Proposed 更新为 Accepted，决定本地 JSONL 正文 + SQLite 可重建索引 + 独立 Eval Engine；OTel/Langfuse 只作为可选安全投影。
+- 经逐项核查补齐业务/系统 Agent 分层、Observability Registry、控制能力声明、统一 ExecutionSummary、人工 Judge、自动采样、Judge 人工纠错、回归案例隐私、评估隔离和真实纵向交付门禁。
+- 三张已确认高保真图已纳入 `docs/superpowers/assets/agent-observability/`，作为实现并排验收基准。
+- 本轮未修改业务代码、数据库或前端；下一步根据确认规格编写分 Slice 实施计划。
+
 ## 2026-07-24：统一个人画像 Task 1–3 后端检查点
 
 - migration 029 扩展 Claim 类型，新增来源、关系、展示配置和逻辑删除；旧 Claim 数据保持可读。

@@ -92,9 +92,13 @@ def test_writer_concurrent_appends_are_monotonic_and_file_modes_are_private(tmp_
     rows = read_trace_rows(tmp_path, "s1", "r1")
     assert [row["sequence"] for row in rows] == list(range(1, 13))
     trace_root = tmp_path / ".cyber-interview-agent" / "agent-traces"
-    assert stat.S_IMODE(trace_root.stat().st_mode) == 0o700
-    assert stat.S_IMODE((trace_root / "s1").stat().st_mode) == 0o700
-    assert stat.S_IMODE((trace_root / "s1" / "r1.jsonl").stat().st_mode) == 0o600
+    if os.name != "nt":
+        assert stat.S_IMODE(trace_root.stat().st_mode) == 0o700
+        assert stat.S_IMODE((trace_root / "s1").stat().st_mode) == 0o700
+        assert (
+            stat.S_IMODE((trace_root / "s1" / "r1.jsonl").stat().st_mode)
+            == 0o600
+        )
 
 
 def test_safe_serializer_never_uses_unknown_repr_or_credentials() -> None:

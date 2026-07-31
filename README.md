@@ -94,7 +94,7 @@ Cyber Interview Agent 为此建立一组职责明确的领域 Agent：
 
 ## 快速开始
 
-需要 Python 3.12+、[uv](https://docs.astral.sh/uv/) 和 Node.js / pnpm。
+需要 Python 3.12.4+、[uv](https://docs.astral.sh/uv/) 和 Node.js / pnpm。
 
 ```bash
 git clone https://github.com/Miracle778/cyber-interview-agent.git
@@ -112,6 +112,20 @@ pnpm dev
 ```
 
 打开 `http://127.0.0.1:5173`，先在「设置」中创建工作区、配置 Provider 和模型绑定，再导入第一份资料。
+
+### Windows PowerShell
+
+Windows 使用 PowerShell 时，主工作区和功能开发工作区必须使用不同端口与应用数据目录，避免串库：
+
+```powershell
+# 主工作区：8000 / 5173，默认应用数据
+.\scripts\dev-main.ps1
+
+# 功能开发工作区：8001 / 5174，独立应用数据
+.\scripts\dev-feature.ps1
+```
+
+两个脚本只打印对应环境的两条启动命令，不会自动启动服务。先执行脚本，再分别把输出中的后端、前端命令粘贴到两个 PowerShell 窗口。首次安装依赖时，在 `backend` 运行 `uv sync`，在 `frontend` 运行 `pnpm install`。
 
 <details>
 <summary><strong>生成与查看 README Demo</strong></summary>

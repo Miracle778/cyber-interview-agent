@@ -109,20 +109,20 @@ export function EvaluationMetricMatrix({
       <header>
         <div>
           <span>质量维度</span>
-          <h2 id="evaluation-metrics-title">核心指标对比</h2>
+          <h2 id="evaluation-metrics-title">检查结果对比</h2>
         </div>
         <small>{ids.length} 个可评估维度</small>
       </header>
       {!baseline ? (
-        <p className="evaluation-metrics__baseline-empty">尚未选择兼容基线</p>
+        <p className="evaluation-metrics__baseline-empty">尚未选择可对比的之前结果</p>
       ) : null}
       <div className="evaluation-metrics__table-wrap">
         <table>
           <thead>
             <tr>
               <th scope="col">指标</th>
-              <th scope="col">基线</th>
-              <th scope="col">候选</th>
+              <th scope="col">之前</th>
+              <th scope="col">这次</th>
               <th scope="col">变化</th>
             </tr>
           </thead>
@@ -153,12 +153,12 @@ export function EvaluationMetricMatrix({
                         {expanded ? <ChevronDown /> : <ChevronRight />}
                         <span>
                           <strong>{dimensionLabel(dimensionId)}</strong>
-                          <small>{candidateDimension?.source === "deterministic" ? "确定性规则" : "独立 Judge"}</small>
+                          <small>{candidateDimension?.source === "deterministic" ? "基础规则检查" : "AI 质量检查"}</small>
                         </span>
                       </button>
                     </th>
-                    <td data-label="基线"><ScoreCell dimension={baselineDimension} /></td>
-                    <td data-label="候选"><ScoreCell dimension={candidateDimension} /></td>
+                    <td data-label="之前"><ScoreCell dimension={baselineDimension} /></td>
+                    <td data-label="这次"><ScoreCell dimension={candidateDimension} /></td>
                     <td data-label="变化">
                       <span
                         className="evaluation-metric-delta"
@@ -177,8 +177,8 @@ export function EvaluationMetricMatrix({
                     <tr className="evaluation-metric-detail">
                       <td colSpan={4}>
                         <div>
-                          {baseline ? <EvidencePanel label="基线证据" dimension={baselineDimension} /> : null}
-                          <EvidencePanel label="候选证据" dimension={candidateDimension} />
+                          {baseline ? <EvidencePanel label="之前的检查依据" dimension={baselineDimension} /> : null}
+                          <EvidencePanel label="这次的检查依据" dimension={candidateDimension} />
                         </div>
                       </td>
                     </tr>

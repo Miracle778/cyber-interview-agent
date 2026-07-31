@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { toActionableError } from "../../shared/api/errorAdvice";
 import { getTraceEventContent } from "./observabilityApi";
 import { TraceJsonViewer } from "./TraceJsonViewer";
+import { friendlyEventName } from "./observabilityLabels";
 import type { TraceEventContent, TraceEventSummary } from "./observabilityTypes";
 
 interface TraceEventInspectorProps {
@@ -99,8 +100,9 @@ export function TraceEventInspector({
     >
       <header>
         <div>
-          <span>事件正文</span>
-          <h2>{event?.eventType ?? "选择一个事件"}</h2>
+          <span>{event ? eventFamily(event.eventType) : "事件正文"}</span>
+          <h2>{event ? friendlyEventName(event.eventType) : "选择一个事件"}</h2>
+          {event ? <small>{event.eventType}</small> : null}
         </div>
         {drawer && onClose ? (
           <button type="button" onClick={onClose} aria-label="关闭事件详情">
@@ -115,13 +117,15 @@ export function TraceEventInspector({
         </p>
       ) : (
         <>
-          <nav aria-label="事件类型">
-            {["请求", "响应", "Tool", "上下文", "配置"].map((label) => (
-              <span key={label} aria-current={eventFamily(event.eventType) === label ? "page" : undefined}>
-                {label}
-              </span>
-            ))}
-          </nav>
+          {event.eventType.includes("failed") || event.eventType.includes("error") ? (
+            <section className="trace-event-inspector__failure">
+              <AlertTriangle size={18} aria-hidden="true" />
+              <div>
+                <strong>这一步没有完成</strong>
+                <p>下面是系统保存的错误记录，可用于确认失败位置或导出诊断。</p>
+              </div>
+            </section>
+          ) : null}
           <dl className="trace-event-inspector__metadata">
             <div><dt>序号</dt><dd>{event.sequence}</dd></div>
             <div><dt>正文大小</dt><dd>{event.byteLength.toLocaleString()} B</dd></div>

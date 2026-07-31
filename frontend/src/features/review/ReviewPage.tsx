@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, ArrowLeft, FileCheck2, MoreHorizontal, PanelLeftOpen, PanelRightClose, PanelRightOpen, RotateCcw, StopCircle } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
 import { toActionableError } from "../../shared/api/errorAdvice";
@@ -183,8 +183,19 @@ function ReviewReportViewer({
 
 export function ReviewPage({ workspace }: ReviewPageProps) {
   const client = useQueryClient();
+  const [searchParams] = useSearchParams();
   const workspaceId = workspace?.id ?? "";
-  const [section, setSection] = useState<ReviewSection>("practice");
+  const requestedSection = searchParams.get("section");
+  const reviewSessionId = searchParams.get("reviewSessionId");
+  const curationSessionId = searchParams.get("curationSessionId");
+  const requestedReturnTo = searchParams.get("returnTo");
+  const returnTo = requestedReturnTo === "/agents"
+    || requestedReturnTo?.startsWith("/agents?")
+    ? requestedReturnTo
+    : null;
+  const [section, setSection] = useState<ReviewSection>(
+    requestedSection === "catalog" ? "catalog" : "practice",
+  );
   const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [optimisticMessage, setOptimisticMessage] = useState<ReviewTimelineMessage | null>(null);
@@ -197,6 +208,14 @@ export function ReviewPage({ workspace }: ReviewPageProps) {
   const rounds = useQuery({ queryKey: ["review-rounds", workspaceId], queryFn: () => listReviewRounds(workspaceId), enabled: Boolean(workspace) });
   const questions = useQuery({ queryKey: ["active-review-questions", workspaceId], queryFn: () => listActiveQuestions(workspaceId), enabled: Boolean(workspace) });
   const round = useQuery({ queryKey: ["review-round", selectedRoundId], queryFn: () => getReviewRound(selectedRoundId!), enabled: Boolean(selectedRoundId) });
+  useEffect(() => {
+    if (!reviewSessionId || selectedRoundId || !rounds.data) return;
+    const requestedRound = rounds.data.find((item) => item.sessionId === reviewSessionId);
+    if (requestedRound) {
+      setSection("practice");
+      setSelectedRoundId(requestedRound.id);
+    }
+  }, [reviewSessionId, rounds.data, selectedRoundId]);
   const reportsNeedProcessing = Boolean(
     round.data?.status === "report_pending"
     && round.data.reports.some((report) => report.status === "review_pending"),
@@ -332,8 +351,8 @@ export function ReviewPage({ workspace }: ReviewPageProps) {
     </nav>
   ) : null;
 
-  return <ReviewShell section={section} actions={toolbarActions} onSectionChange={(value) => { setSection(value); setSelectedRoundId(null); setCreating(false); setDiscussionTarget(null); }}>
-    {section === "catalog" ? <QuestionCatalog workspace={workspace} /> : !selectedRoundId && !creating ? <ReviewLanding rounds={rounds.data ?? []} questionCount={questions.isPending ? null : questions.data?.length ?? 0} onCreate={() => setCreating(true)} onOpen={(id) => { setSelectedRoundId(id); setDiscussionTarget(null); }} onCatalog={() => setSection("catalog")} onArchive={(value) => archive.mutate(value)} onRestore={(value) => restore.mutate(value)} /> : <section className="review-workbench" aria-label="复习工作台">
+  return <ReviewShell section={section} actions={toolbarActions} returnTo={returnTo} onSectionChange={(value) => { setSection(value); setSelectedRoundId(null); setCreating(false); setDiscussionTarget(null); }}>
+    {section === "catalog" ? <QuestionCatalog workspace={workspace} initialSessionId={curationSessionId} /> : !selectedRoundId && !creating ? <ReviewLanding rounds={rounds.data ?? []} questionCount={questions.isPending ? null : questions.data?.length ?? 0} onCreate={() => setCreating(true)} onOpen={(id) => { setSelectedRoundId(id); setDiscussionTarget(null); }} onCatalog={() => setSection("catalog")} onArchive={(value) => archive.mutate(value)} onRestore={(value) => restore.mutate(value)} /> : <section className="review-workbench" aria-label="复习工作台">
       <main className="review-workbench__main">
         {creating ? <ReviewSetup workspace={workspace} questions={questions.data ?? []} onCreate={(request) => create.mutate(request)} onCatalog={() => { setSection("catalog"); setCreating(false); }} busy={create.isPending} /> : null}
         {round.isPending && selectedRoundId ? <p className="status-note" role="status">正在恢复复习轮次…</p> : null}

@@ -71,7 +71,7 @@ describe("EvaluationMetricMatrix", () => {
   it("keeps a single-run report honest when no baseline is selected", () => {
     render(<EvaluationMetricMatrix baseline={null} candidate={run("candidate", 91)} />);
 
-    expect(screen.getByText("尚未选择兼容基线")).toBeInTheDocument();
+    expect(screen.getByText("尚未选择可对比的之前结果")).toBeInTheDocument();
     expect(screen.getByText("91")).toBeInTheDocument();
     expect(screen.queryByText("+19")).not.toBeInTheDocument();
   });

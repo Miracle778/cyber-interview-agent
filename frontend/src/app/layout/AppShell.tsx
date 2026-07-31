@@ -200,8 +200,8 @@ export function AppShell() {
               path="/agents/evaluations"
               element={
                 <PageFrame
-                  title="Agent 质量实验室"
-                  description="基于冻结证据评估 Agent 输出并沉淀回归样例。"
+                  title="运行质量"
+                  description="了解 Agent 最近的表现，及时发现需要关注的问题。"
                   health={health}
                   workspace={workspace}
                   workspaceMode

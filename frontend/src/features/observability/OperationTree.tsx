@@ -9,6 +9,12 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { formatDuration, statusLabel } from "./ExecutionList";
+import {
+  friendlyEventName,
+  friendlyOperationName,
+  isFailureEventType,
+  operationStatusLabel,
+} from "./observabilityLabels";
 import type { OperationSummary, TraceEventSummary } from "./observabilityTypes";
 
 
@@ -17,6 +23,7 @@ interface OperationTreeProps {
   events?: TraceEventSummary[];
   selectedId: string | null;
   selectedEventId?: string | null;
+  executionStatus?: string;
   onSelect: (operationId: string) => void;
   onSelectEvent?: (eventId: string) => void;
 }
@@ -34,6 +41,7 @@ export function OperationTree({
   events = [],
   selectedId,
   selectedEventId = null,
+  executionStatus,
   onSelect,
   onSelectEvent,
 }: OperationTreeProps) {
@@ -64,6 +72,48 @@ export function OperationTree({
     }
     return groups;
   }, [events]);
+  const { displayRoots, promotedRoots, firstSequenceByOperation } = useMemo(() => {
+    const sequenceCache = new Map<string, number>();
+
+    function firstSequence(operationId: string, visiting = new Set<string>()): number {
+      const cached = sequenceCache.get(operationId);
+      if (cached !== undefined) return cached;
+      if (visiting.has(operationId)) return Number.POSITIVE_INFINITY;
+      const nextVisiting = new Set(visiting).add(operationId);
+      const directSequences = (eventsByOperation.get(operationId) ?? [])
+        .map((event) => event.sequence);
+      const childSequences = (childrenByParent.get(operationId) ?? [])
+        .map((child) => firstSequence(child.id, nextVisiting));
+      const sequence = Math.min(
+        ...directSequences,
+        ...childSequences,
+        Number.POSITIVE_INFINITY,
+      );
+      sequenceCache.set(operationId, sequence);
+      return sequence;
+    }
+
+    for (const operation of operations) firstSequence(operation.id);
+    const namedWrapperRoots = roots.filter((operation) =>
+      operation.name.trim().toLocaleLowerCase() === "execution_runtime");
+    const idWrapperRoots = roots.filter((operation) =>
+      operation.id === `execution:${operation.runId}`);
+    const executionRoots = roots.filter((operation) => operation.kind === "execution");
+    const executionRoot = namedWrapperRoots.length === 1
+      ? namedWrapperRoots[0]
+      : idWrapperRoots.length === 1
+        ? idWrapperRoots[0]
+        : executionRoots.length === 1
+          ? executionRoots[0]
+          : null;
+    return {
+      displayRoots: executionRoot ? [executionRoot] : roots,
+      promotedRoots: executionRoot
+        ? roots.filter((operation) => operation.id !== executionRoot.id)
+        : [],
+      firstSequenceByOperation: sequenceCache,
+    };
+  }, [childrenByParent, eventsByOperation, operations, roots]);
 
   function moveFocus(target: EventTarget & HTMLElement, direction: -1 | 1) {
     const items = [...target.closest('[role="tree"]')!.querySelectorAll<HTMLElement>('[role="treeitem"]')];
@@ -72,10 +122,34 @@ export function OperationTree({
   }
 
   function renderOperation(operation: OperationSummary, level: number) {
-    const children = childrenByParent.get(operation.id) ?? [];
+    const children = [
+      ...(childrenByParent.get(operation.id) ?? []),
+      ...(displayRoots[0]?.id === operation.id ? promotedRoots : []),
+    ];
     const operationEvents = eventsByOperation.get(operation.id) ?? [];
     const hasChildren = children.length > 0 || operationEvents.length > 0;
     const expanded = hasChildren && !collapsedIds.has(operation.id);
+    const timelineItems = [
+      ...children.map((child, index) => ({
+        kind: "operation" as const,
+        operation: child,
+        sequence: firstSequenceByOperation.get(child.id) ?? Number.POSITIVE_INFINITY,
+        timestamp: child.startedAt ? Date.parse(child.startedAt) : Number.POSITIVE_INFINITY,
+        index,
+      })),
+      ...operationEvents.map((event, index) => ({
+        kind: "event" as const,
+        event,
+        sequence: event.sequence,
+        timestamp: event.observedAt ? Date.parse(event.observedAt) : Number.POSITIVE_INFINITY,
+        index: children.length + index,
+      })),
+    ].sort((left, right) => {
+      if (left.sequence !== right.sequence) return left.sequence - right.sequence;
+      if (left.timestamp !== right.timestamp) return left.timestamp - right.timestamp;
+      if (left.kind !== right.kind) return left.kind === "operation" ? -1 : 1;
+      return left.index - right.index;
+    });
     return (
       <li role="none" key={operation.id}>
         <button
@@ -123,24 +197,29 @@ export function OperationTree({
             <OperationIcon kind={operation.kind} />
           </span>
           <span className="operation-tree__copy">
-            <strong>{operation.name}</strong>
+            <strong title={operation.name}>{friendlyOperationName(operation)}</strong>
             <small>
-              {statusLabel(operation.status)} · {formatDuration(operation.latencyMs)}
+              {operationStatusLabel(operation.status, executionStatus)
+                ?? statusLabel(operation.status)}
+              {" · "}
+              {formatDuration(operation.latencyMs)}
             </small>
           </span>
         </button>
         {expanded ? (
           <ul role="group">
-            {children.map((child) => renderOperation(child, level + 1))}
-            {operationEvents.map((event) => (
-              <li role="none" key={event.eventId}>
+            {timelineItems.map((item) => item.kind === "operation"
+              ? renderOperation(item.operation, level + 1)
+              : (
+              <li role="none" key={item.event.eventId}>
                 <button
                   type="button"
                   role="treeitem"
                   aria-level={level + 1}
-                  aria-selected={selectedEventId === event.eventId}
+                  aria-selected={selectedEventId === item.event.eventId}
+                  data-tone={isFailureEventType(item.event.eventType) ? "danger" : undefined}
                   className="operation-tree__item operation-tree__event"
-                  onClick={() => onSelectEvent?.(event.eventId)}
+                  onClick={() => onSelectEvent?.(item.event.eventId)}
                   onKeyDown={(keyboardEvent) => {
                     if (keyboardEvent.key === "ArrowDown" || keyboardEvent.key === "ArrowUp") {
                       keyboardEvent.preventDefault();
@@ -156,12 +235,16 @@ export function OperationTree({
                     <Activity size={15} aria-hidden="true" />
                   </span>
                   <span className="operation-tree__copy">
-                    <strong>{event.eventType}</strong>
-                    <small>事件 #{event.sequence} · {event.byteLength.toLocaleString()} B</small>
+                    <strong title={item.event.eventType}>
+                      {friendlyEventName(item.event.eventType)}
+                    </strong>
+                    <small>
+                      事件 #{item.event.sequence} · {item.event.byteLength.toLocaleString()} B
+                    </small>
                   </span>
                 </button>
               </li>
-            ))}
+              ))}
           </ul>
         ) : null}
       </li>
@@ -171,7 +254,7 @@ export function OperationTree({
   return (
     <div className="operation-tree" role="tree" aria-label="执行过程">
       <ul role="none">
-        {roots.map((operation) => renderOperation(operation, 1))}
+        {displayRoots.map((operation) => renderOperation(operation, 1))}
       </ul>
     </div>
   );

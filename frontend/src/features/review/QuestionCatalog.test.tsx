@@ -22,6 +22,35 @@ function controlSession(overrides: Partial<CurationSession> = {}): CurationSessi
 
 describe("QuestionCatalog", () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+  it("opens an exact curation session supplied by a run-center deep link", async () => {
+    const curation = controlSession({
+      id: "cs-deep-link",
+      title: "指定整理会话.md",
+      batchStatus: "review_pending",
+      stage: "waiting_for_command",
+      controls: { canPause: false, canResume: false, canTerminate: false },
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/api/review/curation-sessions")) return Response.json([curation]);
+      if (
+        url.includes("/api/knowledge/sources")
+        || url.includes("/api/review/question-candidates")
+        || url.includes("/api/settings/providers")
+      ) return Response.json([]);
+      if (url.includes("/api/review/bulk-publications/latest")) return Response.json(null);
+      throw new Error(`unexpected ${url}`);
+    });
+
+    render(
+      <QuestionCatalog workspace={workspace} initialSessionId="cs-deep-link" />,
+      { wrapper },
+    );
+
+    expect(await screen.findByRole("log", { name: "整理对话" })).toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { name: "指定整理会话.md" })).not.toHaveLength(0);
+  });
+
   it("opens from curation history into a focused agent workspace", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);

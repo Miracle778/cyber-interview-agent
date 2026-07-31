@@ -37,10 +37,10 @@ describe("EvaluationQualityRail", () => {
   it("separates policy from observed quality results", () => {
     render(<EvaluationQualityRail run={run} feedback={[]} />);
 
-    expect(screen.getByRole("heading", { name: "质量门禁" })).toBeInTheDocument();
-    expect(screen.getByText("确定性规则")).toBeInTheDocument();
-    expect(screen.getByText("独立 Judge")).toBeInTheDocument();
-    expect(screen.getByText("人工反馈")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "检查结论" })).toBeInTheDocument();
+    expect(screen.getByText("基础规则检查")).toBeInTheDocument();
+    expect(screen.getByText("AI 质量检查")).toBeInTheDocument();
+    expect(screen.getByText("你的判断")).toBeInTheDocument();
     expect(screen.getByText("1 项稳定")).toBeInTheDocument();
     expect(screen.getByText("复习评价质量")).toBeInTheDocument();
     expect(screen.getByText("已配置")).toBeInTheDocument();

@@ -16,6 +16,7 @@ from langchain.agents.middleware.types import ModelResponse
 from langchain_core.messages import BaseMessage
 from pydantic import BaseModel
 
+from app.infrastructure.file_descriptors import binary_open_flags
 from app.security.workspace_paths import PathPolicyError, WorkspacePathPolicy
 
 
@@ -296,9 +297,7 @@ class AgentTraceWriter:
                 flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
                 if hasattr(os, "O_NOFOLLOW"):
                     flags |= os.O_NOFOLLOW
-                if hasattr(os, "O_BINARY"):
-                    flags |= os.O_BINARY
-                descriptor = os.open(path, flags, 0o600)
+                descriptor = os.open(path, binary_open_flags(flags), 0o600)
                 try:
                     if not stat.S_ISREG(os.fstat(descriptor).st_mode):
                         raise OSError("agent trace target is not a regular file")

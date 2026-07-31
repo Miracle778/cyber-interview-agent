@@ -77,13 +77,19 @@ function reconcileCurationSession(current: CurationSession | undefined, incoming
   };
 }
 
-export function QuestionCatalog({ workspace }: { workspace: WorkspaceConfig }) {
+export function QuestionCatalog({
+  workspace,
+  initialSessionId = null,
+}: {
+  workspace: WorkspaceConfig;
+  initialSessionId?: string | null;
+}) {
   const client = useQueryClient();
   const [view, setView] = useState<CatalogView>("sessions");
   const [libraryInitialStatus, setLibraryInitialStatus] = useState<QuestionCandidate["status"] | "">("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialSessionId);
   const [directSession, setDirectSession] = useState<CurationSession | null>(null);
   const [originSessionNotice, setOriginSessionNotice] = useState<{ status: "loading" | "recycled" | "projection_missing" | "missing" | "error"; sessionId: string; message: string } | null>(null);
   const [focusedCandidateId, setFocusedCandidateId] = useState<string | null>(null);

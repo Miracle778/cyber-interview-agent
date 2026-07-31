@@ -1,11 +1,19 @@
+import { ArrowLeft } from "lucide-react";
 import type { ReactNode } from "react";
+import { Link } from "react-router-dom";
 
 export type ReviewSection = "catalog" | "practice";
 
-export function ReviewShell({ section, onSectionChange, actions, children }: { section: ReviewSection; onSectionChange: (value: ReviewSection) => void; actions?: ReactNode; children: ReactNode }) {
+export function ReviewShell({ section, onSectionChange, actions, returnTo, children }: { section: ReviewSection; onSectionChange: (value: ReviewSection) => void; actions?: ReactNode; returnTo?: string | null; children: ReactNode }) {
   return (
     <section className="review-shell">
       <header className="review-shell__toolbar">
+        {returnTo ? (
+          <Link className="review-run-center-return" to={returnTo}>
+            <ArrowLeft size={16} aria-hidden="true" />
+            返回任务运行
+          </Link>
+        ) : null}
         <h1>复习</h1>
         <nav className="review-primary-tabs" aria-label="复习工作台入口">
           <button type="button" aria-current={section === "practice" ? "page" : undefined} onClick={() => onSectionChange("practice")}>开始复习</button>

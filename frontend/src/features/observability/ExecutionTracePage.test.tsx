@@ -25,7 +25,7 @@ const execution = {
   status: "completed",
   traceHealth: "complete",
   capabilities: ["open_business"],
-  route: "/knowledge",
+  route: "/review",
   systemOperationCount: 3,
   modelCallCount: 1,
   totalTokens: 12800,
@@ -195,7 +195,7 @@ describe("ExecutionTracePage", () => {
     expect(within(tree).getByRole("treeitem", { name: /识别候选题/ })).toHaveAttribute("aria-level", "3");
 
     fireEvent.click(within(tree).getByRole("treeitem", { name: /识别候选题/ }));
-    const detail = screen.getByRole("region", { name: "Operation 详情" });
+    const detail = screen.getByRole("region", { name: "步骤详情" });
     expect(detail).toHaveTextContent("模型调用");
     expect(detail).toHaveTextContent("12 秒");
     expect(detail).toHaveTextContent("事件数1");
@@ -204,16 +204,16 @@ describe("ExecutionTracePage", () => {
     expect(detail).not.toHaveTextContent("tool arguments");
     expect(detail).not.toHaveTextContent("provider payload");
 
-    const runIndex = screen.getByRole("navigation", { name: "运行索引" });
-    expect(within(runIndex).getByRole("link", { name: /上一轮题库整理/ })).toHaveAttribute(
+    expect(screen.queryByRole("navigation", { name: "运行索引" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "查看业务结果" })).toHaveAttribute(
       "href",
-      "/agents/executions/run-previous",
+      "/review?section=catalog&curationSessionId=session-1&returnTo=%2Fagents%3Fstatus%3Dfailed%26search%3DMyBatis",
     );
     expect(screen.getByRole("region", { name: "执行过程面板" })).toHaveClass(
       "task-workspace__pane",
     );
 
-    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(5));
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(4));
     for (const [request] of fetchSpy.mock.calls) {
       expect(String(request)).not.toMatch(/body|content|prompt|payload/);
     }
@@ -230,12 +230,12 @@ describe("ExecutionTracePage", () => {
     }], true);
     renderTrace();
 
-    const eventItem = await screen.findByRole("treeitem", { name: /model.request/ });
+    const eventItem = await screen.findByRole("treeitem", { name: /模型请求/ });
     expect(fetchSpy.mock.calls.some(([request]) =>
       String(request).includes("/content?"))).toBe(false);
 
     fireEvent.click(eventItem);
-    expect(await screen.findByRole("heading", { name: "请求消息" })).toBeInTheDocument();
+    expect(await screen.findByLabelText("可读 JSON")).toBeInTheDocument();
     expect(fetchSpy.mock.calls.some(([request]) =>
       String(request).includes("/content?"))).toBe(true);
   });
@@ -253,6 +253,80 @@ describe("ExecutionTracePage", () => {
     expect(within(tree).getAllByRole("treeitem")).toHaveLength(2);
     expect(within(tree).getByRole("treeitem", { name: /发现候选题/ })).toHaveAttribute("aria-level", "1");
     expect(within(tree).getByRole("treeitem", { name: /识别候选题/ })).toHaveAttribute("aria-level", "1");
+  });
+
+  it("places detached operation roots between execution boundary events by sequence", async () => {
+    const timelineOperations = [
+      {
+        ...operations[0],
+        id: "runtime-wrapper",
+        name: "execution_runtime",
+      },
+      {
+        ...operations[1],
+        id: "execution:run-1",
+        parentOperationId: null,
+        kind: "execution",
+        name: "ab035da4-5269-41b4-a164-72f22dd0470a",
+      },
+      {
+        ...operations[2],
+        id: "model-child",
+        parentOperationId: "execution:run-1",
+      },
+    ];
+    mockTrace(execution, timelineOperations, [
+      {
+        eventId: "event-completed",
+        operationId: "runtime-wrapper",
+        eventType: "execution.completed",
+        observedAt: "2026-07-29T06:26:18Z",
+        byteLength: 541,
+        sequence: 10,
+      },
+      {
+        eventId: "event-response",
+        operationId: "model-child",
+        eventType: "model.response",
+        observedAt: "2026-07-29T06:26:14Z",
+        byteLength: 1499,
+        sequence: 9,
+      },
+      {
+        eventId: "event-started",
+        operationId: "runtime-wrapper",
+        eventType: "execution.started",
+        observedAt: "2026-07-29T06:26:00Z",
+        byteLength: 536,
+        sequence: 1,
+      },
+      {
+        eventId: "event-request",
+        operationId: "model-child",
+        eventType: "model.request",
+        observedAt: "2026-07-29T06:26:02Z",
+        byteLength: 1753,
+        sequence: 4,
+      },
+    ]);
+
+    renderTrace();
+
+    const treeItems = await screen.findAllByRole("treeitem");
+    const labels = treeItems.map((item) => item.textContent ?? "");
+    expect(labels.findIndex((label) => label.includes("任务开始"))).toBeLessThan(
+      labels.findIndex((label) => label.includes("任务运行")),
+    );
+    expect(labels.findIndex((label) => label.includes("模型请求"))).toBeLessThan(
+      labels.findIndex((label) => label.includes("模型响应")),
+    );
+    expect(labels.findIndex((label) => label.includes("模型响应"))).toBeLessThan(
+      labels.findIndex((label) => label.includes("任务完成")),
+    );
+    expect(screen.getByRole("treeitem", { name: /任务运行/ })).toHaveAttribute(
+      "aria-level",
+      "2",
+    );
   });
 
   it("degrades missing and partial traces without turning them into page errors", async () => {
@@ -278,7 +352,7 @@ describe("ExecutionTracePage", () => {
 
     const switcher = screen.getByRole("navigation", { name: "详情视图" });
     fireEvent.click(within(switcher).getByRole("button", { name: "详情" }));
-    expect(screen.getByRole("region", { name: "Operation 详情" })).toHaveAttribute("data-mobile-active", "true");
+    expect(screen.getByRole("region", { name: "步骤详情" })).toHaveAttribute("data-mobile-active", "true");
     fireEvent.click(within(switcher).getByRole("button", { name: "执行过程" }));
     expect(screen.getByRole("region", { name: "执行过程面板" })).toHaveAttribute("data-mobile-active", "true");
   });
@@ -289,6 +363,67 @@ describe("ExecutionTracePage", () => {
 
     const back = await screen.findByRole("link", { name: "返回运行中心" });
     expect(back).toHaveAttribute("href", "/agents?status=failed&search=MyBatis");
+  });
+
+  it("leads with actionable failure guidance and reconciles unfinished step labels", async () => {
+    const failedExecution = {
+      ...execution,
+      title: "source_d8355c0e7115445b8b92eca88762b9f6.md",
+      status: "failed",
+      errorCode: "curation_work_item_failed",
+      finishedAt: "2026-07-29T06:26:04Z",
+      latencyMs: 4000,
+    };
+    const failedOperations = [
+      {
+        ...operations[0],
+        name: "execution_runtime",
+        status: "failed",
+        finishedAt: "2026-07-29T06:26:04Z",
+        latencyMs: 4000,
+        errorCode: "curation_work_item_failed",
+      },
+      {
+        ...operations[1],
+        name: "ab035da4-5269-41b4-a164-72f22dd0470a",
+        status: "running",
+        finishedAt: null,
+        latencyMs: null,
+      },
+    ];
+    mockTrace(failedExecution, failedOperations, [{
+      eventId: "event-failed",
+      operationId: "execution:run-1",
+      eventType: "execution.failed",
+      observedAt: "2026-07-29T06:26:04Z",
+      byteLength: 623,
+      sequence: 4,
+    }], true);
+
+    renderTrace();
+
+    expect(await screen.findByRole("heading", {
+      level: 1,
+      name: "题库整理任务",
+    })).toBeInTheDocument();
+    const guidance = screen.getByRole("region", { name: "失败处理建议" });
+    expect(guidance).toHaveTextContent("这次任务没有完成");
+    expect(guidance).toHaveTextContent("发生了什么");
+    expect(guidance).toHaveTextContent("影响范围");
+    expect(guidance).toHaveTextContent("建议处理");
+    expect(screen.getByRole("link", { name: "返回任务处理" })).toHaveAttribute(
+      "href",
+      "/review?section=catalog&curationSessionId=session-1&returnTo=%2Fagents%3Fstatus%3Dfailed%26search%3DMyBatis",
+    );
+
+    const tree = screen.getByRole("tree", { name: "执行过程" });
+    expect(within(tree).getByRole("treeitem", { name: /运行任务/ })).toBeInTheDocument();
+    expect(within(tree).getByRole("treeitem", { name: /Agent 处理 未记录结束/ })).toBeInTheDocument();
+    const failedEvent = within(tree).getByRole("treeitem", { name: /任务失败/ });
+    expect(failedEvent).toHaveAttribute("data-tone", "danger");
+    expect(failedEvent).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByRole("heading", { name: "任务失败" })).toBeInTheDocument();
+    expect(screen.getByText("这一步没有完成")).toBeInTheDocument();
   });
 
   it("does not query without a selected workspace", () => {
