@@ -119,7 +119,7 @@ async def test_approval_service_translates_decision_to_resume_command(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_resume_approval_waits_for_interrupt_state_to_persist(tmp_path):
+async def test_resume_approval_waits_for_interrupt_and_resumed_settlement(tmp_path):
     connection = connect_runtime_database(tmp_path)
     runtime = ProductRepository(connection)
     session = runtime.create_session(
@@ -146,9 +146,20 @@ async def test_resume_approval_waits_for_interrupt_state_to_persist(tmp_path):
         mark_draft_review_pending=lambda *_args, **_kwargs: None,
     )
     spawned = []
-    service._spawn = lambda execution_id, *, graph_input: spawned.append(  # type: ignore[method-assign]
-        (execution_id, graph_input)
-    )
+
+    async def finish_resume():
+        await asyncio.sleep(0)
+        runtime.transition_execution(
+            "r1",
+            expected=("running",),
+            target="completed",
+        )
+
+    def spawn(execution_id, *, graph_input):
+        spawned.append((execution_id, graph_input))
+        service._tasks[execution_id] = asyncio.create_task(finish_resume())
+
+    service._spawn = spawn  # type: ignore[method-assign]
 
     async def finish_interrupt():
         await asyncio.sleep(0)
@@ -163,7 +174,7 @@ async def test_resume_approval_waits_for_interrupt_state_to_persist(tmp_path):
     await service.resume_approval("r1", {"decision": "approved"}, "receipt-1")
 
     execution = runtime.get_execution("r1")
-    assert execution.status == "running"
+    assert execution.status == "completed"
     assert execution.resume_count == 1
     assert len(spawned) == 1
     connection.close()
