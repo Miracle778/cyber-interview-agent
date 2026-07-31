@@ -20,6 +20,7 @@ class EvaluationModel(BaseModel):
 
 class CreateEvaluationRunCommand(EvaluationModel):
     execution_id: str = Field(min_length=1)
+    eval_pack_id: str | None = Field(default=None, min_length=1)
 
 
 class EvaluationDimensionResource(EvaluationModel):

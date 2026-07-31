@@ -3,6 +3,7 @@ from app.evaluation.contracts import (
     EvalDimension,
     EvalPack,
     JudgeContract,
+    JudgeViewPolicy,
 )
 
 
@@ -104,5 +105,30 @@ QUESTION_CURATION_V2_PACK = EvalPack(
         "只根据最小业务结果视图评价适用维度；服从代码给出的适用性，"
         "不把明确标记的模型补充误判为来源不忠实，不推测缺失材料。",
         response_contract="JudgeResultV2",
+    ),
+    judge_view=JudgeViewPolicy(
+        data_categories=(
+            "taskIdentity",
+            "curationCounters",
+            "candidateContent",
+            "fieldProvenance",
+            "userDecision",
+            "evidenceGaps",
+        ),
+        content_fields=(
+            "question_text",
+            "reference_answer",
+            "source_answer",
+            "supplemental_answer",
+            "topics",
+            "difficulty",
+            "key_points",
+            "follow_ups",
+            "answer_basis",
+            "material_support",
+            "needs_review",
+            "normalization_issues",
+            "source_refs",
+        ),
     ),
 )

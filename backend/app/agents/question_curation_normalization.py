@@ -23,6 +23,8 @@ class NormalizedSeedOutcome:
     material_support: Literal["sufficient", "partial", "minimal", "unknown"]
     needs_review: bool
     normalization_issues: tuple[str, ...]
+    source_answer: str | None
+    supplemental_answer: str | None
     error_code: str | None
 
 
@@ -97,6 +99,8 @@ def normalize_provider_candidate_observation(
                 material_support=selected.material_support,
                 needs_review=True,
                 normalization_issues=issues,
+                source_answer=selected.source_answer,
+                supplemental_answer=selected.supplemental_answer,
                 error_code=None,
             )
         outcomes.append(selected)
@@ -242,6 +246,8 @@ def _normalize_one(
         material_support=material_support,
         needs_review=needs_review,
         normalization_issues=tuple(issues),
+        source_answer=source_answer or None,
+        supplemental_answer=supplemental_answer or None,
         error_code=None,
     )
 
@@ -259,6 +265,8 @@ def _retryable(
         material_support="unknown",
         needs_review=True,
         normalization_issues=issues or (error_code,),
+        source_answer=None,
+        supplemental_answer=None,
         error_code=error_code,
     )
 

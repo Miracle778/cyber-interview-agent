@@ -205,10 +205,10 @@ async def test_manual_judge_is_idempotent_and_does_not_change_business_status(
     connection, observability, service = _service(tmp_path)
     try:
         first = await service.evaluate(
-            "execution-1", idempotency_key="manual-request-1"
+            "execution-1", idempotency_key="manual-request-1", eval_pack_id="review.v1"
         )
         replay = await service.evaluate(
-            "execution-1", idempotency_key="manual-request-1"
+            "execution-1", idempotency_key="manual-request-1", eval_pack_id="review.v1"
         )
         assert first.id == replay.id
         assert first.status == "completed"
@@ -226,7 +226,7 @@ async def test_provider_failure_keeps_deterministic_results_and_business_run(
         tmp_path, judge=FakeJudge(fail=True)
     )
     try:
-        result = await service.evaluate("execution-1")
+        result = await service.evaluate("execution-1", eval_pack_id="review.v1")
         assert result.status == "failed"
         assert result.error_code == "judge_provider_failed"
         assert result.deterministic_result_json is not None
@@ -242,7 +242,7 @@ async def test_cancelled_judge_records_cancel_without_business_write(tmp_path) -
     )
     try:
         with pytest.raises(asyncio.CancelledError):
-            await service.evaluate("execution-1")
+            await service.evaluate("execution-1", eval_pack_id="review.v1")
         assert service.repository.list_runs()[0].status == "cancelled"
         assert observability.row["status"] == "completed"
     finally:
@@ -259,7 +259,8 @@ async def test_automatic_risk_runs_respect_daily_cap(tmp_path) -> None:
     )
     try:
         completed = await service.evaluate(
-            "execution-1", trigger="automatic", idempotency_key="automatic-1"
+            "execution-1", trigger="automatic", idempotency_key="automatic-1",
+            eval_pack_id="review.v1",
         )
         assert completed.status == "completed"
         with pytest.raises(AutomaticEvaluationSkipped, match="daily_cap"):
@@ -267,6 +268,7 @@ async def test_automatic_risk_runs_respect_daily_cap(tmp_path) -> None:
                 "execution-1",
                 trigger="automatic",
                 idempotency_key="automatic-2",
+                eval_pack_id="review.v1",
             )
     finally:
         connection.close()
@@ -330,5 +332,58 @@ async def test_v2_evaluation_uses_business_outcome_and_minimal_judge_view(
         assert '"mode":"minimal_evaluation_view"' in result.judge_data_scope_json
         assert any(item.rating == "meets" for item in dimensions)
         assert any(item.applicability == "not_applicable" for item in dimensions)
+    finally:
+        connection.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "graph_id",
+    (
+        "review.round",
+        "review.single",
+        "review.discussion",
+        "profile.ingest",
+        "profile.assess",
+        "profile.manage",
+        "job.analysis",
+        "project.deep_dive",
+    ),
+)
+async def test_primary_v2_packs_run_through_the_shared_service(
+    tmp_path,
+    graph_id,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+    connection.execute(
+        "INSERT INTO agent_sessions "
+        "(id, workspace_id, graph_id, graph_version, title) "
+        "VALUES ('session-1', 'workspace-1', ?, 1, 'Test')",
+        (graph_id,),
+    )
+    connection.execute(
+        "INSERT INTO agent_runs (id, session_id, status, input_json) "
+        "VALUES ('execution-1', 'session-1', 'completed', '{}')"
+    )
+    connection.commit()
+    service = AgentEvaluationService(
+        workspace_id="workspace-1",
+        workspace_root=tmp_path,
+        repository=AgentEvaluationRepository(connection, "workspace-1"),
+        observability=FakeObservability(graph_id=graph_id),
+        model_bindings=lambda: {"answer_evaluation": "model-1"},
+        settings=lambda: SimpleNamespace(
+            enabled=True,
+            automatic_daily_cap=20,
+            judge_provider_model_id=None,
+        ),
+        judge_factory=lambda _model_id: FakeV2Judge(),
+    )
+    try:
+        result = await service.evaluate("execution-1")
+        assert result.status == "completed"
+        assert result.evaluation_contract_version == 2
+        assert result.task_type != "legacy"
+        assert result.business_outcome_hash is not None
     finally:
         connection.close()

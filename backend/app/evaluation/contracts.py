@@ -49,6 +49,14 @@ class EvaluationTriggerPolicy:
 
 
 @dataclass(frozen=True, slots=True)
+class JudgeViewPolicy:
+    data_categories: tuple[str, ...]
+    content_fields: tuple[str, ...]
+    max_items: int = 100
+    max_text_chars: int = 4000
+
+
+@dataclass(frozen=True, slots=True)
 class EvalPack:
     id: str
     version: int
@@ -61,6 +69,7 @@ class EvalPack:
     trigger_policy: EvaluationTriggerPolicy = EvaluationTriggerPolicy()
     evaluation_contract_version: int = 1
     task_type: str = "legacy"
+    judge_view: JudgeViewPolicy | None = None
 
 
 def _to_camel(value: str) -> str:

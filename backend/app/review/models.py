@@ -267,6 +267,8 @@ class CurationSeedTaskRecord:
     material_support: MaterialSupport
     needs_review: bool
     normalization_issues: tuple[str, ...]
+    source_answer: str | None
+    supplemental_answer: str | None
     last_error_code: str | None
     version: int
     created_at: str
@@ -336,6 +338,8 @@ class QuestionCandidateRecord:
     material_support: MaterialSupport
     needs_review: bool
     normalization_issues: tuple[str, ...]
+    source_answer: str | None
+    supplemental_answer: str | None
     confirmation_status: Literal["pending", "confirmed"]
     confirmation_version: int
     confirmed_at: str | None

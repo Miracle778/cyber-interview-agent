@@ -66,6 +66,8 @@ def _seed_quality_for_candidate(
                 "material_support": task.material_support,
                 "needs_review": task.needs_review,
                 "normalization_issues": task.normalization_issues,
+                "source_answer": task.source_answer,
+                "supplemental_answer": task.supplemental_answer,
             }
     return {
         "seed_task_id": None,
@@ -73,6 +75,8 @@ def _seed_quality_for_candidate(
         "material_support": "unknown",
         "needs_review": True,
         "normalization_issues": ("legacy_quality_unknown",),
+        "source_answer": None,
+        "supplemental_answer": None,
     }
 
 

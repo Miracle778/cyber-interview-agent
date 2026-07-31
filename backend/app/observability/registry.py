@@ -63,7 +63,7 @@ _REGISTRATIONS = (
         "resume",
         "manual_judge",
         "export_trace",
-        eval_pack_id="question-curation.v1",
+        eval_pack_id="question-revision.v2",
         system_components=("question_generation", "report_summarization"),
     ),
     _registration(
@@ -76,7 +76,7 @@ _REGISTRATIONS = (
         "resume",
         "manual_judge",
         "export_trace",
-        eval_pack_id="review.v1",
+        eval_pack_id="review-round.v2",
         system_components=("answer_evaluation", "agent_chat", "report_summarization"),
     ),
     _registration(
@@ -89,7 +89,7 @@ _REGISTRATIONS = (
         "resume",
         "manual_judge",
         "export_trace",
-        eval_pack_id="review.v1",
+        eval_pack_id="review-discussion.v2",
         system_components=("agent_chat", "report_summarization"),
     ),
     _registration(
@@ -101,7 +101,7 @@ _REGISTRATIONS = (
         "retry",
         "manual_judge",
         "export_trace",
-        eval_pack_id="review.v1",
+        eval_pack_id="review-single.v2",
         system_components=("answer_evaluation", "report_summarization"),
     ),
     _registration(
@@ -114,7 +114,7 @@ _REGISTRATIONS = (
         "resume",
         "manual_judge",
         "export_trace",
-        eval_pack_id="profile.v1",
+        eval_pack_id="profile-assistant.v2",
         system_components=("agent_chat", "profile_assessment"),
     ),
     _registration(
@@ -127,7 +127,7 @@ _REGISTRATIONS = (
         "resume",
         "manual_judge",
         "export_trace",
-        eval_pack_id="job-analysis.v1",
+        eval_pack_id="job-requirement-analysis.v2",
         system_components=("job_analysis",),
     ),
     _registration(
@@ -140,7 +140,7 @@ _REGISTRATIONS = (
         "resume",
         "manual_judge",
         "export_trace",
-        eval_pack_id="project-deep-dive.v1",
+        eval_pack_id="project-deep-dive-coaching.v2",
         system_components=("project_deep_dive",),
     ),
     _registration(
@@ -148,7 +148,7 @@ _REGISTRATIONS = (
         "简历画像整理",
         "",
         "export_trace",
-        eval_pack_id="profile.v1",
+        eval_pack_id="profile-ingest.v2",
         system_components=("profile_extraction",),
         system=True,
     ),
@@ -157,7 +157,7 @@ _REGISTRATIONS = (
         "画像评估",
         "",
         "export_trace",
-        eval_pack_id="profile.v1",
+        eval_pack_id="profile-assessment.v2",
         system_components=("profile_assessment",),
         system=True,
     ),

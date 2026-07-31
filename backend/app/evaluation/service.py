@@ -17,13 +17,14 @@ from app.evaluation.judge_agent import JudgeInvoker
 from app.evaluation.outcome_adapters.question_curation import (
     QuestionCurationOutcomeAdapter,
 )
+from app.evaluation.outcome_adapters.domain import create_sqlite_outcome_adapter
 from app.evaluation.registry import get_eval_pack
 from app.evaluation.repository import AgentEvaluationRepository, EvaluationRunRecord
 from app.evaluation.runtime import EvaluationRuntime
 from app.evaluation.sampling import decide_automatic_evaluation
 from app.evaluation.views import (
     EvaluationView,
-    build_question_curation_evaluation_view,
+    build_task_evaluation_view,
 )
 from app.observability.registry import AGENT_OBSERVABILITY_REGISTRY
 
@@ -34,6 +35,28 @@ class EvaluationNotSupportedError(ValueError):
 
 class AutomaticEvaluationSkipped(RuntimeError):
     pass
+
+
+_COMPATIBLE_PACKS_BY_GRAPH = {
+    "question.curate": {"question-curation.v1", "question-curation.v2"},
+    "question.revise": {"question-curation.v1", "question-revision.v2"},
+    "review.round": {"review.v1", "review-round.v2"},
+    "review.single": {"review.v1", "review-single.v2"},
+    "review.discussion": {"review.v1", "review-discussion.v2"},
+    "profile.ingest": {"profile.v1", "profile-ingest.v2"},
+    "profile.assess": {"profile.v1", "profile-assessment.v2"},
+    "profile.manage": {
+        "profile.v1",
+        "profile-assistant.v2",
+        "profile-write-boundary.v2",
+    },
+    "job.analysis": {"job-analysis.v1", "job-requirement-analysis.v2"},
+    "project.deep_dive": {
+        "project-deep-dive.v1",
+        "project-deep-dive-coaching.v2",
+        "project-question-generation.v2",
+    },
+}
 
 
 class AgentEvaluationService:
@@ -82,6 +105,7 @@ class AgentEvaluationService:
         degraded: bool = False,
         rejected: bool = False,
         heavily_edited: bool = False,
+        eval_pack_id: str | None = None,
     ) -> EvaluationRunRecord:
         execution = self.observability._run(execution_id)
         registration = AGENT_OBSERVABILITY_REGISTRY.get(execution["graph_id"])
@@ -89,7 +113,12 @@ class AgentEvaluationService:
             raise EvaluationNotSupportedError("该 Agent 暂不支持质量评估")
         if execution["graph_id"] == "evaluation.judge":
             raise EvaluationNotSupportedError("Judge 运行不能递归评估")
-        pack = get_eval_pack(registration.eval_pack_id)
+        selected_pack_id = eval_pack_id or registration.eval_pack_id
+        if selected_pack_id not in _COMPATIBLE_PACKS_BY_GRAPH.get(
+            execution["graph_id"], set()
+        ):
+            raise EvaluationNotSupportedError("该评估标准不适用于此 Agent")
+        pack = get_eval_pack(selected_pack_id)
         configured = self._settings()
         if trigger == "automatic":
             decision = decide_automatic_evaluation(
@@ -252,7 +281,7 @@ class AgentEvaluationService:
         idempotency_key: str | None,
     ) -> EvaluationRunRecord:
         outcome = self._outcome_adapter_factory(pack.task_type).build(execution_id)
-        view = self._build_evaluation_view(outcome)
+        view = self._build_evaluation_view(outcome, pack)
         view_json = view.model_dump_json()
         frozen_input_hash = hashlib.sha256(view_json.encode("utf-8")).hexdigest()
         snapshot_json = json.dumps(
@@ -383,22 +412,30 @@ class AgentEvaluationService:
         return completed
 
     def _default_outcome_adapter(self, task_type: str):
-        if task_type == "question_curation":
+        if task_type in {"question_curation", "question_revision"}:
             return QuestionCurationOutcomeAdapter(
                 self.repository.connection,
                 self.workspace_id,
+                task_type=task_type,
             )
-        raise EvaluationNotSupportedError(
-            f"任务类型尚未提供业务结果适配器: {task_type}"
+        return create_sqlite_outcome_adapter(
+            task_type,
+            self.repository.connection,
+            self.workspace_id,
         )
 
     @staticmethod
-    def _build_evaluation_view(outcome) -> EvaluationView:
-        if outcome.task_type == "question_curation":
-            return build_question_curation_evaluation_view(outcome)
-        raise EvaluationNotSupportedError(
-            f"任务类型尚未提供最小 Judge View: {outcome.task_type}"
-        )
+    def _build_evaluation_view(outcome, pack=None) -> EvaluationView:
+        if pack is None:
+            # Compatibility for injected Phase 1 tests.
+            pack = next(
+                item
+                for item in (
+                    get_eval_pack("question-curation.v2"),
+                )
+                if item.task_type == outcome.task_type
+            )
+        return build_task_evaluation_view(outcome, pack)
 
     @staticmethod
     def _validate_v2_judge_result(

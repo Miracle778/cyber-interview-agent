@@ -73,6 +73,8 @@ export interface QuestionCandidate {
   materialSupport?: CurationMaterialSupport;
   needsReview?: boolean;
   normalizationIssues?: string[];
+  sourceAnswer?: string | null;
+  supplementalAnswer?: string | null;
   confirmationStatus?: "pending" | "confirmed";
   confirmationVersion?: number;
   confirmedAt?: string | null;
@@ -157,6 +159,8 @@ export interface CurationProvisionalCandidate {
   materialSupport?: CurationMaterialSupport;
   needsReview?: boolean;
   normalizationIssues?: string[];
+  sourceAnswer?: string | null;
+  supplementalAnswer?: string | null;
   status?: CurationSeedTaskStatus | string;
   version?: number;
   errorCode?: string | null;

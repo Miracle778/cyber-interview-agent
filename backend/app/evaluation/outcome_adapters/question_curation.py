@@ -32,10 +32,14 @@ class QuestionCurationOutcomeAdapter:
         self,
         connection: sqlite3.Connection,
         workspace_id: str,
+        task_type: str = "question_curation",
     ) -> None:
+        if task_type not in {"question_curation", "question_revision"}:
+            raise ValueError(task_type)
         self.connection = connection
         self.connection.row_factory = sqlite3.Row
         self.workspace_id = workspace_id
+        self.task_type = task_type
         self.review = ReviewRepository(connection)
 
     def build(self, execution_id: str) -> BusinessOutcomeProjection:
@@ -173,24 +177,26 @@ class QuestionCurationOutcomeAdapter:
             )
         ]
         gaps: list[str] = []
-        if candidate.answer_basis == "source":
+        if candidate.source_answer:
             provenance.append(
                 OutcomeProvenance(
-                    field_path="content.referenceAnswer",
+                    field_path="content.sourceAnswer",
                     support_type="direct",
                     source_refs=candidate.source_refs,
                 )
             )
-        elif candidate.answer_basis == "model":
+        if candidate.supplemental_answer:
             provenance.append(
                 OutcomeProvenance(
-                    field_path="content.referenceAnswer",
+                    field_path="content.supplementalAnswer",
                     support_type="inferred",
                     source_refs=candidate.source_refs,
                     note="model_supplement_only",
                 )
             )
-        elif candidate.answer_basis == "mixed":
+        if candidate.answer_basis == "mixed" and not (
+            candidate.source_answer and candidate.supplemental_answer
+        ):
             provenance.extend(
                 (
                     OutcomeProvenance(
@@ -208,7 +214,25 @@ class QuestionCurationOutcomeAdapter:
                 )
             )
             gaps.append("source_supplemental_answer_not_separated")
-        else:
+        elif candidate.answer_basis == "source" and not candidate.source_answer:
+            provenance.append(
+                OutcomeProvenance(
+                    field_path="content.referenceAnswer",
+                    support_type="direct",
+                    source_refs=candidate.source_refs,
+                    note="legacy_source_answer",
+                )
+            )
+        elif candidate.answer_basis == "model" and not candidate.supplemental_answer:
+            provenance.append(
+                OutcomeProvenance(
+                    field_path="content.referenceAnswer",
+                    support_type="inferred",
+                    source_refs=candidate.source_refs,
+                    note="legacy_model_supplement",
+                )
+            )
+        elif candidate.answer_basis == "unknown":
             provenance.append(
                 OutcomeProvenance(
                     field_path="content.referenceAnswer",
@@ -252,6 +276,8 @@ class QuestionCurationOutcomeAdapter:
                 "needs_review": candidate.needs_review,
                 "normalization_issues": candidate.normalization_issues,
                 "source_refs": candidate.source_refs,
+                "source_answer": candidate.source_answer,
+                "supplemental_answer": candidate.supplemental_answer,
             }
         )
         return (

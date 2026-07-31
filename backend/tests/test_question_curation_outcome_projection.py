@@ -80,7 +80,8 @@ def _seed_question_curation(connection) -> ReviewRepository:
     connection.execute(
         "UPDATE review_question_candidates SET answer_basis = 'mixed', "
         "material_support = 'partial', needs_review = 1, "
-        "normalization_issues_json = '[\"supplemental_answer_present\"]' "
+        "normalization_issues_json = '[\"supplemental_answer_present\"]', "
+        "source_answer = '原文要点', supplemental_answer = '模型补充' "
         "WHERE id = ?",
         (candidate.id,),
     )
@@ -108,9 +109,9 @@ def test_question_curation_projection_uses_final_domain_state_not_trace(
         assert {
             item.support_type
             for item in projection.items[0].provenance
-            if item.field_path == "content.referenceAnswer"
+            if item.field_path in {"content.sourceAnswer", "content.supplementalAnswer"}
         } == {"direct", "inferred"}
-        assert "source_supplemental_answer_not_separated" in projection.evidence_gaps
+        assert "source_supplemental_answer_not_separated" not in projection.evidence_gaps
         assert len(projection.outcome_hash) == 64
     finally:
         connection.close()
@@ -167,7 +168,7 @@ def test_question_curation_judge_view_is_minimal_and_applicability_aware(
             "userDecision",
             "evidenceGaps",
         )
-        assert applicability["source_answer_fidelity"] == "insufficient_evidence"
+        assert applicability["source_answer_fidelity"] == "applicable"
         assert applicability["duplicate_handling"] == "insufficient_evidence"
         assert applicability["zero_result_reasoning"] == "not_applicable"
         assert "workspacePath" not in serialized

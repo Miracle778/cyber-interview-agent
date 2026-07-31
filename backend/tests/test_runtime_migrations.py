@@ -215,7 +215,7 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == list(range(1, 43))
+        ] == list(range(1, 44))
     assert "agent_context_usage" in _tables(connection)
     assert "profile_deletion_plans" in _tables(connection)
     assert "deleted_at" in {
@@ -588,6 +588,8 @@ def test_migration_026_adds_seed_state_and_backfills_candidate_quality(
         "material_support",
         "needs_review",
         "normalization_issues_json",
+        "source_answer",
+        "supplemental_answer",
         "last_error_code",
         "version",
         "created_at",
@@ -1049,7 +1051,7 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == list(range(1, 43))
+        ] == list(range(1, 44))
     reopened.close()
 
 

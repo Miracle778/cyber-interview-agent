@@ -9,6 +9,7 @@ from app.evaluation.packs.question_curation import (
     QUESTION_CURATION_V2_PACK,
 )
 from app.evaluation.packs.review import REVIEW_PACK
+from app.evaluation.packs.v2_tasks import V2_TASK_PACKS
 
 
 _PACKS = (
@@ -18,6 +19,7 @@ _PACKS = (
     PROFILE_PACK,
     JOB_ANALYSIS_PACK,
     PROJECT_DEEP_DIVE_PACK,
+    *V2_TASK_PACKS,
 )
 
 AGENT_EVAL_PACKS: dict[str, EvalPack] = {pack.id: pack for pack in _PACKS}

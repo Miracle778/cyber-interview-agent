@@ -11,7 +11,7 @@ from app.observability.registry import AGENT_OBSERVABILITY_REGISTRY
 
 
 def test_eval_pack_ids_versions_and_dimension_ids_are_stable() -> None:
-    assert len(AGENT_EVAL_PACKS) == 6
+    assert len(AGENT_EVAL_PACKS) == 17
     assert len(AGENT_EVAL_PACKS) == len(set(AGENT_EVAL_PACKS))
     dimension_pairs: set[tuple[str, str]] = set()
     for pack_id, pack in AGENT_EVAL_PACKS.items():
@@ -27,6 +27,9 @@ def test_eval_pack_ids_versions_and_dimension_ids_are_stable() -> None:
         else:
             assert pack.task_type != "legacy"
             assert pack.judge.response_contract == "JudgeResultV2"
+            assert pack.judge_view is not None
+            assert pack.judge_view.data_categories
+            assert pack.judge_view.content_fields
         assert pack.judge.prompt_id.endswith(f".v{pack.version}")
         assert "chain-of-thought" not in pack.judge.instructions.casefold()
         assert "思维链" not in pack.judge.instructions
@@ -48,7 +51,8 @@ def test_every_observability_eval_pack_reference_resolves() -> None:
         for registration in AGENT_OBSERVABILITY_REGISTRY.values()
         if registration.eval_pack_id is not None
     }
-    assert references == set(AGENT_EVAL_PACKS)
+    assert references <= set(AGENT_EVAL_PACKS)
+    assert all(reference.endswith(".v2") for reference in references)
 
 
 def test_judge_result_is_strict_and_requires_cited_hashes() -> None:

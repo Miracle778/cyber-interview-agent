@@ -133,6 +133,7 @@ async def create_evaluation_run(
             command.execution_id,
             trigger="manual",
             idempotency_key=idempotency_key,
+            eval_pack_id=command.eval_pack_id,
         )
     except EvaluationNotSupportedError as error:
         return _error(422, "evaluation_not_supported", str(error))

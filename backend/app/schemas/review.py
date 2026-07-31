@@ -238,6 +238,8 @@ class QuestionCandidateResource(ReviewModel):
     ] = "unknown"
     needs_review: bool = True
     normalization_issues: list[str] = Field(default_factory=list)
+    source_answer: str | None = None
+    supplemental_answer: str | None = None
     confirmation_status: Literal["pending", "confirmed"] = "pending"
     confirmation_version: int = Field(default=0, ge=0)
     confirmed_at: str | None = None
@@ -462,6 +464,8 @@ class ProvisionalCandidateResource(ReviewModel):
     ] = "unknown"
     needs_review: bool = True
     normalization_issues: list[str] = Field(default_factory=list)
+    source_answer: str | None = None
+    supplemental_answer: str | None = None
     status: str = "completed"
     version: int = Field(default=0, ge=0)
     error_code: str | None = None

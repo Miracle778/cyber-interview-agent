@@ -317,6 +317,8 @@ def create_question_curation_graph(
                 material_support=outcome.material_support,
                 needs_review=outcome.needs_review,
                 normalization_issues=outcome.normalization_issues,
+                source_answer=outcome.source_answer,
+                supplemental_answer=outcome.supplemental_answer,
             )
         else:
             repository.skip_curation_seed_task(
@@ -596,6 +598,8 @@ def create_question_curation_graph(
                             material_support=outcome.material_support,
                             needs_review=outcome.needs_review,
                             normalization_issues=outcome.normalization_issues,
+                            source_answer=outcome.source_answer,
+                            supplemental_answer=outcome.supplemental_answer,
                         )
                     elif current.automatic_attempt_count >= 2:
                         repository.skip_curation_seed_task(
@@ -862,6 +866,8 @@ def _revision_seed_task(
         material_support="unknown",
         needs_review=True,
         normalization_issues=(),
+        source_answer=None,
+        supplemental_answer=None,
         last_error_code=None,
         version=0,
         created_at="",

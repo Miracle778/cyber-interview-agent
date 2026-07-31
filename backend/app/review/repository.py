@@ -908,8 +908,9 @@ class ReviewRepository:
                         "(id, batch_id, draft_id, question_json, source_refs_json, "
                         "correction_note, duplicate_of_question_id, seed_task_id, "
                         "answer_basis, material_support, needs_review, "
-                        "normalization_issues_json, status) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                        "normalization_issues_json, source_answer, "
+                        "supplemental_answer, status) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
                         "'review_pending')",
                         (
                             candidate_id,
@@ -929,6 +930,8 @@ class ReviewRepository:
                                     ("legacy_quality_unknown",),
                                 )
                             )),
+                            item.get("source_answer"),
+                            item.get("supplemental_answer"),
                         ),
                     )
                 else:
@@ -1853,6 +1856,8 @@ class ReviewRepository:
         material_support: str,
         needs_review: bool,
         normalization_issues: tuple[str, ...],
+        source_answer: str | None = None,
+        supplemental_answer: str | None = None,
     ) -> CurationSeedTaskRecord:
         if status not in {"completed", "degraded"}:
             raise ValueError("unsupported curation seed completion status")
@@ -1870,7 +1875,8 @@ class ReviewRepository:
             cursor = self._connection.execute(
                 "UPDATE review_curation_seed_tasks SET status = ?, candidate_json = ?, "
                 "answer_basis = ?, material_support = ?, needs_review = ?, "
-                "normalization_issues_json = ?, last_error_code = NULL, "
+                "normalization_issues_json = ?, source_answer = ?, "
+                "supplemental_answer = ?, last_error_code = NULL, "
                 "version = version + 1, updated_at = CURRENT_TIMESTAMP "
                 "WHERE id = ? AND version = ? AND status = 'running' "
                 "AND candidate_json IS NULL",
@@ -1881,6 +1887,8 @@ class ReviewRepository:
                     material_support,
                     int(needs_review),
                     _canonical_json(normalization_issues),
+                    source_answer,
+                    supplemental_answer,
                     seed_task_id,
                     expected_version,
                 ),
@@ -4921,6 +4929,8 @@ class ReviewRepository:
             normalization_issues=tuple(
                 json.loads(row["normalization_issues_json"])
             ),
+            source_answer=row["source_answer"],
+            supplemental_answer=row["supplemental_answer"],
             last_error_code=safe_error_code,
             version=row["version"],
             created_at=row["created_at"],
@@ -5075,6 +5085,8 @@ class ReviewRepository:
             normalization_issues=tuple(
                 json.loads(row["normalization_issues_json"])
             ),
+            source_answer=row["source_answer"],
+            supplemental_answer=row["supplemental_answer"],
             confirmation_status=cast(
                 Literal["pending", "confirmed"],
                 row["confirmation_status"],
