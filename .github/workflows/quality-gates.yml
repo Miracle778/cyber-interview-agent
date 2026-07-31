@@ -46,6 +46,9 @@ jobs:
         working-directory: backend
         run: uv run pytest -q --tb=short --cov=app --cov-report=term-missing:skip-covered --cov-report=xml:coverage.xml
 
+      - name: Normalize backend coverage paths
+        run: sed -i 's|<source>app</source>|<source>backend/app</source>|' backend/coverage.xml
+
       - name: Set up pnpm
         uses: pnpm/action-setup@v6
         with:

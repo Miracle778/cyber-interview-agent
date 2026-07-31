@@ -374,6 +374,7 @@ class WorkspaceRuntime:
             handlers=handlers,
             event_stream=events,
             resume_action=executions.resume_approval,
+            prepare_resolution=executions.wait_for_approval_ready,
         )
         holder["hitl"] = hitl
         command_agents_factory = getattr(
