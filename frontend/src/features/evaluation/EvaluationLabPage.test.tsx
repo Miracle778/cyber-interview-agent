@@ -196,7 +196,7 @@ describe("EvaluationLabPage", () => {
     expect(screen.getByLabelText("之前结果")).toBeInTheDocument();
     expect(screen.getByLabelText("当前结果")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "检查结论" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "复测案例" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "评估案例" })).toBeInTheDocument();
     expect(
       screen.queryByRole("heading", { name: "长期质量趋势" }),
     ).not.toBeInTheDocument();

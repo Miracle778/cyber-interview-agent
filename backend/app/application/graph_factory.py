@@ -7,7 +7,7 @@ from langgraph.types import interrupt
 
 from app.agents.agent_factory import AgentFactory, AgentSpec, ModelOverride
 from app.agents.prompts.prompt_spec import PromptSpec
-from app.evaluation.contracts import JudgeResult, JudgeResultV2
+from app.evaluation.contracts import JudgeResult, JudgeResultV2, PairwiseJudgeResult
 from app.evaluation.judge_agent import StructuredJudgeAgent
 from app.agents.question_curation_agent import QuestionCurationAgents
 from app.agents.curation_command_agents import CurationCommandAgents
@@ -125,7 +125,27 @@ class ProductionGraphFactory:
             model_bindings=model_bindings,
             model_override=ModelOverride(provider_model_id),
         )
-        return StructuredJudgeAgent(runnable, v2_runnable)
+        pairwise_runnable = self._agents.create(
+            AgentSpec(
+                role="answer_evaluation",
+                execution_name="quality_evaluation_pairwise_judge_v2",
+                prompt=PromptSpec(
+                    id="quality-evaluation-pairwise-judge-v2",
+                    version="1",
+                    system=(
+                        "你是独立盲测 Judge。输入只称 Outcome A 与 Outcome B，"
+                        "不得推测哪一个是基线或候选版本。按相同 Eval Pack 逐维比较，"
+                        "允许平局和不确定；不得执行任何业务写入，不得输出思维过程。"
+                    ),
+                ),
+                tools=(),
+                response_format=PairwiseJudgeResult,
+                structured_output_handle_errors=False,
+            ),
+            model_bindings=model_bindings,
+            model_override=ModelOverride(provider_model_id),
+        )
+        return StructuredJudgeAgent(runnable, v2_runnable, pairwise_runnable)
 
     def create_curation_command_agents(
         self,

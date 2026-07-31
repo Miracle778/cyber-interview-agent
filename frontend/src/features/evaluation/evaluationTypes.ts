@@ -69,15 +69,49 @@ export const regressionCaseSchema = z.object({
   executionId: z.string(),
   evalPackId: z.string(),
   evalPackVersion: z.number().int(),
+  evaluationContractVersion: z.number().int().default(1),
+  runKind: z.enum(["historical_review", "agent_regression"]).default("historical_review"),
   version: z.number().int(),
   snapshotHash: z.string(),
   containsPrivateBodies: z.boolean(),
   redactionSummary: z.string(),
+  caseContractVersion: z.number().int().default(1),
+  taskType: z.string().default("legacy"),
+  privacyManifest: z.record(z.unknown()).default({}),
+  baselineVersions: z.record(z.unknown()).default({}),
+  runnable: z.boolean().default(false),
+  unavailableReason: z.string().nullable().default(null),
+  availableImplementationIds: z.array(z.string()).default([]),
   createdAt: z.string(),
 });
 
 export const regressionCaseListSchema = z.object({
   items: z.array(regressionCaseSchema),
+});
+
+export const regressionRunSchema = z.object({
+  id: z.string(),
+  caseId: z.string(),
+  caseVersion: z.number().int(),
+  status: z.string(),
+  baselineImplementationId: z.string(),
+  candidateImplementationId: z.string(),
+  baselineExecutionId: z.string().nullable(),
+  candidateExecutionId: z.string().nullable(),
+  baselineOutcomeHash: z.string().nullable(),
+  candidateOutcomeHash: z.string().nullable(),
+  deterministicComparison: z.record(z.unknown()).nullable(),
+  pairwiseResult: z.record(z.unknown()).nullable(),
+  infrastructureFailures: z.array(z.record(z.unknown())),
+  isolationManifest: z.record(z.unknown()),
+  errorCode: z.string().nullable(),
+  createdAt: z.string(),
+  startedAt: z.string().nullable(),
+  completedAt: z.string().nullable(),
+});
+
+export const regressionRunListSchema = z.object({
+  items: z.array(regressionRunSchema),
 });
 
 export const comparisonSchema = z.object({
@@ -92,6 +126,8 @@ export const evaluationTrendPointSchema = z.object({
   graphId: z.string(),
   evalPackId: z.string(),
   evalPackVersion: z.number().int(),
+  evaluationContractVersion: z.number().int().default(1),
+  runKind: z.enum(["historical_review", "agent_regression"]).default("historical_review"),
   judgeProviderModelId: z.string().nullable(),
   promptVersion: z.string(),
   schemaVersion: z.string(),
@@ -100,6 +136,11 @@ export const evaluationTrendPointSchema = z.object({
   successRate: z.number(),
   deterministicIssueRate: z.number(),
   averageJudgeScore: z.number().nullable(),
+  needsReviewRate: z.number().default(0),
+  severeRate: z.number().default(0),
+  judgeHumanAgreementRate: z.number().nullable().default(null),
+  userEditRejectRate: z.number().default(0),
+  infrastructureFailureRate: z.number().default(0),
   humanReviewRate: z.number(),
   averageLatencyMs: z.number().nullable(),
   averageTokens: z.number(),
@@ -114,5 +155,6 @@ export type EvaluationRun = z.infer<typeof evaluationRunSchema>;
 export type EvaluationDimension = z.infer<typeof evaluationDimensionSchema>;
 export type EvaluationFeedback = z.infer<typeof feedbackSchema>;
 export type RegressionCase = z.infer<typeof regressionCaseSchema>;
+export type RegressionRun = z.infer<typeof regressionRunSchema>;
 export type EvaluationComparison = z.infer<typeof comparisonSchema>;
 export type EvaluationTrendPoint = z.infer<typeof evaluationTrendPointSchema>;

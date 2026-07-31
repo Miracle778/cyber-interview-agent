@@ -142,3 +142,19 @@ class JudgeResultV2(StrictJudgeModel):
     summary: str = Field(min_length=1)
     risks: list[str]
     human_review_required: bool
+
+
+class PairwiseDimensionResult(StrictJudgeModel):
+    dimension_id: str = Field(min_length=1)
+    winner: Literal["a", "b", "tie", "uncertain"]
+    confidence: float = Field(ge=0, le=1)
+    summary: str = Field(min_length=1)
+
+
+class PairwiseJudgeResult(StrictJudgeModel):
+    winner: Literal["a", "b", "tie", "uncertain"]
+    confidence: float = Field(ge=0, le=1)
+    dimensions: list[PairwiseDimensionResult] = Field(min_length=1)
+    summary: str = Field(min_length=1)
+    risks: list[str]
+    human_review_required: bool

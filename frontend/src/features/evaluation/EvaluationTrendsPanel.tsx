@@ -45,7 +45,8 @@ export function EvaluationTrendsPanel({
             <thead>
               <tr>
                 <th>日期</th><th>Agent / 版本</th><th>运行</th><th>成功率</th>
-                <th>规则问题</th><th>AI 检查均分</th><th>人工复核</th>
+                <th>规则问题</th><th>质量结论</th><th>人工校准</th>
+                <th>用户修改/拒绝</th><th>基础设施失败</th>
                 <th>平均耗时</th><th>Token / 上下文</th>
               </tr>
             </thead>
@@ -66,8 +67,10 @@ export function EvaluationTrendsPanel({
                   <td>{point.runCount}</td>
                   <td><Rate value={point.successRate} /></td>
                   <td><Rate value={point.deterministicIssueRate} inverse /></td>
-                  <td>{point.averageJudgeScore === null ? "—" : point.averageJudgeScore.toFixed(1)}</td>
-                  <td>{percent(point.humanReviewRate)}</td>
+                  <td>{point.evaluationContractVersion >= 2 ? <><span>需复核 {percent(point.needsReviewRate)}</span><small>严重 {percent(point.severeRate)}</small></> : point.averageJudgeScore === null ? "—" : point.averageJudgeScore.toFixed(1)}</td>
+                  <td><span>建议人工 {percent(point.humanReviewRate)}</span><small>Judge 一致 {point.judgeHumanAgreementRate === null ? "—" : percent(point.judgeHumanAgreementRate)}</small></td>
+                  <td>{percent(point.userEditRejectRate)}</td>
+                  <td>{percent(point.infrastructureFailureRate)}</td>
                   <td>{point.averageLatencyMs === null ? "—" : `${Math.round(point.averageLatencyMs / 1000)} 秒`}</td>
                   <td>{Math.round(point.averageTokens).toLocaleString()} / {Math.round(point.averageContextTokens).toLocaleString()}</td>
                 </tr>

@@ -67,7 +67,38 @@ class RegressionCaseRecord:
     expected_invariants_json: str
     contains_private_bodies: bool
     redaction_summary: str
+    case_contract_version: int
+    task_type: str
+    sanitized_input_json: str
+    required_domain_snapshot_json: str
+    privacy_manifest_json: str
+    baseline_versions_json: str
+    source_business_outcome_json: str | None
     created_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class RegressionRunRecord:
+    id: str
+    workspace_id: str
+    case_id: str
+    case_version: int
+    status: str
+    baseline_implementation_id: str
+    candidate_implementation_id: str
+    baseline_execution_id: str | None
+    candidate_execution_id: str | None
+    baseline_outcome_hash: str | None
+    candidate_outcome_hash: str | None
+    deterministic_comparison_json: str | None
+    pairwise_result_json: str | None
+    infrastructure_failures_json: str
+    isolation_manifest_json: str
+    error_code: str | None
+    idempotency_key: str
+    created_at: str
+    started_at: str | None
+    completed_at: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -363,6 +394,13 @@ class AgentEvaluationRepository:
         expected_invariants_json: str,
         contains_private_bodies: bool,
         redaction_summary: str,
+        case_contract_version: int = 1,
+        task_type: str = "legacy",
+        sanitized_input_json: str = "{}",
+        required_domain_snapshot_json: str = "{}",
+        privacy_manifest_json: str = "{}",
+        baseline_versions_json: str = "{}",
+        source_business_outcome_json: str | None = None,
         supersedes_case_id: str | None = None,
     ) -> RegressionCaseRecord:
         version = 1
@@ -376,7 +414,11 @@ class AgentEvaluationRepository:
                 "eval_pack_id, eval_pack_version, case_version, "
                 "supersedes_case_id, snapshot_hash, snapshot_json, "
                 "expected_invariants_json, contains_private_bodies, "
-                "redaction_summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "redaction_summary, case_contract_version, task_type, "
+                "sanitized_input_json, required_domain_snapshot_json, "
+                "privacy_manifest_json, baseline_versions_json, "
+                "source_business_outcome_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     case_id,
                     self.workspace_id,
@@ -391,6 +433,13 @@ class AgentEvaluationRepository:
                     expected_invariants_json,
                     int(contains_private_bodies),
                     redaction_summary,
+                    case_contract_version,
+                    task_type,
+                    sanitized_input_json,
+                    required_domain_snapshot_json,
+                    privacy_manifest_json,
+                    baseline_versions_json,
+                    source_business_outcome_json,
                 ),
             )
         return self._require_case(case_id)
@@ -401,6 +450,122 @@ class AgentEvaluationRepository:
             for row in self.connection.execute(
                 "SELECT * FROM agent_eval_regression_cases "
                 "WHERE workspace_id = ? ORDER BY created_at DESC, id DESC",
+                (self.workspace_id,),
+            )
+        )
+
+    def get_regression_case(self, case_id: str) -> RegressionCaseRecord | None:
+        row = self.connection.execute(
+            "SELECT * FROM agent_eval_regression_cases "
+            "WHERE id = ? AND workspace_id = ?",
+            (case_id, self.workspace_id),
+        ).fetchone()
+        return None if row is None else self._case(row)
+
+    def create_regression_run(
+        self,
+        *,
+        run_id: str,
+        case_id: str,
+        case_version: int,
+        baseline_implementation_id: str,
+        candidate_implementation_id: str,
+        idempotency_key: str,
+    ) -> RegressionRunRecord:
+        existing = self.connection.execute(
+            "SELECT * FROM agent_eval_regression_runs "
+            "WHERE workspace_id = ? AND idempotency_key = ?",
+            (self.workspace_id, idempotency_key),
+        ).fetchone()
+        if existing is not None:
+            record = self._regression_run(existing)
+            if (
+                record.case_id != case_id
+                or record.case_version != case_version
+                or record.baseline_implementation_id != baseline_implementation_id
+                or record.candidate_implementation_id != candidate_implementation_id
+            ):
+                raise EvaluationIdempotencyConflictError(
+                    "regression idempotency key conflict"
+                )
+            return record
+        self._require_case(case_id)
+        with self._transaction():
+            self.connection.execute(
+                "INSERT INTO agent_eval_regression_runs "
+                "(id, workspace_id, case_id, case_version, "
+                "baseline_implementation_id, candidate_implementation_id, "
+                "idempotency_key) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    run_id, self.workspace_id, case_id, case_version,
+                    baseline_implementation_id, candidate_implementation_id,
+                    idempotency_key,
+                ),
+            )
+        return self._require_regression_run(run_id)
+
+    def mark_regression_running(self, run_id: str) -> RegressionRunRecord:
+        with self._transaction():
+            updated = self.connection.execute(
+                "UPDATE agent_eval_regression_runs SET status = 'running', "
+                "started_at = CURRENT_TIMESTAMP WHERE id = ? AND workspace_id = ? "
+                "AND status = 'pending'",
+                (run_id, self.workspace_id),
+            )
+            if updated.rowcount != 1:
+                raise ImmutableEvaluationError("regression run cannot start")
+        return self._require_regression_run(run_id)
+
+    def complete_regression_run(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        baseline_execution_id: str | None = None,
+        candidate_execution_id: str | None = None,
+        baseline_outcome_hash: str | None = None,
+        candidate_outcome_hash: str | None = None,
+        deterministic_comparison_json: str | None = None,
+        pairwise_result_json: str | None = None,
+        infrastructure_failures_json: str = "[]",
+        isolation_manifest_json: str = "{}",
+        error_code: str | None = None,
+    ) -> RegressionRunRecord:
+        with self._transaction():
+            updated = self.connection.execute(
+                "UPDATE agent_eval_regression_runs SET status = ?, "
+                "baseline_execution_id = ?, candidate_execution_id = ?, "
+                "baseline_outcome_hash = ?, candidate_outcome_hash = ?, "
+                "deterministic_comparison_json = ?, pairwise_result_json = ?, "
+                "infrastructure_failures_json = ?, isolation_manifest_json = ?, "
+                "error_code = ?, completed_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND workspace_id = ? AND status = 'running'",
+                (
+                    status, baseline_execution_id, candidate_execution_id,
+                    baseline_outcome_hash, candidate_outcome_hash,
+                    deterministic_comparison_json, pairwise_result_json,
+                    infrastructure_failures_json, isolation_manifest_json,
+                    error_code, run_id, self.workspace_id,
+                ),
+            )
+            if updated.rowcount != 1:
+                raise ImmutableEvaluationError("regression run result is immutable")
+        return self._require_regression_run(run_id)
+
+    def get_regression_run(self, run_id: str) -> RegressionRunRecord | None:
+        row = self.connection.execute(
+            "SELECT * FROM agent_eval_regression_runs "
+            "WHERE id = ? AND workspace_id = ?",
+            (run_id, self.workspace_id),
+        ).fetchone()
+        return None if row is None else self._regression_run(row)
+
+    def list_regression_runs(self) -> tuple[RegressionRunRecord, ...]:
+        return tuple(
+            self._regression_run(row)
+            for row in self.connection.execute(
+                "SELECT * FROM agent_eval_regression_runs WHERE workspace_id = ? "
+                "ORDER BY created_at DESC, id DESC",
                 (self.workspace_id,),
             )
         )
@@ -454,6 +619,12 @@ class AgentEvaluationRepository:
         if row is None:
             raise LookupError("regression case not found")
         return self._case(row)
+
+    def _require_regression_run(self, run_id: str) -> RegressionRunRecord:
+        record = self.get_regression_run(run_id)
+        if record is None:
+            raise LookupError("regression run not found")
+        return record
 
     @staticmethod
     def _run(row) -> EvaluationRunRecord:
@@ -512,7 +683,39 @@ class AgentEvaluationRepository:
             expected_invariants_json=row["expected_invariants_json"],
             contains_private_bodies=bool(row["contains_private_bodies"]),
             redaction_summary=row["redaction_summary"],
+            case_contract_version=row["case_contract_version"],
+            task_type=row["task_type"],
+            sanitized_input_json=row["sanitized_input_json"],
+            required_domain_snapshot_json=row["required_domain_snapshot_json"],
+            privacy_manifest_json=row["privacy_manifest_json"],
+            baseline_versions_json=row["baseline_versions_json"],
+            source_business_outcome_json=row["source_business_outcome_json"],
             created_at=row["created_at"],
+        )
+
+    @staticmethod
+    def _regression_run(row) -> RegressionRunRecord:
+        return RegressionRunRecord(
+            id=row["id"],
+            workspace_id=row["workspace_id"],
+            case_id=row["case_id"],
+            case_version=row["case_version"],
+            status=row["status"],
+            baseline_implementation_id=row["baseline_implementation_id"],
+            candidate_implementation_id=row["candidate_implementation_id"],
+            baseline_execution_id=row["baseline_execution_id"],
+            candidate_execution_id=row["candidate_execution_id"],
+            baseline_outcome_hash=row["baseline_outcome_hash"],
+            candidate_outcome_hash=row["candidate_outcome_hash"],
+            deterministic_comparison_json=row["deterministic_comparison_json"],
+            pairwise_result_json=row["pairwise_result_json"],
+            infrastructure_failures_json=row["infrastructure_failures_json"],
+            isolation_manifest_json=row["isolation_manifest_json"],
+            error_code=row["error_code"],
+            idempotency_key=row["idempotency_key"],
+            created_at=row["created_at"],
+            started_at=row["started_at"],
+            completed_at=row["completed_at"],
         )
 
     @staticmethod

@@ -114,7 +114,40 @@ def test_workspace_isolation_feedback_versions_and_case_privacy(tmp_path) -> Non
             redaction_summary="正文未保存",
         )
         assert case.contains_private_bodies is False
+        assert case.case_contract_version == 1
         assert "private" not in case.snapshot_json.casefold()
+
+        regression = repository.create_regression_run(
+            run_id="regression-1",
+            case_id=case.id,
+            case_version=case.version,
+            baseline_implementation_id="baseline@1",
+            candidate_implementation_id="candidate@2",
+            idempotency_key="case-1-run-1",
+        )
+        assert regression.status == "pending"
+        assert repository.create_regression_run(
+            run_id="ignored",
+            case_id=case.id,
+            case_version=case.version,
+            baseline_implementation_id="baseline@1",
+            candidate_implementation_id="candidate@2",
+            idempotency_key="case-1-run-1",
+        ).id == regression.id
+        repository.mark_regression_running(regression.id)
+        completed = repository.complete_regression_run(
+            regression.id,
+            status="completed",
+            baseline_execution_id="baseline-execution",
+            candidate_execution_id="candidate-execution",
+            baseline_outcome_hash="d" * 64,
+            candidate_outcome_hash="e" * 64,
+            isolation_manifest_json='{"productionWrites":false}',
+        )
+        assert completed.status == "completed"
+        assert completed.baseline_outcome_hash == "d" * 64
+        with pytest.raises(ImmutableEvaluationError):
+            repository.complete_regression_run(completed.id, status="failed")
 
         other = AgentEvaluationRepository(connection, "workspace-2")
         assert other.get_run("eval-1") is None

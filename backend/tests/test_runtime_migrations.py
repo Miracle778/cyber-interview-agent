@@ -98,6 +98,7 @@ EVALUATION_TABLES = {
     "agent_eval_dimension_results",
     "agent_eval_human_feedback",
     "agent_eval_regression_cases",
+    "agent_eval_regression_runs",
     "agent_eval_daily_counters",
 }
 
@@ -215,12 +216,35 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == list(range(1, 44))
+        ] == list(range(1, 45))
     assert "agent_context_usage" in _tables(connection)
     assert "profile_deletion_plans" in _tables(connection)
     assert "deleted_at" in {
         row[1] for row in connection.execute("PRAGMA table_info(profile_materials)")
     }
+    connection.close()
+
+
+def test_migration_044_adds_versioned_cases_and_isolated_regression_runs(
+    tmp_path: Path,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+    case_columns = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info(agent_eval_regression_cases)"
+        )
+    }
+    assert {
+        "case_contract_version",
+        "task_type",
+        "sanitized_input_json",
+        "required_domain_snapshot_json",
+        "privacy_manifest_json",
+        "baseline_versions_json",
+        "source_business_outcome_json",
+    } <= case_columns
+    assert "agent_eval_regression_runs" in _tables(connection)
     connection.close()
 
 
@@ -1051,7 +1075,7 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == list(range(1, 44))
+        ] == list(range(1, 45))
     reopened.close()
 
 

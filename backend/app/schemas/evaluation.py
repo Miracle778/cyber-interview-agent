@@ -106,6 +106,13 @@ class RegressionCaseResource(EvaluationModel):
     snapshot_hash: str
     contains_private_bodies: bool
     redaction_summary: str
+    case_contract_version: int
+    task_type: str
+    privacy_manifest: dict[str, object]
+    baseline_versions: dict[str, object]
+    runnable: bool
+    unavailable_reason: str | None
+    available_implementation_ids: list[str]
     created_at: str
 
 
@@ -115,6 +122,33 @@ class RegressionCaseListResource(EvaluationModel):
 
 class CreateRegressionRunCommand(EvaluationModel):
     case_id: str
+    baseline_implementation_id: str
+    candidate_implementation_id: str
+
+
+class RegressionRunResource(EvaluationModel):
+    id: str
+    case_id: str
+    case_version: int
+    status: str
+    baseline_implementation_id: str
+    candidate_implementation_id: str
+    baseline_execution_id: str | None
+    candidate_execution_id: str | None
+    baseline_outcome_hash: str | None
+    candidate_outcome_hash: str | None
+    deterministic_comparison: dict[str, object] | None
+    pairwise_result: dict[str, object] | None
+    infrastructure_failures: list[dict[str, object]]
+    isolation_manifest: dict[str, object]
+    error_code: str | None
+    created_at: str
+    started_at: str | None
+    completed_at: str | None
+
+
+class RegressionRunListResource(EvaluationModel):
+    items: list[RegressionRunResource]
 
 
 class EvaluationComparisonResource(EvaluationModel):
@@ -129,6 +163,8 @@ class EvaluationTrendPointResource(EvaluationModel):
     graph_id: str
     eval_pack_id: str
     eval_pack_version: int
+    evaluation_contract_version: int
+    run_kind: str
     judge_provider_model_id: str | None
     prompt_version: str
     schema_version: str
@@ -137,6 +173,11 @@ class EvaluationTrendPointResource(EvaluationModel):
     success_rate: float
     deterministic_issue_rate: float
     average_judge_score: float | None
+    needs_review_rate: float
+    severe_rate: float
+    judge_human_agreement_rate: float | None
+    user_edit_reject_rate: float
+    infrastructure_failure_rate: float
     human_review_rate: float
     average_latency_ms: float | None
     average_tokens: float

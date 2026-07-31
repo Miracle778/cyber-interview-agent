@@ -27,6 +27,8 @@ import {
   listEvaluationFeedback,
   listEvaluationTrends,
   listRegressionCases,
+  listRegressionRuns,
+  runRegressionCase,
   submitEvaluationFeedback,
 } from "./evaluationApi";
 import { EvaluationMetricMatrix } from "./EvaluationMetricMatrix";
@@ -37,7 +39,7 @@ import {
 } from "./evaluationPresentation";
 import { EvaluationQualityRail } from "./EvaluationQualityRail";
 import { EvaluationReportHeader } from "./EvaluationReportHeader";
-import type { EvaluationRun } from "./evaluationTypes";
+import type { EvaluationRun, RegressionCase } from "./evaluationTypes";
 import { JudgeResultPanel } from "./JudgeResultPanel";
 import { RegressionCasePanel } from "./RegressionCasePanel";
 import { EvaluationTrendsPanel } from "./EvaluationTrendsPanel";
@@ -83,6 +85,11 @@ export function EvaluationLabPage({
     enabled: Boolean(workspace),
     queryFn: ({ signal }) => listRegressionCases(workspace!.id, signal),
   });
+  const regressionRunsQuery = useQuery({
+    queryKey: ["agent-regression-runs", workspace?.id],
+    enabled: Boolean(workspace),
+    queryFn: ({ signal }) => listRegressionRuns(workspace!.id, signal),
+  });
   const trendsQuery = useQuery({
     queryKey: ["agent-evaluation-trends", workspace?.id],
     enabled: Boolean(workspace),
@@ -117,6 +124,17 @@ export function EvaluationLabPage({
       createRegressionCase(workspace!.id, selectedId!, includePrivateBodies),
     onSuccess: () => void queryClient.invalidateQueries({
       queryKey: ["agent-regression-cases", workspace?.id],
+    }),
+  });
+  const runRegression = useMutation({
+    mutationFn: (item: RegressionCase) => runRegressionCase(
+      workspace!.id,
+      item.id,
+      item.availableImplementationIds[0]!,
+      item.availableImplementationIds[item.availableImplementationIds.length - 1]!,
+    ),
+    onSuccess: () => void queryClient.invalidateQueries({
+      queryKey: ["agent-regression-runs", workspace?.id],
     }),
   });
   const compareQuery = useQuery({
@@ -391,6 +409,9 @@ export function EvaluationLabPage({
                     cases={casesQuery.data ?? []}
                     pending={createCase.isPending}
                     onCreate={(includeBodies) => createCase.mutate(includeBodies)}
+                    regressionRuns={regressionRunsQuery.data ?? []}
+                    runPending={runRegression.isPending}
+                    onRun={(item) => runRegression.mutate(item)}
                   />
                 </main>
                 <EvaluationQualityRail

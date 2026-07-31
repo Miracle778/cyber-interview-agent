@@ -20,6 +20,10 @@ from app.evaluation.outcome_adapters.question_curation import (
 from app.evaluation.outcome_adapters.domain import create_sqlite_outcome_adapter
 from app.evaluation.registry import get_eval_pack
 from app.evaluation.repository import AgentEvaluationRepository, EvaluationRunRecord
+from app.evaluation.regression import (
+    IsolatedAgentRegressionRunner,
+    RegressionImplementationCatalog,
+)
 from app.evaluation.runtime import EvaluationRuntime
 from app.evaluation.sampling import decide_automatic_evaluation
 from app.evaluation.views import (
@@ -75,6 +79,7 @@ class AgentEvaluationService:
         now: Callable[[], datetime] | None = None,
         advanced_diagnostics_enabled: Callable[[], bool] | None = None,
         outcome_adapter_factory: Callable[[str], object] | None = None,
+        regression_implementations: RegressionImplementationCatalog | None = None,
     ) -> None:
         self.workspace_id = workspace_id
         self.workspace_root = workspace_root
@@ -91,10 +96,45 @@ class AgentEvaluationService:
         self._outcome_adapter_factory = (
             outcome_adapter_factory or self._default_outcome_adapter
         )
+        self._regression_implementations = (
+            regression_implementations or RegressionImplementationCatalog()
+        )
 
     @property
     def advanced_diagnostics_enabled(self) -> bool:
         return bool(self._advanced_diagnostics_enabled())
+
+    @property
+    def regression_implementation_ids(self) -> tuple[str, ...]:
+        return self._regression_implementations.ids()
+
+    async def run_regression_case(
+        self,
+        *,
+        case_id: str,
+        baseline_implementation_id: str,
+        candidate_implementation_id: str,
+        idempotency_key: str,
+    ):
+        configured = self._settings()
+        provider_model_id = getattr(configured, "judge_provider_model_id", None)
+        if not provider_model_id:
+            provider_model_id = self._model_bindings().get("answer_evaluation")
+        if not provider_model_id:
+            raise EvaluationNotSupportedError("未配置 Judge 模型")
+        runner = IsolatedAgentRegressionRunner(
+            workspace_id=self.workspace_id,
+            workspace_root=self.workspace_root,
+            repository=self.repository,
+            implementations=self._regression_implementations,
+            judge=self._judge_factory(provider_model_id),
+        )
+        return await runner.run(
+            case_id=case_id,
+            baseline_implementation_id=baseline_implementation_id,
+            candidate_implementation_id=candidate_implementation_id,
+            idempotency_key=idempotency_key,
+        )
 
     async def evaluate(
         self,
