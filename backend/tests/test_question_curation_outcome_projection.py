@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.evaluation.outcome_adapters.question_curation import (
     QuestionCurationOutcomeAdapter,
 )
+from app.evaluation.views import build_question_curation_evaluation_view
 from app.infrastructure.runtime_database import connect_runtime_database
 from app.review.models import QuestionSnapshot
 from app.review.repository import ReviewRepository
@@ -135,5 +136,43 @@ def test_question_curation_projection_hash_changes_after_user_confirmation(
         assert before.outcome_hash != after.outcome_hash
         assert after.items[0].user_decision.status == "accepted"
         assert after.items[0].user_decision.version == 1
+    finally:
+        connection.close()
+
+
+def test_question_curation_judge_view_is_minimal_and_applicability_aware(
+    tmp_path,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+    try:
+        _seed_question_curation(connection)
+        projection = QuestionCurationOutcomeAdapter(
+            connection, "workspace-1"
+        ).build("execution-1")
+
+        view = build_question_curation_evaluation_view(projection)
+        serialized = view.model_dump_json(by_alias=True)
+        applicability = {
+            item.dimension_id: item.applicability
+            for item in view.dimensions
+        }
+
+        assert view.task_type == "question_curation"
+        assert view.business_outcome_hash == projection.outcome_hash
+        assert view.data_categories == (
+            "taskIdentity",
+            "curationCounters",
+            "candidateContent",
+            "fieldProvenance",
+            "userDecision",
+            "evidenceGaps",
+        )
+        assert applicability["source_answer_fidelity"] == "insufficient_evidence"
+        assert applicability["duplicate_handling"] == "insufficient_evidence"
+        assert applicability["zero_result_reasoning"] == "not_applicable"
+        assert "workspacePath" not in serialized
+        assert "storageRef" not in serialized
+        assert "traceEvents" not in serialized
+        assert "source-1#section-1" in serialized
     finally:
         connection.close()

@@ -10,6 +10,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import { EvaluationLabPage } from "./EvaluationLabPage";
+import type { EvaluationRun } from "./evaluationTypes";
 
 
 const workspace: WorkspaceConfig = {
@@ -19,15 +20,20 @@ const workspace: WorkspaceConfig = {
   vaultPath: "/tmp/interview/vault",
 };
 
-const run = {
+const run: EvaluationRun = {
   id: "eval-1",
   workspaceId: "workspace-1",
   executionId: "execution-1",
   evalPackId: "review.v1",
   evalPackVersion: 1,
+  evaluationContractVersion: 1,
+  taskType: "legacy",
+  runKind: "historical_review",
   trigger: "manual",
   status: "completed",
   frozenInputHash: "a".repeat(64),
+  businessOutcomeHash: null,
+  judgeDataScope: {},
   judgeProviderModelId: "model-1",
   errorCode: null,
   createdAt: "2026-07-30T00:00:00Z",
@@ -38,12 +44,16 @@ const run = {
       dimensionId: "key_point_coverage",
       source: "judge",
       status: "scored",
+      applicability: "applicable",
+      rating: null,
+      severity: null,
       score: 86,
       confidence: 0.82,
       summary: "关键结论有事件证据支持",
       citedEventHashes: ["event-hash-1"],
       citedArtifactHashes: ["artifact-hash-1"],
       risks: [],
+      evidenceGaps: [],
     },
   ],
   deterministicResult: { status: "passed" },
@@ -253,5 +263,50 @@ describe("EvaluationLabPage", () => {
       screen.getByRole("heading", { name: "检查结果对比" }),
     ).toBeInTheDocument();
     expect(screen.getAllByText("86").length).toBeGreaterThan(0);
+  });
+
+  it("shows v2 applicability labels without inventing a total score", async () => {
+    const v2Run: EvaluationRun = {
+      ...run,
+      id: "eval-v2",
+      evalPackId: "question-curation.v2",
+      evalPackVersion: 2,
+      evaluationContractVersion: 2,
+      taskType: "question_curation",
+      runKind: "historical_review",
+      businessOutcomeHash: "b".repeat(64),
+      judgeDataScope: { mode: "minimal_evaluation_view" },
+      dimensions: [
+        {
+          ...run.dimensions[0],
+          dimensionId: "source_answer_fidelity",
+          score: null,
+          applicability: "not_applicable",
+          rating: null,
+          severity: null,
+          confidence: null,
+          evidenceGaps: ["材料未提供原文答案"],
+        },
+        {
+          ...run.dimensions[0],
+          dimensionId: "model_completion_quality",
+          score: null,
+          applicability: "applicable",
+          rating: "needs_review",
+          severity: "medium",
+          evidenceGaps: [],
+        },
+      ],
+    };
+    mockEvaluationPage([v2Run]);
+    renderPage();
+
+    await screen.findByRole("heading", { name: "质量概览" });
+    fireEvent.click(screen.getByRole("button", { name: "评估工具" }));
+
+    expect(screen.getByText("业务结果质检")).toBeInTheDocument();
+    expect(screen.getByText("不适用")).toBeInTheDocument();
+    expect(screen.getByText("建议复核")).toBeInTheDocument();
+    expect(screen.queryByText("总分")).not.toBeInTheDocument();
   });
 });

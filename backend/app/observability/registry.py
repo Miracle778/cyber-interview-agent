@@ -50,7 +50,7 @@ _REGISTRATIONS = (
         "resume",
         "manual_judge",
         "export_trace",
-        eval_pack_id="question-curation.v1",
+        eval_pack_id="question-curation.v2",
         system_components=("question_generation", "report_summarization"),
     ),
     _registration(

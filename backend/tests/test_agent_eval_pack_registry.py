@@ -11,18 +11,22 @@ from app.observability.registry import AGENT_OBSERVABILITY_REGISTRY
 
 
 def test_eval_pack_ids_versions_and_dimension_ids_are_stable() -> None:
-    assert len(AGENT_EVAL_PACKS) == 5
+    assert len(AGENT_EVAL_PACKS) == 6
     assert len(AGENT_EVAL_PACKS) == len(set(AGENT_EVAL_PACKS))
     dimension_pairs: set[tuple[str, str]] = set()
     for pack_id, pack in AGENT_EVAL_PACKS.items():
         assert pack.id == pack_id
         assert pack_id.endswith(f".v{pack.version}")
-        assert 3 <= len(pack.dimensions) <= 7
+        assert 3 <= len(pack.dimensions) <= 9
         assert len(pack.dimensions) == len(
             {dimension.id for dimension in pack.dimensions}
         )
-        assert pack.required_evidence_event_types
-        assert pack.rules
+        if pack.evaluation_contract_version == 1:
+            assert pack.required_evidence_event_types
+            assert pack.rules
+        else:
+            assert pack.task_type != "legacy"
+            assert pack.judge.response_contract == "JudgeResultV2"
         assert pack.judge.prompt_id.endswith(f".v{pack.version}")
         assert "chain-of-thought" not in pack.judge.instructions.casefold()
         assert "思维链" not in pack.judge.instructions

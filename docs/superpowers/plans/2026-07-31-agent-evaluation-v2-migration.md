@@ -1,6 +1,6 @@
 # Agent Evaluation v2 Migration Plan
 
-**Status:** Phase 0 documentation correction completed; product-code migration has not started.
+**Status:** Phase 1 foundation and v1/v2 coexistence completed; Phase 2 deterministic business rules in progress.
 
 **Goal:** Preserve v1 history while moving evaluation from Trace-centric scoring to outcome-centric, task-specific quality evidence and then adding real candidate-version regression.
 
@@ -63,12 +63,16 @@ The first adapter resolves a question-curation Execution to its persisted batch,
 
 ### Task 3: Add applicability-aware evaluation
 
+**Status:** Completed 2026-08-01.
+
 - Code decides obvious `not_applicable` and `insufficient_evidence` cases.
 - Judge contract permits nullable rating and explicit evidence gaps.
 - UI replaces total score with anchored labels, severity and confidence.
 - Existing v1 results display under an “初版质检” badge.
 
 ### Task 4: Add minimal `EvaluationView`
+
+**Status:** Completed 2026-08-01 for the first question-curation v2 Pack; the same privacy contract is now the required template for Phase 3 task Packs.
 
 - Each Pack declares required fields and redaction policy.
 - Persist a privacy manifest with Judge provider/model and data categories.

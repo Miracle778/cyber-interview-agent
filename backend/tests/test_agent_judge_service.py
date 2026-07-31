@@ -6,7 +6,19 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.evaluation.contracts import JudgeDimensionResult, JudgeResult
+from app.evaluation.contracts import (
+    JudgeDimensionResult,
+    JudgeDimensionResultV2,
+    JudgeResult,
+    JudgeResultV2,
+)
+from app.evaluation.outcomes import (
+    BusinessOutcomePayload,
+    OutcomeCounters,
+    OutcomeIdentity,
+    OutcomeInput,
+    freeze_business_outcome,
+)
 from app.evaluation.registry import get_eval_pack
 from app.evaluation.repository import AgentEvaluationRepository
 from app.evaluation.sampling import decide_automatic_evaluation
@@ -93,6 +105,76 @@ class FakeJudge:
             summary="整体稳定",
             risks=[],
             human_review_required=False,
+        )
+
+
+class FakeV2Judge:
+    async def evaluate_v2(self, *, view, pack, context):
+        return JudgeResultV2(
+            dimensions=[
+                JudgeDimensionResultV2(
+                    dimension_id=dimension.dimension_id,
+                    applicability=dimension.applicability,
+                    rating=(
+                        "meets"
+                        if dimension.applicability == "applicable"
+                        else None
+                    ),
+                    severity=(
+                        "none"
+                        if dimension.applicability == "applicable"
+                        else None
+                    ),
+                    confidence=(
+                        0.8
+                        if dimension.applicability == "applicable"
+                        else None
+                    ),
+                    cited_event_hashes=[],
+                    cited_artifact_hashes=[],
+                    evidence_gaps=(
+                        []
+                        if dimension.applicability == "applicable"
+                        else [dimension.applicability_reason]
+                    ),
+                    summary=dimension.applicability_reason,
+                    risks=[],
+                )
+                for dimension in view.dimensions
+            ],
+            summary="业务结果可用",
+            risks=[],
+            human_review_required=False,
+        )
+
+
+class FakeOutcomeAdapter:
+    def build(self, execution_id):
+        return freeze_business_outcome(
+            BusinessOutcomePayload(
+                task_type="question_curation",
+                identity=OutcomeIdentity(
+                    workspace_id="workspace-1",
+                    session_id="session-1",
+                    execution_id=execution_id,
+                    graph_id="question.curate",
+                    domain_refs={"batchId": "batch-1"},
+                ),
+                input=OutcomeInput(
+                    source_refs=("source-1",),
+                    input_hash="d" * 64,
+                    requested_scope={"batchId": "batch-1"},
+                ),
+                execution_status="completed",
+                terminal_state="review_pending",
+                items=(),
+                units=(),
+                unit_counters={
+                    "candidates": OutcomeCounters(
+                        total=0, completed=0, failed=0, skipped=0, pending=0
+                    )
+                },
+            )
         )
 
 
@@ -209,5 +291,44 @@ def test_success_sampling_is_stable_and_recursive_agent_is_rejected(tmp_path) ->
     try:
         with pytest.raises(EvaluationNotSupportedError):
             asyncio.run(service.evaluate("execution-1"))
+    finally:
+        connection.close()
+
+
+@pytest.mark.asyncio
+async def test_v2_evaluation_uses_business_outcome_and_minimal_judge_view(
+    tmp_path,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+    observability = FakeObservability(graph_id="question.curate")
+    service = AgentEvaluationService(
+        workspace_id="workspace-1",
+        workspace_root=tmp_path,
+        repository=AgentEvaluationRepository(connection, "workspace-1"),
+        observability=observability,
+        model_bindings=lambda: {"answer_evaluation": "model-1"},
+        settings=lambda: SimpleNamespace(
+            enabled=True,
+            automatic_daily_cap=20,
+            judge_provider_model_id=None,
+        ),
+        judge_factory=lambda _model_id: FakeV2Judge(),
+        outcome_adapter_factory=lambda _task_type: FakeOutcomeAdapter(),
+    )
+    try:
+        result = await service.evaluate("execution-1")
+        dimensions = service.repository.list_dimension_results(result.id)
+        snapshot = result.snapshot_json
+
+        assert result.status == "completed"
+        assert result.eval_pack_id == "question-curation.v2"
+        assert result.evaluation_contract_version == 2
+        assert result.business_outcome_hash is not None
+        assert '"businessOutcome"' in snapshot
+        assert '"evaluationView"' in snapshot
+        assert "traceEvents" not in snapshot
+        assert '"mode":"minimal_evaluation_view"' in result.judge_data_scope_json
+        assert any(item.rating == "meets" for item in dimensions)
+        assert any(item.applicability == "not_applicable" for item in dimensions)
     finally:
         connection.close()

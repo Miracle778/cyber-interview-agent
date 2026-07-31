@@ -89,6 +89,12 @@ function EvidencePanel({
           <p>{dimension.risks.join("；")}</p>
         </div>
       ) : null}
+      {dimension.evidenceGaps.length ? (
+        <div className="evaluation-metric-evidence__risks">
+          <strong>缺少的依据</strong>
+          <p>{dimension.evidenceGaps.join("；")}</p>
+        </div>
+      ) : null}
     </section>
   );
 }

@@ -2,6 +2,7 @@ import { AlertTriangle, CheckCircle2, Clock3, LoaderCircle } from "lucide-react"
 import { formatBeijingDateTime } from "../../shared/time";
 import {
   evaluationStatusMeta,
+  evaluationContractLabel,
   formatEvaluationVersion,
 } from "./evaluationPresentation";
 import type { EvaluationRun } from "./evaluationTypes";
@@ -25,7 +26,9 @@ export function EvaluationReportHeader({
   return (
     <header className="evaluation-report-header">
       <div>
-        <span className="evaluation-report-header__eyebrow">质量报告</span>
+        <span className="evaluation-report-header__eyebrow">
+          {evaluationContractLabel(run)}
+        </span>
         <h1>{formatEvaluationVersion(run)}</h1>
         <p>
           {formatBeijingDateTime(run.completedAt ?? run.createdAt) ?? "时间未知"}

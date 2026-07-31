@@ -7,7 +7,7 @@ from langgraph.types import interrupt
 
 from app.agents.agent_factory import AgentFactory, AgentSpec, ModelOverride
 from app.agents.prompts.prompt_spec import PromptSpec
-from app.evaluation.contracts import JudgeResult
+from app.evaluation.contracts import JudgeResult, JudgeResultV2
 from app.evaluation.judge_agent import StructuredJudgeAgent
 from app.agents.question_curation_agent import QuestionCurationAgents
 from app.agents.curation_command_agents import CurationCommandAgents
@@ -103,7 +103,29 @@ class ProductionGraphFactory:
             model_bindings=model_bindings,
             model_override=ModelOverride(provider_model_id),
         )
-        return StructuredJudgeAgent(runnable)
+        v2_runnable = self._agents.create(
+            AgentSpec(
+                role="answer_evaluation",
+                execution_name="quality_evaluation_judge_v2",
+                prompt=PromptSpec(
+                    id="quality-evaluation-judge-v2",
+                    version="1",
+                    system=(
+                        "你是独立质量评估 Judge。只根据输入的最小 Evaluation View "
+                        "评价业务结果，不得索取或推测完整 Trace、隐藏资料和本地路径。"
+                        "必须服从每个维度由代码给出的 applicability；不适用或证据不足"
+                        "时不得给质量等级。不得提出或执行业务修改，不得输出思维过程。"
+                        "严格返回约定的结构化结果。"
+                    ),
+                ),
+                tools=(),
+                response_format=JudgeResultV2,
+                structured_output_handle_errors=False,
+            ),
+            model_bindings=model_bindings,
+            model_override=ModelOverride(provider_model_id),
+        )
+        return StructuredJudgeAgent(runnable, v2_runnable)
 
     def create_curation_command_agents(
         self,

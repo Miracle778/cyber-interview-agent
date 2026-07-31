@@ -30,6 +30,7 @@ const PACK_LABELS: Record<string, string> = {
   "profile.v1": "画像助手质量",
   "project-deep-dive.v1": "项目深挖质量",
   "question-curation.v1": "题目整理质量",
+  "question-curation.v2": "题目整理业务结果质量",
   "review.v1": "复习评价质量",
 };
 
@@ -62,6 +63,15 @@ const DIMENSION_LABELS: Record<string, string> = {
   version_frozen: "JD 版本冻结",
   write_boundary: "写入边界",
   zero_item_compatibility: "零题兼容",
+  material_processing_completeness: "材料处理完整性",
+  explicit_question_recognition: "明确题目识别",
+  candidate_completeness: "候选完整性",
+  question_source_consistency: "题目来源一致性",
+  source_answer_fidelity: "原文答案忠实度",
+  model_completion_quality: "模型补全质量",
+  completion_transparency: "补全透明度",
+  duplicate_handling: "重复项处理",
+  zero_result_reasoning: "零结果合理性",
 };
 
 const STATUS_META: Record<string, EvaluationStatusMeta> = {
@@ -104,6 +114,24 @@ export function evaluationStatusMeta(status: string): EvaluationStatusMeta {
 }
 
 export function dimensionOutcome(dimension: EvaluationDimension): DimensionOutcome {
+  if (dimension.applicability === "not_applicable") {
+    return { label: "不适用", tone: "neutral" };
+  }
+  if (dimension.applicability === "insufficient_evidence") {
+    return { label: "证据不足", tone: "warning" };
+  }
+  if (dimension.rating === "meets") {
+    return { label: "符合要求", tone: "success" };
+  }
+  if (dimension.rating === "usable") {
+    return { label: "基本可用", tone: "neutral" };
+  }
+  if (dimension.rating === "needs_review") {
+    return { label: "建议复核", tone: "warning" };
+  }
+  if (dimension.rating === "severe") {
+    return { label: "严重问题", tone: "danger" };
+  }
   const normalizedStatus = dimension.status.toLowerCase();
   if (FAILURE_STATUSES.has(normalizedStatus)) {
     return { label: "未通过", tone: "danger" };
@@ -156,4 +184,8 @@ export function summarizeEvaluation(
 
 export function formatEvaluationVersion(run: EvaluationRun): string {
   return `${evaluationPackLabel(run.evalPackId)} · v${run.evalPackVersion}`;
+}
+
+export function evaluationContractLabel(run: EvaluationRun): string {
+  return run.evaluationContractVersion >= 2 ? "业务结果质检" : "初版质检";
 }
