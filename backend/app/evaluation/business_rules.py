@@ -76,6 +76,28 @@ def evaluate_common_business_rules(
     return BusinessRuleEvaluation(status=status, blocking=False, rules=rules)
 
 
+def evaluate_business_rules(
+    outcome: BusinessOutcomeProjection,
+    *,
+    connection: sqlite3.Connection,
+    workspace_id: str,
+) -> BusinessRuleEvaluation:
+    common = evaluate_common_business_rules(
+        outcome,
+        connection=connection,
+        workspace_id=workspace_id,
+    )
+    rules = common.rules + _task_rules(outcome)
+    status = (
+        "failed"
+        if any(item.status == "failed" for item in rules)
+        else "inconclusive"
+        if any(item.status == "inconclusive" for item in rules)
+        else "passed"
+    )
+    return BusinessRuleEvaluation(status=status, blocking=False, rules=rules)
+
+
 def calibrate_business_rules(
     cases: tuple[RuleCalibrationCase, ...],
     *,
@@ -247,6 +269,276 @@ def _source_version_integrity(
         "已有来源引用，但公共投影不足以证明版本、hash 与 locator 全部有效。",
         tuple(f"source:{item}" for item in sorted(refs)),
         ("domain_source_validation_required",),
+    )
+
+
+def _task_rules(outcome: BusinessOutcomeProjection) -> tuple[BusinessRuleResult, ...]:
+    if outcome.task_type in {"question_curation", "question_revision"}:
+        return (_question_answer_boundary(outcome), _question_zero_result(outcome))
+    if outcome.task_type in {"review_round", "review_single"}:
+        return (_review_progression_guard(outcome),)
+    if outcome.task_type == "review_discussion":
+        return (
+            _unprovable_rule(
+                "review.discussion_progress_isolation",
+                "缺少讨论前后的正式复习进度快照，无法证明讨论没有推进题号。",
+            ),
+        )
+    if outcome.task_type == "profile_ingest":
+        return (_profile_ingest_evidence(outcome),)
+    if outcome.task_type == "profile_assessment":
+        return (
+            _unprovable_rule(
+                "profile.assessment_missing_semantics",
+                "缺失、未记录与未评估的语义需要结构化 assessment scope 才能确定。",
+            ),
+        )
+    if outcome.task_type == "profile_assistant":
+        return (_profile_tool_budget(outcome),)
+    if outcome.task_type == "profile_write_boundary":
+        return (_profile_write_receipts(outcome), _profile_expected_versions(outcome))
+    if outcome.task_type == "job_requirement_analysis":
+        return (_job_source_locators(outcome), _job_inference_boundary(outcome))
+    if outcome.task_type == "project_deep_dive_coaching":
+        return (_project_gap_lifecycle(outcome),)
+    if outcome.task_type == "project_question_generation":
+        return (_project_question_catalog_links(outcome),)
+    return ()
+
+
+def _question_answer_boundary(outcome: BusinessOutcomeProjection) -> BusinessRuleResult:
+    invalid = []
+    for item in outcome.items:
+        basis = item.content.get("answer_basis")
+        source = item.content.get("source_answer")
+        supplemental = item.content.get("supplemental_answer")
+        if basis == "mixed" and not (source and supplemental):
+            invalid.append(item.item_id)
+        elif basis == "source" and not source:
+            invalid.append(item.item_id)
+        elif basis == "model" and not supplemental:
+            invalid.append(item.item_id)
+    evidence = tuple(f"outcome-item:{item.item_id}" for item in outcome.items)
+    if invalid:
+        return _failed(
+            "question.answer_provenance_separation",
+            "答案来源声明与独立字段不一致：" + "、".join(invalid),
+            evidence,
+        )
+    return _passed(
+        "question.answer_provenance_separation",
+        "原资料答案与 AI 补充按字段独立保存。",
+        evidence or (f"outcome:{outcome.outcome_hash}",),
+    )
+
+
+def _question_zero_result(outcome: BusinessOutcomeProjection) -> BusinessRuleResult:
+    if outcome.items:
+        return _passed(
+            "question.zero_result_classification",
+            "本次存在候选题，不适用零结果原因检查。",
+            (f"outcome:{outcome.outcome_hash}",),
+        )
+    return _inconclusive(
+        "question.zero_result_classification",
+        "本次没有候选题，但结果投影未保存“确实无题、待人工复核或处理失败”的结构化原因。",
+        (f"outcome:{outcome.outcome_hash}",),
+        ("zero_result_reason_not_projected",),
+    )
+
+
+def _review_progression_guard(outcome: BusinessOutcomeProjection) -> BusinessRuleResult:
+    current_index = outcome.input.requested_scope.get("currentIndex")
+    if not isinstance(current_index, int):
+        return _inconclusive(
+            "review.progression_guard",
+            "缺少复习轮次 currentIndex，无法核对推进守卫。",
+            (f"outcome:{outcome.outcome_hash}",),
+            ("review_current_index_not_projected",),
+        )
+    completed = sum(
+        bool(item.content.get("skipped"))
+        or item.content.get("result_kind") in {
+            "independent_mastery", "assisted_mastery", "revealed", "skipped"
+        }
+        for item in outcome.items
+    )
+    if current_index > completed:
+        return _failed(
+            "review.progression_guard",
+            f"轮次已推进到 {current_index}，但只有 {completed} 道题满足通过或显式跳过条件。",
+            tuple(f"review-attempt:{item.item_id}" for item in outcome.items),
+        )
+    return _passed(
+        "review.progression_guard",
+        "题号推进未越过已通过或显式跳过的题目数量。",
+        tuple(f"review-attempt:{item.item_id}" for item in outcome.items)
+        or (f"outcome:{outcome.outcome_hash}",),
+    )
+
+
+def _profile_ingest_evidence(outcome: BusinessOutcomeProjection) -> BusinessRuleResult:
+    invalid = [
+        item.item_id
+        for item in outcome.items
+        if not any(provenance.evidence_refs for provenance in item.provenance)
+    ]
+    if invalid:
+        return _failed(
+            "profile.proposal_evidence",
+            "画像建议缺少字段级 Evidence：" + "、".join(invalid),
+            tuple(f"profile-proposal:{item}" for item in invalid),
+        )
+    return _passed(
+        "profile.proposal_evidence",
+        "画像建议均保留字段级 Evidence 引用。",
+        tuple(f"profile-proposal:{item.item_id}" for item in outcome.items)
+        or (f"outcome:{outcome.outcome_hash}",),
+    )
+
+
+def _profile_tool_budget(outcome: BusinessOutcomeProjection) -> BusinessRuleResult:
+    tools = [unit.unit_type.removeprefix("tool:") for unit in outcome.units if unit.unit_type.startswith("tool:")]
+    overused = sorted({name for name in tools if tools.count(name) > 2})
+    if len(tools) > 6 or overused:
+        detail = f"总调用 {len(tools)} 次"
+        if overused:
+            detail += "；重复超限：" + "、".join(overused)
+        return _failed(
+            "profile.tool_budget",
+            detail,
+            tuple(f"tool-audit:{unit.unit_id}" for unit in outcome.units),
+        )
+    return _passed(
+        "profile.tool_budget",
+        f"Tool 调用总数 {len(tools)}，未超过每轮与单工具预算。",
+        tuple(f"tool-audit:{unit.unit_id}" for unit in outcome.units)
+        or (f"outcome:{outcome.outcome_hash}",),
+    )
+
+
+def _profile_write_receipts(outcome: BusinessOutcomeProjection) -> BusinessRuleResult:
+    invalid = [
+        item.item_id for item in outcome.items
+        if item.status == "completed" and not item.content.get("receipt_id")
+    ]
+    if invalid:
+        return _failed(
+            "profile.write_receipt_integrity",
+            "已完成的画像写入项缺少 Receipt：" + "、".join(invalid),
+            tuple(f"action-plan-item:{item}" for item in invalid),
+        )
+    return _passed(
+        "profile.write_receipt_integrity",
+        "已完成的画像写入项均关联稳定 Receipt。",
+        tuple(f"action-plan-item:{item.item_id}" for item in outcome.items)
+        or (f"outcome:{outcome.outcome_hash}",),
+    )
+
+
+def _profile_expected_versions(outcome: BusinessOutcomeProjection) -> BusinessRuleResult:
+    guarded_operations = {"propose_claim_update", "propose_claim_reject"}
+    invalid = [
+        item.item_id for item in outcome.items
+        if item.content.get("operation") in guarded_operations
+        and item.content.get("expected_version") is None
+    ]
+    if invalid:
+        return _failed(
+            "profile.write_version_guard",
+            "更新或拒绝现有 Claim 时缺少 expected version：" + "、".join(invalid),
+            tuple(f"action-plan-item:{item}" for item in invalid),
+        )
+    return _passed(
+        "profile.write_version_guard",
+        "现有 Claim 的变更均携带 expected version。",
+        tuple(f"action-plan-item:{item.item_id}" for item in outcome.items)
+        or (f"outcome:{outcome.outcome_hash}",),
+    )
+
+
+def _job_source_locators(outcome: BusinessOutcomeProjection) -> BusinessRuleResult:
+    invalid = [item.item_id for item in outcome.items if item.content.get("locator_valid") is False]
+    unknown = [item.item_id for item in outcome.items if item.content.get("locator_valid") is None]
+    if invalid:
+        return _failed(
+            "job.source_locator_integrity",
+            "岗位要求的原文 quote 与版本 offset 不一致：" + "、".join(invalid),
+            tuple(f"job-requirement:{item}" for item in invalid),
+        )
+    if unknown:
+        return _inconclusive(
+            "job.source_locator_integrity",
+            "部分岗位要求缺少可反查的正文或 offset。",
+            tuple(f"job-requirement:{item}" for item in unknown),
+            ("job_source_locator_missing",),
+        )
+    return _passed(
+        "job.source_locator_integrity",
+        "岗位要求 quote 与对应文档版本 offset 一致。",
+        tuple(f"job-requirement:{item.item_id}" for item in outcome.items)
+        or (f"outcome:{outcome.outcome_hash}",),
+    )
+
+
+def _job_inference_boundary(outcome: BusinessOutcomeProjection) -> BusinessRuleResult:
+    invalid = [
+        item.item_id for item in outcome.items
+        if item.content.get("inferred") is True
+        and item.provenance
+        and any(p.support_type != "inferred" for p in item.provenance)
+    ]
+    if invalid:
+        return _failed(
+            "job.inference_boundary",
+            "推断准备建议被标记成显式岗位要求来源：" + "、".join(invalid),
+            tuple(f"job-requirement:{item}" for item in invalid),
+        )
+    return _passed(
+        "job.inference_boundary",
+        "显式岗位要求与系统推断使用不同来源类型。",
+        tuple(f"job-requirement:{item.item_id}" for item in outcome.items)
+        or (f"outcome:{outcome.outcome_hash}",),
+    )
+
+
+def _project_gap_lifecycle(outcome: BusinessOutcomeProjection) -> BusinessRuleResult:
+    invalid = [
+        item.item_id for item in outcome.items
+        if item.item_type == "project_gap"
+        and item.status == "resolved"
+        and not item.content.get("resolution_ref")
+    ]
+    if invalid:
+        return _failed(
+            "project.gap_lifecycle",
+            "已解决 Gap 缺少 resolution ref：" + "、".join(invalid),
+            tuple(f"project-gap:{item}" for item in invalid),
+        )
+    return _passed(
+        "project.gap_lifecycle",
+        "已解决 Gap 均保留解决依据。",
+        tuple(f"project-gap:{item.item_id}" for item in outcome.items if item.item_type == "project_gap")
+        or (f"outcome:{outcome.outcome_hash}",),
+    )
+
+
+def _project_question_catalog_links(outcome: BusinessOutcomeProjection) -> BusinessRuleResult:
+    invalid = [
+        item.item_id for item in outcome.items
+        if item.status == "confirmed" and not item.content.get("review_candidate_id")
+    ]
+    if invalid:
+        return _failed(
+            "project.question_catalog_link",
+            "已确认项目题没有关联题库候选：" + "、".join(invalid),
+            tuple(f"project-question:{item}" for item in invalid),
+        )
+    return _passed(
+        "project.question_catalog_link",
+        "已确认项目题均可追溯到题库候选。",
+        tuple(f"project-question:{item.item_id}" for item in outcome.items)
+        or (f"outcome:{outcome.outcome_hash}",),
     )
 
 

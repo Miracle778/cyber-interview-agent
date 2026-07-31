@@ -1,5 +1,13 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-08-01：Evaluation v2 Phase 3 核心迁移
+
+- 新增题目改写、复习轮次/单题/讨论、画像提取/评估/助手/写入边界、岗位要求分析、项目深挖/项目题生成共 11 个 v2 Pack；连同题目整理共 12 个。
+- 新增通用 SQLite Outcome Adapter 和 Pack 级最小 Judge View，默认 Observability Registry 已切换到对应 v2 Pack，仍保留显式 v1 历史复检。
+- 迁移 043 分开保存原资料答案和 AI 补充，题库详情与整理产物页分别展示来源。
+- 任务级 advisory Rule 已覆盖复习推进、画像 Evidence/Tool/写入、JD offset/推断边界、项目 Gap/题库关联；不可证明项返回证据不足。
+- 定向验证：后端 84 项持久化/迁移/Adapter/服务用例、规则与服务 29 项；前端 TypeScript、题目详情 6 项及展示语义 4 项通过。
+
 ## 2026-08-01：Evaluation v2 Phase 1 Task 2
 
 - 新增不可变 `BusinessOutcomeProjection` 公共契约，hash 只由业务输入摘要、最终领域状态、处理单元、候选、来源类型和用户决定生成，不包含 Trace 正文。

@@ -155,6 +155,10 @@ class SqliteOutcomeAdapter:
             units=tuple(units),
             counters={"attempts": _counters(statuses)},
             gaps=() if attempts else ("review_attempts_not_recorded",),
+            requested_scope={
+                "currentIndex": int(round_row["current_index"]),
+                "questionCount": len(_array(round_row["question_snapshots_json"])),
+            },
         )
 
     def _discussion(self, execution: sqlite3.Row) -> BusinessOutcomeProjection:

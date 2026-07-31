@@ -61,7 +61,9 @@ function run(dimensions: EvaluationDimension[]): EvaluationRun {
 describe("evaluation presentation semantics", () => {
   it("translates packs, dimensions and statuses into business language", () => {
     expect(evaluationPackLabel("question-curation.v1")).toBe("题目整理质量");
+    expect(evaluationPackLabel("project-question-generation.v2")).toBe("项目题生成业务结果质量");
     expect(dimensionLabel("source_fidelity")).toBe("来源忠实度");
+    expect(dimensionLabel("review.progression_guard")).toBe("复习推进守卫");
     expect(evaluationStatusMeta("completed").label).toBe("评估完成");
     expect(formatEvaluationVersion(run([]))).toBe("题目整理质量 · v2");
   });

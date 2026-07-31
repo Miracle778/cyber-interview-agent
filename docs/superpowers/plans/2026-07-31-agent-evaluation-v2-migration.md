@@ -1,6 +1,6 @@
 # Agent Evaluation v2 Migration Plan
 
-**Status:** Phase 1 foundation and v1/v2 coexistence completed; Phase 2 deterministic business rules in progress.
+**Status:** Phase 1–2 completed; Phase 3 task Pack、Outcome Adapter、答案来源拆分与只读领域规则已完成，代表案例集与浏览器验收待阶段收口统一补齐。
 
 **Goal:** Preserve v1 history while moving evaluation from Trace-centric scoring to outcome-centric, task-specific quality evidence and then adding real candidate-version regression.
 
@@ -119,6 +119,8 @@ Each rule must cite domain rows, Receipts or immutable hashes, not merely event-
 Exit condition: rules can detect known invariant violations without relying on Judge and without blocking business traffic.
 
 ## Phase 3: Migrate task Packs by business value
+
+**Implementation status (2026-08-01):** 12 个 v2 Pack 已注册；题目、复习、画像、JD 与项目任务均有最小 Outcome Adapter/Judge View。题目答案按 `source_answer` / `supplemental_answer` 独立持久化和展示；复习推进、画像写入回执/版本、JD offset、项目 Gap/题库关联等可证明事实已接入 advisory Rule。无法由最终快照证明的讨论隔离、迟到结果与“未记录≠不存在”等边界明确返回证据不足，不由 Judge 猜测。所有规则仍不阻断业务。
 
 Implement one vertical slice at a time, including adapter, rules, Judge view, API, UI and a small real-case set.
 

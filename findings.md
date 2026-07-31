@@ -16,6 +16,9 @@
 - 最终业务结果可以直接证明 Workspace/Execution 身份一致、稳定 ID 唯一、公开计数守恒以及 direct/normalized 字段是否保留来源引用。
 - 最终快照不能独立证明迟到结果没有覆盖、Tool/写入边界始终合规或 Receipt/Event 全程一致；这些维度必须等待领域 Adapter 投影状态转换历史、审计和 Receipt，当前返回 `insufficient_evidence`。
 - 规则结果新增领域 `evidenceRefs`，不再把领域行引用塞进 `citedEventHashes`；所有规则保持 advisory，初始合成校准用例只能证明规则实现符合标签，不能证明真实数据误报率足以启用门禁。
+- Phase 3 的公共 Adapter 可以统一投影 ID、终态、计数、来源和用户决定，但任务不变量必须继续由领域语义解释：例如 `review.currentIndex` 只能与通过/跳过结果比较，画像更新/拒绝必须有 expected version，JD quote 必须满足 `body[start:end] == quote`。
+- 最终快照不能证明“讨论前后题号完全没变”、迟到 Provider 结果是否曾尝试回写等时序事实；这类规则保持 `inconclusive`，后续需补前后状态快照或 Receipt，而不是让 Judge 推断。
+- 题目答案过去只保留合并后的 `reference_answer`；迁移 043 新增 `source_answer` 与 `supplemental_answer`，新候选可以分别评价原文忠实度和模型补全质量，旧候选仍保留兼容读取并显式暴露证据缺口。
 
 ## 2026-07-29：项目级 Agent 可观测与质量评估设计
 

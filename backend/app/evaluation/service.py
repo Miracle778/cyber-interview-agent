@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from app.agents.context import AgentContext
 from app.evaluation.contracts import JudgeResult, JudgeResultV2
-from app.evaluation.business_rules import evaluate_common_business_rules
+from app.evaluation.business_rules import evaluate_business_rules
 from app.evaluation.judge_agent import JudgeInvoker
 from app.evaluation.outcome_adapters.question_curation import (
     QuestionCurationOutcomeAdapter,
@@ -332,7 +332,7 @@ class AgentEvaluationService:
         if record.status != "pending":
             return record
         record = self.repository.mark_running(record.id)
-        deterministic = evaluate_common_business_rules(
+        deterministic = evaluate_business_rules(
             outcome,
             connection=self.repository.connection,
             workspace_id=self.workspace_id,
