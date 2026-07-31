@@ -51,11 +51,15 @@ Implemented as runtime migration 041 plus additive repository/API contracts. Cur
 
 ### Task 2: Build `BusinessOutcomeProjection`
 
+**Status:** Common contract and first question-curation adapter completed 2026-08-01; remaining business adapters stay in their Phase 3 slices.
+
 - Define the common projection contract.
 - Add one adapter interface per business goal.
 - Read terminal domain state, Receipt, source/version links and user decision.
 - Prove later domain edits do not mutate a completed evaluation projection.
 - Keep raw Trace as an explanatory reference, not the primary result.
+
+The first adapter resolves a question-curation Execution to its persisted batch, work items, seed tasks, candidates, source semantics and user decisions. It records the current merged-answer provenance gap instead of inventing source/supplemental separation.
 
 ### Task 3: Add applicability-aware evaluation
 

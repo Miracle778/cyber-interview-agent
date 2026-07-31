@@ -1,5 +1,13 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-08-01：Evaluation v2 Phase 1 Task 2
+
+- 新增不可变 `BusinessOutcomeProjection` 公共契约，hash 只由业务输入摘要、最终领域状态、处理单元、候选、来源类型和用户决定生成，不包含 Trace 正文。
+- 首个题目整理适配器可从原始或恢复 Execution 定位批次，投影 work item、seed task、候选状态、确认/拒绝/忽略决定和 Graph/领域版本。
+- 对 `mixed` 答案同时标记 direct 与 inferred，并明确记录 `source_supplemental_answer_not_separated`；当前存储无法恢复原文答案与模型补充时不伪造字段。
+- 定向回归覆盖投影内容、hash 稳定性、用户确认后 hash 变化、评估契约和题目整理工作单元，共 `46 passed in 3.58s`；compileall 与 `git diff --check` 通过。
+- 本任务没有把投影接入 v1 Judge，也没有新增外部模型调用；其他业务域适配器留在各自 Phase 3 Slice。
+
 ## 2026-08-01：Evaluation v2 Phase 1 Task 1
 
 - 新增 runtime migration 041，以增量字段保存契约版本、任务类型、运行类型、业务结果 hash、Judge 数据范围，以及维度适用性、等级、严重度和证据缺口。
