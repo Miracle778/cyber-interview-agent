@@ -345,8 +345,12 @@ export function EvaluationLabPage({
                       <article>
                         <ShieldCheck />
                         <span>
-                          <strong>基础规则检查</strong>
-                          <small>结构、终态与证据完整性</small>
+                          <strong>{selected.evaluationContractVersion >= 2
+                            ? "确定性业务规则"
+                            : "评估证据完整性检查"}</strong>
+                          <small>{selected.evaluationContractVersion >= 2
+                            ? "领域行、Receipt、hash 与状态不变量"
+                            : "Trace 事件是否足够完成初版质检"}</small>
                         </span>
                       </article>
                       <article>

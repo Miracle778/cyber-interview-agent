@@ -90,6 +90,7 @@ def _run_resource(service: AgentEvaluationService, record) -> EvaluationRunResou
                 "cited_artifact_hashes": _json(item.cited_artifact_hashes_json) or [],
                 "risks": _json(item.risks_json) or [],
                 "evidence_gaps": _json(item.evidence_gaps_json) or [],
+                "evidence_refs": _json(item.evidence_refs_json) or [],
             }
         )
     judged = _json(record.judge_result_json)

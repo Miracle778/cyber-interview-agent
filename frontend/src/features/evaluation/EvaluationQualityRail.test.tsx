@@ -37,6 +37,7 @@ const run: EvaluationRun = {
     citedArtifactHashes: [],
     risks: [],
     evidenceGaps: [],
+    evidenceRefs: [],
   }],
   deterministicResult: { status: "passed" },
   judgeSummary: null,
@@ -47,7 +48,7 @@ describe("EvaluationQualityRail", () => {
     render(<EvaluationQualityRail run={run} feedback={[]} />);
 
     expect(screen.getByRole("heading", { name: "检查结论" })).toBeInTheDocument();
-    expect(screen.getByText("基础规则检查")).toBeInTheDocument();
+    expect(screen.getByText("评估证据完整性检查")).toBeInTheDocument();
     expect(screen.getByText("AI 质量检查")).toBeInTheDocument();
     expect(screen.getByText("你的判断")).toBeInTheDocument();
     expect(screen.getByText("1 项稳定")).toBeInTheDocument();

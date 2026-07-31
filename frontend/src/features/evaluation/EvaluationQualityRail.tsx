@@ -38,8 +38,12 @@ export function EvaluationQualityRail({
           <li>
             <span><ShieldCheck /></span>
             <div>
-              <strong>基础规则检查</strong>
-              <p>明确的结构和状态问题可以直接识别。</p>
+              <strong>{run.evaluationContractVersion >= 2
+                ? "确定性业务规则"
+                : "评估证据完整性检查"}</strong>
+              <p>{run.evaluationContractVersion >= 2
+                ? "只根据领域事实检查可证明的不变量，当前仅告警。"
+                : "检查本次质检所需的 Trace 证据是否完整。"}</p>
             </div>
           </li>
           <li>

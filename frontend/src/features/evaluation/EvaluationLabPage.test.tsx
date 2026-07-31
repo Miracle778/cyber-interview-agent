@@ -54,6 +54,7 @@ const run: EvaluationRun = {
       citedArtifactHashes: ["artifact-hash-1"],
       risks: [],
       evidenceGaps: [],
+      evidenceRefs: [],
     },
   ],
   deterministicResult: { status: "passed" },

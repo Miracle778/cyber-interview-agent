@@ -19,6 +19,7 @@ export const evaluationDimensionSchema = z.object({
   citedArtifactHashes: z.array(z.string()),
   risks: z.array(z.string()),
   evidenceGaps: z.array(z.string()).default([]),
+  evidenceRefs: z.array(z.string()).default([]),
 });
 
 export const evaluationRunSchema = z.object({

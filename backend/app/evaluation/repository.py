@@ -86,6 +86,7 @@ class EvaluationDimensionRecord:
     cited_artifact_hashes_json: str
     risks_json: str
     evidence_gaps_json: str
+    evidence_refs_json: str
     created_at: str
 
 
@@ -262,8 +263,8 @@ class AgentEvaluationRepository:
                     "(eval_run_id, dimension_id, source, status, score, "
                     "applicability, rating, severity, confidence, summary, "
                     "cited_event_hashes_json, cited_artifact_hashes_json, "
-                    "risks_json, evidence_gaps_json) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "risks_json, evidence_gaps_json, evidence_refs_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                     "ON CONFLICT(eval_run_id, dimension_id, source) DO NOTHING",
                     (
                         eval_run_id,
@@ -280,6 +281,7 @@ class AgentEvaluationRepository:
                         row.get("cited_artifact_hashes_json", "[]"),
                         row.get("risks_json", "[]"),
                         row.get("evidence_gaps_json", "[]"),
+                        row.get("evidence_refs_json", "[]"),
                     ),
                 )
         return self.list_dimension_results(eval_run_id)
@@ -530,5 +532,6 @@ class AgentEvaluationRepository:
             cited_artifact_hashes_json=row["cited_artifact_hashes_json"],
             risks_json=row["risks_json"],
             evidence_gaps_json=row["evidence_gaps_json"],
+            evidence_refs_json=row["evidence_refs_json"],
             created_at=row["created_at"],
         )

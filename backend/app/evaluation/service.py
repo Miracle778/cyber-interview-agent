@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from app.agents.context import AgentContext
 from app.evaluation.contracts import JudgeResult, JudgeResultV2
+from app.evaluation.business_rules import evaluate_common_business_rules
 from app.evaluation.judge_agent import JudgeInvoker
 from app.evaluation.outcome_adapters.question_curation import (
     QuestionCurationOutcomeAdapter,
@@ -302,14 +303,13 @@ class AgentEvaluationService:
         if record.status != "pending":
             return record
         record = self.repository.mark_running(record.id)
-        deterministic = {
-            "status": "passed",
-            "rules": [],
-            "evidenceGaps": list(outcome.evidence_gaps),
-            "note": "业务不变量规则将在 Phase 2 逐项校准；当前不阻断业务。",
-        }
+        deterministic = evaluate_common_business_rules(
+            outcome,
+            connection=self.repository.connection,
+            workspace_id=self.workspace_id,
+        )
         deterministic_json = json.dumps(
-            deterministic,
+            asdict(deterministic),
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -328,6 +328,7 @@ class AgentEvaluationService:
             progress_scope=("evaluation", record.id),
             agent_role="answer_evaluation",
         )
+        self._store_business_rules(record.id, deterministic)
         try:
             judged = await self._judge_factory(provider_model_id).evaluate_v2(
                 view=view,
@@ -476,6 +477,44 @@ class AgentEvaluationService:
                     ),
                 }
                 for item in result.dimensions
+            ),
+        )
+
+    def _store_business_rules(self, eval_run_id: str, result) -> None:
+        self.repository.store_dimension_results(
+            eval_run_id,
+            tuple(
+                {
+                    "dimension_id": item.rule_id,
+                    "source": "deterministic",
+                    "status": item.status,
+                    "applicability": (
+                        "insufficient_evidence"
+                        if item.status == "inconclusive"
+                        else "applicable"
+                    ),
+                    "rating": (
+                        "meets"
+                        if item.status == "passed"
+                        else "severe"
+                        if item.status == "failed"
+                        else None
+                    ),
+                    "severity": (
+                        item.severity if item.status != "inconclusive" else None
+                    ),
+                    "confidence": (
+                        1.0 if item.status != "inconclusive" else None
+                    ),
+                    "summary": item.summary,
+                    "evidence_gaps_json": json.dumps(
+                        item.evidence_gaps, ensure_ascii=False
+                    ),
+                    "evidence_refs_json": json.dumps(
+                        item.evidence_refs, ensure_ascii=False
+                    ),
+                }
+                for item in result.rules
             ),
         )
 

@@ -38,6 +38,7 @@ class EvaluationDimensionResource(EvaluationModel):
     cited_artifact_hashes: list[str]
     risks: list[str]
     evidence_gaps: list[str]
+    evidence_refs: list[str]
 
 
 class EvaluationRunResource(EvaluationModel):

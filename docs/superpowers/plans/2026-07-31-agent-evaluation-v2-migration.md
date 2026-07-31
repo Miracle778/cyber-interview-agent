@@ -85,11 +85,15 @@ Exit condition: one fixture Pack can evaluate a business outcome using v2 contra
 
 ### Task 5: Rename v1 checks
 
+**Status:** Completed 2026-08-01. API keeps immutable v1 rows; UI now names the legacy checks “评估证据完整性检查” and does not expose the unused blocking field.
+
 - UI/API call existing checks “评估证据完整性检查”.
 - Do not surface their `blocking` field.
 - Preserve historical records unchanged.
 
 ### Task 6: Implement common Runtime invariants
+
+**Status:** Completed 2026-08-01 as an advisory rule engine. Rules cite domain Execution rows, outcome hashes, counters and source refs. Evidence not present in the projection is reported as inconclusive instead of guessed.
 
 Start with read-only rules for:
 
@@ -104,6 +108,8 @@ Start with read-only rules for:
 Each rule must cite domain rows, Receipts or immutable hashes, not merely event-type presence.
 
 ### Task 7: Calibrate before blocking
+
+**Status:** Initial deterministic calibration harness and labeled positive/negative/ambiguous fixtures completed 2026-08-01. All v2.0 rules remain advisory; no automatic blocking switch exists.
 
 - Build labeled positive, negative and ambiguous cases.
 - Record false positive/negative rates.

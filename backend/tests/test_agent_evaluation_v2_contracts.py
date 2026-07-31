@@ -44,6 +44,7 @@ def test_v2_run_and_dimension_metadata_round_trip(tmp_path) -> None:
                     "confidence": None,
                     "summary": "原材料没有提供答案。",
                     "evidence_gaps_json": '["sourceAnswer 为空"]',
+                    "evidence_refs_json": '["candidate:candidate-1"]',
                 },
             ),
         )
@@ -57,6 +58,7 @@ def test_v2_run_and_dimension_metadata_round_trip(tmp_path) -> None:
         assert dimensions[0].rating is None
         assert dimensions[0].severity is None
         assert dimensions[0].evidence_gaps_json == '["sourceAnswer 为空"]'
+        assert dimensions[0].evidence_refs_json == '["candidate:candidate-1"]'
     finally:
         connection.close()
 

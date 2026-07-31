@@ -18,7 +18,7 @@
 - `docs/superpowers/specs/2026-07-31-agent-evaluation-v2-design.md`
 - `docs/superpowers/plans/2026-07-31-agent-evaluation-v2-migration.md`
 
-当前执行：Evaluation v2 Phase 1 已完成增量契约、`BusinessOutcomeProjection`、题目整理 v2 Pack、适用性判定、最小 Judge View 和 v1/v2 页面共存；下一步实现基于领域事实的只读确定性规则并校准误报边界。
+当前执行：Evaluation v2 Phase 1–2 已完成；v1 命名已纠正，v2 已具备引用领域事实的只读确定性规则、显式证据不足和初始校准工具，且没有阻断开关。下一步迁移题目改写、复习、画像、JD 和项目任务级 Pack/Outcome Adapter。
 
 ## 当前设计：Agent 可观测与质量评估工作台
 

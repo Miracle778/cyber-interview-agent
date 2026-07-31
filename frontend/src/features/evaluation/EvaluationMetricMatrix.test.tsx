@@ -38,6 +38,7 @@ function run(id: string, score: number): EvaluationRun {
       citedArtifactHashes: [`artifact-${id}-hash`],
       risks: ["边界样例不足"],
       evidenceGaps: [],
+      evidenceRefs: [],
     }],
     deterministicResult: null,
     judgeSummary: null,

@@ -28,6 +28,7 @@ function dimension(
     citedArtifactHashes: [],
     risks: [],
     evidenceGaps: [],
+    evidenceRefs: [],
   };
 }
 

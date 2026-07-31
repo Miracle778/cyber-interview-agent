@@ -71,6 +71,12 @@ function EvidencePanel({
           <dd>{dimension.confidence === null ? "未提供" : `${Math.round(dimension.confidence * 100)}%`}</dd>
         </div>
         <div>
+          <dt>业务依据</dt>
+          <dd>{dimension.evidenceRefs.length
+            ? dimension.evidenceRefs.join("、")
+            : "无"}</dd>
+        </div>
+        <div>
           <dt>事件证据</dt>
           <dd>{dimension.citedEventHashes.length
             ? dimension.citedEventHashes.map((hash) => hash.slice(0, 18)).join("、")
@@ -159,7 +165,11 @@ export function EvaluationMetricMatrix({
                         {expanded ? <ChevronDown /> : <ChevronRight />}
                         <span>
                           <strong>{dimensionLabel(dimensionId)}</strong>
-                          <small>{candidateDimension?.source === "deterministic" ? "基础规则检查" : "AI 质量检查"}</small>
+                          <small>{candidateDimension?.source === "deterministic"
+                            ? candidate.evaluationContractVersion >= 2
+                              ? "确定性业务规则"
+                              : "评估证据完整性检查"
+                            : "AI 质量检查"}</small>
                         </span>
                       </button>
                     </th>
