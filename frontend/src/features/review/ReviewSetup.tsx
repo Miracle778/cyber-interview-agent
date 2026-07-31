@@ -17,7 +17,11 @@ export function ReviewSetup({ workspace, questions, onCreate, onCatalog, busy }:
   const bindings = useQuery({ queryKey: ["model-bindings", workspace.id], queryFn: () => getWorkspaceModelBindings(workspace.id) });
   const sources = useQuery({ queryKey: ["knowledge-sources", workspace.id], queryFn: () => listSources(workspace.id) });
   const models = useMemo(() => (providers.data ?? []).flatMap((provider) => provider.enabled ? provider.models.filter((model) => model.enabled).map((model) => ({ id: model.id, label: `${provider.name} / ${model.displayName}` })) : []), [providers.data]);
-  const topics = useMemo(() => [...new Set(questions.flatMap((item) => item.topics))].sort(), [questions]);
+  const topics = useMemo(
+    () => [...new Set(questions.flatMap((item) => item.topics))]
+      .sort((left, right) => left.localeCompare(right, "zh-CN")),
+    [questions],
+  );
   const [selectedTopics, setSelectedTopics] = useState<string[]>([]);
   const [topicQuery, setTopicQuery] = useState("");
   const [topicsExpanded, setTopicsExpanded] = useState(false);

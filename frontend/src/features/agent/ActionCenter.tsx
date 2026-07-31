@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, PencilLine, Play, ShieldQuestion, X } from "lucide-react";
 import { ApiError } from "../../shared/api/client";
+import { createOperationId } from "../../shared/operationId";
 import { Badge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
@@ -26,8 +27,7 @@ function displayValue(value: unknown) {
 
 
 function operationKey(kind: "approve" | "reject", actionId: string) {
-  const random = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);
-  return `${kind}-${actionId}-${random}`;
+  return createOperationId(`${kind}-${actionId}`);
 }
 
 function editValue(action: PendingAction, field: string, edits: Record<string, string>) {

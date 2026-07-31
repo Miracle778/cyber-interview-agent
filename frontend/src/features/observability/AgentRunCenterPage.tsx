@@ -291,7 +291,8 @@ export function AgentRunCenterPage({
   const returnTo =
     `/agents${searchParams.size ? `?${searchParams.toString()}` : ""}`;
   const agentNames = useMemo(
-    () => [...new Set(allExecutions.map((item) => item.displayName))].sort(),
+    () => [...new Set(allExecutions.map((item) => item.displayName))]
+      .sort((left, right) => left.localeCompare(right, "zh-CN")),
     [allExecutions],
   );
   const counts = useMemo(() => ({
