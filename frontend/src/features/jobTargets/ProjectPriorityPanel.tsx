@@ -31,7 +31,10 @@ export function ProjectPriorityPanel({
   }, [initialCoreProjectId, initialSupplementaryProjectIds.join("|"), projects[0]?.id]);
   const changed = useMemo(
     () => core !== (initialCoreProjectId ?? "") ||
-      [...supplementary].sort().join("|") !== [...initialSupplementaryProjectIds].sort().join("|"),
+      [...supplementary].sort((left, right) => left.localeCompare(right)).join("|") !==
+        [...initialSupplementaryProjectIds]
+          .sort((left, right) => left.localeCompare(right))
+          .join("|"),
     [core, initialCoreProjectId, initialSupplementaryProjectIds, supplementary],
   );
   return <section className="project-priority-panel"><header><h2>重点准备项目</h2><p>选 1 个核心项目、最多 2 个补充项目。项目本身仍归个人画像管理。</p></header>

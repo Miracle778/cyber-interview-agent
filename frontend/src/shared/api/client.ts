@@ -14,6 +14,29 @@ export interface RequestOptions {
   signal?: AbortSignal;
 }
 
+function ensureSameOriginApiPath(path: string): void {
+  const locationOrigin = globalThis.location?.origin;
+  const baseOrigin =
+    locationOrigin && locationOrigin !== "null"
+      ? locationOrigin
+      : "http://localhost";
+  let resolved: URL;
+  try {
+    resolved = new URL(path, baseOrigin);
+  } catch {
+    throw new ApiError("invalid_api_path", "请求地址不合法");
+  }
+  if (
+    !path.startsWith("/") ||
+    path.startsWith("//") ||
+    path.includes("\\") ||
+    resolved.origin !== baseOrigin ||
+    !resolved.pathname.startsWith("/api/")
+  ) {
+    throw new ApiError("invalid_api_path", "请求地址必须是当前应用的 API 路径");
+  }
+}
+
 async function readErrorBody(response: Response): Promise<{ code?: string; message?: string }> {
   try {
     const body = (await response.json()) as unknown;
@@ -32,6 +55,7 @@ async function readErrorBody(response: Response): Promise<{ code?: string; messa
  * treats 204 No Content as an empty (void) result without parsing a body.
  */
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  ensureSameOriginApiPath(path);
   const headers = new Headers(options.headers);
   if (options.body !== undefined && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");

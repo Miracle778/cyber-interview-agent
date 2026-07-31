@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeft, Library, MessagesSquare, RotateCcw, Sparkles, Trash2, TriangleAlert, Upload, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createOperationId } from "../../shared/operationId";
 import { Button } from "../../shared/ui/Button";
 import { cancelAgentExecution } from "../agent/agentApi";
 import { useAgentEvents } from "../agent/useAgentEvents";
@@ -29,7 +30,7 @@ interface CurationControlNotice {
 }
 
 function commandId() {
-  return globalThis.crypto?.randomUUID?.() ?? `curation-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return createOperationId("curation");
 }
 
 function curationIsRunning(session: CurationSession) {

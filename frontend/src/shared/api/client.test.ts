@@ -11,6 +11,21 @@ describe("apiGet", () => {
     await expect(apiGet<{ status: string }>("/api/health")).resolves.toEqual({ status: "ok" });
   });
 
+  it.each([
+    "https://attacker.example/collect",
+    "//attacker.example/collect",
+    "/api/../admin",
+    "/not-api/health",
+  ])("rejects paths outside the same-origin API boundary: %s", async (path) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(apiGet(path)).rejects.toMatchObject({
+      code: "invalid_api_path",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("throws ApiError for failed responses", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ code: "bad", message: "坏请求" }), { status: 400 })));
     await expect(apiGet("/api/fail")).rejects.toBeInstanceOf(ApiError);

@@ -1,9 +1,10 @@
 import { apiGet, apiPost, apiRequest, apiUpload } from "../../shared/api/client";
+import { createOperationId } from "../../shared/operationId";
 import type { AgentSession } from "../agent/agentTypes";
 import type { AcceptedMaterialRetry, AcceptedMaterialUpload, BatchClaimDecisionResult, ClaimDecision, ClaimDecisionResult, DuplicateProposalConsolidationResult, DuplicateProposalPreview, MaterialDeletionPreview, MaterialVersionDeletionPreview, PermanentMaterialDeletionResult, ProfileActionPlan, ProfileAssessment, ProfileCardCommand, ProfileCardWriteResult, ProfileClaimWorkspace, ProfileMaterial, ProfileMaterialDocument, ProfileMaterialVersion, ProfileMaterialVersionDetail, ProfilePresentation, UnifiedProfile } from "./profileTypes";
 
 function commandKey(prefix: string) {
-  return `${prefix}-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
+  return createOperationId(prefix);
 }
 
 function commandOptions(idempotencyKey = commandKey("profile"), signal?: AbortSignal) {

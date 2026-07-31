@@ -753,7 +753,6 @@ class AgentExecutionService:
         except asyncio.CancelledError:
             if self._repository.get_execution(execution_id).cancellation_requested:
                 await self._finish_cancel(execution_id)
-                return
             raise
         except Exception as error:
             current = self._repository.get_execution(execution_id)
