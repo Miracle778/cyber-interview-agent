@@ -672,6 +672,77 @@
 .regression-panel td small { display: block; margin-top: 3px; color: var(--text-muted); }
 .regression-panel tbody td[colspan] { padding: 24px; color: var(--text-muted); text-align: center; }
 
+.regression-run-summary {
+  display: grid;
+  gap: 7px;
+  min-width: 260px;
+  margin-top: 9px;
+  padding: 9px 10px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+.regression-run-summary.is-completed {
+  background: color-mix(in srgb, var(--success) 6%, var(--surface));
+  border-color: color-mix(in srgb, var(--success) 28%, var(--border));
+}
+
+.regression-run-summary.is-warning {
+  background: color-mix(in srgb, var(--warning) 7%, var(--surface));
+  border-color: color-mix(in srgb, var(--warning) 30%, var(--border));
+}
+
+.regression-run-summary__headline,
+.regression-run-summary summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.regression-run-summary__headline > svg {
+  width: 17px;
+  color: var(--success);
+  flex: 0 0 auto;
+}
+
+.regression-run-summary.is-warning .regression-run-summary__headline > svg {
+  color: var(--warning);
+}
+
+.regression-run-summary__headline span { min-width: 0; }
+.regression-run-summary__headline strong { display: block; font-size: .75rem; }
+.regression-run-summary__headline small { margin-top: 2px; }
+
+.regression-run-summary summary {
+  color: var(--primary);
+  font-size: .7rem;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+}
+
+.regression-run-summary summary::-webkit-details-marker { display: none; }
+.regression-run-summary summary svg { width: 14px; }
+
+.regression-run-summary dl {
+  display: grid;
+  gap: 5px;
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.regression-run-summary dl > div {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.regression-run-summary dt { color: var(--text-muted); }
+.regression-run-summary dd { min-width: 0; margin: 0; }
+.regression-run-summary dd code { display: block; margin-top: 2px; overflow-wrap: anywhere; }
+
 .evaluation-quality-rail {
   min-width: 0;
   min-height: 0;

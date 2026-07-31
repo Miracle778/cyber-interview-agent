@@ -1,4 +1,12 @@
-import { Archive, LockKeyhole, PlayCircle, Plus } from "lucide-react";
+import {
+  Archive,
+  CheckCircle2,
+  CircleAlert,
+  FlaskConical,
+  LockKeyhole,
+  PlayCircle,
+  Plus,
+} from "lucide-react";
 import { formatBeijingDateTime } from "../../shared/time";
 import { evaluationPackLabel } from "./evaluationPresentation";
 import type { EvaluationRun, RegressionCase, RegressionRun } from "./evaluationTypes";
@@ -72,19 +80,102 @@ export function RegressionCasePanel({
           <tbody>
             {cases.length === 0 ? (
               <tr><td colSpan={6}>还没有评估案例，可以从当前结果保存第一条。</td></tr>
-            ) : cases.map((item, index) => (
-              <tr key={item.id}>
-                <td><strong>案例 {String(index + 1).padStart(2, "0")}</strong><small>{item.redactionSummary}</small></td>
-                <td><code>{item.executionId.slice(0, 12)}</code></td>
-                <td>{evaluationPackLabel(item.evalPackId)} · v{item.evalPackVersion}</td>
-                <td>{item.containsPrivateBodies ? "包含经确认的正文" : "正文已移除"}</td>
-                <td>{formatBeijingDateTime(item.createdAt) ?? "时间未知"}</td>
-                <td>{item.runnable && onRun ? <button type="button" disabled={runPending} onClick={() => onRun(item)}><PlayCircle />使用当前 Agent 版本运行回归案例</button> : <small>{item.unavailableReason ?? "仅支持重新质检历史结果"}</small>}{regressionRuns.find((run) => run.caseId === item.id) ? <small>最近回归：{regressionRuns.find((run) => run.caseId === item.id)?.status}</small> : null}</td>
-              </tr>
-            ))}
+            ) : cases.map((item, index) => {
+              const latestRun = regressionRuns.find((run) => run.caseId === item.id);
+              return (
+                <tr key={item.id}>
+                  <td><strong>案例 {String(index + 1).padStart(2, "0")}</strong><small>{item.redactionSummary}</small></td>
+                  <td><code>{item.executionId.slice(0, 12)}</code></td>
+                  <td>{evaluationPackLabel(item.evalPackId)} · v{item.evalPackVersion}</td>
+                  <td>{item.containsPrivateBodies ? "包含经确认的正文" : "正文已移除"}</td>
+                  <td>{formatBeijingDateTime(item.createdAt) ?? "时间未知"}</td>
+                  <td>
+                    {item.runnable && onRun ? (
+                      <button type="button" disabled={runPending} onClick={() => onRun(item)}>
+                        <PlayCircle />使用当前 Agent 版本运行回归案例
+                      </button>
+                    ) : <small>{item.unavailableReason ?? "仅支持重新质检历史结果"}</small>}
+                    {latestRun ? <RegressionRunSummary run={latestRun} /> : null}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
     </section>
   );
+}
+
+function RegressionRunSummary({ run }: { run: RegressionRun }) {
+  const pairwiseWinner = typeof run.pairwiseResult?.winner === "string"
+    ? run.pairwiseResult.winner
+    : null;
+  const baselineVersions = objectValue(run.isolationManifest, "baselineVersions");
+  const candidateVersions = objectValue(run.isolationManifest, "candidateVersions");
+  const completed = run.status === "completed";
+  const statusLabel = completed
+    ? "回归已完成"
+    : run.status === "failed"
+      ? "回归未完成"
+      : "回归处理中";
+
+  return (
+    <div className={`regression-run-summary${completed ? " is-completed" : " is-warning"}`}>
+      <div className="regression-run-summary__headline">
+        {completed ? <CheckCircle2 /> : <CircleAlert />}
+        <span>
+          <strong>{statusLabel}</strong>
+          <small>{pairwiseConclusion(pairwiseWinner)}</small>
+        </span>
+      </div>
+      <details>
+        <summary><FlaskConical />查看本次回归依据</summary>
+        <dl>
+          <div>
+            <dt>来源配置</dt>
+            <dd>{implementationLabel(run.baselineImplementationId)}<code>{versionSummary(baselineVersions)}</code></dd>
+          </div>
+          <div>
+            <dt>当前配置</dt>
+            <dd>{implementationLabel(run.candidateImplementationId)}<code>{versionSummary(candidateVersions)}</code></dd>
+          </div>
+          <div>
+            <dt>运行隔离</dt>
+            <dd>{run.isolationManifest.separateSandboxes === true ? "双沙箱" : "未确认"} · {run.isolationManifest.productionWrites === false ? "未写正式工作区" : "写入状态未确认"}</dd>
+          </div>
+          <div>
+            <dt>基础设施</dt>
+            <dd>{run.infrastructureFailures.length === 0
+              ? "无异常"
+              : `${run.infrastructureFailures.length} 个异常，结果仅供排查`}</dd>
+          </div>
+        </dl>
+      </details>
+    </div>
+  );
+}
+
+function objectValue(source: Record<string, unknown>, key: string) {
+  const value = source[key];
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function versionSummary(versions: Record<string, unknown>) {
+  const graph = typeof versions.graph === "string" ? versions.graph : "Graph 版本未知";
+  const mode = versions.codeMode === "current_process" ? "当前进程代码" : "代码版本未知";
+  return `${graph} · ${mode}`;
+}
+
+function implementationLabel(implementationId: string) {
+  return implementationId === "current-runtime" ? "当前模型配置" : "案例来源模型配置";
+}
+
+function pairwiseConclusion(winner: string | null) {
+  if (winner === "a" || winner === "baseline") return "盲评结论：来源配置略优";
+  if (winner === "b" || winner === "candidate") return "盲评结论：当前配置略优";
+  if (winner === "tie") return "盲评结论：整体持平";
+  return "尚无可展示的盲评结论";
 }

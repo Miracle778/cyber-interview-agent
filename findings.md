@@ -1,5 +1,12 @@
 # Agent Runtime 框架收敛关键发现
 
+## 2026-08-01：Evaluation v2 真实回归验收
+
+- 同一输入、同一模型配置仍可能产生不同业务结果；真实题目整理 A/B 中一边出现模型补充截断，另一边完整，说明回归必须比较重新生成的 Outcome，不能只重新 Judge 历史文本。
+- 盲评内部使用 A/B 随机顺序，但持久化结果会重映射为 `baseline/candidate/tie`；产品页面必须展示“来源配置/当前配置”，不能泄露 A/B 或原始英文状态。
+- 对话与题目整理的真实案例均证明 `separateSandboxes=true`、`productionWrites=false`，且无基础设施失败；这足以证明当前模型配置比较链路成立，但两边仍使用 `codeMode=current_process`，不等同于任意 Git 历史代码回放。
+- Judge 对模型补充的技术正确性只能给语义信号；来源忠实度、补充透明度和处理计数由字段级 provenance 与确定性规则分别约束，任何 Judge 胜负都不进入发布门禁。
+
 ## 2026-07-31：Evaluation v1 实现审计与 v2 边界
 
 - 当前 5 个 Pack 的 21 个维度由 Judge 统一输出 0–100 分，没有 N/A 或证据不足状态；宽泛 Pack 被多个业务目标复用，存在任务不匹配。

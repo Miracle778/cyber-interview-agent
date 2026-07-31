@@ -2,7 +2,7 @@
 
 ## 当前设计修订：Agent Evaluation v2
 
-状态：现有 5 类 Pack、21 个维度、Rule、Judge 与回归 API 已完成逐项代码审计；32 项产品与架构边界已确认。当前只修正文档与 README，不修改业务代码或 v1 数据。
+状态：Evaluation v2 Phase 1–5 已完成产品实现与阶段验收；v1 数据保持只读兼容，质量门禁仍默认关闭且没有批准的阻断规则。
 
 - v1 正式定位为“初版质检 / 历史结果复检”，不是候选业务 Agent 回归；
 - 评估主对象改为最终业务结果包，Trace 只解释形成过程；
@@ -18,7 +18,7 @@
 - `docs/superpowers/specs/2026-07-31-agent-evaluation-v2-design.md`
 - `docs/superpowers/plans/2026-07-31-agent-evaluation-v2-migration.md`
 
-当前执行：Evaluation v2 Phase 1–3 已完成；Phase 4 已接通执行前数据库/checkpoint/材料快照、版本化 EvalCase、来源/当前模型配置实现、双沙箱业务重跑、确定性规则和匿名 A/B Judge，题目整理与对话 Agent 的 Runtime 集成用例均已通过。Phase 5 趋势指标已接通；质量门禁边界已代码化但默认关闭且没有已批准规则。下一步完成真实 Provider 浏览器案例、最终回归和文档门禁。
+当前执行：Phase 1–5 已完成。合成的题目整理与深入讨论案例均通过真实 Provider、v2 Judge、执行前快照、双沙箱业务重跑和匿名 A/B Judge；质量实验室浏览器验收通过。后端 `1005 passed`、前端 `333 passed`、生产构建通过。下一步只在积累足够人工校准样本并新增 ADR 后，评估是否批准少量确定性规则进入发布门禁。
 
 ## 当前设计：Agent 可观测与质量评估工作台
 

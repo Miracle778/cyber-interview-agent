@@ -181,7 +181,7 @@ Freeze sanitized task input, required domain snapshot, expected invariants, priv
 
 ### Task 10: Pairwise comparison
 
-**Status:** Implemented 2026-08-01. A/B order is deterministic-randomized per run and remapped only after the no-Tool Judge returns. Runtime integration covers one question-curation and one conversation case without Provider calls.
+**Status:** Completed and accepted 2026-08-01. A/B order is deterministic-randomized per run and remapped only after the no-Tool Judge returns. Deterministic Runtime integration covers question curation and conversation; final acceptance additionally ran one sanitized real-Provider case of each kind through both sandboxes and the pairwise Judge.
 
 - Judge receives anonymized A/B outcomes in random order.
 - Run deterministic rules before the Judge.
@@ -190,7 +190,7 @@ Freeze sanitized task input, required domain snapshot, expected invariants, priv
 
 ### Task 11: Product terminology and UX
 
-**Status:** Implemented 2026-08-01. The UI separates history-only cases from private local runnable cases, requires explicit confirmation, and only offers the rerun action for a restorable snapshot with both implementations registered.
+**Status:** Completed and browser-accepted 2026-08-01. The UI separates history-only cases from private local runnable cases, requires explicit confirmation, only offers rerun for restorable cases, and shows friendly status, source/current implementation versions, blind-review conclusion, sandbox isolation and infrastructure failures.
 
 - Existing action: “重新质检历史结果”.
 - New action: “使用当前 Agent 版本运行回归案例”.
@@ -198,6 +198,8 @@ Freeze sanitized task input, required domain snapshot, expected invariants, priv
 - Show exact baseline/candidate versions and infrastructure failures.
 
 Exit condition: one real question-curation case and one conversational Agent case rerun baseline/candidate code in isolation and produce comparable outcome evidence.
+
+**Exit evidence:** Completed. Real cases `bf931f31-3f13-437b-9b75-f70dccf55ff8` and `211e40e5-5c9b-4d4e-8934-554fe63c49b5` both produced regenerated baseline/candidate Outcome hashes, pairwise results, empty infrastructure failures and `productionWrites=false`.
 
 ## Phase 5: Trends and optional quality gates
 
@@ -220,6 +222,14 @@ For each phase:
 5. run `git diff --check` and inspect migration compatibility;
 6. perform one browser happy path per vertical slice;
 7. perform a complete browser acceptance only before v2 stage closure.
+
+## Stage closure checklist
+
+- [x] 后端完整回归：1005 passed。
+- [x] 前端完整回归：68 files / 333 passed；TypeScript 与 production build 通过。
+- [x] 真实 Provider：题目整理与深入讨论各一条，均完成 v2 Judge 和隔离 A/B 回归。
+- [x] 浏览器验收：设置、质量报告、回归版本/隔离依据与趋势页面通过。
+- [x] 文档门禁：verification、learning ownership pack 与本计划保持一致。
 
 ## Product maturity language
 
