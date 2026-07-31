@@ -376,7 +376,7 @@ async def test_source_mutation_after_claim_fails_before_vault_write_and_retries(
     assert tuple(publication)[1:] == ("prepared", None)
     connection.close()
 
-    source.write_text(draft.markdown, encoding="utf-8")
+    source.write_bytes(draft.markdown.encode("utf-8"))
     monkeypatch.setattr(service._repository, "prepare", original_prepare)
     retried = await PublicationService(
         tmp_path, workspace_id="w1"
@@ -394,7 +394,7 @@ async def test_mark_failure_preserves_preexisting_matching_target(
     vault = initialize_vault(tmp_path)
     target = vault / "10_question_bank/question-1.md"
     rendered = _rendered_publication(draft, action)
-    target.write_text(rendered, encoding="utf-8")
+    target.write_bytes(rendered.encode("utf-8"))
     service = PublicationService(tmp_path, workspace_id="w1")
 
     async def fail_mark(*_args, **_kwargs):

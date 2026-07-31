@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-from pathlib import Path
 
 import pytest
 from docx import Document
@@ -12,7 +11,7 @@ from app.profile.errors import (
     ProfileNoExtractableText,
     ProfileParseError,
 )
-from app.profile.parsers import ExtractedSegment, parse_document
+from app.profile.parsers import parse_document
 
 
 def _make_pdf(pages_text: list[str]) -> bytes:
@@ -193,6 +192,7 @@ def test_parse_text_normalizes_line_endings() -> None:
             _make_docx(["", "  "]),
         ),
     ],
+    ids=("text", "markdown", "docx"),
 )
 def test_parse_empty_document_raises_no_extractable_text(
     file_name: str, mime_type: str, content: bytes

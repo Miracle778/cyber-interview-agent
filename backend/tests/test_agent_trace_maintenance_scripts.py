@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import sqlite3
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -19,6 +19,8 @@ def _run(script: Path, *arguments: str):
         cwd=ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        env={**os.environ, "PYTHONUTF8": "1"},
         check=False,
     )
 

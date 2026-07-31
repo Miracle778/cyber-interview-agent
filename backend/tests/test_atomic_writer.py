@@ -100,6 +100,7 @@ def test_quarantine_uses_binary_mode_and_closes_before_windows_replace(
     real_open = os.open
     real_close = os.close
     real_replace = os.replace
+    native_binary_flag = getattr(os, "O_BINARY", 0)
     open_descriptors: set[int] = set()
     observed_flags: list[int] = []
 
@@ -107,7 +108,11 @@ def test_quarantine_uses_binary_mode_and_closes_before_windows_replace(
 
     def tracked_open(path, flags, mode=0o777):
         observed_flags.append(flags)
-        descriptor = real_open(path, flags & ~binary_flag, mode)
+        descriptor = real_open(
+            path,
+            (flags & ~binary_flag) | native_binary_flag,
+            mode,
+        )
         open_descriptors.add(descriptor)
         return descriptor
 

@@ -218,7 +218,7 @@ async def application(tmp_path: Path):
     )
     draft_path = workspace / "artifacts/review/drafts/draft-q1.md"
     draft_path.parent.mkdir(parents=True, exist_ok=True)
-    draft_path.write_text("# MVCC\n", encoding="utf-8")
+    draft_path.write_bytes(b"# MVCC\n")
     repository.save_candidate(
         batch_id="batch-1",
         question=snapshot,

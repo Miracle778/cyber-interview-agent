@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, Protocol
-from uuid import NAMESPACE_URL, uuid4, uuid5
+from uuid import NAMESPACE_URL, uuid5
 
 from langgraph.types import Command
 
@@ -304,6 +304,7 @@ class AgentExecutionService:
     async def resume_approval(
         self, execution_id: str, decision: dict[str, Any], _receipt_id: str
     ) -> None:
+        await self._wait_for_inflight_interrupt(execution_id)
         execution = self._repository.transition_execution(
             execution_id,
             expected=("waiting_for_approval", "interrupted"),
@@ -317,6 +318,13 @@ class AgentExecutionService:
             {"executionId": execution.id, "resumed": True},
         )
         self._spawn(execution.id, graph_input=Command(resume=decision))
+
+    async def _wait_for_inflight_interrupt(self, execution_id: str) -> None:
+        """Wait until the active graph has persisted its interrupt state."""
+        task = self._tasks.get(execution_id)
+        if task is None or task is asyncio.current_task():
+            return
+        await task
 
     async def resume_input(
         self,

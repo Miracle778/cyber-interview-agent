@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from app.agents.context import AgentContext
 from app.application.approval_service import ApprovalService
+from app.application.execution_service import AgentExecutionService
+from app.application.session_service import ProductEventStream, ProductRepository
 from app.infrastructure.runtime_database import connect_runtime_database
 from app.graphs.publication import create_publication_graph
 from app.hitl.models import PendingActionRecord
 from app.hitl.repository import PendingActionRepository
-from app.application.session_service import ProductRepository
 
 
 def _context(tmp_path):
@@ -113,6 +116,57 @@ async def test_approval_service_translates_decision_to_resume_command(tmp_path):
 
     assert approved.action.status == "approved"
     assert approved.command.resume == {"decisions": [{"type": "approve"}]}
+
+
+@pytest.mark.asyncio
+async def test_resume_approval_waits_for_interrupt_state_to_persist(tmp_path):
+    connection = connect_runtime_database(tmp_path)
+    runtime = ProductRepository(connection)
+    session = runtime.create_session(
+        workspace_id="w1",
+        kind="diagnostic.approval",
+        title="Approval",
+        session_id="s1",
+    )
+    runtime.create_execution(
+        session.id,
+        input={},
+        model_bindings={},
+        execution_id="r1",
+    )
+    service = AgentExecutionService(
+        workspace_id="w1",
+        workspace_root=tmp_path,
+        repository=runtime,
+        events=ProductEventStream(runtime, workspace_root=tmp_path),
+        graph_factory=lambda *_args, **_kwargs: None,
+        model_bindings=lambda: {},
+        create_action=lambda _command: None,
+        create_draft=lambda _command: None,
+        mark_draft_review_pending=lambda *_args, **_kwargs: None,
+    )
+    spawned = []
+    service._spawn = lambda execution_id, *, graph_input: spawned.append(  # type: ignore[method-assign]
+        (execution_id, graph_input)
+    )
+
+    async def finish_interrupt():
+        await asyncio.sleep(0)
+        runtime.transition_execution(
+            "r1",
+            expected=("running",),
+            target="waiting_for_approval",
+        )
+
+    service._tasks["r1"] = asyncio.create_task(finish_interrupt())
+
+    await service.resume_approval("r1", {"decision": "approved"}, "receipt-1")
+
+    execution = runtime.get_execution("r1")
+    assert execution.status == "running"
+    assert execution.resume_count == 1
+    assert len(spawned) == 1
+    connection.close()
 
 
 def _action() -> PendingActionRecord:
