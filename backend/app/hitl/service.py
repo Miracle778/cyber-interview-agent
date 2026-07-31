@@ -26,6 +26,7 @@ class EventPublisher(Protocol):
 
 
 ResumeAction = Callable[[str, dict[str, Any], str], Awaitable[None]]
+PrepareResolution = Callable[[str], Awaitable[None]]
 
 
 class HitlService:
@@ -36,11 +37,13 @@ class HitlService:
         handlers: ActionHandlerRegistry,
         event_stream: EventPublisher,
         resume_action: ResumeAction,
+        prepare_resolution: PrepareResolution | None = None,
     ) -> None:
         self._repository = repository
         self._handlers = handlers
         self._event_stream = event_stream
         self._resume_action = resume_action
+        self._prepare_resolution = prepare_resolution
 
     async def create_action(
         self, request: CreatePendingAction
@@ -63,6 +66,7 @@ class HitlService:
             "decision": "approved",
             "payload": resolved_payload,
         }
+        await self._wait_until_resolvable(action)
         receipt = await self._repository.resolve(
             action.id,
             expected_version=command.version,
@@ -96,6 +100,7 @@ class HitlService:
             "decision": "rejected",
             "reason": reason,
         }
+        await self._wait_until_resolvable(action)
         receipt = await self._repository.resolve(
             action.id,
             expected_version=command.version,
@@ -122,6 +127,11 @@ class HitlService:
                 continue
             delivered.append(receipt.id)
         return tuple(delivered)
+
+    async def _wait_until_resolvable(self, action: PendingActionRecord) -> None:
+        if action.status != "pending" or self._prepare_resolution is None:
+            return
+        await self._prepare_resolution(action.run_id)
 
     async def _deliver(self, action, receipt, handler) -> None:
         if receipt.delivery_status == "delivered":

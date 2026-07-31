@@ -2,11 +2,14 @@
   "name": "cyber-interview-agent-frontend",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@11.5.1",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc && vite build",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage --reporter=dot",
     "test:watch": "vitest",
     "e2e": "playwright test --config ../playwright.config.ts"
   },
@@ -28,6 +31,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",
+    "@vitest/coverage-v8": "2.1.0",
     "jsdom": "^25.0.0",
     "typescript": "^5.7.0",
     "vite": "^6.0.0",

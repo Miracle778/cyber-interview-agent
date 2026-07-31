@@ -304,7 +304,7 @@ class AgentExecutionService:
     async def resume_approval(
         self, execution_id: str, decision: dict[str, Any], _receipt_id: str
     ) -> None:
-        await self._wait_for_inflight_interrupt(execution_id)
+        await self.wait_for_approval_ready(execution_id)
         execution = self._repository.transition_execution(
             execution_id,
             expected=("waiting_for_approval", "interrupted"),
@@ -318,6 +318,11 @@ class AgentExecutionService:
             {"executionId": execution.id, "resumed": True},
         )
         self._spawn(execution.id, graph_input=Command(resume=decision))
+        await self.wait(execution.id)
+
+    async def wait_for_approval_ready(self, execution_id: str) -> None:
+        """Wait until the active graph has persisted its approval interrupt."""
+        await self._wait_for_inflight_interrupt(execution_id)
 
     async def _wait_for_inflight_interrupt(self, execution_id: str) -> None:
         """Wait until the active graph has persisted its interrupt state."""

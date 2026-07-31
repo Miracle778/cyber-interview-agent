@@ -5,6 +5,8 @@ import re
 from dataclasses import dataclass
 from hashlib import sha256
 
+from pydantic import ValidationError
+
 from app.agents.question_curation_contracts import (
     QuestionCandidate,
     QuestionCandidateChunk,
