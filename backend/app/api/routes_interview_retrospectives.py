@@ -209,6 +209,25 @@ def _cleanup_resource(service, retrospective_id: str, cleanup_id: str):
 
 
 @router.get(
+    "/api/interview-retrospectives/{retrospective_id}/cleanup-runs/current",
+    response_model=CleanupVersionResource | None,
+)
+def get_current_cleanup(
+    retrospective_id: str,
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    application: AgentApplication = Depends(get_agent_application),
+):
+    service = _application(application, workspace_id)
+    cleanup = service.current_cleanup(retrospective_id)
+    if cleanup is None:
+        return None
+    return cleanup_version_resource(
+        cleanup,
+        segments=service.list_segments(retrospective_id, cleanup.id),
+    )
+
+
+@router.get(
     "/api/interview-retrospectives/{retrospective_id}/cleanup-runs/{cleanup_id}",
     response_model=CleanupVersionResource,
 )

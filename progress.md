@@ -1,5 +1,16 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-08-01：面试复盘 Slice 1 捕获与整理闭环
+
+- 新增一级入口 `/retrospectives` 与求职目标深链，提供进行中/已归档/回收站生命周期页签、稳定目标筛选、复盘列表和响应式主从工作台。
+- 新建流程支持录音转写/事后回忆、粘贴或导入 TXT/Markdown、500,000 字限制，以及不离开当前流程的轻量求职目标创建。
+- 整理工作台接通后台进度、停止/继续/失败重试、说话人校正、全局身份对调、段落忽略、版本化保存和确认门禁；版本冲突会提示并重新载入最新结果。
+- 新增“当前整理版本”读取端点；离开页面后从一级导航返回，不依赖旧 URL 也能恢复未确认进度。确认后的版本仍由 `activeCleanupVersionId` 读取。
+- 自动证据：后端复盘 API `4 passed`，前端最终受影响集合 `42 passed`，Ruff、Python compileall、TypeScript、production build 与 `git diff --check` 通过；仅保留既有大 chunk 提示。
+- 浏览器假模型闭环覆盖 1440×900 与 390×844：创建目标、粘贴文字、启动整理、修订未知说话人、保存、确认、刷新恢复均通过；两档 `scrollWidth == clientWidth`，控制台 warning/error 为 0。原生日期控件的自动填充未触发 React `onChange`，已用后端 camelCase API 与前端日期组件测试确认产品字段正常。
+- 产品成熟度：Slice 1 可用于文本捕获和整理确认；尚未提取问题、生成逐题分析、候选沉淀或复盘对话。
+- 下一步：Task 5 渐进问题提取与逐题分析后端。
+
 ## 2026-08-01：面试复盘 Task 3 后台整理闭环
 
 - 新增无 Tool 的 `retrospective_analysis` Cleanup Agent、严格结构化输出、24,000 字窗口与 1,000 字重叠 Reducer；偏移回退、窗口越界和未知字段会被拒绝。

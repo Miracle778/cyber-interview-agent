@@ -229,6 +229,16 @@ class InterviewRetrospectiveRepository:
             raise RetrospectiveNotFound(cleanup_id)
         return _cleanup(row)
 
+    def latest_cleanup_version(
+        self, retrospective_id: str
+    ) -> CleanupVersionRecord | None:
+        row = self.connection.execute(
+            "SELECT * FROM interview_cleanup_versions "
+            "WHERE retrospective_id = ? ORDER BY ordinal DESC, rowid DESC LIMIT 1",
+            (retrospective_id,),
+        ).fetchone()
+        return _cleanup(row) if row is not None else None
+
     def insert_cleanup_run(
         self,
         retrospective_id: str,

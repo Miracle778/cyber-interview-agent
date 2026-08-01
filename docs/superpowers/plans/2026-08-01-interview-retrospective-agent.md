@@ -491,33 +491,35 @@ git commit -m "feat: add retrospective cleanup workflow"
 - Consumes: Task 3 API.
 - Produces: `/retrospectives` top-level route and Job Target deep link.
 
-- [ ] **Step 1: Write RED component tests**
+- [x] **Step 1: Write RED component tests**
 
 Cover target required/inline creation, source-kind selection, 500,000-character counter, `.txt`/`.md` validation, IME-safe shared composer behavior, persisted cleanup progress, uncertain-segment focus, bulk speaker swap, segment ignore, expected-version conflict refresh, and confirm gate.
 
-- [ ] **Step 2: Run RED tests**
+Slice 1 has no message composer; IME behavior remains assigned to Task 9 when continuing chat is introduced. The capture textarea, lifecycle recovery and cleanup controls are covered here.
+
+- [x] **Step 2: Run RED tests**
 
 Run: `pnpm test -- RetrospectiveCreateFlow.test.tsx CleanupWorkbench.test.tsx InterviewRetrospectivePage.test.tsx`
 
 Expected: FAIL because components do not exist.
 
-- [ ] **Step 3: Add typed API client and Query keys**
+- [x] **Step 3: Add typed API client and Query keys**
 
 Use stable keys `['retrospectives', workspaceId, filters]`, `['retrospective', id]`, `['cleanup', id, versionId]`. Mutations invalidate only affected list/detail/cleanup keys.
 
-- [ ] **Step 4: Implement list and create flow**
+- [x] **Step 4: Implement list and create flow**
 
 The top-level page shows active/archive/recycle tabs, target filter using shared `SelectControl`, recent rows, result/date/round metadata, and one primary “新建复盘” action. The create flow uses a visible two-choice input type and target selection with inline lightweight target creation.
 
-- [ ] **Step 5: Implement CleanupWorkbench**
+- [x] **Step 5: Implement CleanupWorkbench**
 
 Render source-aligned segments, role chips, uncertainty reasons, inline role/name edit, ignore toggle, global swap, progress/stop/retry, and a sticky confirm action. Confirm remains disabled while included segments have `unknown` roles or cleanup is incomplete.
 
-- [ ] **Step 6: Add dual navigation**
+- [x] **Step 6: Add dual navigation**
 
 Add `/retrospectives` with a dedicated navigation icon and add a target-scoped link that passes `jobTargetId` as a URL search parameter. Both routes render the same resources.
 
-- [ ] **Step 7: Run focused UI checks**
+- [x] **Step 7: Run focused UI checks**
 
 Run:
 
@@ -528,11 +530,11 @@ pnpm build
 git diff --check
 ```
 
-- [ ] **Step 8: Minimal browser Slice 1 path**
+- [x] **Step 8: Minimal browser Slice 1 path**
 
 At 1440 and 390 widths: create a lightweight target, paste a transcript, start fake-provider cleanup, correct one uncertain speaker, confirm cleanup, refresh, and verify the confirmed version remains selected. Confirm no horizontal overflow and no console warning/error.
 
-- [ ] **Step 9: Update Slice 1 verification and commit**
+- [x] **Step 9: Update Slice 1 verification and commit**
 
 Update local `docs/verification/interview-retrospective.md` with commands and screenshots, then commit product/formal files only:
 

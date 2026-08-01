@@ -316,6 +316,13 @@ async def test_retrospective_capture_cleanup_and_confirm_api(
             assert cleanup["status"] == "review_pending"
             assert len(cleanup["segments"]) == 1
 
+            current_cleanup = await client.get(
+                f"/api/interview-retrospectives/{retrospective['id']}/cleanup-runs/current",
+                params={"workspaceId": "w1"},
+            )
+            assert current_cleanup.status_code == 200
+            assert current_cleanup.json()["id"] == cleanup["id"]
+
             confirmed = await client.post(
                 f"/api/interview-retrospectives/{retrospective['id']}/cleanup-runs/{cleanup['id']}/confirm",
                 json={

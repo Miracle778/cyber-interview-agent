@@ -143,6 +143,10 @@ class InterviewRetrospectiveApplication:
             raise RetrospectiveTargetRequired("整理版本不属于当前复盘")
         return cleanup
 
+    def current_cleanup(self, retrospective_id: str):
+        self.service.get(retrospective_id)
+        return self.repository.latest_cleanup_version(retrospective_id)
+
     def list_segments(self, retrospective_id: str, cleanup_id: str):
         self.get_cleanup(retrospective_id, cleanup_id)
         return self.repository.list_segments(cleanup_id)

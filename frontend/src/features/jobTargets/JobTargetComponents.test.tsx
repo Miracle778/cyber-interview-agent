@@ -183,6 +183,7 @@ describe("job target workspace", () => {
     render(<JobTargetWorkspace target={target} analysis={analysis} tab="deep-dive" onTab={vi.fn()} onCompleteInfo={onCompleteInfo}><div>项目内容</div></JobTargetWorkspace>);
 
     expect(screen.getByText(/还缺岗位名称/)).toBeVisible();
+    expect(screen.getByRole("link", { name: "面试复盘" })).toHaveAttribute("href", "/retrospectives?jobTargetId=t");
     fireEvent.click(screen.getByRole("button", { name: "待补充 补充岗位名称" }));
     expect(onCompleteInfo).toHaveBeenCalledOnce();
   });

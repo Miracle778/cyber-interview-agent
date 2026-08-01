@@ -11,6 +11,7 @@ import { JobTargetPage } from "../../features/jobTargets/JobTargetPage";
 import { AgentRunCenterPage } from "../../features/observability/AgentRunCenterPage";
 import { ExecutionTracePage } from "../../features/observability/ExecutionTracePage";
 import { EvaluationLabPage } from "../../features/evaluation/EvaluationLabPage";
+import { InterviewRetrospectivePage } from "../../features/interviewRetrospectives/InterviewRetrospectivePage";
 import { getWorkspace, type WorkspaceConfig } from "../../features/settings/settingsApi";
 import { WorkspaceSwitcher } from "../../features/settings/WorkspaceSwitcher";
 import { MobileNavigation } from "../navigation/MobileNavigation";
@@ -163,6 +164,21 @@ export function AppShell() {
                   workspaceMode
                 >
                   <JobTargetPage workspace={workspace} />
+                </PageFrame>
+              }
+            />
+            <Route
+              path="/retrospectives"
+              element={
+                <PageFrame
+                  title="面试复盘"
+                  description="整理面试记录，核对问题和改进动作。"
+                  health={health}
+                  workspace={workspace}
+                  workspaceMode
+                  taskWorkspaceMode
+                >
+                  <InterviewRetrospectivePage workspace={workspace} />
                 </PageFrame>
               }
             />
