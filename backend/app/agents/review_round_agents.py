@@ -61,7 +61,11 @@ class ReviewRoundAgents:
                 ),
                 model_bindings=model_bindings,
                 model_override=answer_model_override,
-                checkpointer=checkpointer,
+                # The evaluator is a single-turn decision.  Its complete
+                # question and answer are supplied for every invocation, so
+                # retaining Agent messages would leak an earlier question
+                # into the next evaluation in the same review session.
+                checkpointer=None,
             ),
             reporter=factory.create(
                 AgentSpec(
@@ -73,7 +77,7 @@ class ReviewRoundAgents:
                 ),
                 model_bindings=model_bindings,
                 model_override=discussion_model_override,
-                checkpointer=checkpointer,
+                checkpointer=None,
             ),
             discussion=factory.create(
                 AgentSpec(
@@ -97,7 +101,7 @@ class ReviewRoundAgents:
                 ),
                 model_bindings=model_bindings,
                 model_override=answer_model_override,
-                checkpointer=checkpointer,
+                checkpointer=None,
             ),
             turn_classifier=factory.create(
                 AgentSpec(
@@ -109,7 +113,7 @@ class ReviewRoundAgents:
                 ),
                 model_bindings=model_bindings,
                 model_override=answer_model_override,
-                checkpointer=checkpointer,
+                checkpointer=None,
             ),
         )
 

@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   ArrowUpRight,
   Bot,
-  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   CircleAlert,
@@ -21,8 +20,6 @@ import type { WorkspaceConfig } from "../settings/settingsApi";
 import {
   ExecutionList,
   executionNeedsAction,
-  executionResultSummary,
-  executionTaskTitle,
 } from "./ExecutionList";
 import { ExecutionPreview } from "./ExecutionPreview";
 import {
@@ -130,14 +127,6 @@ function countStatuses(
       ? execution.status === statuses
       : statuses.has(execution.status)
   ).length;
-}
-
-function actionLabel(execution: ExecutionSummary) {
-  if (["waiting_for_input", "waiting_for_approval"].includes(execution.status)) {
-    return "继续处理";
-  }
-  if (execution.status === "queued") return "查看进度";
-  return "查看并处理";
 }
 
 function defaultPreviewOpen() {
@@ -383,28 +372,6 @@ export function AgentRunCenterPage({
                 </div>
                 <strong>{actionItems.length}</strong>
               </button>
-              <div className="agent-action-center__items">
-                {actionItems.slice(0, 2).map((execution) => (
-                  <article key={execution.id}>
-                    <span
-                      className="agent-action-center__icon"
-                      data-tone={execution.status === "failed" ? "danger" : "warning"}
-                      aria-hidden="true"
-                    >
-                      {execution.status === "failed"
-                        ? <AlertTriangle size={18} />
-                        : <CheckCircle2 size={18} />}
-                    </span>
-                    <div>
-                      <strong>{executionTaskTitle(execution)}</strong>
-                      <p>{executionResultSummary(execution)}</p>
-                    </div>
-                    <button type="button" onClick={() => selectExecution(execution.id)}>
-                      {actionLabel(execution)}
-                    </button>
-                  </article>
-                ))}
-              </div>
               </section>
             ) : null}
 

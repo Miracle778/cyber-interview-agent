@@ -1096,6 +1096,20 @@ button.agent-run-metric[aria-pressed="true"] {
   box-shadow: inset 3px 0 0 var(--danger);
 }
 
+.operation-tree__event[data-tone="recovered"] {
+  color: var(--text-muted);
+}
+
+.operation-tree__event[data-tone="recovered"] .operation-tree__icon {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
+.operation-tree__event[data-tone="recovered"][aria-selected="true"] {
+  background: color-mix(in srgb, var(--success-soft) 55%, var(--surface));
+  box-shadow: inset 3px 0 0 var(--success);
+}
+
 .operation-tree__event {
   min-height: 48px;
 }

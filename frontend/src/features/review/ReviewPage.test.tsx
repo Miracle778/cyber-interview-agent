@@ -6,7 +6,7 @@ import { MemoryRouter } from "react-router-dom";
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import type { PendingAction } from "../agent/hitlTypes";
 import type { KnowledgeSource } from "../knowledge/knowledgeTypes";
-import { ReviewPage } from "./ReviewPage";
+import { ReviewPage, shouldShowStreamExecutionError } from "./ReviewPage";
 import type { ActiveQuestion, ReviewRound } from "./reviewTypes";
 
 class FakeEventSource {
@@ -72,6 +72,14 @@ function mockApi(rounds: ReviewRound[], questions: ActiveQuestion[] = [], action
 describe("R2 ReviewPage", () => {
   beforeEach(() => vi.stubGlobal("EventSource", FakeEventSource));
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  it("does not surface a stale stream failure after durable state has recovered", () => {
+    const staleFailure = { code: "agent_execution_failed", message: "Agent 运行失败" };
+
+    expect(shouldShowStreamExecutionError("waiting_for_input", staleFailure, false)).toBe(false);
+    expect(shouldShowStreamExecutionError("running", staleFailure, false)).toBe(true);
+    expect(shouldShowStreamExecutionError("running", staleFailure, true)).toBe(false);
+  });
 
   it("separates question curation and review as primary entries", async () => {
     mockApi([]);

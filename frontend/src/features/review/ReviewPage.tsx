@@ -44,6 +44,18 @@ function currentEvaluationStage(events: AgentEvent[], attemptId: string | null):
   return stage;
 }
 
+export function shouldShowStreamExecutionError(
+  executionStatus: string | null | undefined,
+  executionError: { code: string; message: string } | null,
+  evaluationFailureIsHandled: boolean,
+) {
+  return Boolean(
+    executionError
+    && executionStatus === "running"
+    && !evaluationFailureIsHandled,
+  );
+}
+
 function ReviewQuestionStepper({ round, viewedOrdinal, onSelect }: { round: ReviewRound; viewedOrdinal: number | null; onSelect: (ordinal: number) => void }) {
   const [expandedRange, setExpandedRange] = useState<{ start: number; end: number } | null>(null);
   const current = Math.min(round.currentIndex, Math.max(0, round.questionCount - 1));
@@ -283,6 +295,12 @@ export function ReviewPage({ workspace }: ReviewPageProps) {
   const busy = create.isPending || answer.isPending || skip.isPending || interrupt.isPending || cancel.isPending || retry.isPending || recover.isPending;
   const caught = create.error ?? answer.error ?? interrupt.error ?? retry.error ?? recover.error ?? skip.error ?? cancel.error ?? discuss.error ?? archive.error ?? restore.error ?? rounds.error ?? round.error;
   const error = caught ? toActionableError(caught, "复习操作失败") : null;
+  const evaluationFailureIsHandled = round.data?.attempts.at(-1)?.status === "evaluation_failed";
+  const streamExecutionError = shouldShowStreamExecutionError(
+    round.data?.executionStatus,
+    stream.executionError,
+    evaluationFailureIsHandled,
+  ) ? stream.executionError : null;
 
   if (!workspace) return <div className="empty-state"><p>请先初始化工作区</p><Link className="text-link" to="/settings">前往设置</Link></div>;
 
@@ -424,7 +442,7 @@ export function ReviewPage({ workspace }: ReviewPageProps) {
             ) : null}
           </>
         )}
-        {error || (stream.executionError && round.data?.executionStatus !== "failed") ? <div className="error-banner" role="alert"><AlertCircle size={16} /><span>错误：{error?.message ?? stream.executionError?.message}</span><span>{error?.advice ?? "刷新轮次后重试"}</span></div> : null}
+        {error || streamExecutionError ? <div className="error-banner" role="alert"><AlertCircle size={16} /><span>错误：{error?.message ?? streamExecutionError?.message}</span><span>{error?.advice ?? "刷新轮次后重试"}</span></div> : null}
       </main>
     </section>}
   </ReviewShell>;

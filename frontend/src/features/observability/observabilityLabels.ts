@@ -1,4 +1,7 @@
-import type { OperationSummary } from "./observabilityTypes";
+import type {
+  OperationSummary,
+  TraceEventSummary,
+} from "./observabilityTypes";
 
 const OPERATION_NAMES: Record<string, string> = {
   execution_runtime: "运行任务",
@@ -19,7 +22,7 @@ const EVENT_NAMES: Record<string, string> = {
   "execution.interrupted": "任务已暂停",
   "model.request": "模型请求",
   "model.response": "模型响应",
-  "model.error": "模型调用失败",
+  "model.error": "模型处理异常",
   "tool.started": "工具开始执行",
   "tool.completed": "工具执行完成",
   "tool.failed": "工具执行失败",
@@ -47,8 +50,9 @@ export function friendlyOperationName(operation: OperationSummary) {
   return operation.name;
 }
 
-export function friendlyEventName(eventType: string) {
-  return EVENT_NAMES[eventType] ?? eventType;
+export function friendlyEventName(eventType: string, recovered = false) {
+  const name = EVENT_NAMES[eventType] ?? eventType;
+  return recovered && isFailureEventType(eventType) ? `${name} · 已恢复` : name;
 }
 
 export function isFailureEventType(eventType: string) {
@@ -58,7 +62,9 @@ export function isFailureEventType(eventType: string) {
 export function operationStatusLabel(
   operationStatus: string,
   executionStatus?: string,
+  recovered = false,
 ) {
+  if (operationStatus === "failed" && recovered) return "历史异常 · 已恢复";
   if (
     ["failed", "partial_success", "cancelled", "interrupted"].includes(
       executionStatus ?? "",
@@ -68,4 +74,49 @@ export function operationStatusLabel(
     return "未记录结束";
   }
   return null;
+}
+
+export function failureEventWasRecovered(
+  event: TraceEventSummary,
+  events: TraceEventSummary[],
+) {
+  return isFailureEventType(event.eventType)
+    && events.some((candidate) =>
+      candidate.eventType === "execution.started"
+      && candidate.sequence > event.sequence,
+    );
+}
+
+export function operationWasRecovered(
+  operation: OperationSummary,
+  events: TraceEventSummary[],
+  operations: OperationSummary[] = [],
+) {
+  const operationIds = new Set([operation.id]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const candidate of operations) {
+      if (
+        candidate.parentOperationId
+        && operationIds.has(candidate.parentOperationId)
+        && !operationIds.has(candidate.id)
+      ) {
+        operationIds.add(candidate.id);
+        changed = true;
+      }
+    }
+  }
+  const latestFailureSequence = events.reduce(
+    (latest, event) => operationIds.has(event.operationId)
+      && isFailureEventType(event.eventType)
+      ? Math.max(latest, event.sequence)
+      : latest,
+    -1,
+  );
+  return latestFailureSequence >= 0
+    && events.some((event) =>
+      event.eventType === "execution.started"
+      && event.sequence > latestFailureSequence,
+    );
 }

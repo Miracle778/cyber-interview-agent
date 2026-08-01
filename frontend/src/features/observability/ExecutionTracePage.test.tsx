@@ -426,6 +426,71 @@ describe("ExecutionTracePage", () => {
     expect(screen.getByText("这一步没有完成")).toBeInTheDocument();
   });
 
+  it("marks an earlier model failure as recovered after execution resumes", async () => {
+    const resumedExecution = {
+      ...execution,
+      graphId: "review.round",
+      displayName: "复习助手",
+      status: "running",
+      finishedAt: null,
+    };
+    const resumedOperations = [
+      {
+        ...operations[0],
+        name: "execution_runtime",
+        status: "running",
+        finishedAt: null,
+      },
+      {
+        ...operations[1],
+        name: "review_round_evaluator",
+        status: "failed",
+        finishedAt: "2026-07-29T06:26:14Z",
+      },
+      {
+        ...operations[2],
+        name: "review_round_evaluator",
+        status: "failed",
+        finishedAt: "2026-07-29T06:26:14Z",
+      },
+    ];
+    const resumedEvents = [
+      {
+        eventId: "event-model-error",
+        operationId: "model-1",
+        eventType: "model.error",
+        observedAt: "2026-07-29T06:26:14Z",
+        byteLength: 616,
+        sequence: 4,
+      },
+      {
+        eventId: "event-resumed",
+        operationId: "execution:run-1",
+        eventType: "execution.started",
+        observedAt: "2026-07-29T06:26:15Z",
+        byteLength: 536,
+        sequence: 5,
+      },
+    ];
+    mockTrace(resumedExecution, resumedOperations, resumedEvents);
+
+    renderTrace();
+
+    const tree = await screen.findByRole("tree", { name: "执行过程" });
+    const recoveredEvent = within(tree).getByRole("treeitem", {
+      name: /模型处理异常 · 已恢复/,
+    });
+    expect(recoveredEvent).toHaveAttribute("data-tone", "recovered");
+    expect(within(tree).getAllByRole("treeitem", {
+      name: /review_round_evaluator 历史异常 · 已恢复/,
+    })).toHaveLength(2);
+    fireEvent.click(recoveredEvent);
+    expect(await screen.findByRole("heading", {
+      name: "模型处理异常 · 已恢复",
+    })).toBeInTheDocument();
+    expect(screen.getByText("这一步曾发生异常，后续已恢复")).toBeInTheDocument();
+  });
+
   it("does not query without a selected workspace", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     render(

@@ -221,7 +221,7 @@ describe("AgentRunCenterPage", () => {
     expect(preview).toHaveTextContent("12.8k");
   });
 
-  it("prioritizes waiting and failed tasks in the action center", async () => {
+  it("keeps the action center as a compact filter without duplicating task rows", async () => {
     mockPage(page([
       runningExecution,
       waitingExecution,
@@ -237,17 +237,14 @@ describe("AgentRunCenterPage", () => {
         name: "查看需要你处理的 2 个任务",
       })).toHaveAttribute("aria-pressed", "true");
     });
-    expect(actionCenter).toHaveTextContent("补充项目背景");
-    expect(actionCenter).toHaveTextContent("项目深入讨论");
-    expect(within(actionCenter).getByRole("button", {
-      name: "继续处理",
+    expect(actionCenter).not.toHaveTextContent("补充项目背景");
+    expect(actionCenter).not.toHaveTextContent("项目深入讨论");
+    expect(within(taskList()).getByRole("button", {
+      name: /补充项目背景/,
     })).toBeInTheDocument();
-    fireEvent.click(within(actionCenter).getByRole("button", {
-      name: "查看并处理",
-    }));
-    expect(screen.getByRole("complementary", { name: "任务详情" })).toHaveTextContent(
-      "本次任务没有完成",
-    );
+    expect(within(taskList()).getByRole("button", {
+      name: /项目深入讨论/,
+    })).toBeInTheDocument();
   });
 
   it("defaults to actionable tasks and lets the yellow summary restore that filter", async () => {

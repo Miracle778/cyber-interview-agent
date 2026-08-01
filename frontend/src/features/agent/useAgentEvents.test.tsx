@@ -176,6 +176,24 @@ describe("useAgentEvents", () => {
     expect(result.current.executionError).toBeNull();
   });
 
+  it("clears a replayed execution failure when the failed review evaluation is retried", () => {
+    const { result } = renderHook(() =>
+      useAgentEvents("s1", {
+        createEventSource: (url) => new FakeEventSource(url),
+      }),
+    );
+    const source = FakeEventSource.instances[0];
+
+    act(() => {
+      source.emit({ id: 1, type: "execution.failed", sessionId: "s1", executionId: "r1", timestamp: "now", payload: { code: "agent_execution_failed" } });
+      source.emit({ id: 2, type: "review.evaluation.started", sessionId: "s1", executionId: "r1", timestamp: "later", payload: { roundId: "round-1", attemptId: "a1", retried: true } });
+      source.emit({ id: 3, type: "review.evaluation.completed", sessionId: "s1", executionId: "r1", timestamp: "later", payload: { roundId: "round-1", attemptId: "a1" } });
+      source.emit({ id: 4, type: "execution.interrupted", sessionId: "s1", executionId: "r1", timestamp: "later", payload: {} });
+    });
+
+    expect(result.current.executionError).toBeNull();
+  });
+
   it("buffers deltas by execution and ignores replayed event ids", () => {
     const { result } = renderHook(() =>
       useAgentEvents("s1", {

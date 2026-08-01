@@ -191,7 +191,11 @@ export function useAgentEvents(
             }
           }
         }
-        if (event.type === "execution.started") {
+        if (
+          event.type === "execution.started"
+          || event.type === "review.evaluation.started"
+          || event.type === "review.evaluation.completed"
+        ) {
           setExecutionError(null);
         } else if (event.type === "execution.failed") {
           const payload = event.payload as { code?: string; message?: string };

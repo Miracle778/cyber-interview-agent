@@ -35,7 +35,9 @@ import { TraceEventInspector } from "./TraceEventInspector";
 import { TraceExportDialog } from "./TraceExportDialog";
 import {
   friendlyOperationName,
+  failureEventWasRecovered,
   isFailureEventType,
+  operationWasRecovered,
   operationKindLabel,
   operationStatusLabel,
 } from "./observabilityLabels";
@@ -153,6 +155,14 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
   const selectedEvent = useMemo(
     () => events.find((event) => event.eventId === selectedEventId) ?? null,
     [events, selectedEventId],
+  );
+  const selectedRecovered = useMemo(
+    () => selectedEvent
+      ? failureEventWasRecovered(selectedEvent, events)
+      : selected
+        ? operationWasRecovered(selected, events, operations)
+        : false,
+    [events, operations, selected, selectedEvent],
   );
   const linearFallback =
     operations.length > 1 &&
@@ -373,6 +383,7 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
               runId={runId}
               event={selectedEvent}
               advancedEnabled={diagnosticsQuery.data?.advancedEnabled ?? false}
+              recovered={selectedRecovered}
               drawer={narrowScreen}
               onClose={() => {
                 setSelectedEventId(null);
@@ -389,7 +400,11 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
                 <div>
                   <dt>状态</dt>
                   <dd>
-                    {operationStatusLabel(selected.status, execution.status)
+                    {operationStatusLabel(
+                      selected.status,
+                      execution.status,
+                      selectedRecovered,
+                    )
                       ?? statusLabel(selected.status)}
                   </dd>
                 </div>

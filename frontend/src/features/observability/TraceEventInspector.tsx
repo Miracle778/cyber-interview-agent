@@ -11,6 +11,7 @@ interface TraceEventInspectorProps {
   runId: string;
   event: TraceEventSummary | null;
   advancedEnabled: boolean;
+  recovered?: boolean;
   drawer?: boolean;
   onClose?: () => void;
 }
@@ -28,6 +29,7 @@ export function TraceEventInspector({
   runId,
   event,
   advancedEnabled,
+  recovered = false,
   drawer = false,
   onClose,
 }: TraceEventInspectorProps) {
@@ -101,7 +103,7 @@ export function TraceEventInspector({
       <header>
         <div>
           <span>{event ? eventFamily(event.eventType) : "事件正文"}</span>
-          <h2>{event ? friendlyEventName(event.eventType) : "选择一个事件"}</h2>
+          <h2>{event ? friendlyEventName(event.eventType, recovered) : "选择一个事件"}</h2>
           {event ? <small>{event.eventType}</small> : null}
         </div>
         {drawer && onClose ? (
@@ -121,8 +123,8 @@ export function TraceEventInspector({
             <section className="trace-event-inspector__failure">
               <AlertTriangle size={18} aria-hidden="true" />
               <div>
-                <strong>这一步没有完成</strong>
-                <p>下面是系统保存的错误记录，可用于确认失败位置或导出诊断。</p>
+                <strong>{recovered ? "这一步曾发生异常，后续已恢复" : "这一步没有完成"}</strong>
+                <p>{recovered ? "错误记录会作为历史诊断保留，不代表当前任务仍处于失败状态。" : "下面是系统保存的错误记录，可用于确认失败位置或导出诊断。"}</p>
               </div>
             </section>
           ) : null}

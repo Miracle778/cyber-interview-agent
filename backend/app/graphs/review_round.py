@@ -486,31 +486,25 @@ def _coverage_decisions(
         evaluation.covered_key_points or evaluation.partial_key_points
     )
     if explicit:
-        reported = (
-            *evaluation.covered_key_points,
-            *evaluation.partial_key_points,
-            *evaluation.missing_key_points,
-        )
-        unknown = [point for point in reported if point not in required]
-        if unknown:
-            raise ValueError(f"unknown key point in evaluation: {unknown[0]}")
-        overlap = (
-            set(evaluation.covered_key_points)
-            & set(evaluation.partial_key_points)
-        ) | (
-            set(evaluation.covered_key_points)
-            & set(evaluation.missing_key_points)
-        ) | (
-            set(evaluation.partial_key_points)
-            & set(evaluation.missing_key_points)
-        )
-        if overlap:
-            raise ValueError("evaluation returned contradictory key point status")
-        status_by_point = {
-            **{point: "covered" for point in evaluation.covered_key_points},
-            **{point: "partial" for point in evaluation.partial_key_points},
-            **{point: "uncovered" for point in evaluation.missing_key_points},
-        }
+        # Structured-output models occasionally append their explanation to a
+        # frozen key point (for example ``关键点（用户只提到……）``).  Treat the
+        # frozen text as the identity and keep model prose as evidence.  An
+        # unmappable or contradictory item must never fail the whole review;
+        # the conservative status wins instead.
+        status_by_point: dict[str, str] = {}
+        priority = {"covered": 0, "partial": 1, "uncovered": 2}
+        for reported_points, status in (
+            (evaluation.covered_key_points, "covered"),
+            (evaluation.partial_key_points, "partial"),
+            (evaluation.missing_key_points, "uncovered"),
+        ):
+            for reported in reported_points:
+                point = _frozen_key_point(required_points, reported)
+                if point is None:
+                    continue
+                current = status_by_point.get(point)
+                if current is None or priority[status] > priority[current]:
+                    status_by_point[point] = status
     elif evaluation.score == "good":
         status_by_point = {point: "covered" for point in required_points}
     else:
@@ -534,6 +528,11 @@ def _coverage_decisions(
                     None,
                     (
                         evaluation.evidence_by_point.get(point),
+                        _mapped_point_evidence(
+                            point,
+                            required_points,
+                            evaluation.evidence_by_point,
+                        ),
                         (
                             evaluation.evidence
                             if status_by_point.get(point) == "covered"
@@ -544,4 +543,38 @@ def _coverage_decisions(
             ),
         )
         for point in required_points
+    )
+
+
+def _frozen_key_point(
+    required_points: tuple[str, ...], reported_point: str
+) -> str | None:
+    reported = reported_point.strip()
+    if reported in required_points:
+        return reported
+    annotated_matches = [
+        point
+        for point in required_points
+        if reported.startswith(point)
+        and reported[len(point) : len(point) + 1] in {"（", "(", "：", ":", "-", "—", " "}
+    ]
+    if not annotated_matches:
+        return None
+    return max(annotated_matches, key=len)
+
+
+def _mapped_point_evidence(
+    point: str,
+    required_points: tuple[str, ...],
+    evidence_by_point: dict[str, str],
+) -> str | None:
+    if point in evidence_by_point:
+        return None
+    return next(
+        (
+            evidence
+            for reported, evidence in evidence_by_point.items()
+            if _frozen_key_point(required_points, reported) == point
+        ),
+        None,
     )
