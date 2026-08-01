@@ -251,7 +251,7 @@ git diff --check
 
 Expected: all selected tests and typecheck pass.
 
-- [ ] **Step 7: Commit Task 1**
+- [x] **Step 7: Commit Task 1**
 
 ```bash
 git add backend/app/db/migrations backend/app/interview_retrospectives backend/app/schemas/settings.py backend/tests frontend/src/features/settings
@@ -271,7 +271,7 @@ git commit -m "feat: add interview retrospective domain schema"
 - Consumes: Task 1 records and constraints.
 - Produces: `InterviewRetrospectiveService.create(...)`, `add_source_version(...)`, `create_cleanup_version(...)`, `replace_segments(...)`, `confirm_cleanup(...)`, `clear_source(...)`, `archive(...)`, `recycle(...)`, `restore(...)`, `deletion_impact(...)`, `delete_permanently(...)`.
 
-- [ ] **Step 1: Write RED lifecycle and ownership tests**
+- [x] **Step 1: Write RED lifecycle and ownership tests**
 
 ```python
 def test_create_requires_same_workspace_target(service, other_workspace_target):
@@ -307,13 +307,13 @@ def test_add_source_is_immutable_and_idempotent(service, retrospective):
 
 Also cover 500,000/500,001 characters, `.txt`/`.md` file names, conflicting idempotency replay, expected-version conflicts, cross-workspace IDs, active-run deletion blocking, target cascade, and downstream receipt preservation.
 
-- [ ] **Step 2: Run RED tests**
+- [x] **Step 2: Run RED tests**
 
 Run: `./.venv/bin/pytest -q tests/test_interview_retrospective_repository.py tests/test_interview_retrospective_service.py`
 
 Expected: FAIL because repository/service modules do not exist.
 
-- [ ] **Step 3: Implement Workspace-scoped repository methods**
+- [x] **Step 3: Implement Workspace-scoped repository methods**
 
 Repository queries always join or filter `workspace_id`. Transactions are short and deterministic. Provide exact methods:
 
@@ -329,15 +329,15 @@ active_execution_ids(retrospective_id: str) -> tuple[str, ...]
 save_receipt(scope: str, idempotency_key: str, request_hash: str, result_json: str) -> None
 ```
 
-- [ ] **Step 4: Implement service invariants**
+- [x] **Step 4: Implement service invariants**
 
 The service validates target ownership, lifecycle, source size/type, body hash, version preconditions, cleanup/source relationships, and deletion blockers. `clear_source` performs one transaction that empties source body and stored excerpts, sets `cleared_at`, and preserves hashes and structured results.
 
-- [ ] **Step 5: Add body-safe projections**
+- [x] **Step 5: Add body-safe projections**
 
 List resources include counts and active status but never source body. Source body is returned only by an explicit detail method. Cleared sources return `bodyAvailable=false`, `body=null`, and `clearedAt`.
 
-- [ ] **Step 6: Run GREEN tests**
+- [x] **Step 6: Run GREEN tests**
 
 Run:
 
@@ -347,7 +347,7 @@ Run:
 git diff --check
 ```
 
-- [ ] **Step 7: Commit Task 2**
+- [x] **Step 7: Commit Task 2**
 
 ```bash
 git add backend/app/interview_retrospectives backend/tests/test_interview_retrospective_*.py

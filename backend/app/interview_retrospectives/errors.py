@@ -17,6 +17,10 @@ class RetrospectiveSourceTooLarge(RetrospectiveDomainError):
     code = "retrospective_source_too_large"
 
 
+class RetrospectiveSourceUnsupported(RetrospectiveDomainError):
+    code = "retrospective_source_unsupported"
+
+
 class RetrospectiveSourceCleared(RetrospectiveDomainError):
     code = "retrospective_source_cleared"
 
@@ -31,6 +35,10 @@ class RetrospectiveBusy(RetrospectiveDomainError):
 
 class RetrospectiveVersionConflict(RetrospectiveDomainError):
     code = "retrospective_version_conflict"
+
+
+class RetrospectiveIdempotencyConflict(RetrospectiveDomainError):
+    code = "retrospective_idempotency_conflict"
 
 
 class RetrospectiveQuestionConfirmationRequired(RetrospectiveDomainError):

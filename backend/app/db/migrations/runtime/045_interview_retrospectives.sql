@@ -23,10 +23,13 @@ CREATE TABLE interview_retrospectives (
         REFERENCES agent_sessions(id) ON DELETE CASCADE,
     chat_session_id TEXT NOT NULL UNIQUE
         REFERENCES agent_sessions(id) ON DELETE CASCADE,
+    create_idempotency_key TEXT NOT NULL,
     version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE UNIQUE INDEX ux_interview_retrospective_create_receipt
+    ON interview_retrospectives(workspace_id, create_idempotency_key);
 CREATE INDEX idx_interview_retrospectives_workspace_lifecycle
     ON interview_retrospectives(
         workspace_id, lifecycle_status, updated_at DESC, id

@@ -49,6 +49,14 @@
 - RED 明确验证缺表、缺角色和设置页缺入口；GREEN 后迁移/数据库/Provider 受影响回归 `46 passed`，设置组件 `2 passed`，TypeScript、Python compileall 与 `git diff --check` 通过。
 - 下一步：Task 2 实现复盘生命周期、源版本、整理版本与删除不变量。
 
+## 2026-08-01：面试复盘 Task 2 领域生命周期完成
+
+- 新增 Workspace 安全 Repository/Service、源版本幂等导入、500,000 字符和 `.txt/.md` 边界、整理片段确认门禁与正文安全投影。
+- 原文清除会删除源正文、整理片段正文、工作项正文和分析来源摘录，同时保留哈希、结构化元数据与下游资产边界。
+- 归档、回收、恢复、运行阻断删除、永久删除私有 Session 和删除影响预检已具备确定性领域语义。
+- RED/GREEN 覆盖归属、幂等、输入边界、未知说话人、原文清除、活动 Execution、生命周期、投影和删除影响；合并 Job Target 受影响回归 `20 passed`。
+- 下一步：Task 3 接入真实 Cleanup Agent、后台 Execution、API 和运行中心 Registry。
+
 ## 2026-07-29：Agent 可观测与质量评估实施计划完成
 
 - 根据已确认规格与 ADR，完成一个总索引和四个纵向 Slice 计划，共 1,268 行：
