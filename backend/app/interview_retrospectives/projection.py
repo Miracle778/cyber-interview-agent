@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from app.interview_retrospectives.models import (
+    ActionItemRecord,
     AnalysisRunRecord,
     AnalysisWorkItemRecord,
+    AssetCandidateRecord,
     CleanupVersionRecord,
     GapRecord,
     QuestionAnalysisRecord,
@@ -178,5 +180,43 @@ def analysis_work_item_resource(
         "status": record.status,
         "attemptCount": record.attempt_count,
         "lastErrorCode": record.last_error_code,
+        "updatedAt": record.updated_at,
+    }
+
+
+def asset_candidate_resource(record: AssetCandidateRecord) -> dict[str, object]:
+    return {
+        "id": record.id,
+        "retrospectiveId": record.retrospective_id,
+        "analysisRunId": record.analysis_run_id,
+        "questionUnitId": record.question_unit_id,
+        "candidateKind": record.candidate_kind,
+        "fingerprint": record.fingerprint,
+        "payload": json.loads(record.payload_json),
+        "matches": json.loads(record.match_json),
+        "status": record.status,
+        "targetResourceType": record.target_resource_type,
+        "targetResourceId": record.target_resource_id,
+        "lastErrorCode": record.last_error_code,
+        "version": record.version,
+        "createdAt": record.created_at,
+        "updatedAt": record.updated_at,
+    }
+
+
+def action_item_resource(record: ActionItemRecord) -> dict[str, object]:
+    return {
+        "id": record.id,
+        "retrospectiveId": record.retrospective_id,
+        "analysisRunId": record.analysis_run_id,
+        "questionUnitId": record.question_unit_id,
+        "gapId": record.gap_id,
+        "actionKind": record.action_kind,
+        "title": record.title,
+        "detail": record.detail,
+        "status": record.status,
+        "version": record.version,
+        "completedAt": record.completed_at,
+        "createdAt": record.created_at,
         "updatedAt": record.updated_at,
     }

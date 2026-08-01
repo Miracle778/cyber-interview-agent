@@ -553,6 +553,68 @@ class ProfileService:
             created_by_execution_id=execution_id,
         )
 
+    def create_retrospective_proposals(
+        self,
+        proposals: Sequence[CreateClaimProposalSpec],
+        *,
+        retrospective_id: str,
+        candidate_id: str,
+        idempotency_key: str,
+    ):
+        """Create user-selected proposals without treating model output as facts."""
+        validated_specs: list[CreateClaimProposalSpec] = []
+        for spec in proposals:
+            category = spec.proposed_value.get("category")
+            if not isinstance(category, str):
+                raise ProfileValueInvalid("retrospective proposal category is required")
+            value = {
+                key: item
+                for key, item in spec.proposed_value.items()
+                if key != "category"
+            }
+            validated = validate_profile_value(category, value)  # type: ignore[arg-type]
+            target_claim_id = spec.target_claim_id
+            base_version_id = None
+            if spec.proposal_type == "update":
+                if target_claim_id is None:
+                    raise ProfileValueInvalid(
+                        "retrospective update requires a target profile card"
+                    )
+                claim = self.repository.get_claim(target_claim_id)
+                if (
+                    claim.workspace_id != self.workspace_id
+                    or claim.claim_type != category
+                    or claim.current_confirmed_version_id is None
+                ):
+                    raise ProfileClaimVersionConflict(
+                        "retrospective update target is not current"
+                    )
+                base_version_id = claim.current_confirmed_version_id
+            elif spec.proposal_type != "create":
+                raise ProfileValueInvalid(
+                    "retrospective proposal only supports create or update"
+                )
+            validated_specs.append(
+                CreateClaimProposalSpec(
+                    proposal_type=spec.proposal_type,
+                    target_claim_id=target_claim_id,
+                    base_claim_version_id=base_version_id,
+                    proposed_value={"category": category, **validated},
+                    reason=spec.reason,
+                    source="interview_retrospective",
+                    source_kind="agent_inference",
+                    source_ref={
+                        "retrospectiveId": retrospective_id,
+                        "candidateId": candidate_id,
+                    },
+                )
+            )
+        return self.repository.create_workspace_claim_proposals(
+            self.workspace_id,
+            validated_specs,
+            idempotency_key=f"retrospective:{idempotency_key}",
+        )
+
     def create_profile_card(
         self,
         *,

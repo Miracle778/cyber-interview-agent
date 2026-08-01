@@ -720,15 +720,15 @@ git commit -m "feat: add progressive retrospective report"
 - Consumes: completed confirmed question analyses.
 - Produces: candidate list/decision, Review/Profile/Project adapters, immediate practice launch, action items, and Knowledge draft/publication selection.
 
-- [ ] **Step 1: Write RED candidate safety tests**
+- [x] **Step 1: Write RED candidate safety tests**
 
 Prove pending inferred questions cannot produce candidates; model output only inserts retrospective candidate rows; similar questions return match choices; cross-workspace targets fail; same receipt does not duplicate writes; partial failure preserves failed candidates; rejected fingerprint is not re-proposed.
 
-- [ ] **Step 2: Implement candidate generation and matching**
+- [x] **Step 2: Implement candidate generation and matching**
 
 Generate candidates only after all eligible question work completes. Use existing Review similarity, Profile candidate matching, and project narrative lookup. Store match IDs and scores as suggestions; do not auto-merge.
 
-- [ ] **Step 3: Implement deterministic adapters**
+- [x] **Step 3: Implement deterministic adapters**
 
 Exact actions:
 
@@ -741,15 +741,15 @@ summary: include | exclude
 
 Each adapter validates candidate kind, current version, target Workspace, and action payload; calls the owning service; then saves one immutable write receipt with target resource ID.
 
-- [ ] **Step 4: Add immediate-practice bridge**
+- [x] **Step 4: Add immediate-practice bridge**
 
 Only a confirmed Review question resource can start a Review round. Return a stable `/review?questionId=...&source=retrospective&id=...` link and never create a second question during launch.
 
-- [ ] **Step 5: Add action item commands**
+- [x] **Step 5: Add action item commands**
 
 Create action items during finalization with source question/gap IDs. Expose only `pending → completed/dismissed`; retries with the same expected version are idempotent.
 
-- [ ] **Step 6: Add Knowledge document type and safe projection**
+- [x] **Step 6: Add Knowledge document type and safe projection**
 
 Register:
 
@@ -762,7 +762,7 @@ DocumentTypeDefinition(
 
 The Markdown renderer receives only selected confirmed fields and stable links. Tests assert raw source bodies, pending inferred questions, chat messages, prompt text, and provider responses are absent.
 
-- [ ] **Step 7: Add candidate/action/publication endpoints**
+- [x] **Step 7: Add candidate/action/publication endpoints**
 
 ```text
 GET  /{id}/candidates
@@ -773,7 +773,7 @@ POST /{id}/actions/{actionId}/decision
 POST /{id}/publication-drafts
 ```
 
-- [ ] **Step 8: Run GREEN tests and commit**
+- [x] **Step 8: Run GREEN tests and commit**
 
 ```bash
 ./.venv/bin/pytest -q tests/test_interview_retrospective_candidates.py tests/test_interview_retrospective_publication.py tests/test_interview_retrospective_review_adapter.py tests/test_question_similarity.py

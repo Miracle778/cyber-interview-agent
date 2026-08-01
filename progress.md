@@ -1456,3 +1456,12 @@
 - v2 趋势按 Pack、契约版本和 run kind 分组；新增需复核/严重、Judge-人工一致、用户修改/拒绝和基础设施失败指标。
 - 自动门禁模块默认关闭、批准规则集合为空，只允许未来经真实案例校准和 ADR 批准的确定性规则阻断；Judge 结论不进入门禁。
 - 新鲜定向证据：回归/设置/迁移/Judge 后端 22 项，质量门禁与 Runtime 集成 7 项；前端类型检查及设置/评估页面 7 项通过。完整回归、真实 Provider 浏览器案例和文档门禁待最终收口统一执行。
+
+## 2026-08-02：面试复盘 Task 7 候选沉淀与安全发布
+
+- 候选生成接入分析 finalizer，只读取 confirmed/formal 结果；Review 相似题、项目画像匹配均只形成建议，不自动合并。
+- 题库新建/补充进入 Review 自有待确认草稿，画像与项目讲解进入 Profile 待确认 Proposal；所有用户决定均使用乐观锁和复盘 Receipt。
+- 行动项按 gap 生成并支持完成/忽略；立即练习只接受 active Review Question，并返回稳定复盘来源链接。
+- 新增 `interview_retrospective` Knowledge 文档类型和 migration 046；发布稿按用户选择投影，不接收原始转写、pending 推断、Prompt、Provider 响应或聊天消息。
+- 新增候选、批量决定、行动项和发布草稿 API；批量部分失败保留成功结果和失败候选，重复请求不产生重复跨域资源。
+- 自动证据：候选/发布/API 聚焦测试 14 项通过；复盘、Review、Profile 与 Knowledge 受影响回归 134 项通过；Ruff、compileall 与差异检查通过。

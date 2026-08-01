@@ -12,19 +12,34 @@ from uuid import uuid4
 
 import aiosqlite
 
-from app.infrastructure.runtime_database import connect_runtime_database, runtime_database_path
+from app.infrastructure.runtime_database import (
+    connect_runtime_database,
+    runtime_database_path,
+)
 from app.knowledge.workspace_layout import initialize_knowledge_artifacts
 from app.security.workspace_paths import WorkspacePathPolicy
 
 
 DocumentType: TypeAlias = Literal[
-    "source", "question", "concept", "session_report", "mastery_report"
+    "source",
+    "question",
+    "concept",
+    "session_report",
+    "mastery_report",
+    "interview_retrospective",
 ]
 DraftStatus: TypeAlias = Literal[
     "draft", "review_pending", "rejected", "published", "superseded"
 ]
 _DOCUMENT_TYPES = frozenset(
-    {"source", "question", "concept", "session_report", "mastery_report"}
+    {
+        "source",
+        "question",
+        "concept",
+        "session_report",
+        "mastery_report",
+        "interview_retrospective",
+    }
 )
 _EDITABLE_STATUSES = frozenset({"draft", "review_pending", "rejected"})
 
@@ -207,9 +222,7 @@ class KnowledgeDraftService:
             document_id=command.document_id,
             title=command.title.strip(),
             markdown=command.markdown,
-            content_path=(
-                f"artifacts/{command.domain}/drafts/{command.draft_id}.md"
-            ),
+            content_path=(f"artifacts/{command.domain}/drafts/{command.draft_id}.md"),
             source_refs=command.source_refs,
             relation_refs=command.relation_refs,
             content_hash=_hash_text(command.markdown),
@@ -245,8 +258,7 @@ class KnowledgeDraftService:
                         "curation finalization no longer owns staging"
                     )
                 existing_cursor = await connection.execute(
-                    "SELECT * FROM review_curation_staged_drafts "
-                    "WHERE draft_id = ?",
+                    "SELECT * FROM review_curation_staged_drafts WHERE draft_id = ?",
                     (staged.id,),
                 )
                 existing = await existing_cursor.fetchone()
@@ -263,15 +275,18 @@ class KnowledgeDraftService:
                         "content_hash) VALUES (?, ?, ?, ?, ?)",
                         (staged.id, *expected),
                     )
-                elif tuple(
-                    existing[key]
-                    for key in (
-                        "batch_id",
-                        "execution_id",
-                        "content_path",
-                        "content_hash",
+                elif (
+                    tuple(
+                        existing[key]
+                        for key in (
+                            "batch_id",
+                            "execution_id",
+                            "content_path",
+                            "content_hash",
+                        )
                     )
-                ) != expected:
+                    != expected
+                ):
                     raise DraftContentChangedError(
                         f"staged draft {staged.id!r} identity changed"
                     )
@@ -301,9 +316,7 @@ class KnowledgeDraftService:
     ) -> None:
         expected_path = f"artifacts/review/drafts/{draft_id}.md"
         if content_path != expected_path:
-            raise DraftContentChangedError(
-                f"staged draft {draft_id!r} path changed"
-            )
+            raise DraftContentChangedError(f"staged draft {draft_id!r} path changed")
         path = WorkspacePathPolicy(self._workspace_root).resolve_for_create(
             "review.drafts", f"{draft_id}.md"
         )
@@ -344,9 +357,7 @@ class KnowledgeDraftService:
                             (row["draft_id"],),
                         )
                         continue
-                    expected_path = (
-                        f"artifacts/review/drafts/{row['draft_id']}.md"
-                    )
+                    expected_path = f"artifacts/review/drafts/{row['draft_id']}.md"
                     if row["content_path"] != expected_path:
                         continue
                     path = policy.resolve_for_create(
@@ -364,8 +375,7 @@ class KnowledgeDraftService:
                     path.unlink()
                     removed += 1
                     await connection.execute(
-                        "DELETE FROM review_curation_staged_drafts "
-                        "WHERE draft_id = ?",
+                        "DELETE FROM review_curation_staged_drafts WHERE draft_id = ?",
                         (row["draft_id"],),
                     )
                 await connection.commit()
@@ -408,13 +418,9 @@ class KnowledgeDraftService:
         return removed
 
     async def create(self, command: CreateDraftCommand) -> KnowledgeDraftRecord:
-        initialize_knowledge_artifacts(
-            self._workspace_root, domain=command.domain
-        )
+        initialize_knowledge_artifacts(self._workspace_root, domain=command.domain)
         draft_id = command.draft_id or str(uuid4())
-        document_id = command.document_id or (
-            f"{command.document_type}_{uuid4().hex}"
-        )
+        document_id = command.document_id or (f"{command.document_type}_{uuid4().hex}")
         filename = f"{draft_id}.md"
         content_path = f"artifacts/{command.domain}/drafts/{filename}"
         digest = _hash_text(command.markdown)

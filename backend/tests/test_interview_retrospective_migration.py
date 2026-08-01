@@ -45,7 +45,7 @@ def test_runtime_migration_adds_versioned_retrospective_domain(
         connection.close()
 
     assert RETROSPECTIVE_TABLES <= tables
-    assert migrations == list(range(1, 46))
+    assert migrations == list(range(1, 47))
 
 
 def test_app_migration_backfills_retrospective_model_roles(
@@ -76,9 +76,7 @@ def test_app_migration_backfills_retrospective_model_roles(
 def _create_app_database_at_version_8(data_dir: Path) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(data_dir / "app.sqlite")
-    migrations_dir = (
-        Path(__file__).parents[1] / "app" / "db" / "migrations" / "app"
-    )
+    migrations_dir = Path(__file__).parents[1] / "app" / "db" / "migrations" / "app"
     connection.execute(
         "CREATE TABLE schema_migrations ("
         "version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
@@ -94,8 +92,7 @@ def _create_app_database_at_version_8(data_dir: Path) -> None:
             (version,),
         )
     connection.execute(
-        "INSERT INTO workspaces(id, root_path, available) "
-        "VALUES ('w1', '/tmp/w1', 1)"
+        "INSERT INTO workspaces(id, root_path, available) VALUES ('w1', '/tmp/w1', 1)"
     )
     connection.execute(
         "INSERT INTO providers("

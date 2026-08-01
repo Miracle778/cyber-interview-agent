@@ -898,3 +898,12 @@
 - 渐进列表的默认焦点属于持久业务状态的视图规则：失败优先，其次高风险、已完成；一旦 URL 中的用户选择仍有效，新结果到达不能抢走焦点。
 - 768 宽度下，应用侧栏、复盘记录栏、问题栏和详情四层并排会把正文压缩到 247px。1023 以下应把问题栏与详情改为上下布局，390 再把外层记录与详情改为自然单列。
 - 共享 `.task-workspace` 的后加载 `display:grid` 会覆盖同权重的移动端 `display:block`。页面断点应使用组件双类名提高选择器优先级，避免依赖 `!important` 或页面高度计算。
+
+## 2026-08-02：面试复盘候选与跨领域写入边界
+
+- 候选生成必须读取已落库的 confirmed QuestionUnit 和 formal QuestionAnalysis；模型输出本身不能直接触达题库、画像、项目叙事或 Knowledge。
+- 相似题分数只用于展示匹配选项，不能自动合并。`link_existing` 必须再次读取目标领域的当前资源并验证 Workspace。
+- `create_new` 进入 Review 自己的 `review_pending` 草稿/候选链，不直接激活正式题目；只有已关联的 active Review Question 才能生成“立即练习”链接。
+- Profile 与项目叙事通过 Profile 所有者创建带 `agent_inference` 来源的待确认 Proposal；复盘 Receipt 只在领域调用成功后落库。
+- 被拒绝候选以 fingerprint 保留，重复 finalizer 不重新打开；批量部分失败只把失败项留在 failed，成功项及其 Receipt 不回滚。
+- Knowledge 发布草稿只从确认问题、正式分析、已确认经历、行动项和稳定链接投影，原始转写、pending 推断、Prompt、Provider 响应和聊天消息没有进入渲染输入。

@@ -608,6 +608,8 @@ class WorkspaceRuntime:
             products=repository,
             agents=retrospective_agents,
             profile=profile,
+            review=review,
+            drafts=drafts,
             analysis_model_id=configured_model_bindings.get("retrospective_analysis"),
         )
         if agent_evaluation is not None:

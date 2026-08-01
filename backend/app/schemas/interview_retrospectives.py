@@ -251,3 +251,114 @@ class AnalysisReportResource(AgentModel):
     analyses: list[QuestionAnalysisResource]
     items: list[AnalysisWorkItemResource]
     summary: dict[str, object]
+
+
+class AssetCandidateResource(AgentModel):
+    id: str
+    retrospective_id: str
+    analysis_run_id: str
+    question_unit_id: str | None
+    candidate_kind: Literal[
+        "review_question", "profile_claim", "project_narrative", "summary"
+    ]
+    fingerprint: str
+    payload: dict[str, object]
+    matches: list[dict[str, object]]
+    status: str
+    target_resource_type: str | None
+    target_resource_id: str | None
+    last_error_code: str | None
+    version: int
+    created_at: str
+    updated_at: str
+
+
+CandidateDecision = Literal[
+    "link_existing",
+    "supplement_existing",
+    "create_new",
+    "propose_update",
+    "propose_new",
+    "reject",
+    "include",
+    "exclude",
+]
+
+
+class CandidateDecisionCommand(AgentModel):
+    workspace_id: str
+    action: CandidateDecision
+    target_resource_id: str | None = None
+    action_payload: dict[str, object] = Field(default_factory=dict)
+    expected_version: int = Field(ge=1)
+
+
+class BatchCandidateDecisionItem(AgentModel):
+    candidate_id: str
+    action: CandidateDecision
+    target_resource_id: str | None = None
+    action_payload: dict[str, object] = Field(default_factory=dict)
+    expected_version: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=8, max_length=200)
+
+
+class BatchCandidateDecisionCommand(AgentModel):
+    workspace_id: str
+    decisions: list[BatchCandidateDecisionItem] = Field(min_length=1, max_length=100)
+
+
+class BatchCandidateDecisionResult(AgentModel):
+    candidate_id: str
+    status: Literal["completed", "failed"]
+    candidate: AssetCandidateResource | None = None
+    error_code: str | None = None
+
+
+class ActionItemResource(AgentModel):
+    id: str
+    retrospective_id: str
+    analysis_run_id: str
+    question_unit_id: str | None
+    gap_id: str | None
+    action_kind: Literal["material", "expression", "knowledge", "experience"]
+    title: str
+    detail: str
+    status: Literal["pending", "completed", "dismissed"]
+    version: int
+    completed_at: str | None
+    created_at: str
+    updated_at: str
+
+
+class ActionDecisionCommand(AgentModel):
+    workspace_id: str
+    decision: Literal["completed", "dismissed"]
+    expected_version: int = Field(ge=1)
+
+
+class PublicationDraftCommand(AgentModel):
+    workspace_id: str
+    selected_sections: list[
+        Literal[
+            "basic_info",
+            "confirmed_questions",
+            "selected_conclusions",
+            "confirmed_experiences",
+            "action_items",
+            "stable_links",
+        ]
+    ] = Field(min_length=1, max_length=6)
+
+
+class PublicationDraftResource(AgentModel):
+    id: str
+    document_type: str
+    title: str
+    markdown: str
+    status: str
+    version: int
+
+
+class ImmediatePracticeResource(AgentModel):
+    question_id: str
+    href: str

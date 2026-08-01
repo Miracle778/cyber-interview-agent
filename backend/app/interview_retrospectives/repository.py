@@ -12,8 +12,10 @@ from app.interview_retrospectives.errors import (
     RetrospectiveVersionConflict,
 )
 from app.interview_retrospectives.models import (
+    ActionItemRecord,
     AnalysisRunRecord,
     AnalysisWorkItemRecord,
+    AssetCandidateRecord,
     CleanupVersionRecord,
     CleanupWorkItemRecord,
     GapRecord,
@@ -1063,6 +1065,174 @@ class InterviewRetrospectiveRepository:
         ).fetchall()
         return tuple(_gap(row) for row in rows)
 
+    def upsert_asset_candidate(
+        self,
+        retrospective_id: str,
+        *,
+        analysis_run_id: str,
+        question_unit_id: str | None,
+        candidate_kind: str,
+        fingerprint: str,
+        payload: dict[str, object],
+        matches: tuple[dict[str, object], ...] = (),
+    ) -> AssetCandidateRecord:
+        identifier = str(uuid4())
+        self.connection.execute(
+            "INSERT INTO interview_asset_candidates("
+            "id, retrospective_id, analysis_run_id, question_unit_id, "
+            "candidate_kind, fingerprint, payload_json, match_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(retrospective_id, candidate_kind, fingerprint) DO NOTHING",
+            (
+                identifier,
+                retrospective_id,
+                analysis_run_id,
+                question_unit_id,
+                candidate_kind,
+                fingerprint,
+                json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                json.dumps(matches, ensure_ascii=False, sort_keys=True),
+            ),
+        )
+        row = self.connection.execute(
+            "SELECT id FROM interview_asset_candidates "
+            "WHERE retrospective_id = ? AND candidate_kind = ? AND fingerprint = ?",
+            (retrospective_id, candidate_kind, fingerprint),
+        ).fetchone()
+        self.connection.commit()
+        return self.get_asset_candidate(str(row["id"]))
+
+    def get_asset_candidate(self, candidate_id: str) -> AssetCandidateRecord:
+        row = self.connection.execute(
+            "SELECT * FROM interview_asset_candidates WHERE id = ?", (candidate_id,)
+        ).fetchone()
+        if row is None:
+            raise RetrospectiveNotFound(candidate_id)
+        return _asset_candidate(row)
+
+    def list_asset_candidates(
+        self, retrospective_id: str, *, status: str | None = None
+    ) -> tuple[AssetCandidateRecord, ...]:
+        query = "SELECT * FROM interview_asset_candidates WHERE retrospective_id = ?"
+        values: list[object] = [retrospective_id]
+        if status is not None:
+            query += " AND status = ?"
+            values.append(status)
+        rows = self.connection.execute(
+            query + " ORDER BY created_at, rowid", values
+        ).fetchall()
+        return tuple(_asset_candidate(row) for row in rows)
+
+    def transition_asset_candidate(
+        self,
+        candidate_id: str,
+        *,
+        status: str,
+        target_resource_type: str | None,
+        target_resource_id: str | None,
+        last_error_code: str | None,
+        expected_version: int,
+    ) -> AssetCandidateRecord:
+        current = self.get_asset_candidate(candidate_id)
+        if (
+            current.status == status
+            and current.target_resource_type == target_resource_type
+            and current.target_resource_id == target_resource_id
+            and current.last_error_code == last_error_code
+        ):
+            return current
+        cursor = self.connection.execute(
+            "UPDATE interview_asset_candidates SET status = ?, "
+            "target_resource_type = ?, target_resource_id = ?, last_error_code = ?, "
+            "version = version + 1, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND version = ? AND status IN ('pending','blocked','failed')",
+            (
+                status,
+                target_resource_type,
+                target_resource_id,
+                last_error_code,
+                candidate_id,
+                expected_version,
+            ),
+        )
+        if cursor.rowcount != 1:
+            self.connection.rollback()
+            raise RetrospectiveVersionConflict("候选项版本已更新")
+        self.connection.commit()
+        return self.get_asset_candidate(candidate_id)
+
+    def upsert_action_item(
+        self,
+        retrospective_id: str,
+        *,
+        analysis_run_id: str,
+        question_unit_id: str | None,
+        gap_id: str | None,
+        action_kind: str,
+        title: str,
+        detail: str,
+    ) -> ActionItemRecord:
+        row = self.connection.execute(
+            "SELECT id FROM interview_action_items WHERE retrospective_id = ? "
+            "AND question_unit_id IS ? AND action_kind = ? AND title = ?",
+            (retrospective_id, question_unit_id, action_kind, title),
+        ).fetchone()
+        if row is None:
+            identifier = str(uuid4())
+            self.connection.execute(
+                "INSERT INTO interview_action_items("
+                "id, retrospective_id, analysis_run_id, question_unit_id, gap_id, "
+                "action_kind, title, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    identifier,
+                    retrospective_id,
+                    analysis_run_id,
+                    question_unit_id,
+                    gap_id,
+                    action_kind,
+                    title,
+                    detail,
+                ),
+            )
+            self.connection.commit()
+            row = {"id": identifier}
+        return self.get_action_item(str(row["id"]))
+
+    def get_action_item(self, action_id: str) -> ActionItemRecord:
+        row = self.connection.execute(
+            "SELECT * FROM interview_action_items WHERE id = ?", (action_id,)
+        ).fetchone()
+        if row is None:
+            raise RetrospectiveNotFound(action_id)
+        return _action_item(row)
+
+    def list_action_items(self, retrospective_id: str) -> tuple[ActionItemRecord, ...]:
+        rows = self.connection.execute(
+            "SELECT * FROM interview_action_items WHERE retrospective_id = ? "
+            "ORDER BY created_at, rowid",
+            (retrospective_id,),
+        ).fetchall()
+        return tuple(_action_item(row) for row in rows)
+
+    def decide_action_item(
+        self, action_id: str, *, decision: str, expected_version: int
+    ) -> ActionItemRecord:
+        current = self.get_action_item(action_id)
+        if current.status == decision:
+            return current
+        cursor = self.connection.execute(
+            "UPDATE interview_action_items SET status = ?, "
+            "completed_at = CASE WHEN ? = 'completed' THEN CURRENT_TIMESTAMP ELSE NULL END, "
+            "version = version + 1, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND version = ? AND status = 'pending'",
+            (decision, decision, action_id, expected_version),
+        )
+        if cursor.rowcount != 1:
+            self.connection.rollback()
+            raise RetrospectiveVersionConflict("行动项版本已更新")
+        self.connection.commit()
+        return self.get_action_item(action_id)
+
     def mark_analysis_completed(
         self, run_id: str, *, summary: dict[str, object]
     ) -> AnalysisRunRecord:
@@ -1511,6 +1681,44 @@ def _question_analysis(row: sqlite3.Row) -> QuestionAnalysisRecord:
         source_available=bool(row["source_available"]),
         result_status=row["result_status"],
         version=row["version"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _asset_candidate(row: sqlite3.Row) -> AssetCandidateRecord:
+    return AssetCandidateRecord(
+        id=row["id"],
+        retrospective_id=row["retrospective_id"],
+        analysis_run_id=row["analysis_run_id"],
+        question_unit_id=row["question_unit_id"],
+        candidate_kind=row["candidate_kind"],
+        fingerprint=row["fingerprint"],
+        payload_json=row["payload_json"],
+        match_json=row["match_json"],
+        status=row["status"],
+        target_resource_type=row["target_resource_type"],
+        target_resource_id=row["target_resource_id"],
+        last_error_code=row["last_error_code"],
+        version=row["version"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _action_item(row: sqlite3.Row) -> ActionItemRecord:
+    return ActionItemRecord(
+        id=row["id"],
+        retrospective_id=row["retrospective_id"],
+        analysis_run_id=row["analysis_run_id"],
+        question_unit_id=row["question_unit_id"],
+        gap_id=row["gap_id"],
+        action_kind=row["action_kind"],
+        title=row["title"],
+        detail=row["detail"],
+        status=row["status"],
+        version=row["version"],
+        completed_at=row["completed_at"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

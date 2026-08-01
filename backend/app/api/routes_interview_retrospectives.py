@@ -7,8 +7,10 @@ from fastapi import APIRouter, Depends, Header, Query, Response, status
 from app.api.dependencies import get_agent_application
 from app.application.workspace_runtime import AgentApplication
 from app.interview_retrospectives.projection import (
+    action_item_resource,
     analysis_run_resource,
     analysis_work_item_resource,
+    asset_candidate_resource,
     cleanup_version_resource,
     question_analysis_resource,
     question_resource,
@@ -16,6 +18,8 @@ from app.interview_retrospectives.projection import (
     source_version_resource,
 )
 from app.schemas.interview_retrospectives import (
+    ActionDecisionCommand,
+    ActionItemResource,
     AddSourceVersionCommand,
     CleanupControlCommand,
     CleanupStartResource,
@@ -33,6 +37,13 @@ from app.schemas.interview_retrospectives import (
     AnalysisReportResource,
     AnalysisRunResource,
     AnalysisStartResource,
+    AssetCandidateResource,
+    BatchCandidateDecisionCommand,
+    BatchCandidateDecisionResult,
+    CandidateDecisionCommand,
+    ImmediatePracticeResource,
+    PublicationDraftCommand,
+    PublicationDraftResource,
     QuestionDecisionCommand,
     QuestionResource,
     StartAnalysisCommand,
@@ -547,4 +558,180 @@ def get_report(
         ],
         "items": [analysis_work_item_resource(item) for item in items],
         "summary": run_resource["summary"] or {},
+    }
+
+
+@router.get(
+    "/api/interview-retrospectives/{retrospective_id}/candidates",
+    response_model=list[AssetCandidateResource],
+)
+def list_candidates(
+    retrospective_id: str,
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    candidate_status: Annotated[str | None, Query(alias="status")] = None,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    return [
+        asset_candidate_resource(item)
+        for item in _application(application, workspace_id).list_candidates(
+            retrospective_id, status=candidate_status
+        )
+    ]
+
+
+@router.post(
+    "/api/interview-retrospectives/{retrospective_id}/candidates/{candidate_id}/decision",
+    response_model=AssetCandidateResource,
+)
+async def decide_candidate(
+    retrospective_id: str,
+    candidate_id: str,
+    command: CandidateDecisionCommand,
+    idempotency_key: IdempotencyKey,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    record = await _application(application, command.workspace_id).decide_candidate(
+        retrospective_id,
+        candidate_id,
+        action=command.action,
+        target_resource_id=command.target_resource_id,
+        action_payload=command.action_payload,
+        expected_version=command.expected_version,
+        idempotency_key=idempotency_key,
+    )
+    return asset_candidate_resource(record)
+
+
+@router.get(
+    "/api/interview-retrospectives/{retrospective_id}/candidates/{candidate_id}/practice-link",
+    response_model=ImmediatePracticeResource,
+)
+def candidate_practice_link(
+    retrospective_id: str,
+    candidate_id: str,
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    application: AgentApplication = Depends(get_agent_application),
+):
+    service = _application(application, workspace_id)
+    candidate = service.repository.get_asset_candidate(candidate_id)
+    if (
+        candidate.retrospective_id != retrospective_id
+        or candidate.status != "confirmed"
+        or candidate.target_resource_type != "review_question"
+        or candidate.target_resource_id is None
+    ):
+        raise ValueError("只有已关联的正式题库题目可以立即练习")
+    return {
+        "questionId": candidate.target_resource_id,
+        "href": service.immediate_practice_link(
+            retrospective_id, candidate.target_resource_id
+        ),
+    }
+
+
+@router.post(
+    "/api/interview-retrospectives/{retrospective_id}/candidates/batch-decision",
+    response_model=list[BatchCandidateDecisionResult],
+)
+async def batch_decide_candidates(
+    retrospective_id: str,
+    command: BatchCandidateDecisionCommand,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    service = _application(application, command.workspace_id)
+    results: list[dict[str, object]] = []
+    for item in command.decisions:
+        try:
+            record = await service.decide_candidate(
+                retrospective_id,
+                item.candidate_id,
+                action=item.action,
+                target_resource_id=item.target_resource_id,
+                action_payload=item.action_payload,
+                expected_version=item.expected_version,
+                idempotency_key=item.idempotency_key,
+            )
+            results.append(
+                {
+                    "candidateId": item.candidate_id,
+                    "status": "completed",
+                    "candidate": asset_candidate_resource(record),
+                    "errorCode": None,
+                }
+            )
+        except Exception as error:
+            results.append(
+                {
+                    "candidateId": item.candidate_id,
+                    "status": "failed",
+                    "candidate": None,
+                    "errorCode": str(getattr(error, "code", type(error).__name__)),
+                }
+            )
+    return results
+
+
+@router.get(
+    "/api/interview-retrospectives/{retrospective_id}/actions",
+    response_model=list[ActionItemResource],
+)
+def list_actions(
+    retrospective_id: str,
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    application: AgentApplication = Depends(get_agent_application),
+):
+    return [
+        action_item_resource(item)
+        for item in _application(application, workspace_id).list_actions(
+            retrospective_id
+        )
+    ]
+
+
+@router.post(
+    "/api/interview-retrospectives/{retrospective_id}/actions/{action_id}/decision",
+    response_model=ActionItemResource,
+)
+def decide_action(
+    retrospective_id: str,
+    action_id: str,
+    command: ActionDecisionCommand,
+    idempotency_key: IdempotencyKey,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    record = _application(application, command.workspace_id).decide_action(
+        retrospective_id,
+        action_id,
+        decision=command.decision,
+        expected_version=command.expected_version,
+        idempotency_key=idempotency_key,
+    )
+    return action_item_resource(record)
+
+
+@router.post(
+    "/api/interview-retrospectives/{retrospective_id}/publication-drafts",
+    response_model=PublicationDraftResource,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_publication_draft(
+    retrospective_id: str,
+    command: PublicationDraftCommand,
+    idempotency_key: IdempotencyKey,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    draft = await _application(
+        application, command.workspace_id
+    ).create_publication_draft(
+        retrospective_id,
+        selected_sections=tuple(command.selected_sections),
+        idempotency_key=idempotency_key,
+    )
+    return {
+        "id": draft.id,
+        "documentType": draft.document_type,
+        "title": draft.title,
+        "markdown": draft.markdown,
+        "status": draft.status,
+        "version": draft.version,
     }

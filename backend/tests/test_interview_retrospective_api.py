@@ -520,6 +520,41 @@ async def test_progressive_analysis_api_returns_questions_and_report_without_sco
                 f"/api/interview-retrospectives/{retrospective.id}/report",
                 params={"workspaceId": "w1"},
             )
+            candidates = await client.get(
+                f"/api/interview-retrospectives/{retrospective.id}/candidates",
+                params={"workspaceId": "w1"},
+            )
+            review_candidate = next(
+                item
+                for item in candidates.json()
+                if item["candidateKind"] == "review_question"
+            )
+            review_decision = await client.post(
+                f"/api/interview-retrospectives/{retrospective.id}/candidates/{review_candidate['id']}/decision",
+                json={
+                    "workspaceId": "w1",
+                    "action": "create_new",
+                    "expectedVersion": review_candidate["version"],
+                    "actionPayload": {},
+                },
+                headers={"Idempotency-Key": "analysis-api-review-candidate"},
+            )
+            actions = await client.get(
+                f"/api/interview-retrospectives/{retrospective.id}/actions",
+                params={"workspaceId": "w1"},
+            )
+            publication = await client.post(
+                f"/api/interview-retrospectives/{retrospective.id}/publication-drafts",
+                json={
+                    "workspaceId": "w1",
+                    "selectedSections": [
+                        "basic_info",
+                        "confirmed_questions",
+                        "action_items",
+                    ],
+                },
+                headers={"Idempotency-Key": "analysis-api-publication"},
+            )
 
         assert questions.status_code == 200, questions.text
         assert questions.json()[0]["origin"] == "original"
@@ -535,6 +570,22 @@ async def test_progressive_analysis_api_returns_questions_and_report_without_sco
             }
         ]
         assert "overallScore" not in report.json()["summary"]
+        assert candidates.status_code == 200, candidates.text
+        assert {item["candidateKind"] for item in candidates.json()} == {
+            "review_question",
+            "project_narrative",
+            "summary",
+        }
+        assert review_decision.status_code == 200, review_decision.text
+        assert review_decision.json()["status"] == "confirmed"
+        assert (
+            review_decision.json()["targetResourceType"] == "review_question_candidate"
+        )
+        assert actions.status_code == 200, actions.text
+        assert actions.json()[0]["status"] == "pending"
+        assert publication.status_code == 201, publication.text
+        assert publication.json()["documentType"] == "interview_retrospective"
+        assert "介绍缓存治理" in publication.json()["markdown"]
     finally:
         app.dependency_overrides.pop(get_agent_application, None)
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from urllib.parse import urlencode
 
 from app.agents.context import AgentContext
 from app.agents.interview_retrospective_agents import InterviewRetrospectiveAgents
@@ -30,7 +31,10 @@ from app.interview_retrospectives.repository import (
     InterviewRetrospectiveRepository,
 )
 from app.interview_retrospectives.service import InterviewRetrospectiveService
+from app.knowledge.drafts import CreateDraftCommand, KnowledgeDraftService
+from app.profile.models import CreateClaimProposalSpec
 from app.profile.service import ProfileService
+from app.review.question_similarity import question_similarity
 
 
 class InterviewRetrospectiveApplication:
@@ -45,6 +49,8 @@ class InterviewRetrospectiveApplication:
         products: ProductRepository,
         agents: InterviewRetrospectiveAgents | None,
         profile: ProfileService | None = None,
+        review=None,
+        drafts: KnowledgeDraftService | None = None,
         analysis_model_id: str | None = None,
     ) -> None:
         self.workspace_id = workspace_id
@@ -55,6 +61,8 @@ class InterviewRetrospectiveApplication:
         self.products = products
         self.agents = agents
         self.profile = profile
+        self.review = review
+        self.drafts = drafts
         self.analysis_model_id = analysis_model_id
 
     async def create_retrospective(
@@ -344,6 +352,525 @@ class InterviewRetrospectiveApplication:
             self.repository.list_analysis_work_items(run.id),
         )
 
+    def generate_candidates(self, retrospective_id: str, run_id: str):
+        self.service.get(retrospective_id)
+        run = self.get_analysis_run(retrospective_id, run_id)
+        questions = self.repository.list_questions(
+            retrospective_id, cleanup_version_id=run.cleanup_version_id
+        )
+        analyses = {
+            item.question_unit_id: item
+            for item in self.repository.list_question_analyses(run_id)
+        }
+        eligible = tuple(
+            item for item in questions if item.decision_status == "confirmed"
+        )
+        if any(
+            item.id not in analyses or analyses[item.id].result_status != "formal"
+            for item in eligible
+        ):
+            raise ValueError("确认问题尚未全部完成分析")
+
+        review_questions = () if self.review is None else self.review.list_questions()
+        for question in eligible:
+            analysis = analyses[question.id]
+            matches = tuple(
+                sorted(
+                    (
+                        {
+                            "resourceId": item.snapshot.question_id,
+                            "score": round(
+                                question_similarity(
+                                    question.question_text,
+                                    item.snapshot.question_text,
+                                ),
+                                4,
+                            ),
+                            "title": item.snapshot.question_text,
+                        }
+                        for item in review_questions
+                        if question_similarity(
+                            question.question_text, item.snapshot.question_text
+                        )
+                        >= 0.45
+                    ),
+                    key=lambda item: (-float(item["score"]), str(item["resourceId"])),
+                )
+            )
+            payload: dict[str, object] = {
+                "questionText": question.question_text,
+                "questionKind": question.question_kind,
+                "sourceQuestionId": question.id,
+                "verdict": analysis.verdict,
+                "suggestedAnswer": analysis.suggested_answer,
+                "keyPoints": list(analysis.improvement_outline),
+            }
+            self.repository.upsert_asset_candidate(
+                retrospective_id,
+                analysis_run_id=run_id,
+                question_unit_id=question.id,
+                candidate_kind="review_question",
+                fingerprint=_digest(
+                    {
+                        "kind": "review_question",
+                        "question": question.stable_key,
+                        "payload": payload,
+                    }
+                ),
+                payload=payload,
+                matches=matches,
+            )
+            if question.question_kind == "project_experience":
+                project_payload = {
+                    "sourceQuestionId": question.id,
+                    "questionText": question.question_text,
+                    "suggestedNarrative": analysis.suggested_answer,
+                    "improvementOutline": list(analysis.improvement_outline),
+                }
+                self.repository.upsert_asset_candidate(
+                    retrospective_id,
+                    analysis_run_id=run_id,
+                    question_unit_id=question.id,
+                    candidate_kind="project_narrative",
+                    fingerprint=_digest(
+                        {
+                            "kind": "project_narrative",
+                            "question": question.stable_key,
+                            "payload": project_payload,
+                        }
+                    ),
+                    payload=project_payload,
+                    matches=self._project_matches(),
+                )
+
+        retrospective = self.service.get(retrospective_id)
+        summary_payload = {
+            "title": retrospective.title,
+            "roundLabel": retrospective.round_label,
+            "interviewDate": retrospective.interview_date,
+            "questionIds": [item.id for item in eligible],
+            "verdictCounts": _verdict_counts(eligible, analyses),
+        }
+        self.repository.upsert_asset_candidate(
+            retrospective_id,
+            analysis_run_id=run_id,
+            question_unit_id=None,
+            candidate_kind="summary",
+            fingerprint=_digest({"kind": "summary", "payload": summary_payload}),
+            payload=summary_payload,
+        )
+        eligible_ids = {item.id for item in eligible}
+        for gap in self.repository.list_gaps(run_id):
+            if gap.question_unit_id not in eligible_ids:
+                continue
+            self.repository.upsert_action_item(
+                retrospective_id,
+                analysis_run_id=run_id,
+                question_unit_id=gap.question_unit_id,
+                gap_id=gap.id,
+                action_kind=gap.gap_kind,
+                title=gap.summary,
+                detail=f"来自复盘问题 {gap.question_unit_id}",
+            )
+        return self.repository.list_asset_candidates(retrospective_id)
+
+    def _project_matches(self) -> tuple[dict[str, object], ...]:
+        if self.profile is None:
+            return ()
+        return tuple(
+            {
+                "resourceId": item.id,
+                "resourceVersion": item.version,
+                "score": 1.0,
+            }
+            for item in self.profile.repository.list_claims(self.workspace_id)
+            if item.claim_type == "project"
+        )
+
+    def list_candidates(self, retrospective_id: str, *, status: str | None = None):
+        self.service.get(retrospective_id)
+        return self.repository.list_asset_candidates(retrospective_id, status=status)
+
+    async def decide_candidate(
+        self,
+        retrospective_id: str,
+        candidate_id: str,
+        *,
+        action: str,
+        target_resource_id: str | None,
+        action_payload: dict[str, object],
+        expected_version: int,
+        idempotency_key: str,
+    ):
+        self.service.get(retrospective_id)
+        candidate = self.repository.get_asset_candidate(candidate_id)
+        if candidate.retrospective_id != retrospective_id:
+            raise RetrospectiveTargetRequired("候选项不属于当前复盘")
+        request = {
+            "candidateId": candidate_id,
+            "action": action,
+            "targetResourceId": target_resource_id,
+            "payload": action_payload,
+            "expectedVersion": expected_version,
+        }
+        request_hash = _digest(request)
+        scope = f"candidate_decision:{candidate_id}"
+        replay = self.repository.receipt(retrospective_id, scope, idempotency_key)
+        if replay is not None:
+            saved_hash, result = replay
+            if saved_hash != request_hash:
+                raise RetrospectiveIdempotencyConflict("同一幂等键不能处理不同候选项")
+            return self.repository.get_asset_candidate(str(result["candidateId"]))
+        allowed = {
+            "review_question": {
+                "link_existing",
+                "supplement_existing",
+                "create_new",
+                "reject",
+            },
+            "profile_claim": {
+                "link_existing",
+                "propose_update",
+                "propose_new",
+                "reject",
+            },
+            "project_narrative": {
+                "link_existing",
+                "propose_update",
+                "propose_new",
+                "reject",
+            },
+            "summary": {"include", "exclude"},
+        }
+        if action not in allowed[candidate.candidate_kind]:
+            raise ValueError("候选动作与类型不匹配")
+        target_type: str | None = None
+        resolved_target: str | None = None
+        try:
+            if action in {"reject", "exclude"}:
+                status = "rejected"
+            elif candidate.candidate_kind == "summary":
+                status, target_type, resolved_target = (
+                    "confirmed",
+                    "interview_retrospective_summary",
+                    retrospective_id,
+                )
+            elif candidate.candidate_kind == "review_question":
+                target_type, resolved_target = await self._write_review_candidate(
+                    retrospective_id,
+                    candidate,
+                    action=action,
+                    target_resource_id=target_resource_id,
+                    action_payload=action_payload,
+                )
+                status = "confirmed"
+            else:
+                target_type, resolved_target = self._write_profile_candidate(
+                    retrospective_id,
+                    candidate,
+                    action=action,
+                    target_resource_id=target_resource_id,
+                    action_payload=action_payload,
+                    idempotency_key=idempotency_key,
+                )
+                status = "confirmed"
+            decided = self.repository.transition_asset_candidate(
+                candidate_id,
+                status=status,
+                target_resource_type=target_type,
+                target_resource_id=resolved_target,
+                last_error_code=None,
+                expected_version=expected_version,
+            )
+        except Exception as error:
+            if candidate.status in {"pending", "blocked", "failed"}:
+                self.repository.transition_asset_candidate(
+                    candidate_id,
+                    status="failed",
+                    target_resource_type=None,
+                    target_resource_id=None,
+                    last_error_code=type(error).__name__,
+                    expected_version=candidate.version,
+                )
+            raise
+        self.repository.save_receipt(
+            retrospective_id,
+            scope=scope,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+            result={"candidateId": decided.id},
+        )
+        return decided
+
+    async def _write_review_candidate(
+        self,
+        retrospective_id: str,
+        candidate,
+        *,
+        action: str,
+        target_resource_id: str | None,
+        action_payload: dict[str, object],
+    ) -> tuple[str, str]:
+        if self.review is None:
+            raise ValueError("题库适配器不可用")
+        if action == "link_existing":
+            if target_resource_id is None:
+                raise ValueError("请选择已有题目")
+            target = self.review.get_confirmed_question(target_resource_id)
+            if target.workspace_id != self.workspace_id:
+                raise ValueError("题目不属于当前工作区")
+            return "review_question", target.snapshot.question_id
+        if action == "supplement_existing" and target_resource_id is None:
+            raise ValueError("补充已有题目必须选择目标")
+        created = await self.review.create_retrospective_candidate(
+            retrospective_id=retrospective_id,
+            payload=json.loads(candidate.payload_json),
+            target_question_id=target_resource_id,
+            edited_payload=action_payload,
+        )
+        return "review_question_candidate", created.id
+
+    def _write_profile_candidate(
+        self,
+        retrospective_id: str,
+        candidate,
+        *,
+        action: str,
+        target_resource_id: str | None,
+        action_payload: dict[str, object],
+        idempotency_key: str,
+    ) -> tuple[str, str]:
+        if self.profile is None:
+            raise ValueError("画像适配器不可用")
+        if action == "link_existing":
+            if target_resource_id is None:
+                raise ValueError("请选择已有画像项")
+            claim = self.profile.repository.get_claim(target_resource_id)
+            if claim.workspace_id != self.workspace_id:
+                raise ValueError("画像项不属于当前工作区")
+            return "profile_claim", claim.id
+        proposal_type = "update" if action == "propose_update" else "create"
+        target = None
+        base = None
+        if proposal_type == "update":
+            if target_resource_id is None:
+                raise ValueError("更新建议必须选择目标画像项")
+            target = self.profile.repository.get_claim(target_resource_id)
+            if target.workspace_id != self.workspace_id:
+                raise ValueError("画像项不属于当前工作区")
+            base = target.current_confirmed_version_id
+        category = (
+            "project"
+            if candidate.candidate_kind == "project_narrative"
+            else str(action_payload.get("category", "highlight"))
+        )
+        proposed_value = dict(action_payload.get("value", {}))
+        proposed_value["category"] = category
+        proposals = self.profile.create_retrospective_proposals(
+            (
+                CreateClaimProposalSpec(
+                    proposal_type=proposal_type,
+                    target_claim_id=None if target is None else target.id,
+                    base_claim_version_id=base,
+                    proposed_value=proposed_value,
+                    reason=f"来自面试复盘 {retrospective_id}",
+                ),
+            ),
+            retrospective_id=retrospective_id,
+            candidate_id=candidate.id,
+            idempotency_key=idempotency_key,
+        )
+        return "profile_claim_proposal", proposals[0].id
+
+    def list_actions(self, retrospective_id: str):
+        self.service.get(retrospective_id)
+        return self.repository.list_action_items(retrospective_id)
+
+    def decide_action(
+        self,
+        retrospective_id: str,
+        action_id: str,
+        *,
+        decision: str,
+        expected_version: int,
+        idempotency_key: str,
+    ):
+        if decision not in {"completed", "dismissed"}:
+            raise ValueError("不支持的行动项状态")
+        self.service.get(retrospective_id)
+        request_hash = _digest(
+            {
+                "actionId": action_id,
+                "decision": decision,
+                "expectedVersion": expected_version,
+            }
+        )
+        scope = f"action_decision:{action_id}"
+        replay = self.repository.receipt(retrospective_id, scope, idempotency_key)
+        if replay is not None:
+            saved_hash, result = replay
+            if saved_hash != request_hash:
+                raise RetrospectiveIdempotencyConflict("同一幂等键不能处理不同行动项")
+            return self.repository.get_action_item(str(result["actionId"]))
+        action = self.repository.get_action_item(action_id)
+        if action.retrospective_id != retrospective_id:
+            raise RetrospectiveTargetRequired("行动项不属于当前复盘")
+        decided = self.repository.decide_action_item(
+            action_id, decision=decision, expected_version=expected_version
+        )
+        self.repository.save_receipt(
+            retrospective_id,
+            scope=scope,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+            result={"actionId": decided.id},
+        )
+        return decided
+
+    def immediate_practice_link(
+        self, retrospective_id: str, review_question_id: str
+    ) -> str:
+        self.service.get(retrospective_id)
+        if self.review is None:
+            raise ValueError("题库适配器不可用")
+        target = self.review.get_confirmed_question(review_question_id)
+        if target.workspace_id != self.workspace_id:
+            raise ValueError("题目不属于当前工作区")
+        return "/review?" + urlencode(
+            {
+                "questionId": target.snapshot.question_id,
+                "source": "retrospective",
+                "id": retrospective_id,
+            }
+        )
+
+    async def create_publication_draft(
+        self,
+        retrospective_id: str,
+        *,
+        selected_sections: tuple[str, ...],
+        idempotency_key: str,
+    ):
+        retrospective = self.service.get(retrospective_id)
+        allowed = {
+            "basic_info",
+            "confirmed_questions",
+            "selected_conclusions",
+            "confirmed_experiences",
+            "action_items",
+            "stable_links",
+        }
+        if not selected_sections or set(selected_sections) - allowed:
+            raise ValueError("发布范围不合法")
+        request_hash = _digest({"sections": list(selected_sections)})
+        scope = "publication_draft"
+        replay = self.repository.receipt(retrospective_id, scope, idempotency_key)
+        if replay is not None:
+            saved_hash, result = replay
+            if saved_hash != request_hash:
+                raise RetrospectiveIdempotencyConflict("同一幂等键不能生成不同发布稿")
+            if self.drafts is None:
+                raise ValueError("Knowledge 草稿服务不可用")
+            return await self.drafts.get(str(result["draftId"]))
+        if self.drafts is None:
+            raise ValueError("Knowledge 草稿服务不可用")
+        active_run = (
+            None
+            if retrospective.active_analysis_run_id is None
+            else self.repository.get_analysis_run(retrospective.active_analysis_run_id)
+        )
+        draft = await self.drafts.create(
+            CreateDraftCommand(
+                domain="review",
+                document_type="interview_retrospective",
+                title=f"面试复盘：{retrospective.title}",
+                markdown=self._publication_markdown(
+                    retrospective_id, selected_sections
+                ),
+                source_refs=(f"retrospective:{retrospective_id}",),
+                relation_refs=(f"job-target:{retrospective.job_target_id}",),
+                session_id=retrospective.analysis_session_id,
+                run_id=None if active_run is None else active_run.execution_id,
+                agent_type="interview_retrospective",
+            )
+        )
+        self.repository.save_receipt(
+            retrospective_id,
+            scope=scope,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+            result={"draftId": draft.id},
+        )
+        return draft
+
+    def _publication_markdown(
+        self, retrospective_id: str, selected_sections: tuple[str, ...]
+    ) -> str:
+        retrospective = self.service.get(retrospective_id)
+        run_id = retrospective.active_analysis_run_id
+        if run_id is None:
+            raise ValueError("复盘尚未生成分析")
+        run = self.repository.get_analysis_run(run_id)
+        questions = tuple(
+            item
+            for item in self.repository.list_questions(
+                retrospective_id, cleanup_version_id=run.cleanup_version_id
+            )
+            if item.decision_status == "confirmed"
+        )
+        analyses = {
+            item.question_unit_id: item
+            for item in self.repository.list_question_analyses(run_id)
+            if item.result_status == "formal"
+        }
+        lines = [f"# {retrospective.title}", ""]
+        if "basic_info" in selected_sections:
+            lines.extend(
+                [
+                    "## 基本信息",
+                    f"- 面试轮次：{retrospective.round_label}",
+                    f"- 面试日期：{retrospective.interview_date or '未记录'}",
+                    f"- 面试结果：{retrospective.outcome}",
+                    "",
+                ]
+            )
+        if "confirmed_questions" in selected_sections:
+            lines.extend(["## 已确认问题", ""])
+            for index, question in enumerate(questions, start=1):
+                lines.append(f"### {index}. {question.question_text}")
+                analysis = analyses.get(question.id)
+                if analysis is not None and analysis.suggested_answer:
+                    lines.extend(["", analysis.suggested_answer])
+                lines.append("")
+        if "selected_conclusions" in selected_sections:
+            lines.extend(["## 复盘结论", ""])
+            for question in questions:
+                analysis = analyses.get(question.id)
+                if analysis is not None:
+                    lines.append(f"- {question.question_text}：{analysis.verdict}")
+            lines.append("")
+        if "confirmed_experiences" in selected_sections:
+            lines.extend(["## 已确认经历", ""])
+            for candidate in self.repository.list_asset_candidates(retrospective_id):
+                if (
+                    candidate.candidate_kind == "project_narrative"
+                    and candidate.status == "confirmed"
+                ):
+                    payload = json.loads(candidate.payload_json)
+                    lines.append(f"- {payload.get('suggestedNarrative', '')}")
+            lines.append("")
+        if "action_items" in selected_sections:
+            lines.extend(["## 后续行动", ""])
+            for item in self.repository.list_action_items(retrospective_id):
+                marker = "x" if item.status == "completed" else " "
+                lines.append(f"- [{marker}] {item.title}")
+            lines.append("")
+        if "stable_links" in selected_sections:
+            lines.extend(
+                ["## 关联", "", f"- 复盘：retrospective:{retrospective_id}", ""]
+            )
+        return "\n".join(lines).rstrip() + "\n"
+
     def _analysis_context_snapshot(self, retrospective) -> dict[str, object]:
         target = self.service.job_targets.get_target(retrospective.job_target_id)
         document = None
@@ -518,6 +1045,23 @@ class InterviewRetrospectiveApplication:
                             )
                             self.repository.complete_analysis_work_item(
                                 current.id, output=serialized
+                            )
+                    elif current.work_key == "candidate_generation":
+                        with cancellation.critical_section():
+                            candidates = self.generate_candidates(
+                                run.retrospective_id, run_id
+                            )
+                            self.repository.complete_analysis_work_item(
+                                current.id,
+                                output={
+                                    "candidateIds": [item.id for item in candidates],
+                                    "actionItemIds": [
+                                        item.id
+                                        for item in self.list_actions(
+                                            run.retrospective_id
+                                        )
+                                    ],
+                                },
                             )
                     elif current.work_key == "final_projection":
                         questions = self.repository.list_questions(
@@ -920,3 +1464,11 @@ def _digest(value: object) -> str:
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _verdict_counts(questions, analyses) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for question in questions:
+        verdict = analyses[question.id].verdict
+        counts[verdict] = counts.get(verdict, 0) + 1
+    return counts

@@ -38,7 +38,11 @@ from app.application.session_service import (
 from app.hitl.models import ResolveActionCommand
 from app.hitl.repository import PendingActionRepository
 from app.hitl.service import HitlService
-from app.knowledge.drafts import KnowledgeDraftService, UpdateDraftCommand
+from app.knowledge.drafts import (
+    CreateDraftCommand,
+    KnowledgeDraftService,
+    UpdateDraftCommand,
+)
 from app.knowledge.source_registry import KnowledgeSourceService
 from app.knowledge.publication import PublicationService
 from app.review.errors import InsufficientQuestionsError, ReviewConflictError
@@ -55,6 +59,7 @@ from app.review.curation_seed_reconciliation import reconcile_curation_seed_task
 from app.review.models import (
     BulkPublicationPreflight,
     CurationSummary,
+    QuestionSnapshot,
     ReviewRoundSettings,
 )
 from app.review.repository import ReviewRepository
@@ -117,8 +122,7 @@ def _seed_progress_resource(seed_tasks) -> dict[str, int]:
         "completed": statuses.count("completed"),
         "degraded": statuses.count("degraded"),
         "retrying": sum(
-            status in {"running", "retryable", "interrupted"}
-            for status in statuses
+            status in {"running", "retryable", "interrupted"} for status in statuses
         ),
         "skipped": statuses.count("skipped"),
         "pending": statuses.count("pending"),
@@ -193,9 +197,7 @@ class ReviewApplication:
         self._discussion_locks: dict[str, asyncio.Lock] = {}
         self._curation_control_locks: dict[str, asyncio.Lock] = {}
         self.curation_commands = CurationCommandService()
-        self.timeline = SessionTimelineProjector(
-            self.sessions.repository, self.events
-        )
+        self.timeline = SessionTimelineProjector(self.sessions.repository, self.events)
 
     async def create_curation_session(
         self, *, source_refs: tuple[str, ...]
@@ -210,9 +212,7 @@ class ReviewApplication:
             await source_service.get(source_id, include_deleted=False)
             for source_id in selected
         ]
-        prepared_sources, excerpts = self._prepare_curation_source_records(
-            sources
-        )
+        prepared_sources, excerpts = self._prepare_curation_source_records(sources)
         existing = self.repository.list_curation_sessions(self.workspace_id)
         warnings: list[dict[str, object]] = []
         for source_id in selected:
@@ -220,8 +220,7 @@ class ReviewApplication:
             if not related:
                 continue
             in_progress = any(
-                item.stage
-                not in {"waiting_for_command", "completed", "failed"}
+                item.stage not in {"waiting_for_command", "completed", "failed"}
                 for item in related
             )
             warnings.append(
@@ -278,9 +277,7 @@ class ReviewApplication:
             session_id=session.id,
             run_id=None,
             source_refs=selected,
-            status=(
-                "generating" if prepared_sources.has_usable_text else "completed"
-            ),
+            status=("generating" if prepared_sources.has_usable_text else "completed"),
         )
         if not prepared_sources.has_usable_text:
             await self._complete_curation_without_text(
@@ -304,9 +301,7 @@ class ReviewApplication:
                 "source_excerpts": excerpts,
                 "similar_questions": [
                     item.snapshot.question_text
-                    for item in self.repository.list_active_questions(
-                        self.workspace_id
-                    )
+                    for item in self.repository.list_active_questions(self.workspace_id)
                 ],
                 "rewrite_feedback": None,
             },
@@ -385,9 +380,7 @@ class ReviewApplication:
         record = self.repository.get_curation_session(session_id)
         if record.workspace_id != self.workspace_id:
             raise LookupError(session_id)
-        session = self.sessions.repository.get_session(
-            session_id, include_deleted=True
-        )
+        session = self.sessions.repository.get_session(session_id, include_deleted=True)
         source_service = KnowledgeSourceService(
             self.workspace_root, workspace_id=self.workspace_id
         )
@@ -406,9 +399,7 @@ class ReviewApplication:
                 limit=None,
             )
         )
-        latest_command = self.repository.latest_curation_command_receipt(
-            session_id
-        )
+        latest_command = self.repository.latest_curation_command_receipt(session_id)
         batch = (
             None
             if record.active_batch_id is None
@@ -416,9 +407,7 @@ class ReviewApplication:
         )
         seed_tasks = ()
         if batch is not None:
-            reconciliation = reconcile_curation_seed_tasks(
-                self.repository, batch.id
-            )
+            reconciliation = reconcile_curation_seed_tasks(self.repository, batch.id)
             for warning in reconciliation.warnings:
                 self.repository.append_curation_warning(session_id, warning)
             if reconciliation.warnings:
@@ -430,9 +419,7 @@ class ReviewApplication:
             else self.sessions.repository.get_execution(batch.run_id)
         )
         work_items = (
-            ()
-            if batch is None
-            else self.repository.list_curation_work_items(batch.id)
+            () if batch is None else self.repository.list_curation_work_items(batch.id)
         )
         phase = self._active_curation_phase(record)
         phase_items = (
@@ -473,9 +460,7 @@ class ReviewApplication:
                     {
                         "id": item.id,
                         "title": (
-                            item.question_text
-                            if candidate is None
-                            else candidate.title
+                            item.question_text if candidate is None else candidate.title
                         ),
                         "question_text": item.question_text,
                         "source_refs": item.source_refs,
@@ -511,16 +496,16 @@ class ReviewApplication:
                 for ordinal, candidate in enumerate(chunk.candidates):
                     if len(provisional_candidates) >= 200:
                         break
-                    provisional_candidates.append({
-                        "id": f"{item.id}:{ordinal}",
-                        "title": candidate.title,
-                        "question_text": candidate.question_text,
-                        "source_refs": candidate.source_refs,
-                    })
+                    provisional_candidates.append(
+                        {
+                            "id": f"{item.id}:{ordinal}",
+                            "title": candidate.title,
+                            "question_text": candidate.question_text,
+                            "source_refs": candidate.source_refs,
+                        }
+                    )
         timing = (
-            None
-            if batch is None
-            else self.repository.curation_batch_timing(batch.id)
+            None if batch is None else self.repository.curation_batch_timing(batch.id)
         )
         controls = self._curation_controls(batch)
         projected_stage = (
@@ -533,8 +518,7 @@ class ReviewApplication:
         organization_warnings_by_source = {
             str(item["sourceId"]): str(item["code"])
             for item in record.warnings
-            if item.get("code")
-            in {"source_curating", "source_previously_curated"}
+            if item.get("code") in {"source_curating", "source_previously_curated"}
         }
         source_resources = []
         for source in sources:
@@ -569,9 +553,7 @@ class ReviewApplication:
             "execution_finished_at": None if latest is None else latest.finished_at,
             "execution_error_code": None if latest is None else latest.error_code,
             "execution_error_message": None if latest is None else latest.error_message,
-            "context_compacted": self.sessions.repository.context_compacted(
-                session_id
-            ),
+            "context_compacted": self.sessions.repository.context_compacted(session_id),
             "context_usage": self.sessions.repository.context_usage(session_id),
             "stage": projected_stage,
             "progress": {
@@ -598,9 +580,7 @@ class ReviewApplication:
                     item.status in {"failed", "interrupted", "retryable"}
                     for item in phase_items
                 ),
-                "pending_units": sum(
-                    item.status == "pending" for item in phase_items
-                ),
+                "pending_units": sum(item.status == "pending" for item in phase_items),
             },
             "timing": {
                 "current_elapsed_ms": (
@@ -615,7 +595,8 @@ class ReviewApplication:
             "seed_progress": _seed_progress_resource(seed_tasks),
             "quality_summary": _quality_summary_resource(seed_tasks),
             "source_warnings": [
-                warning for warning in record.warnings
+                warning
+                for warning in record.warnings
                 if isinstance(warning.get("sourceId"), str)
             ],
             "summary": asdict(record.summary),
@@ -637,9 +618,7 @@ class ReviewApplication:
             "pending_count": sum(
                 item.status == "review_pending" for item in candidates
             ),
-            "published_count": sum(
-                item.status == "published" for item in candidates
-            ),
+            "published_count": sum(item.status == "published" for item in candidates),
             "messages": [
                 asdict(item)
                 for item in self.sessions.repository.list_messages(session_id)
@@ -726,10 +705,7 @@ class ReviewApplication:
             )
         except ReviewConflictError:
             winner = self.repository.get_batch(batch_id)
-            if (
-                existing is None
-                and winner.status in {"review_pending", "completed"}
-            ):
+            if existing is None and winner.status in {"review_pending", "completed"}:
                 return await self.curation_resource(session_id)
             raise
         if receipt.result_status != "requested":
@@ -862,9 +838,7 @@ class ReviewApplication:
                 idempotency_key=idempotency_key,
                 execution_id=reserved_execution_id,
             )
-            execution = await self.executions.rearm_prepared(
-                reserved_execution_id
-            )
+            execution = await self.executions.rearm_prepared(reserved_execution_id)
         try:
             resumed = self.repository.resume_curation_batch(
                 batch.id,
@@ -954,21 +928,21 @@ class ReviewApplication:
         )
         if existing is not None:
             if existing.request_digest != digest:
-                raise ReviewConflictError(
-                    "curation seed retry idempotency key changed"
-                )
+                raise ReviewConflictError("curation seed retry idempotency key changed")
             return self._accepted_seed_retry_resource(existing)
 
         session = self.sessions.get(session_id)
         execution_input = self.repository.curation_batch_input(task.batch_id)
-        execution_input.update({
-            "manualSeedTaskId": task.id,
-            "manual_seed_task_id": task.id,
-            "manualSeedExpectedVersion": expected_version,
-            "manual_seed_expected_version": expected_version,
-            "manualSeedRetryKey": idempotency_key,
-            "manual_seed_retry_key": idempotency_key,
-        })
+        execution_input.update(
+            {
+                "manualSeedTaskId": task.id,
+                "manual_seed_task_id": task.id,
+                "manualSeedExpectedVersion": expected_version,
+                "manual_seed_expected_version": expected_version,
+                "manualSeedRetryKey": idempotency_key,
+                "manual_seed_retry_key": idempotency_key,
+            }
+        )
         execution = await self.executions.prepare(
             session, input=execution_input, project_input_message=False
         )
@@ -1016,9 +990,7 @@ class ReviewApplication:
             ]
         )
 
-    def preflight_bulk_publication(
-        self, session_id: str
-    ) -> BulkPublicationPreflight:
+    def preflight_bulk_publication(self, session_id: str) -> BulkPublicationPreflight:
         curation = self.repository.get_curation_session(session_id)
         publishable: list[str] = []
         already_published: list[str] = []
@@ -1071,9 +1043,7 @@ class ReviewApplication:
                 "curation summary changed before bulk publication"
             )
         if candidate_ids != preflight.publishable:
-            raise ReviewConflictError(
-                "bulk publication eligibility changed"
-            )
+            raise ReviewConflictError("bulk publication eligibility changed")
         confirmed = set(confirmed_ai_candidate_ids)
         if not confirmed.issubset(candidate_ids):
             raise ReviewConflictError("AI confirmation candidate set changed")
@@ -1108,18 +1078,14 @@ class ReviewApplication:
     def _schedule_bulk_publication(self, operation) -> None:
         if operation.execution_id is None:
             raise ReviewConflictError("bulk publication has no execution")
-        execution = self.sessions.repository.get_execution(
-            operation.execution_id
-        )
+        execution = self.sessions.repository.get_execution(operation.execution_id)
 
         async def handler(current, cancellation):
             self.repository.transition_bulk_publication(
                 operation.id, expected=("accepted",), target="running"
             )
             try:
-                for item in self.repository.list_bulk_publication_items(
-                    operation.id
-                ):
+                for item in self.repository.list_bulk_publication_items(operation.id):
                     if item.status == "completed":
                         continue
                     cancellation.raise_if_requested()
@@ -1167,21 +1133,15 @@ class ReviewApplication:
                         },
                     )
                     cancellation.raise_if_requested()
-                self.repository.complete_bulk_publication_from_items(
-                    operation.id
-                )
+                self.repository.complete_bulk_publication_from_items(operation.id)
             except (ExecutionCancelled, asyncio.CancelledError):
                 latest = self.sessions.repository.get_execution(current.id)
-                self.repository.reset_running_bulk_publication_items(
-                    operation.id
-                )
+                self.repository.reset_running_bulk_publication_items(operation.id)
                 self.repository.transition_bulk_publication(
                     operation.id,
                     expected=("running",),
                     target=(
-                        "cancelled"
-                        if latest.cancellation_requested
-                        else "interrupted"
+                        "cancelled" if latest.cancellation_requested else "interrupted"
                     ),
                 )
                 raise
@@ -1218,9 +1178,7 @@ class ReviewApplication:
         self._schedule_bulk_publication(operation)
         return self._accepted_bulk_publication_resource(operation)
 
-    def bulk_publication_resource(
-        self, operation_id: str
-    ) -> dict[str, Any]:
+    def bulk_publication_resource(self, operation_id: str) -> dict[str, Any]:
         operation = self.repository.reconcile_bulk_publication(operation_id)
         return self._bulk_publication_resource(operation)
 
@@ -1243,9 +1201,7 @@ class ReviewApplication:
             "retry_count": operation.retry_count,
             "items": [
                 asdict(item)
-                for item in self.repository.list_bulk_publication_items(
-                    operation.id
-                )
+                for item in self.repository.list_bulk_publication_items(operation.id)
             ],
             "created_at": operation.created_at,
             "completed_at": operation.completed_at,
@@ -1279,9 +1235,7 @@ class ReviewApplication:
         )
         if existing is not None:
             if existing.execution_id is None:
-                raise ReviewConflictError(
-                    "curation command has no execution"
-                )
+                raise ReviewConflictError("curation command has no execution")
             return self._accepted_curation_command_resource(existing)
         curation = self.repository.get_curation_session(session_id)
         if curation.summary_version != summary_version:
@@ -1311,9 +1265,7 @@ class ReviewApplication:
         )
         if not created:
             if receipt.execution_id is None:
-                raise ReviewConflictError(
-                    "curation command has no execution"
-                )
+                raise ReviewConflictError("curation command has no execution")
             return self._accepted_curation_command_resource(receipt)
         session = self.sessions.get(session_id)
         execution = await self.executions.prepare(
@@ -1385,11 +1337,7 @@ class ReviewApplication:
                 )
             except (ExecutionCancelled, asyncio.CancelledError):
                 latest = self.sessions.repository.get_execution(current.id)
-                target = (
-                    "cancelled"
-                    if latest.cancellation_requested
-                    else "interrupted"
-                )
+                target = "cancelled" if latest.cancellation_requested else "interrupted"
                 self.repository.transition_curation_command_lifecycle(
                     receipt.id,
                     expected=("running",),
@@ -1406,9 +1354,7 @@ class ReviewApplication:
 
         self.executions.run_background(execution, handler)
 
-    async def retry_curation_command(
-        self, command_id: str
-    ) -> dict[str, Any]:
+    async def retry_curation_command(self, command_id: str) -> dict[str, Any]:
         receipt = self.repository.get_curation_command_receipt(command_id)
         if receipt.lifecycle_status not in {"interrupted", "failed"}:
             raise ReviewConflictError("curation command cannot be retried")
@@ -1434,9 +1380,7 @@ class ReviewApplication:
                 "reasoningEffort": curation.preferred_reasoning_effort,
             },
         )
-        receipt = self.repository.requeue_curation_command(
-            receipt.id, execution.id
-        )
+        receipt = self.repository.requeue_curation_command(receipt.id, execution.id)
         self._schedule_curation_command(
             receipt=receipt,
             text=receipt.original_text,
@@ -1480,9 +1424,7 @@ class ReviewApplication:
         _submitted_at: str | None = None,
         _command_agents: CurationCommandAgents | None = None,
     ) -> dict[str, Any]:
-        command_started_at = (
-            _submitted_at or datetime.now(timezone.utc).isoformat()
-        )
+        command_started_at = _submitted_at or datetime.now(timezone.utc).isoformat()
         if _prepared_receipt_id is None:
             existing = self.repository.find_curation_command_receipt(
                 session_id=session_id,
@@ -1496,7 +1438,9 @@ class ReviewApplication:
             existing = None
         curation = self.repository.get_curation_session(session_id)
         if curation.summary_version != summary_version:
-            raise ReviewConflictError("curation summary changed before command resolution")
+            raise ReviewConflictError(
+                "curation summary changed before command resolution"
+            )
         candidate_resources = tuple(
             [
                 await self.candidate_resource(str(item["candidateId"]))
@@ -1512,9 +1456,7 @@ class ReviewApplication:
             str(item["candidateId"]) for item in curation.summary.items
         }
         messages = self.sessions.repository.list_messages(session_id)
-        context_record = self.repository.get_or_create_curation_context(
-            session_id
-        )
+        context_record = self.repository.get_or_create_curation_context(session_id)
         focused_candidate_ids = context_record.focused_candidate_ids
         if context_record.version == 0 and not focused_candidate_ids:
             focused_candidate_ids = CurationContextAdapter.recover_focus(
@@ -1540,13 +1482,9 @@ class ReviewApplication:
 
             async def context_provider(*, compact_overflow: bool = True):
                 nonlocal context_record, response_context, response_invocation_context
-                latest_execution = self.sessions.repository.latest_execution(
-                    session_id
-                )
+                latest_execution = self.sessions.repository.latest_execution(session_id)
                 if latest_execution is None:
-                    raise ReviewConflictError(
-                        "curation session has no execution"
-                    )
+                    raise ReviewConflictError("curation session has no execution")
                 invocation_context = self._curation_invocation_context(
                     session_id=session_id,
                     run_id=latest_execution.id,
@@ -1644,8 +1582,8 @@ class ReviewApplication:
                 {"resourceId": _prepared_receipt_id or idempotency_key},
             )
             if self.curation_commands.route_input(text) == "conversation":
-                response_context, response_invocation_context = (
-                    await context_provider(compact_overflow=False)
+                response_context, response_invocation_context = await context_provider(
+                    compact_overflow=False
                 )
                 response_chunks: list[str] = []
                 async for chunk in command_agents.responder.astream(
@@ -1783,9 +1721,7 @@ class ReviewApplication:
                     with critical:
                         await self._publish_curation_candidate(
                             candidate_id,
-                            idempotency_key=(
-                                f"{idempotency_key}:{candidate_id}"
-                            ),
+                            idempotency_key=(f"{idempotency_key}:{candidate_id}"),
                             confirm_ai_supplement=True,
                         )
                     published.append(candidate_id)
@@ -1807,13 +1743,20 @@ class ReviewApplication:
             if parsed.kind == "mixed" and parsed.rewrite_candidate_ids:
                 if _cancellation is not None:
                     _cancellation.raise_if_requested()
-                rewrite_feedback = self._candidate_notes_feedback(parsed.rewrite_candidate_ids, parsed.feedback)
-                candidate = self.repository.get_candidate(parsed.rewrite_candidate_ids[0])
+                rewrite_feedback = self._candidate_notes_feedback(
+                    parsed.rewrite_candidate_ids, parsed.feedback
+                )
+                candidate = self.repository.get_candidate(
+                    parsed.rewrite_candidate_ids[0]
+                )
                 if execution_id is not None:
-                    await self.executions.complete_background_execution(
-                        execution_id
-                    )
-                rewrite_execution = await self._start_curation_execution(session_id=session_id, source_refs=curation.source_refs, rewrite_feedback=rewrite_feedback, rewrite_of_batch_id=candidate.batch_id)
+                    await self.executions.complete_background_execution(execution_id)
+                rewrite_execution = await self._start_curation_execution(
+                    session_id=session_id,
+                    source_refs=curation.source_refs,
+                    rewrite_feedback=rewrite_feedback,
+                    rewrite_of_batch_id=candidate.batch_id,
+                )
                 result["rewriteExecutionId"] = (
                     None if rewrite_execution is None else rewrite_execution.id
                 )
@@ -1822,20 +1765,18 @@ class ReviewApplication:
             if _cancellation is not None:
                 _cancellation.raise_if_requested()
             candidate = self.repository.get_candidate(parsed.candidate_ids[0])
-            rewrite_feedback = self._candidate_notes_feedback(parsed.candidate_ids, parsed.feedback)
+            rewrite_feedback = self._candidate_notes_feedback(
+                parsed.candidate_ids, parsed.feedback
+            )
             if execution_id is not None:
-                await self.executions.complete_background_execution(
-                    execution_id
-                )
+                await self.executions.complete_background_execution(execution_id)
             execution = await self._start_curation_execution(
                 session_id=session_id,
                 source_refs=curation.source_refs,
                 rewrite_feedback=rewrite_feedback,
                 rewrite_of_batch_id=candidate.batch_id,
             )
-            result = {
-                "executionId": None if execution is None else execution.id
-            }
+            result = {"executionId": None if execution is None else execution.id}
         else:
             refreshed = self._summarize_curation(session_id)
             result = {"summaryVersion": refreshed.summary_version}
@@ -1871,9 +1812,7 @@ class ReviewApplication:
         )
         result_candidate_ids = self._result_candidate_ids(parsed, result)
         if result_candidate_ids:
-            latest_context = self.repository.get_or_create_curation_context(
-                session_id
-            )
+            latest_context = self.repository.get_or_create_curation_context(session_id)
             focus = CurationContextAdapter.focus_after(
                 result_candidate_ids, valid_candidate_ids
             )
@@ -1883,9 +1822,7 @@ class ReviewApplication:
                     expected_version=latest_context.version,
                     focused_candidate_ids=focus,
                     last_intent=(
-                        "inspect"
-                        if plan.inspect.scope != "none"
-                        else parsed.kind
+                        "inspect" if plan.inspect.scope != "none" else parsed.kind
                     ),
                     last_result_candidate_ids=focus,
                     dialogue_summary=latest_context.dialogue_summary,
@@ -1966,11 +1903,15 @@ class ReviewApplication:
             return parsed.candidate_ids
         return ()
 
-    def _candidate_notes_feedback(self, candidate_ids: tuple[str, ...], extra: str | None) -> str:
+    def _candidate_notes_feedback(
+        self, candidate_ids: tuple[str, ...], extra: str | None
+    ) -> str:
         lines = ["请按以下候选题备注重新生成，并保留其余未指定题目："]
         for candidate_id in candidate_ids:
             candidate = self.repository.get_candidate(candidate_id)
-            lines.append(f"- {candidate.question.title}（{candidate_id}）：{candidate.review_note or extra or '重新整理'}")
+            lines.append(
+                f"- {candidate.question.title}（{candidate_id}）：{candidate.review_note or extra or '重新整理'}"
+            )
         if extra:
             lines.append(f"补充要求：{extra}")
         return "\n".join(lines)
@@ -2038,21 +1979,22 @@ class ReviewApplication:
         if candidate.status == "rejected":
             raise ReviewConflictError("rejected candidate cannot be published")
         question = candidate.question
-        if not all((
-            question.title.strip(),
-            question.question_text.strip(),
-            question.reference_answer.strip(),
-            question.topics,
-            question.key_points,
-            candidate.source_refs,
-        )):
+        if not all(
+            (
+                question.title.strip(),
+                question.question_text.strip(),
+                question.reference_answer.strip(),
+                question.topics,
+                question.key_points,
+                candidate.source_refs,
+            )
+        ):
             raise ReviewConflictError("candidate has incomplete required fields")
         if question.difficulty not in {"easy", "medium", "hard"}:
             raise ReviewConflictError("candidate difficulty is invalid")
         if (
             candidate.duplicate_of_question_id is not None
-            and candidate.revision_of_question_id
-            != candidate.duplicate_of_question_id
+            and candidate.revision_of_question_id != candidate.duplicate_of_question_id
         ):
             raise ReviewConflictError(
                 "duplicate candidate must be resolved before publication"
@@ -2070,8 +2012,7 @@ class ReviewApplication:
             if active.snapshot.question_id == candidate.question.question_id:
                 if (
                     candidate.revision_of_question_id is not None
-                    and active.snapshot.content_hash
-                    != candidate.revision_base_hash
+                    and active.snapshot.content_hash != candidate.revision_base_hash
                     and active.draft_id != candidate.draft_id
                 ):
                     raise ReviewConflictError(
@@ -2085,9 +2026,7 @@ class ReviewApplication:
                 right_topics=active.snapshot.topics,
                 threshold=0.9,
             ):
-                raise ReviewConflictError(
-                    "an equivalent question is already published"
-                )
+                raise ReviewConflictError("an equivalent question is already published")
 
     async def _start_curation_execution(
         self,
@@ -2127,16 +2066,13 @@ class ReviewApplication:
             prepared_sources = None
             if revision_context is None:
                 source_records = [
-                    await source_service.get(source_id)
-                    for source_id in source_refs
+                    await source_service.get(source_id) for source_id in source_refs
                 ]
-                prepared_sources, excerpts = (
-                    self._prepare_curation_source_records(source_records)
+                prepared_sources, excerpts = self._prepare_curation_source_records(
+                    source_records
                 )
                 for warning in prepared_sources.warnings:
-                    self.repository.append_curation_warning(
-                        session_id, dict(warning)
-                    )
+                    self.repository.append_curation_warning(session_id, dict(warning))
             batch = self.repository.create_batch(
                 workspace_id=self.workspace_id,
                 session_id=session_id,
@@ -2150,10 +2086,7 @@ class ReviewApplication:
                     else "generating"
                 ),
             )
-            if (
-                prepared_sources is not None
-                and not prepared_sources.has_usable_text
-            ):
+            if prepared_sources is not None and not prepared_sources.has_usable_text:
                 await self._complete_curation_without_text(
                     session_id=session_id,
                     batch_id=batch.id,
@@ -2168,9 +2101,7 @@ class ReviewApplication:
                 "source_excerpts": excerpts,
                 "similar_questions": [
                     item.snapshot.question_text
-                    for item in self.repository.list_active_questions(
-                        self.workspace_id
-                    )
+                    for item in self.repository.list_active_questions(self.workspace_id)
                 ],
                 "rewrite_feedback": rewrite_feedback,
                 "revisionCandidateId": revision_candidate_id,
@@ -2225,9 +2156,7 @@ class ReviewApplication:
         }:
             return None
         items = self.repository.list_curation_work_items(record.active_batch_id)
-        discovery_items = tuple(
-            item for item in items if item.stage == "discovery"
-        )
+        discovery_items = tuple(item for item in items if item.stage == "discovery")
         if discovery_items and all(
             item.status == "completed" for item in discovery_items
         ):
@@ -2337,9 +2266,7 @@ class ReviewApplication:
         sources = KnowledgeSourceService(
             self.workspace_root, workspace_id=self.workspace_id
         )
-        source_records = [
-            await sources.get(source_id) for source_id in source_refs
-        ]
+        source_records = [await sources.get(source_id) for source_id in source_refs]
         prepared_sources, excerpts = self._prepare_curation_source_records(
             source_records, character_limit=20_000
         )
@@ -2360,7 +2287,9 @@ class ReviewApplication:
             run_id=None,
             source_refs=source_refs,
             rewrite_of_batch_id=rewrite_of_batch_id,
-            status="completed" if not prepared_sources.has_usable_text else "generating",
+            status="completed"
+            if not prepared_sources.has_usable_text
+            else "generating",
         )
         if not prepared_sources.has_usable_text:
             await self._complete_curation_without_text(
@@ -2384,9 +2313,7 @@ class ReviewApplication:
                 "source_excerpts": excerpts,
                 "similar_questions": [
                     item.snapshot.question_text
-                    for item in self.repository.list_active_questions(
-                        self.workspace_id
-                    )
+                    for item in self.repository.list_active_questions(self.workspace_id)
                 ],
                 "rewrite_feedback": rewrite_feedback,
             },
@@ -2426,18 +2353,12 @@ class ReviewApplication:
             "created_at": batch.created_at,
             "updated_at": batch.updated_at,
             "candidate_count": len(own),
-            "pending_count": sum(
-                item.status == "review_pending" for item in own
-            ),
-            "candidates": [
-                await self.candidate_resource(item.id) for item in own
-            ],
+            "pending_count": sum(item.status == "review_pending" for item in own),
+            "candidates": [await self.candidate_resource(item.id) for item in own],
         }
 
     async def list_candidate_resources(self, **filters) -> tuple[dict[str, Any], ...]:
-        records = self.repository.list_candidates(
-            self.workspace_id, **filters
-        )
+        records = self.repository.list_candidates(self.workspace_id, **filters)
         return tuple([await self.candidate_resource(item.id) for item in records])
 
     async def candidate_resource(self, candidate_id: str) -> dict[str, Any]:
@@ -2460,9 +2381,7 @@ class ReviewApplication:
                 duplicate = None
         is_active_version = False
         try:
-            active = self.repository.get_active_question(
-                candidate.question.question_id
-            )
+            active = self.repository.get_active_question(candidate.question.question_id)
             is_active_version = active.draft_id == candidate.draft_id
         except LookupError:
             pass
@@ -2480,9 +2399,7 @@ class ReviewApplication:
             "rejected_at": candidate.rejected_at,
             "rejection_action_id": candidate.rejection_action_id,
             "duplicate_of_question_id": candidate.duplicate_of_question_id,
-            "duplicate_question": (
-                None if duplicate is None else asdict(duplicate)
-            ),
+            "duplicate_question": (None if duplicate is None else asdict(duplicate)),
             "revision_of_question_id": candidate.revision_of_question_id,
             "seed_task_id": candidate.seed_task_id,
             "answer_basis": candidate.answer_basis,
@@ -2689,7 +2606,11 @@ class ReviewApplication:
                     source_refs=batch.source_refs,
                 )
         curation = self.repository.get_curation_session(session_id)
-        draft = None if candidate.draft_id is None else await self.drafts.get(candidate.draft_id)
+        draft = (
+            None
+            if candidate.draft_id is None
+            else await self.drafts.get(candidate.draft_id)
+        )
         revision_context = "\n".join(
             (
                 "只修订下面这一道题；只返回一个候选，并保持 logical question 不变。",
@@ -2727,9 +2648,7 @@ class ReviewApplication:
             revision_candidate_id=candidate.id,
             revision_context=revision_context,
             expected_revision_draft_id=(None if draft is None else draft.id),
-            expected_revision_draft_version=(
-                None if draft is None else draft.version
-            ),
+            expected_revision_draft_version=(None if draft is None else draft.version),
             expected_revision_draft_hash=(
                 None if draft is None else draft.content_hash
             ),
@@ -2751,9 +2670,7 @@ class ReviewApplication:
             current,
             title=values.get("title", current.title),
             question_text=values.get("question_text", current.question_text),
-            reference_answer=values.get(
-                "reference_answer", current.reference_answer
-            ),
+            reference_answer=values.get("reference_answer", current.reference_answer),
             topics=tuple(values.get("topics", current.topics)),
             difficulty=values.get("difficulty", current.difficulty),
             key_points=tuple(values.get("key_points", current.key_points)),
@@ -2801,6 +2718,106 @@ class ReviewApplication:
         return self.repository.list_active_questions(
             self.workspace_id, topic=topic, difficulty=difficulty
         )
+
+    def get_confirmed_question(self, question_id: str):
+        return self.repository.get_active_question(question_id)
+
+    async def create_retrospective_candidate(
+        self,
+        *,
+        retrospective_id: str,
+        payload: dict[str, object],
+        target_question_id: str | None,
+        edited_payload: dict[str, object],
+    ):
+        """Import a user-approved retrospective suggestion into Review review_pending.
+
+        This creates a normal Review draft and candidate; it intentionally does
+        not activate the question or bypass Review publication.
+        """
+        question_text = str(
+            edited_payload.get("questionText", payload.get("questionText", ""))
+        ).strip()
+        answer = str(
+            edited_payload.get("suggestedAnswer", payload.get("suggestedAnswer", ""))
+        ).strip()
+        points = tuple(
+            str(item).strip()
+            for item in edited_payload.get("keyPoints", payload.get("keyPoints", ()))
+            if str(item).strip()
+        )
+        if not question_text or not answer:
+            raise ValueError("复盘题目和参考回答不能为空")
+        if not points:
+            points = ("能够完整说明核心思路",)
+        source_ref = f"retrospective:{retrospective_id}"
+        session = await self.sessions.create(
+            workspace_id=self.workspace_id,
+            kind="question.curate",
+            title="面试复盘题目候选",
+        )
+        self.repository.create_curation_session(
+            workspace_id=self.workspace_id,
+            session_id=session.id,
+            source_refs=(source_ref,),
+        )
+        batch = self.repository.create_batch(
+            workspace_id=self.workspace_id,
+            session_id=session.id,
+            run_id=None,
+            source_refs=(source_ref,),
+            status="review_pending",
+        )
+        question_id = str(uuid4())
+        document_id = f"question_{uuid4().hex}"
+        markdown = (
+            f"# {question_text}\n\n"
+            f"## 题目\n\n{question_text}\n\n"
+            f"## 参考回答\n\n{answer}\n\n"
+            "## 必答点\n\n" + "\n".join(f"- {item}" for item in points) + "\n"
+        )
+        draft = await self.drafts.create(
+            CreateDraftCommand(
+                domain="review",
+                document_type="question",
+                title=question_text[:120],
+                markdown=markdown,
+                source_refs=(source_ref,),
+                relation_refs=(f"retrospective:{retrospective_id}",),
+                session_id=session.id,
+                agent_type="interview_retrospective",
+                document_id=document_id,
+            )
+        )
+        snapshot = QuestionSnapshot(
+            question_id=question_id,
+            document_id=document_id,
+            content_hash=draft.content_hash,
+            title=question_text[:120],
+            question_text=question_text,
+            reference_answer=answer,
+            topics=("面试复盘",),
+            difficulty="medium",
+            key_points=points,
+            follow_ups=(),
+            required_key_points=points,
+        )
+        candidate = self.repository.save_candidate(
+            batch_id=batch.id,
+            question=snapshot,
+            draft_id=draft.id,
+            source_refs=(source_ref,),
+            duplicate_of_question_id=target_question_id,
+            status="review_pending",
+        )
+        self.repository.update_curation_progress(
+            session.id,
+            stage="waiting_for_command",
+            completed_units=1,
+            total_units=1,
+            active_batch_id=batch.id,
+        )
+        return candidate
 
     async def create_round(self, settings: ReviewRoundSettings):
         self.validate_model(settings.answer_model_id, settings.reasoning_effort)
@@ -2977,11 +2994,7 @@ class ReviewApplication:
                 None,
             )
             uncovered = (
-                [
-                    item.point
-                    for item in current.coverage
-                    if item.status != "covered"
-                ]
+                [item.point for item in current.coverage if item.status != "covered"]
                 if current is not None
                 else list(question.required_key_points)
             )
@@ -3042,9 +3055,7 @@ class ReviewApplication:
             "version": receipt.version,
         }
 
-    async def retry_evaluation(
-        self, round_id: str, *, idempotency_key: str
-    ):
+    async def retry_evaluation(self, round_id: str, *, idempotency_key: str):
         round_record = self.repository.get_round(round_id)
         existing = self.repository.find_evaluation_retry_receipt(
             round_id, idempotency_key=idempotency_key
@@ -3117,7 +3128,8 @@ class ReviewApplication:
                 item
                 for item in reversed(self.repository.list_attempts(round_id))
                 if item.ordinal == round_record.current_index + 1
-                and item.status in {
+                and item.status
+                in {
                     "evaluating",
                     "evaluation_failed",
                     "waiting_for_follow_up",
@@ -3144,9 +3156,7 @@ class ReviewApplication:
         await self.executions.wait(round_record.execution_id)
         return self.repository.get_round(round_id)
 
-    async def interrupt_evaluation(
-        self, round_id: str, *, idempotency_key: str
-    ):
+    async def interrupt_evaluation(self, round_id: str, *, idempotency_key: str):
         round_record = self.repository.get_round(round_id)
         if round_record.execution_id is None:
             raise ReviewConflictError("round has no execution")
@@ -3204,14 +3214,10 @@ class ReviewApplication:
         )
         return round_record
 
-    async def create_discussion(
-        self, round_id: str, *, ordinal: int
-    ):
+    async def create_discussion(self, round_id: str, *, ordinal: int):
         round_record = self.repository.get_round(round_id)
         attempts = self.repository.list_attempts(round_id)
-        attempt = next(
-            (item for item in attempts if item.ordinal == ordinal), None
-        )
+        attempt = next((item for item in attempts if item.ordinal == ordinal), None)
         if attempt is None:
             raise LookupError(ordinal)
         lock = self._discussion_locks.setdefault(attempt.id, asyncio.Lock())
@@ -3302,9 +3308,7 @@ class ReviewApplication:
             source_links = self.repository.list_question_source_links(
                 question.question_id
             )
-            source_ids = tuple(
-                dict.fromkeys(link.source_id for link in source_links)
-            )
+            source_ids = tuple(dict.fromkeys(link.source_id for link in source_links))
             source_service = (
                 KnowledgeSourceService(
                     self.workspace_root,
@@ -3330,18 +3334,12 @@ class ReviewApplication:
             )
             sources_by_id = {
                 source_id: record
-                for source_id, record in zip(
-                    source_ids, source_records, strict=True
-                )
+                for source_id, record in zip(source_ids, source_records, strict=True)
                 if record is not None
             }
             source_resources = []
             for source_id in source_ids:
-                links = [
-                    link
-                    for link in source_links
-                    if link.source_id == source_id
-                ]
+                links = [link for link in source_links if link.source_id == source_id]
                 section_numbers = []
                 for link in links:
                     suffix = link.evidence_ref.rpartition("#section-")[2]
@@ -3352,13 +3350,9 @@ class ReviewApplication:
                     {
                         "source_id": source_id,
                         "filename": (
-                            None
-                            if source is None
-                            else source.original_filename
+                            None if source is None else source.original_filename
                         ),
-                        "section_numbers": tuple(
-                            dict.fromkeys(section_numbers)
-                        ),
+                        "section_numbers": tuple(dict.fromkeys(section_numbers)),
                         "evidence_count": len(links),
                         "availability": (
                             "missing"
@@ -3376,32 +3370,22 @@ class ReviewApplication:
                 "question_text": question.question_text,
                 "topics": question.topics,
                 "difficulty": question.difficulty,
-                "required_key_point_count": len(
-                    question.required_key_points
-                ),
+                "required_key_point_count": len(question.required_key_points),
                 "covered_key_point_count": sum(
                     item.status == "covered" for item in coverage
                 ),
                 "missing_directions": (
-                    [
-                        item.point
-                        for item in coverage
-                        if item.status != "covered"
-                    ]
+                    [item.point for item in coverage if item.status != "covered"]
                     if attempt is not None and attempt.evaluation is not None
                     else []
                 ),
-                "has_answer": bool(
-                    attempt is not None and attempt.answer_revisions
-                ),
+                "has_answer": bool(attempt is not None and attempt.answer_revisions),
                 "hint_level": hint_level,
                 "sources": source_resources,
             }
         reports = []
         for report_kind in ("session_report", "mastery_report"):
-            proposal = self.repository.find_report_proposal(
-                round_id, report_kind
-            )
+            proposal = self.repository.find_report_proposal(round_id, report_kind)
             if proposal is None:
                 continue
             draft = await self.drafts.get(proposal.draft_id)
