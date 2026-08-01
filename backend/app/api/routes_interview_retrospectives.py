@@ -533,12 +533,18 @@ def get_report(
     result = _application(application, workspace_id).report(retrospective_id)
     if result is None:
         return None
-    run, questions, analyses, items = result
+    run, questions, analyses, gaps, items = result
     run_resource = analysis_run_resource(run)
     return {
         "analysisRun": run_resource,
         "questions": [question_resource(item) for item in questions],
-        "analyses": [question_analysis_resource(item) for item in analyses],
+        "analyses": [
+            question_analysis_resource(
+                item,
+                tuple(gap for gap in gaps if gap.question_analysis_id == item.id),
+            )
+            for item in analyses
+        ],
         "items": [analysis_work_item_resource(item) for item in items],
         "summary": run_resource["summary"] or {},
     }

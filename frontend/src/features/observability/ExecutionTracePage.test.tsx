@@ -157,11 +157,12 @@ function Providers({ children }: { children: ReactNode }) {
   );
 }
 
-function renderTrace(from = "/agents?status=failed&search=MyBatis") {
+function renderTrace(from = "/agents?status=failed&search=MyBatis", search = "") {
   return render(
     <MemoryRouter
       initialEntries={[{
         pathname: "/agents/executions/run-1",
+        search,
         state: { from },
       }]}
     >
@@ -428,6 +429,15 @@ describe("ExecutionTracePage", () => {
 
     const back = await screen.findByRole("link", { name: "返回运行中心" });
     expect(back).toHaveAttribute("href", "/agents?status=failed&search=MyBatis");
+  });
+
+  it("returns to the selected retrospective question when opened from a report", async () => {
+    mockTrace();
+    const returnTo = "/retrospectives?retrospectiveId=retro-1&questionId=q-2";
+    renderTrace("/agents", `?returnTo=${encodeURIComponent(returnTo)}`);
+
+    const back = await screen.findByRole("link", { name: "返回面试复盘" });
+    expect(back).toHaveAttribute("href", returnTo);
   });
 
   it("leads with actionable failure guidance and reconciles unfinished step labels", async () => {

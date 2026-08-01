@@ -210,6 +210,12 @@ class QuestionDecisionCommand(AgentModel):
     expected_version: int = Field(ge=1)
 
 
+class AnalysisGapResource(AgentModel):
+    kind: str
+    summary: str
+    evidence_segment_ids: list[str]
+
+
 class QuestionAnalysisResource(AgentModel):
     id: str
     analysis_run_id: str
@@ -218,6 +224,7 @@ class QuestionAnalysisResource(AgentModel):
     strengths: list[dict[str, object]]
     improvements: list[dict[str, object]]
     omissions: list[dict[str, object]]
+    gaps: list[AnalysisGapResource]
     evidence_level: str
     confidence: float
     improvement_outline: list[str]

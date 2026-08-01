@@ -12,7 +12,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation, useParams } from "react-router-dom";
+import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
 import { TaskWorkspace, TaskWorkspacePane } from "../../shared/ui/TaskWorkspace";
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import { getAgentDiagnosticsSettings, listProviders } from "../settings/settingsApi";
@@ -79,11 +79,12 @@ function failureGuidance(execution: ExecutionSummary) {
 export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
   const { runId = "" } = useParams();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   const from = (location.state as { from?: unknown } | null)?.from;
-  const returnTo =
-    typeof from === "string" && from.startsWith("/agents")
-      ? from
-      : "/agents";
+  const requestedReturnTo = searchParams.get("returnTo");
+  const validReturnTo = (value: unknown): value is string => typeof value === "string" && (value.startsWith("/agents") || value.startsWith("/retrospectives"));
+  const returnTo = validReturnTo(requestedReturnTo) ? requestedReturnTo : validReturnTo(from) ? from : "/agents";
+  const returnLabel = returnTo.startsWith("/retrospectives") ? "返回面试复盘" : "返回运行中心";
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [mobileView, setMobileView] = useState<"process" | "detail">("process");
@@ -230,7 +231,7 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
               ? error.message
               : "无法读取运行详情"}
           </strong>
-          <Link to={returnTo}>返回运行中心</Link>
+          <Link to={returnTo}>{returnLabel}</Link>
         </div>
       </section>
     );
@@ -251,7 +252,7 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
   return (
     <section className="execution-trace-page" aria-label="高级运行详情">
       <header className="execution-trace__header">
-        <Link to={returnTo} aria-label="返回运行中心">
+        <Link to={returnTo} aria-label={returnLabel}>
           <ArrowLeft size={18} aria-hidden="true" />
         </Link>
         <div>

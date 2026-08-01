@@ -16,6 +16,7 @@ from app.interview_retrospectives.models import (
     AnalysisWorkItemRecord,
     CleanupVersionRecord,
     CleanupWorkItemRecord,
+    GapRecord,
     QuestionAnalysisRecord,
     QuestionUnitRecord,
     RetrospectiveRecord,
@@ -1053,6 +1054,15 @@ class InterviewRetrospectiveRepository:
         ).fetchall()
         return tuple(_question_analysis(row) for row in rows)
 
+    def list_gaps(self, run_id: str) -> tuple[GapRecord, ...]:
+        rows = self.connection.execute(
+            "SELECT g.* FROM interview_gaps g "
+            "JOIN interview_question_units q ON q.id = g.question_unit_id "
+            "WHERE g.analysis_run_id = ? ORDER BY q.ordinal, g.rowid",
+            (run_id,),
+        ).fetchall()
+        return tuple(_gap(row) for row in rows)
+
     def mark_analysis_completed(
         self, run_id: str, *, summary: dict[str, object]
     ) -> AnalysisRunRecord:
@@ -1501,6 +1511,21 @@ def _question_analysis(row: sqlite3.Row) -> QuestionAnalysisRecord:
         source_available=bool(row["source_available"]),
         result_status=row["result_status"],
         version=row["version"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _gap(row: sqlite3.Row) -> GapRecord:
+    return GapRecord(
+        id=row["id"],
+        analysis_run_id=row["analysis_run_id"],
+        question_analysis_id=row["question_analysis_id"],
+        question_unit_id=row["question_unit_id"],
+        gap_kind=row["gap_kind"],
+        summary=row["summary"],
+        evidence=tuple(json.loads(row["evidence_json"])),
+        status=row["status"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

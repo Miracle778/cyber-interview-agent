@@ -666,27 +666,27 @@ git commit -m "feat: add progressive interview analysis"
 - Consumes: Task 5 progressive resources.
 - Produces: report-first detail route and advanced run-detail deep link with return context.
 
-- [ ] **Step 1: Write RED UI tests**
+- [x] **Step 1: Write RED UI tests**
 
 Cover real progress counts, completed questions appearing before finalization, failed-item emphasis and default selection, inferred badges/decision controls, evidence-level language, absent overall score, source-cleared state, stop/resume/retry, and return URL to the selected retrospective/question.
 
-- [ ] **Step 2: Implement persisted polling/event refresh**
+- [x] **Step 2: Implement persisted polling/event refresh**
 
 Poll only while run status is active; stop after terminal/review state. Preserve selected question ID in URL search params. Do not reset selection when new progressive items arrive unless the selected item disappears.
 
-- [ ] **Step 3: Implement report-first responsive shell**
+- [x] **Step 3: Implement report-first responsive shell**
 
 At desktop widths, use a bounded question rail and flexible detail pane. Failed questions use the error palette; pending inferred questions use warning palette. On initial load select the first failed question, otherwise the first high-risk question, otherwise the first completed question.
 
-- [ ] **Step 4: Implement analysis content**
+- [x] **Step 4: Implement analysis content**
 
 Show verdict text, confidence, evidence level, strengths, improvements, omissions, four gap kinds, improvement outline, suggested answer, source excerpt, and “模型判断，建议核对” where applicable. Do not render empty cards.
 
-- [ ] **Step 5: Add advanced run-detail navigation**
+- [x] **Step 5: Add advanced run-detail navigation**
 
 Pass `returnTo=/retrospectives/{id}?questionId={questionId}`. The business page keeps a visible “查看运行详情” action without hiding it in a collapsed technical section.
 
-- [ ] **Step 6: Run focused checks and commit**
+- [x] **Step 6: Run focused checks and commit**
 
 ```bash
 pnpm test -- AnalysisProgress.test.tsx QuestionTimeline.test.tsx QuestionAnalysisPanel.test.tsx RetrospectiveWorkspace.test.tsx

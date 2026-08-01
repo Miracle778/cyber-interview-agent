@@ -1,8 +1,12 @@
 import { apiGet, apiRequest } from "../../shared/api/client";
 import type {
+  AnalysisReceipt,
+  AnalysisReport,
+  AnalysisRun,
   CleanupReceipt,
   CleanupVersion,
   InterviewRetrospective,
+  InterviewQuestion,
   RetrospectiveLifecycle,
   RetrospectiveOutcome,
   SegmentEdit,
@@ -167,5 +171,78 @@ export function resumeCleanup(
   return apiRequest<CleanupReceipt>(
     `/api/interview-retrospectives/${retrospectiveId}/cleanup-runs/${cleanupId}/resume`,
     command("POST", { workspaceId }, "retrospective-resume"),
+  );
+}
+
+export function startAnalysis(
+  workspaceId: string,
+  retrospectiveId: string,
+  cleanupVersionId: string,
+) {
+  return apiRequest<AnalysisReceipt>(
+    `/api/interview-retrospectives/${retrospectiveId}/analysis-runs`,
+    command("POST", { workspaceId, cleanupVersionId }, "retrospective-analysis"),
+  );
+}
+
+export function getAnalysisRun(
+  workspaceId: string,
+  retrospectiveId: string,
+  runId: string,
+  signal?: AbortSignal,
+) {
+  return apiGet<AnalysisRun>(
+    `/api/interview-retrospectives/${retrospectiveId}/analysis-runs/${runId}?workspaceId=${encodeURIComponent(workspaceId)}`,
+    { signal },
+  );
+}
+
+export function getAnalysisReport(
+  workspaceId: string,
+  retrospectiveId: string,
+  signal?: AbortSignal,
+) {
+  return apiGet<AnalysisReport | null>(
+    `/api/interview-retrospectives/${retrospectiveId}/report?workspaceId=${encodeURIComponent(workspaceId)}`,
+    { signal },
+  );
+}
+
+export function stopAnalysis(workspaceId: string, retrospectiveId: string, runId: string) {
+  return apiRequest<AnalysisRun>(
+    `/api/interview-retrospectives/${retrospectiveId}/analysis-runs/${runId}/stop`,
+    command("POST", { workspaceId }, "retrospective-analysis-stop"),
+  );
+}
+
+export function resumeAnalysis(workspaceId: string, retrospectiveId: string, runId: string) {
+  return apiRequest<AnalysisReceipt>(
+    `/api/interview-retrospectives/${retrospectiveId}/analysis-runs/${runId}/resume`,
+    command("POST", { workspaceId }, "retrospective-analysis-resume"),
+  );
+}
+
+export function retryAnalysis(workspaceId: string, retrospectiveId: string, runId: string) {
+  return apiRequest<AnalysisReceipt>(
+    `/api/interview-retrospectives/${retrospectiveId}/analysis-runs/${runId}/retry`,
+    command("POST", { workspaceId }, "retrospective-analysis-retry"),
+  );
+}
+
+export function decideQuestion(
+  workspaceId: string,
+  retrospectiveId: string,
+  questionId: string,
+  decision: "confirmed" | "rejected" | "superseded",
+  expectedVersion: number,
+  editedText?: string,
+) {
+  return apiRequest<InterviewQuestion>(
+    `/api/interview-retrospectives/${retrospectiveId}/questions/${questionId}/decision`,
+    command(
+      "POST",
+      { workspaceId, decision, expectedVersion, editedText },
+      "retrospective-question-decision",
+    ),
   );
 }

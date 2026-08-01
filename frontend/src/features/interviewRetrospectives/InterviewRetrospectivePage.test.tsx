@@ -19,6 +19,12 @@ const api = vi.hoisted(() => ({
   confirmCleanup: vi.fn(),
   stopCleanup: vi.fn(),
   resumeCleanup: vi.fn(),
+  getAnalysisReport: vi.fn(),
+  startAnalysis: vi.fn(),
+  stopAnalysis: vi.fn(),
+  resumeAnalysis: vi.fn(),
+  retryAnalysis: vi.fn(),
+  decideQuestion: vi.fn(),
 }));
 
 vi.mock("./retrospectiveApi", () => api);
@@ -82,6 +88,8 @@ describe("InterviewRetrospectivePage", () => {
       },
     ]);
     api.getCurrentCleanup.mockResolvedValue(null);
+    api.getCleanup.mockResolvedValue(null);
+    api.getAnalysisReport.mockResolvedValue(null);
   });
 
   it("keeps lifecycle tabs visible and applies a target deep link", async () => {
@@ -164,5 +172,31 @@ describe("InterviewRetrospectivePage", () => {
     expect(await screen.findByText("刷新或离开不会丢失已完成结果。")).toBeVisible();
     expect(api.getCurrentCleanup).toHaveBeenCalledWith("w1", "retro-1", expect.any(AbortSignal));
     expect(api.getCleanup).toHaveBeenCalledWith("w1", "retro-1", "cleanup-current", expect.any(AbortSignal));
+  });
+
+  it("opens the failed question first and keeps completed results visible while analysis runs", async () => {
+    api.listRetrospectives.mockResolvedValue([{
+      id: "retro-1", workspaceId: "w1", jobTargetId: "target-1", title: "星河科技后端一面", roundLabel: "一面", interviewDate: "2026-08-01", outcome: "pending", note: "", lifecycleStatus: "active", activeSourceVersionId: "source-1", activeCleanupVersionId: "cleanup-1", activeAnalysisRunId: "run-1", version: 2, createdAt: "now", updatedAt: "now",
+    }]);
+    api.getAnalysisReport.mockResolvedValue({
+      analysisRun: { id: "run-1", retrospectiveId: "retro-1", cleanupVersionId: "cleanup-1", executionId: "execution-1", retryOfAnalysisRunId: null, status: "running", stage: "question_analysis", controlIntent: null, completedItems: 1, totalItems: 3, currentWorkKey: "question_analysis:q-2", cumulativeElapsedMs: 2_000, latestProgressAt: "now", summary: null, version: 2, createdAt: "now", updatedAt: "now" },
+      questions: [
+        { id: "q-1", retrospectiveId: "retro-1", cleanupVersionId: "cleanup-1", ordinal: 1, questionKind: "project", origin: "original", questionText: "已经完成的问题", questionSegmentIds: [], answerSegmentIds: [], inferenceBasis: "", confidence: .9, decisionStatus: "confirmed", version: 1, createdAt: "now", updatedAt: "now" },
+        { id: "q-2", retrospectiveId: "retro-1", cleanupVersionId: "cleanup-1", ordinal: 2, questionKind: "system", origin: "original", questionText: "分析失败的问题", questionSegmentIds: [], answerSegmentIds: [], inferenceBasis: "", confidence: .9, decisionStatus: "confirmed", version: 1, createdAt: "now", updatedAt: "now" },
+      ],
+      analyses: [{ id: "a-1", analysisRunId: "run-1", questionUnitId: "q-1", verdict: "strong", strengths: [{ summary: "结构清晰", evidenceSegmentIds: [] }], improvements: [], omissions: [], gaps: [], evidenceLevel: "direct", confidence: .9, improvementOutline: [], suggestedAnswer: "", sourceExcerpt: "", sourceAvailable: true, resultStatus: "completed", version: 1 }],
+      items: [
+        { id: "i-1", questionUnitId: "q-1", workKey: "question_analysis:q-1", status: "completed", attemptCount: 1, lastErrorCode: null, updatedAt: "now" },
+        { id: "i-2", questionUnitId: "q-2", workKey: "question_analysis:q-2", status: "retryable", attemptCount: 1, lastErrorCode: "provider_timeout", updatedAt: "now" },
+      ],
+      summary: {},
+    });
+
+    renderPage("/retrospectives?retrospectiveId=retro-1");
+
+    expect(await screen.findByRole("heading", { name: "分析失败的问题" })).toBeVisible();
+    expect(screen.getByText("这道题分析失败")).toBeVisible();
+    expect(screen.getByRole("button", { name: /已经完成的问题/ })).toBeVisible();
+    expect(screen.queryByText(/总分/)).not.toBeInTheDocument();
   });
 });

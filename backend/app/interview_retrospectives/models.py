@@ -206,7 +206,7 @@ class GapRecord:
     question_unit_id: str
     gap_kind: GapKind
     summary: str
-    evidence: tuple[dict[str, object], ...]
+    evidence: tuple[str, ...]
     status: str
     created_at: str
     updated_at: str

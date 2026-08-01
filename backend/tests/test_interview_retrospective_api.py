@@ -527,6 +527,13 @@ async def test_progressive_analysis_api_returns_questions_and_report_without_sco
         assert report.status_code == 200, report.text
         assert report.json()["analysisRun"]["status"] == "completed"
         assert report.json()["items"][0]["status"] == "completed"
+        assert report.json()["analyses"][0]["gaps"] == [
+            {
+                "kind": "expression",
+                "summary": "结果表达不够具体",
+                "evidenceSegmentIds": [],
+            }
+        ]
         assert "overallScore" not in report.json()["summary"]
     finally:
         app.dependency_overrides.pop(get_agent_application, None)

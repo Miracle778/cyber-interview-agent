@@ -4,6 +4,7 @@ from app.interview_retrospectives.models import (
     AnalysisRunRecord,
     AnalysisWorkItemRecord,
     CleanupVersionRecord,
+    GapRecord,
     QuestionAnalysisRecord,
     QuestionUnitRecord,
     RetrospectiveRecord,
@@ -138,6 +139,7 @@ def analysis_run_resource(record: AnalysisRunRecord) -> dict[str, object]:
 
 def question_analysis_resource(
     record: QuestionAnalysisRecord,
+    gaps: tuple[GapRecord, ...] = (),
 ) -> dict[str, object]:
     return {
         "id": record.id,
@@ -147,6 +149,14 @@ def question_analysis_resource(
         "strengths": list(record.strengths),
         "improvements": list(record.improvements),
         "omissions": list(record.omissions),
+        "gaps": [
+            {
+                "kind": gap.gap_kind,
+                "summary": gap.summary,
+                "evidenceSegmentIds": list(gap.evidence),
+            }
+            for gap in gaps
+        ],
         "evidenceLevel": record.evidence_level,
         "confidence": record.confidence,
         "improvementOutline": list(record.improvement_outline),

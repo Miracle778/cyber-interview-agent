@@ -340,6 +340,7 @@ class InterviewRetrospectiveApplication:
             run,
             questions,
             self.repository.list_question_analyses(run.id),
+            self.repository.list_gaps(run.id),
             self.repository.list_analysis_work_items(run.id),
         )
 
