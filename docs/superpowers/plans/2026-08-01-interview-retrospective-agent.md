@@ -799,23 +799,23 @@ git commit -m "feat: connect retrospective findings to preparation assets"
 - Consumes: Task 7 APIs.
 - Produces: visible three-group review queue, matching choices, immediate practice, action checklist, and summary publication flow.
 
-- [ ] **Step 1: Write RED UI tests**
+- [x] **Step 1: Write RED UI tests**
 
 Cover counts from server, pending-inference blockers, existing/new match choices, batch preflight, partial-failure retention, immediate-practice link, action state, selected summary fields, and raw-transcript exclusion copy.
 
-- [ ] **Step 2: Implement grouped review queue**
+- [x] **Step 2: Implement grouped review queue**
 
 Use three primary groups: “复习题”“项目与画像”“复盘总结”. Keep all tabs visible after selection. Each row shows source question, match status, decision, and resulting resource link.
 
-- [ ] **Step 3: Implement batch and partial failure behavior**
+- [x] **Step 3: Implement batch and partial failure behavior**
 
 Batch submission sends explicit candidate IDs and actions. Successful rows leave pending queue; failed rows remain selected with stable reason and retry action.
 
-- [ ] **Step 4: Implement action and publication panels**
+- [x] **Step 4: Implement action and publication panels**
 
 Action items are compact checklist rows, not cards per item. Publication shows selectable sections, preview, Knowledge confirmation, and success link; no transcript option exists.
 
-- [ ] **Step 5: Run focused tests and commit**
+- [x] **Step 5: Run focused tests and commit**
 
 ```bash
 pnpm test -- RetrospectiveCandidates.test.tsx RetrospectiveActions.test.tsx RetrospectiveWorkspace.test.tsx

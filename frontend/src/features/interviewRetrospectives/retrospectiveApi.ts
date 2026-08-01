@@ -3,11 +3,17 @@ import type {
   AnalysisReceipt,
   AnalysisReport,
   AnalysisRun,
+  CandidateBatchResult,
+  CandidateDecisionInput,
   CleanupReceipt,
   CleanupVersion,
   InterviewRetrospective,
   InterviewQuestion,
   RetrospectiveLifecycle,
+  RetrospectiveActionItem,
+  RetrospectiveCandidate,
+  RetrospectivePublicationDraft,
+  PublicationSection,
   RetrospectiveOutcome,
   SegmentEdit,
   SourceKind,
@@ -243,6 +249,103 @@ export function decideQuestion(
       "POST",
       { workspaceId, decision, expectedVersion, editedText },
       "retrospective-question-decision",
+    ),
+  );
+}
+
+export function listCandidates(
+  workspaceId: string,
+  retrospectiveId: string,
+  signal?: AbortSignal,
+) {
+  return apiGet<RetrospectiveCandidate[]>(
+    `/api/interview-retrospectives/${retrospectiveId}/candidates?workspaceId=${encodeURIComponent(workspaceId)}`,
+    { signal },
+  );
+}
+
+export function decideCandidate(
+  workspaceId: string,
+  retrospectiveId: string,
+  input: CandidateDecisionInput,
+) {
+  return apiRequest<RetrospectiveCandidate>(
+    `/api/interview-retrospectives/${retrospectiveId}/candidates/${input.candidateId}/decision`,
+    command(
+      "POST",
+      {
+        workspaceId,
+        action: input.action,
+        targetResourceId: input.targetResourceId ?? null,
+        actionPayload: input.actionPayload ?? {},
+        expectedVersion: input.expectedVersion,
+      },
+      "retrospective-candidate-decision",
+    ),
+  );
+}
+
+export function batchDecideCandidates(
+  workspaceId: string,
+  retrospectiveId: string,
+  inputs: CandidateDecisionInput[],
+) {
+  return apiRequest<CandidateBatchResult[]>(
+    `/api/interview-retrospectives/${retrospectiveId}/candidates/batch-decision`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        workspaceId,
+        decisions: inputs.map((input) => ({
+          ...input,
+          targetResourceId: input.targetResourceId ?? null,
+          actionPayload: input.actionPayload ?? {},
+          idempotencyKey: commandKey("retrospective-candidate-batch-item"),
+        })),
+      }),
+    },
+  );
+}
+
+export function listActions(
+  workspaceId: string,
+  retrospectiveId: string,
+  signal?: AbortSignal,
+) {
+  return apiGet<RetrospectiveActionItem[]>(
+    `/api/interview-retrospectives/${retrospectiveId}/actions?workspaceId=${encodeURIComponent(workspaceId)}`,
+    { signal },
+  );
+}
+
+export function decideAction(
+  workspaceId: string,
+  retrospectiveId: string,
+  actionId: string,
+  decision: "completed" | "dismissed",
+  expectedVersion: number,
+) {
+  return apiRequest<RetrospectiveActionItem>(
+    `/api/interview-retrospectives/${retrospectiveId}/actions/${actionId}/decision`,
+    command(
+      "POST",
+      { workspaceId, decision, expectedVersion },
+      "retrospective-action-decision",
+    ),
+  );
+}
+
+export function createPublicationDraft(
+  workspaceId: string,
+  retrospectiveId: string,
+  selectedSections: PublicationSection[],
+) {
+  return apiRequest<RetrospectivePublicationDraft>(
+    `/api/interview-retrospectives/${retrospectiveId}/publication-drafts`,
+    command(
+      "POST",
+      { workspaceId, selectedSections },
+      "retrospective-publication-draft",
     ),
   );
 }

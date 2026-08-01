@@ -1465,3 +1465,13 @@
 - 新增 `interview_retrospective` Knowledge 文档类型和 migration 046；发布稿按用户选择投影，不接收原始转写、pending 推断、Prompt、Provider 响应或聊天消息。
 - 新增候选、批量决定、行动项和发布草稿 API；批量部分失败保留成功结果和失败候选，重复请求不产生重复跨域资源。
 - 自动证据：候选/发布/API 聚焦测试 14 项通过；复盘、Review、Profile 与 Knowledge 受影响回归 134 项通过；Ruff、compileall 与差异检查通过。
+
+## 2026-08-02：面试复盘 Task 8 候选审核、行动与发布界面
+
+- 复盘详情新增“逐题复盘 / 准备资产 / 行动与发布”三个常驻入口；准备资产内部保留复习题、项目与画像、复盘总结三个常驻分组及服务端计数。
+- 候选支持已有题匹配、新建题、画像/项目 Proposal、拒绝、显式勾选批量处理和失败原因；正式题关联后提供稳定“立即练习”链接。
+- 行动项采用紧凑清单；发布区只允许选择安全章节，明确排除原始转写、待确认推断、聊天、Prompt 和模型原始响应，完成后可返回 Knowledge。
+- 前端真实接入 Task 7 candidate/action/publication API；批量部分失败保留失败项。后端补齐空 action payload 下的合法项目建议默认值，并在更新时合并当前确认版本。
+- 自动证据：Task 8 前端组件/页面聚焦 `12 passed`，后端候选聚焦 `6 passed`，TypeScript、Ruff、production build 与差异检查通过。
+- 隔离浏览器验收：桌面端完成题库关联、行动完成、Knowledge 草稿生成；390px 下无页面横向溢出、行动/发布单列展示，浏览器控制台 error 为 0。验收使用虚构 API 数据，未调用真实 Provider。
+- 下一步：Task 9 受限对话、纠正建议确认与局部重算。

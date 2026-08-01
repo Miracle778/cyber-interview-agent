@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { RetrospectiveWorkspace } from "./RetrospectiveWorkspace";
 import type { AnalysisReport, InterviewRetrospective } from "./retrospectiveTypes";
 
@@ -13,12 +13,37 @@ const report: AnalysisReport = {
   summary: { highRiskCount: 0 },
 };
 
+const workspaceProps = {
+  candidates: [],
+  actions: [],
+  publicationDraft: null,
+  candidateBusy: false,
+  actionBusy: false,
+  publicationBusy: false,
+  onCandidateDecision: vi.fn(),
+  onBatchCandidateDecision: vi.fn(),
+  onActionDecision: vi.fn(),
+  onCreateDraft: vi.fn(),
+};
+
+afterEach(cleanup);
+
 describe("RetrospectiveWorkspace", () => {
   it("renders completed questions before finalization without an overall score", () => {
-    render(<MemoryRouter><RetrospectiveWorkspace retrospective={retrospective} report={report} selectedQuestionId="q-1" busy={false} onSelectQuestion={vi.fn()} onStop={vi.fn()} onResume={vi.fn()} onRetry={vi.fn()} onDecision={vi.fn()} /></MemoryRouter>);
+    render(<MemoryRouter><RetrospectiveWorkspace {...workspaceProps} retrospective={retrospective} report={report} selectedQuestionId="q-1" busy={false} onSelectQuestion={vi.fn()} onStop={vi.fn()} onResume={vi.fn()} onRetry={vi.fn()} onDecision={vi.fn()} /></MemoryRouter>);
     expect(screen.getByRole("heading", { name: "介绍一下缓存治理" })).toBeVisible();
     expect(screen.getByText("结构清晰")).toBeVisible();
     expect(screen.queryByText(/总分/)).not.toBeInTheDocument();
     expect(screen.getByText("分析仍在继续，已完成的问题可以先看")).toBeVisible();
+  });
+
+  it("keeps review, assets, and action views visible while switching", () => {
+    render(<MemoryRouter><RetrospectiveWorkspace {...workspaceProps} retrospective={retrospective} report={report} selectedQuestionId="q-1" busy={false} onSelectQuestion={vi.fn()} onStop={vi.fn()} onResume={vi.fn()} onRetry={vi.fn()} onDecision={vi.fn()} /></MemoryRouter>);
+    expect(screen.getByRole("tab", { name: /逐题复盘 1/ })).toBeVisible();
+    expect(screen.getByRole("tab", { name: /准备资产 0/ })).toBeVisible();
+    expect(screen.getByRole("tab", { name: /行动与发布 0/ })).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: /准备资产 0/ }));
+    expect(screen.getByRole("heading", { name: "沉淀本次复盘" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: /逐题复盘 1/ })).toBeVisible();
   });
 });

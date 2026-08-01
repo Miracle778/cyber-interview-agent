@@ -25,6 +25,12 @@ const api = vi.hoisted(() => ({
   resumeAnalysis: vi.fn(),
   retryAnalysis: vi.fn(),
   decideQuestion: vi.fn(),
+  listCandidates: vi.fn(),
+  decideCandidate: vi.fn(),
+  batchDecideCandidates: vi.fn(),
+  listActions: vi.fn(),
+  decideAction: vi.fn(),
+  createPublicationDraft: vi.fn(),
 }));
 
 vi.mock("./retrospectiveApi", () => api);
@@ -90,6 +96,8 @@ describe("InterviewRetrospectivePage", () => {
     api.getCurrentCleanup.mockResolvedValue(null);
     api.getCleanup.mockResolvedValue(null);
     api.getAnalysisReport.mockResolvedValue(null);
+    api.listCandidates.mockResolvedValue([]);
+    api.listActions.mockResolvedValue([]);
   });
 
   it("keeps lifecycle tabs visible and applies a target deep link", async () => {

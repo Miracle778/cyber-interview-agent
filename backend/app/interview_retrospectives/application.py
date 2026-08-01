@@ -664,7 +664,27 @@ class InterviewRetrospectiveApplication:
             if candidate.candidate_kind == "project_narrative"
             else str(action_payload.get("category", "highlight"))
         )
-        proposed_value = dict(action_payload.get("value", {}))
+        payload = json.loads(candidate.payload_json)
+        supplied_value = action_payload.get("value", {})
+        if not isinstance(supplied_value, dict):
+            raise ValueError("画像建议内容格式不正确")
+        proposed_value: dict[str, object] = {}
+        if target is not None and base is not None:
+            proposed_value.update(self.profile.repository.get_claim_version(base).value)
+        proposed_value.update(supplied_value)
+        if category == "project" and not proposed_value.get("name"):
+            proposed_value["name"] = str(
+                payload.get("questionText") or "面试复盘项目经历"
+            )[:200]
+            narrative = str(payload.get("suggestedNarrative") or "").strip()
+            if narrative:
+                proposed_value["key_actions"] = [narrative[:200]]
+        elif category == "highlight" and not proposed_value.get("text"):
+            proposed_value["text"] = str(
+                payload.get("suggestedClaim")
+                or payload.get("questionText")
+                or "来自面试复盘的画像建议"
+            )[:2000]
         proposed_value["category"] = category
         proposals = self.profile.create_retrospective_proposals(
             (

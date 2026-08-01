@@ -178,3 +178,92 @@ export interface AnalysisReport {
   items: AnalysisWorkItem[];
   summary: Record<string, unknown>;
 }
+
+export type RetrospectiveCandidateKind =
+  | "review_question"
+  | "profile_claim"
+  | "project_narrative"
+  | "summary";
+
+export type RetrospectiveCandidateDecision =
+  | "link_existing"
+  | "supplement_existing"
+  | "create_new"
+  | "propose_update"
+  | "propose_new"
+  | "reject"
+  | "include"
+  | "exclude";
+
+export interface CandidateMatch {
+  resourceId: string;
+  resourceVersion?: number;
+  score: number;
+  title?: string;
+}
+
+export interface RetrospectiveCandidate {
+  id: string;
+  retrospectiveId: string;
+  analysisRunId: string;
+  questionUnitId: string | null;
+  candidateKind: RetrospectiveCandidateKind;
+  fingerprint: string;
+  payload: Record<string, unknown>;
+  matches: CandidateMatch[];
+  status: "pending" | "confirmed" | "rejected" | "blocked" | "failed" | "superseded";
+  targetResourceType: string | null;
+  targetResourceId: string | null;
+  lastErrorCode: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CandidateDecisionInput {
+  candidateId: string;
+  action: RetrospectiveCandidateDecision;
+  targetResourceId?: string | null;
+  actionPayload?: Record<string, unknown>;
+  expectedVersion: number;
+}
+
+export interface CandidateBatchResult {
+  candidateId: string;
+  status: "completed" | "failed";
+  candidate: RetrospectiveCandidate | null;
+  errorCode: string | null;
+}
+
+export interface RetrospectiveActionItem {
+  id: string;
+  retrospectiveId: string;
+  analysisRunId: string;
+  questionUnitId: string | null;
+  gapId: string | null;
+  actionKind: "material" | "expression" | "knowledge" | "experience";
+  title: string;
+  detail: string;
+  status: "pending" | "completed" | "dismissed";
+  version: number;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type PublicationSection =
+  | "basic_info"
+  | "confirmed_questions"
+  | "selected_conclusions"
+  | "confirmed_experiences"
+  | "action_items"
+  | "stable_links";
+
+export interface RetrospectivePublicationDraft {
+  id: string;
+  documentType: string;
+  title: string;
+  markdown: string;
+  status: string;
+  version: number;
+}

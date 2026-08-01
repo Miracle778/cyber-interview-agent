@@ -45,6 +45,16 @@ class FailingReview(FakeReview):
         raise RuntimeError("review unavailable")
 
 
+class FakeProfile:
+    def __init__(self) -> None:
+        self.proposed_value = None
+        self.repository = SimpleNamespace(list_claims=lambda _workspace_id: ())
+
+    def create_retrospective_proposals(self, proposals, **_values):
+        self.proposed_value = proposals[0].proposed_value
+        return (SimpleNamespace(id="profile-proposal-1"),)
+
+
 def test_generation_excludes_pending_inferred_and_returns_review_matches(tmp_path):
     connection, app, retrospective, run, questions = candidate_fixture(
         tmp_path, review=FakeReview()
@@ -173,6 +183,43 @@ def test_action_decision_is_versioned_and_idempotent(tmp_path):
 
     assert completed.status == replay.status == "completed"
     assert completed.version == replay.version
+    connection.close()
+
+
+@pytest.mark.asyncio
+async def test_project_candidate_builds_a_valid_default_profile_proposal(tmp_path):
+    profile = FakeProfile()
+    connection, app, retrospective, run, questions = candidate_fixture(
+        tmp_path, profile=profile
+    )
+    candidate = app.repository.upsert_asset_candidate(
+        retrospective.id,
+        analysis_run_id=run.id,
+        question_unit_id=questions[0].id,
+        candidate_kind="project_narrative",
+        fingerprint="project-default-value",
+        payload={
+            "questionText": "介绍缓存治理项目",
+            "suggestedNarrative": "通过消息表和幂等补偿保证最终一致性。",
+        },
+    )
+
+    decided = await app.decide_candidate(
+        retrospective.id,
+        candidate.id,
+        action="propose_new",
+        target_resource_id=None,
+        action_payload={},
+        expected_version=candidate.version,
+        idempotency_key="project-proposal-default",
+    )
+
+    assert decided.target_resource_type == "profile_claim_proposal"
+    assert profile.proposed_value == {
+        "name": "介绍缓存治理项目",
+        "key_actions": ["通过消息表和幂等补偿保证最终一致性。"],
+        "category": "project",
+    }
     connection.close()
 
 

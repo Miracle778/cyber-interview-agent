@@ -14,12 +14,18 @@ import { RetrospectiveCreateFlow, type RetrospectiveCreateValues } from "./Retro
 import { RetrospectiveList } from "./RetrospectiveList";
 import {
   addSourceVersion,
+  batchDecideCandidates,
   confirmCleanup,
+  createPublicationDraft,
   createRetrospective,
+  decideAction,
+  decideCandidate,
   decideQuestion,
   getAnalysisReport,
   getCleanup,
   getCurrentCleanup,
+  listActions,
+  listCandidates,
   listRetrospectives,
   resumeCleanup,
   resumeAnalysis,
@@ -30,7 +36,17 @@ import {
   stopCleanup,
   updateSegments,
 } from "./retrospectiveApi";
-import type { AnalysisReceipt, AnalysisReport, AnalysisRun, RetrospectiveLifecycle, SegmentEdit } from "./retrospectiveTypes";
+import type {
+  AnalysisReceipt,
+  AnalysisReport,
+  AnalysisRun,
+  PublicationSection,
+  RetrospectiveActionItem,
+  RetrospectiveCandidate,
+  RetrospectiveCandidateDecision,
+  RetrospectiveLifecycle,
+  SegmentEdit,
+} from "./retrospectiveTypes";
 import "./interviewRetrospectives.css";
 
 const TABS: Array<{ value: RetrospectiveLifecycle; label: string; icon: typeof Archive }> = [
@@ -79,6 +95,18 @@ export function InterviewRetrospectivePage({ workspace }: { workspace: Workspace
     queryFn: ({ signal }) => getAnalysisReport(workspaceId, selected!.id, signal),
     enabled: Boolean(workspaceId && selected?.activeAnalysisRunId),
     refetchInterval: (query) => ["queued", "running", "stopping"].includes(query.state.data?.analysisRun.status ?? "") ? 1_000 : false,
+  });
+  const candidatesQuery = useQuery({
+    queryKey: ["retrospective-candidates", workspaceId, selected?.id],
+    queryFn: ({ signal }) => listCandidates(workspaceId, selected!.id, signal),
+    enabled: Boolean(workspaceId && selected?.activeAnalysisRunId),
+    refetchInterval: () => ["queued", "running", "stopping"].includes(reportQuery.data?.analysisRun.status ?? "") ? 1_000 : false,
+  });
+  const actionsQuery = useQuery({
+    queryKey: ["retrospective-actions", workspaceId, selected?.id],
+    queryFn: ({ signal }) => listActions(workspaceId, selected!.id, signal),
+    enabled: Boolean(workspaceId && selected?.activeAnalysisRunId),
+    refetchInterval: () => ["queued", "running", "stopping"].includes(reportQuery.data?.analysisRun.status ?? "") ? 1_000 : false,
   });
   const selectedQuestionId = useMemo(
     () => chooseQuestionId(reportQuery.data ?? null, requestedQuestionId),
@@ -191,6 +219,54 @@ export function InterviewRetrospectivePage({ workspace }: { workspace: Workspace
       setError(reason instanceof Error ? reason.message : "题目确认失败");
     },
   });
+  const candidateDecisionMutation = useMutation({
+    mutationFn: ({ candidate, decision, targetResourceId }: { candidate: RetrospectiveCandidate; decision: RetrospectiveCandidateDecision; targetResourceId?: string }) => decideCandidate(workspaceId, selected!.id, {
+      candidateId: candidate.id,
+      action: decision,
+      targetResourceId,
+      expectedVersion: candidate.version,
+    }),
+    onSuccess: async () => {
+      setError(null);
+      await candidatesQuery.refetch();
+    },
+    onError: (reason) => {
+      setError(reason instanceof Error ? reason.message : "候选资料处理失败");
+      void candidatesQuery.refetch();
+    },
+  });
+  const candidateBatchMutation = useMutation({
+    mutationFn: (candidates: RetrospectiveCandidate[]) => batchDecideCandidates(workspaceId, selected!.id, candidates.map((candidate) => ({
+      candidateId: candidate.id,
+      action: "reject",
+      expectedVersion: candidate.version,
+    }))),
+    onSuccess: async (results) => {
+      const failed = results.filter((result) => result.status === "failed");
+      setError(failed.length ? `${failed.length} 项没有处理成功，已保留选择供你重试。` : null);
+      await candidatesQuery.refetch();
+    },
+    onError: (reason) => {
+      setError(reason instanceof Error ? reason.message : "批量处理失败，所选候选已保留");
+      void candidatesQuery.refetch();
+    },
+  });
+  const actionDecisionMutation = useMutation({
+    mutationFn: ({ action, decision }: { action: RetrospectiveActionItem; decision: "completed" | "dismissed" }) => decideAction(workspaceId, selected!.id, action.id, decision, action.version),
+    onSuccess: async () => {
+      setError(null);
+      await actionsQuery.refetch();
+    },
+    onError: (reason) => {
+      setError(reason instanceof Error ? reason.message : "行动项更新失败");
+      void actionsQuery.refetch();
+    },
+  });
+  const publicationMutation = useMutation({
+    mutationFn: (sections: PublicationSection[]) => createPublicationDraft(workspaceId, selected!.id, sections),
+    onSuccess: () => setError(null),
+    onError: (reason) => setError(reason instanceof Error ? reason.message : "Knowledge 草稿生成失败"),
+  });
 
   if (!workspace) return <section className="retrospective-page retrospective-page--without-workspace"><header className="retrospective-page__header"><div><p>复盘工作台</p><h1>面试复盘</h1><span>把录音转写或事后回忆整理成可核对、可继续的复盘记录。</span></div></header><div className="retrospective-page__missing"><MessageSquareText size={32} /><h2>先选择工作区</h2><p>面试文字、整理结果和复盘记录会保存在所选工作区。</p></div></section>;
   const counts = Object.fromEntries(TABS.map((tab) => [tab.value, tab.value === lifecycle ? listQuery.data?.length ?? 0 : null]));
@@ -222,13 +298,23 @@ export function InterviewRetrospectivePage({ workspace }: { workspace: Workspace
           {selected && reportQuery.data ? <RetrospectiveWorkspace
             retrospective={selected}
             report={reportQuery.data}
+            candidates={candidatesQuery.data ?? []}
+            actions={actionsQuery.data ?? []}
+            publicationDraft={publicationMutation.data ?? null}
             selectedQuestionId={selectedQuestionId}
             busy={analysisControlMutation.isPending || questionDecisionMutation.isPending}
+            candidateBusy={candidateDecisionMutation.isPending || candidateBatchMutation.isPending}
+            actionBusy={actionDecisionMutation.isPending}
+            publicationBusy={publicationMutation.isPending}
             onSelectQuestion={(id) => patchSearch({ questionId: id })}
             onStop={() => analysisControlMutation.mutate("stop")}
             onResume={() => analysisControlMutation.mutate("resume")}
             onRetry={() => analysisControlMutation.mutate("retry")}
             onDecision={(decision) => questionDecisionMutation.mutate(decision)}
+            onCandidateDecision={(candidate, decision, targetResourceId) => candidateDecisionMutation.mutate({ candidate, decision, targetResourceId })}
+            onBatchCandidateDecision={(candidates) => candidateBatchMutation.mutate(candidates)}
+            onActionDecision={(action, decision) => actionDecisionMutation.mutate({ action, decision })}
+            onCreateDraft={(sections) => publicationMutation.mutate(sections)}
           /> : cleanupQuery.data && cleanupQuery.data.status !== "confirmed" ? <CleanupWorkbench cleanup={cleanupQuery.data} busy={segmentMutation.isPending || confirmMutation.isPending || controlMutation.isPending} onSave={(segments, version) => segmentMutation.mutate({ segments, version })} onConfirm={(version) => confirmMutation.mutate(version)} onStop={() => controlMutation.mutate("stop")} onResume={() => controlMutation.mutate("resume")} /> : selected?.activeAnalysisRunId && reportQuery.isPending ? <div className="retrospective-page__empty-detail"><RotateCcw size={28} /><h2>正在读取分析结果</h2><p>已经完成的问题马上会显示在这里。</p></div> : selected ? <RetrospectiveSummary retrospective={selected} actionLabel={selected.activeCleanupVersionId || cleanupQuery.data?.status === "confirmed" ? "开始分析" : "开始整理"} busy={analysisStartMutation.isPending} onStart={selected.activeCleanupVersionId || cleanupQuery.data?.status === "confirmed" ? () => analysisStartMutation.mutate(selected.activeCleanupVersionId ?? cleanupQuery.data!.id) : selected.activeSourceVersionId ? async () => {
             try {
               const receipt = await startCleanup(workspaceId, selected.id, selected.activeSourceVersionId!);
