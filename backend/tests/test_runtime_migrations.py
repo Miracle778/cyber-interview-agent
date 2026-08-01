@@ -1075,7 +1075,7 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == list(range(1, 45))
+        ] == list(range(1, 46))
     reopened.close()
 
 

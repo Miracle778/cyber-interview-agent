@@ -1,5 +1,13 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-08-01：面试复盘迁移到最新产品基线
+
+- 确认本地 `feature/review-agent-workspace` 的 `a4fb776` 才是最新产品基线；旧复盘分支基于过期远程主线，未继续在错误基线上开发。
+- 从 `a4fb776` 创建独立 `codex/interview-retrospective-agent-v2` 工作区，迁入复盘 Task 1–2 与清洗契约三笔提交；原 feature 工作区的未提交前端文件和 handoff 文档保持不变。
+- 为避开 Evaluation v2 已使用的 runtime 041–044 和 app 009，复盘迁移顺延为 runtime 045、app 010，并同步修正连续升级断言与正式计划引用。
+- 新基线验证：复盘/迁移/Repository/Service/Projection/契约定向 `27 passed`，受影响后端组合曾达 `72 passed / 1 stale assertion`，修正后失败项通过；前端完整 `68 files / 339 passed`。
+- 下一步继续 Task 3 的真实 Cleanup Agent、后台执行和 API，不再回到旧复盘分支开发。
+
 ## 2026-08-01：Evaluation v2 Phase 1–5 阶段收口
 
 - 在开发工作区开启显式本机回归输入记录，用不含个人资料的 Redis 合成问题完成深入讨论与题目整理两条真实 Provider 路径。
@@ -41,6 +49,7 @@
 - 修订 2026-07-29 规格、ADR 和计划的成熟度表述；README 改为如实说明当前“历史结果复检”和规划中的“真实回归”。
 - 新增 README 手绘图 `assets/readme/08-agent-quality-evaluation-boundary-v2.png`；旧图保留，未删除任何历史资产。
 - 本轮未修改后端、数据库或前端代码，未迁移或删除 v1 评估数据。
+
 ## 2026-08-01：面试复盘需求冻结与 Task 1 完成
 
 - 通过 27 个单项产品决策冻结首版范围：目标归属、文字输入、说话人确认、推断问题、无总分、四类缺口、候选审核、局部重算、渐进运行、报告优先、双入口、移动端和发布边界。
