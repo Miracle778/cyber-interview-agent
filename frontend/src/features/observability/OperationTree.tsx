@@ -12,6 +12,7 @@ import { formatDuration, statusLabel } from "./ExecutionList";
 import {
   friendlyEventName,
   friendlyOperationName,
+  executionStartPresentation,
   failureEventWasRecovered,
   isFailureEventType,
   operationWasRecovered,
@@ -128,7 +129,10 @@ export function OperationTree({
       ...(childrenByParent.get(operation.id) ?? []),
       ...(displayRoots[0]?.id === operation.id ? promotedRoots : []),
     ];
-    const operationEvents = eventsByOperation.get(operation.id) ?? [];
+    const operationEvents = (eventsByOperation.get(operation.id) ?? []).filter(
+      (event) => event.eventType !== "execution.started"
+        || executionStartPresentation(event, events) !== null,
+    );
     const hasChildren = children.length > 0 || operationEvents.length > 0;
     const expanded = hasChildren && !collapsedIds.has(operation.id);
     const recovered = operationWasRecovered(operation, events, operations);
@@ -216,6 +220,7 @@ export function OperationTree({
                 return renderOperation(item.operation, level + 1);
               }
               const recoveredFailure = failureEventWasRecovered(item.event, events);
+              const startPresentation = executionStartPresentation(item.event, events);
               return (
               <li role="none" key={item.event.eventId}>
                 <button
@@ -248,7 +253,11 @@ export function OperationTree({
                   </span>
                   <span className="operation-tree__copy">
                     <strong title={item.event.eventType}>
-                      {friendlyEventName(item.event.eventType, recoveredFailure)}
+                      {friendlyEventName(
+                        item.event.eventType,
+                        recoveredFailure,
+                        startPresentation === "recovery",
+                      )}
                     </strong>
                     <small>
                       事件 #{item.event.sequence} · {item.event.byteLength.toLocaleString()} B

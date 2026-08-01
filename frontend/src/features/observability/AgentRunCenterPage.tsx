@@ -307,10 +307,10 @@ export function AgentRunCenterPage({
   };
 
   return (
-    <section aria-label="任务运行" className="agent-run-center agent-run-center--friendly">
+    <section aria-label="Agent 运行中心" className="agent-run-center agent-run-center--friendly">
       <header className="agent-run-center__header">
         <div>
-          <h1 id="agent-run-center-title">任务运行</h1>
+          <h1 id="agent-run-center-title">Agent 运行中心</h1>
           <p>查看 Agent 正在做什么，需要你处理的事项会优先显示。</p>
         </div>
         <div className="agent-run-center__header-actions">

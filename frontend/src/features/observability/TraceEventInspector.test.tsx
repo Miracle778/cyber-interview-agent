@@ -32,7 +32,7 @@ describe("TraceEventInspector", () => {
     );
 
     expect(screen.getByText("完整内容需开启高级诊断")).toBeInTheDocument();
-    expect(screen.getByText(/仅展示 Provider 实际返回的数据/)).toBeInTheDocument();
+    expect(screen.getByText(/展示系统实际发送给模型的内容/)).toBeInTheDocument();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -82,7 +82,72 @@ describe("TraceEventInspector", () => {
     );
   });
 
-  it("pretty prints parsed JSON without building message cards", async () => {
+  it("shows a readable review answer before the raw model request", async () => {
+    const content = JSON.stringify({
+      provider_model_id: "glm-config-1",
+      messages: [{
+        type: "human",
+        content: "冻结题目：{\"title\":\"MySQL 存储引擎对比\"}\n用户回答：InnoDB 支持事务，MyISAM 不支持事务\n补充回答：默认使用 InnoDB",
+      }],
+      system_message: {
+        type: "system",
+        content: "根据冻结题目评价用户回答。",
+      },
+      model_settings: { temperature: 0.2 },
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({
+      eventId: "event-1",
+      eventType: "model.request",
+      content,
+      contentEncoding: "utf-8-json",
+      offset: 0,
+      nextOffset: null,
+      complete: true,
+      sha256: "abc",
+      redactionsApplied: true,
+    }));
+
+    render(
+      <TraceEventInspector
+        workspaceId="workspace-1"
+        runId="run-1"
+        event={{ ...event, byteLength: content.length }}
+        advancedEnabled
+        modelCatalog={{
+          "glm-config-1": {
+            displayName: "GLM 5.2",
+            modelId: "glm-5.2",
+            providerName: "火山方舟",
+          },
+        }}
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "本次用户回答" })).toBeInTheDocument();
+    expect(screen.getByText("InnoDB 支持事务，MyISAM 不支持事务")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "补充回答" })).toBeInTheDocument();
+    expect(screen.getByText("默认使用 InnoDB")).toBeInTheDocument();
+    expect(screen.getAllByText("MySQL 存储引擎对比", { exact: false })).not.toHaveLength(0);
+    expect(screen.getByText("根据冻结题目评价用户回答。")).toBeInTheDocument();
+    expect(screen.getByText("GLM 5.2")).toBeInTheDocument();
+    expect(screen.getByText(/glm-5\.2/)).toBeInTheDocument();
+    expect(screen.getByText(/火山方舟/)).toBeInTheDocument();
+    expect(screen.getByText("模型输入上下文").closest("details")).toHaveAttribute("open");
+    expect(screen.getByText("系统上下文").closest("details")).toHaveAttribute("open");
+    expect(screen.getByText("使用模型与参数").closest("details")).toHaveAttribute("open");
+    expect(screen.getByText("原始事件 JSON").closest("details")).not.toHaveAttribute("open");
+    expect(
+      [...document.querySelectorAll(".trace-model-request > details > summary")]
+        .map((item) => item.textContent),
+    ).toEqual([
+      "使用模型与参数",
+      "系统上下文",
+      "模型输入上下文",
+      "原始事件 JSON",
+    ]);
+  });
+
+  it("shows generic model input as readable content without mislabelling it as a user answer", async () => {
     const escapedQuestions = JSON.stringify([{
       seed_key: "seed-1",
       question_text: "SQLite 出现 database is locked 时应该怎样治理？",
@@ -123,8 +188,8 @@ describe("TraceEventInspector", () => {
     expect(formatted).toHaveTextContent("题目种子：");
     expect(formatted.textContent).toContain("题目种子：\n\n");
     expect(formatted.textContent).not.toContain("题目种子：\\n\\n");
-    expect(screen.queryByText("用户消息")).not.toBeInTheDocument();
-    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "发送给模型的内容" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "本次用户回答" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "原文" }));
     expect(screen.getByText(content)).toBeInTheDocument();
@@ -167,7 +232,25 @@ describe("TraceEventInspector", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json({
       eventId: "event-1",
       eventType: "model.response",
-      content: "{\"duration_ms\":120,\"response\":{\"structured_response\":{\"score\":4},\"result\":\"raw\"}}",
+      content: JSON.stringify({
+        duration_ms: 120,
+        response: {
+          structured_response: {
+            covered_key_points: ["事务"],
+            missing_key_points: ["锁机制"],
+            follow_up_prompt: "请继续说明锁机制",
+          },
+          result: [{
+            type: "ai",
+            content: "评价完成",
+            usage_metadata: {
+              input_tokens: 520,
+              output_tokens: 120,
+              total_tokens: 640,
+            },
+          }],
+        },
+      }),
       contentEncoding: "utf-8-json",
       offset: 0,
       nextOffset: null,
@@ -185,10 +268,15 @@ describe("TraceEventInspector", () => {
       />,
     );
     expect(await screen.findByRole("heading", { name: "Provider 返回的 reasoning" })).toBeInTheDocument();
-    const formatted = screen.getByLabelText("可读 JSON");
-    expect(formatted).toHaveTextContent('"structured_response"');
-    expect(formatted).toHaveTextContent('"result": "raw"');
-    expect(formatted).toHaveTextContent('"duration_ms": 120');
+    expect(screen.getByRole("heading", { name: "结构化结果" })).toBeInTheDocument();
+    expect(screen.getByText("已覆盖关键点")).toBeInTheDocument();
+    expect(screen.getByText("事务")).toBeInTheDocument();
+    expect(screen.getByText("待完善关键点")).toBeInTheDocument();
+    expect(screen.getByText("锁机制")).toBeInTheDocument();
+    expect(screen.getByText("请继续说明锁机制")).toBeInTheDocument();
+    expect(screen.getByText("120 毫秒")).toBeInTheDocument();
+    expect(screen.getByText("640")).toBeInTheDocument();
+    expect(screen.getByText("原始事件 JSON")).toBeInTheDocument();
     unmount();
 
     vi.restoreAllMocks();

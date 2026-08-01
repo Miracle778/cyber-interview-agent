@@ -103,6 +103,9 @@ function mockTrace(
 ) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
+    if (url.includes("/api/settings/providers")) {
+      return Response.json([]);
+    }
     if (url.includes("/api/settings/agent-diagnostics")) {
       return Response.json({
         advancedEnabled,
@@ -315,7 +318,7 @@ describe("ExecutionTracePage", () => {
     const treeItems = await screen.findAllByRole("treeitem");
     const labels = treeItems.map((item) => item.textContent ?? "");
     expect(labels.findIndex((label) => label.includes("任务开始"))).toBeLessThan(
-      labels.findIndex((label) => label.includes("任务运行")),
+      labels.findIndex((label) => label.includes("本次运行")),
     );
     expect(labels.findIndex((label) => label.includes("模型请求"))).toBeLessThan(
       labels.findIndex((label) => label.includes("模型响应")),
@@ -323,10 +326,72 @@ describe("ExecutionTracePage", () => {
     expect(labels.findIndex((label) => label.includes("模型响应"))).toBeLessThan(
       labels.findIndex((label) => label.includes("任务完成")),
     );
-    expect(screen.getByRole("treeitem", { name: /任务运行/ })).toHaveAttribute(
+    expect(screen.getByRole("treeitem", { name: /本次运行/ })).toHaveAttribute(
       "aria-level",
       "2",
     );
+  });
+
+  it("groups each review answer evaluation and hides meaningless resume markers", async () => {
+    const reviewExecution = {
+      ...execution,
+      graphId: "review.round",
+      displayName: "复习助手",
+      status: "waiting_for_input",
+      finishedAt: null,
+    };
+    const reviewOperations = [
+      {
+        ...operations[0],
+        status: "running",
+        finishedAt: null,
+      },
+      {
+        ...operations[1],
+        id: "evaluation-2",
+        name: "review_round_evaluator:2",
+        agentRole: "answer_evaluation",
+        status: "completed",
+      },
+      {
+        ...operations[2],
+        id: "model-2",
+        parentOperationId: "evaluation-2",
+        name: "review_round_evaluator:2",
+        agentRole: "answer_evaluation",
+      },
+      {
+        ...operations[1],
+        id: "evaluation-3",
+        name: "review_round_evaluator:3",
+        agentRole: "answer_evaluation",
+        status: "completed",
+      },
+      {
+        ...operations[2],
+        id: "model-3",
+        parentOperationId: "evaluation-3",
+        name: "review_round_evaluator:3",
+        agentRole: "answer_evaluation",
+      },
+    ];
+    mockTrace(reviewExecution, reviewOperations, [
+      { eventId: "start-1", operationId: "execution:run-1", eventType: "execution.started", observedAt: "2026-07-29T06:26:00Z", byteLength: 536, sequence: 1 },
+      { eventId: "resume-2", operationId: "execution:run-1", eventType: "execution.started", observedAt: "2026-07-29T06:26:01Z", byteLength: 536, sequence: 2 },
+      { eventId: "request-2", operationId: "model-2", eventType: "model.request", observedAt: "2026-07-29T06:26:02Z", byteLength: 800, sequence: 3 },
+      { eventId: "response-2", operationId: "model-2", eventType: "model.response", observedAt: "2026-07-29T06:26:03Z", byteLength: 900, sequence: 4 },
+      { eventId: "resume-3", operationId: "execution:run-1", eventType: "execution.started", observedAt: "2026-07-29T06:26:04Z", byteLength: 536, sequence: 5 },
+      { eventId: "request-3", operationId: "model-3", eventType: "model.request", observedAt: "2026-07-29T06:26:05Z", byteLength: 800, sequence: 6 },
+      { eventId: "response-3", operationId: "model-3", eventType: "model.response", observedAt: "2026-07-29T06:26:06Z", byteLength: 900, sequence: 7 },
+    ]);
+
+    renderTrace();
+
+    const tree = await screen.findByRole("tree", { name: "执行过程" });
+    expect(within(tree).getAllByRole("treeitem", { name: /任务开始/ })).toHaveLength(1);
+    expect(within(tree).getByRole("treeitem", { name: /第 2 题 · 回答评价/ })).toBeInTheDocument();
+    expect(within(tree).getByRole("treeitem", { name: /第 3 题 · 回答评价/ })).toBeInTheDocument();
+    expect(within(tree).getAllByRole("treeitem", { name: /模型调用/ })).toHaveLength(2);
   });
 
   it("degrades missing and partial traces without turning them into page errors", async () => {
@@ -481,9 +546,15 @@ describe("ExecutionTracePage", () => {
       name: /模型处理异常 · 已恢复/,
     });
     expect(recoveredEvent).toHaveAttribute("data-tone", "recovered");
-    expect(within(tree).getAllByRole("treeitem", {
-      name: /review_round_evaluator 历史异常 · 已恢复/,
-    })).toHaveLength(2);
+    expect(within(tree).getByRole("treeitem", {
+      name: /回答评价 历史异常 · 已恢复/,
+    })).toBeInTheDocument();
+    expect(within(tree).getByRole("treeitem", {
+      name: /模型调用 历史异常 · 已恢复/,
+    })).toBeInTheDocument();
+    expect(within(tree).getByRole("treeitem", {
+      name: /任务恢复/,
+    })).toBeInTheDocument();
     fireEvent.click(recoveredEvent);
     expect(await screen.findByRole("heading", {
       name: "模型处理异常 · 已恢复",

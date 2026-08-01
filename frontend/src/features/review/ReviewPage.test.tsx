@@ -128,10 +128,28 @@ describe("R2 ReviewPage", () => {
     expect(await screen.findByRole("region", { name: "当前复习轮次" })).toHaveTextContent(
       "Read View 如何判断可见性？",
     );
-    expect(screen.getByRole("link", { name: "返回任务运行" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "返回运行中心" })).toHaveAttribute(
       "href",
       "/agents?status=needs_me",
     );
+
+    fireEvent.click(screen.getByRole("button", { name: "返回历史" }));
+    expect(await screen.findByRole("heading", { name: "复习历史" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "当前复习轮次" })).toBeNull();
+  });
+
+  it("leaves a run-center deep-linked round when opening question curation", async () => {
+    mockApi([waitingRound]);
+    render(<ReviewPage workspace={workspace} />, {
+      wrapper: wrapperAt(
+        "/review?section=practice&reviewSessionId=session-1&returnTo=%2Fagents%3Fstatus%3Dneeds_me",
+      ),
+    });
+
+    expect(await screen.findByRole("region", { name: "当前复习轮次" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "题库整理" }));
+    expect(await screen.findByRole("heading", { name: "题库整理" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "当前复习轮次" })).toBeNull();
   });
 
   it("opens completed and skipped questions in read-only review mode and returns to the active question", async () => {

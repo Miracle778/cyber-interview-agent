@@ -15,7 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { TaskWorkspace, TaskWorkspacePane } from "../../shared/ui/TaskWorkspace";
 import type { WorkspaceConfig } from "../settings/settingsApi";
-import { getAgentDiagnosticsSettings } from "../settings/settingsApi";
+import { getAgentDiagnosticsSettings, listProviders } from "../settings/settingsApi";
 import {
   getObservabilityExecution,
   listObservabilityEvents,
@@ -35,6 +35,7 @@ import { TraceEventInspector } from "./TraceEventInspector";
 import { TraceExportDialog } from "./TraceExportDialog";
 import {
   friendlyOperationName,
+  executionStartPresentation,
   failureEventWasRecovered,
   isFailureEventType,
   operationWasRecovered,
@@ -113,8 +114,28 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
     enabled: Boolean(workspace),
     queryFn: getAgentDiagnosticsSettings,
   });
+  const providersQuery = useQuery({
+    queryKey: ["providers"],
+    enabled: Boolean(workspace && diagnosticsQuery.data?.advancedEnabled),
+    queryFn: listProviders,
+  });
   const operations = operationsQuery.data ?? [];
   const events = eventsQuery.data ?? [];
+  const modelCatalog = useMemo(
+    () => Object.fromEntries(
+      (providersQuery.data ?? []).flatMap((provider) =>
+        provider.models.map((model) => [
+          model.id,
+          {
+            displayName: model.displayName,
+            modelId: model.modelId,
+            providerName: provider.name,
+          },
+        ]),
+      ),
+    ),
+    [providersQuery.data],
+  );
 
   useEffect(() => {
     if (selectedId && operations.some((item) => item.id === selectedId)) return;
@@ -163,6 +184,12 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
         ? operationWasRecovered(selected, events, operations)
         : false,
     [events, operations, selected, selectedEvent],
+  );
+  const selectedResume = useMemo(
+    () => selectedEvent
+      ? executionStartPresentation(selectedEvent, events) === "recovery"
+      : false,
+    [events, selectedEvent],
   );
   const linearFallback =
     operations.length > 1 &&
@@ -384,6 +411,8 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
               event={selectedEvent}
               advancedEnabled={diagnosticsQuery.data?.advancedEnabled ?? false}
               recovered={selectedRecovered}
+              resumed={selectedResume}
+              modelCatalog={modelCatalog}
               drawer={narrowScreen}
               onClose={() => {
                 setSelectedEventId(null);

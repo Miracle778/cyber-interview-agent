@@ -211,7 +211,7 @@ export function EvaluationLabPage({
     <section className="evaluation-lab" aria-label="运行质量">
       <header className="evaluation-lab__header">
         <div>
-          <h1>任务运行</h1>
+          <h1>Agent 运行中心</h1>
           <p>跟进正在处理的事项，及时完成需要你的步骤。</p>
         </div>
         <button
@@ -222,7 +222,7 @@ export function EvaluationLabPage({
           {surface === "overview" ? <Wrench /> : <BarChart3 />}
           {surface === "overview" ? "评估工具" : "返回质量概览"}
         </button>
-        <nav aria-label="任务运行工作区">
+        <nav aria-label="Agent 运行中心工作区">
           <Link to="/agents">运行中心</Link>
           <Link to="/agents/evaluations" aria-current="page">运行质量</Link>
         </nav>

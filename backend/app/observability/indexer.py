@@ -274,13 +274,21 @@ class TraceLedgerIndexer:
             )
         ]
         if parent_operation_id and parent_operation_id != f"execution:{run_id}":
+            parent_name = next(
+                (
+                    value
+                    for value in (row.get("agent_name"), agent_role)
+                    if isinstance(value, str) and value
+                ),
+                "agent",
+            )
             operations.append(
                 _operation(
                     operation_id=parent_operation_id,
                     run_id=run_id,
                     parent_operation_id=f"execution:{run_id}",
                     kind="agent",
-                    name=agent_role or "agent",
+                    name=parent_name,
                     agent_role=agent_role,
                     observed_at=observed_at,
                 )

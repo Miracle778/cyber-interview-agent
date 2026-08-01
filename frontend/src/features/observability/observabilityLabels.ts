@@ -12,6 +12,8 @@ const OPERATION_NAMES: Record<string, string> = {
   profile_generation: "整理个人画像",
   job_analysis: "分析岗位要求",
   project_deep_dive: "深入分析项目",
+  review_round_evaluator: "回答评价",
+  project_answer_evaluator: "项目回答评价",
 };
 
 const EVENT_NAMES: Record<string, string> = {
@@ -30,7 +32,7 @@ const EVENT_NAMES: Record<string, string> = {
 };
 
 const KIND_NAMES: Record<OperationSummary["kind"], string> = {
-  execution: "任务运行",
+  execution: "本次运行",
   agent: "Agent 处理",
   model: "模型调用",
   tool: "工具调用",
@@ -38,6 +40,7 @@ const KIND_NAMES: Record<OperationSummary["kind"], string> = {
 };
 
 const UUID_LIKE = /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i;
+const SCOPED_REVIEW_EVALUATOR = /^(review_round_evaluator|project_answer_evaluator):(\d+)$/;
 
 export function operationKindLabel(kind: OperationSummary["kind"]) {
   return KIND_NAMES[kind];
@@ -45,14 +48,56 @@ export function operationKindLabel(kind: OperationSummary["kind"]) {
 
 export function friendlyOperationName(operation: OperationSummary) {
   const normalized = operation.name.trim().toLocaleLowerCase();
+  const scopedEvaluation = normalized.match(SCOPED_REVIEW_EVALUATOR);
+  if (scopedEvaluation) {
+    if (operation.kind === "model") return "模型调用";
+    return `第 ${Number(scopedEvaluation[2])} 题 · ${scopedEvaluation[1] === "project_answer_evaluator" ? "项目回答评价" : "回答评价"}`;
+  }
+  if (
+    operation.kind === "model"
+    && ["review_round_evaluator", "project_answer_evaluator"].includes(normalized)
+  ) {
+    return "模型调用";
+  }
   if (OPERATION_NAMES[normalized]) return OPERATION_NAMES[normalized];
   if (UUID_LIKE.test(normalized)) return KIND_NAMES[operation.kind];
   return operation.name;
 }
 
-export function friendlyEventName(eventType: string, recovered = false) {
+export function friendlyEventName(
+  eventType: string,
+  recovered = false,
+  resumed = false,
+) {
+  if (eventType === "execution.started" && resumed) return "任务恢复";
   const name = EVENT_NAMES[eventType] ?? eventType;
   return recovered && isFailureEventType(eventType) ? `${name} · 已恢复` : name;
+}
+
+export function executionStartPresentation(
+  event: TraceEventSummary,
+  events: TraceEventSummary[],
+): "start" | "recovery" | null {
+  if (event.eventType !== "execution.started") return null;
+  let sawStart = false;
+  let failureSinceStart = false;
+  for (const candidate of [...events].sort((left, right) => left.sequence - right.sequence)) {
+    if (candidate.eventType === "execution.started") {
+      const presentation = !sawStart
+        ? failureSinceStart ? "recovery" : "start"
+        : failureSinceStart
+          ? "recovery"
+          : null;
+      if (candidate.eventId === event.eventId) return presentation;
+      sawStart = true;
+      failureSinceStart = false;
+      continue;
+    }
+    if (isFailureEventType(candidate.eventType)) {
+      failureSinceStart = true;
+    }
+  }
+  return null;
 }
 
 export function isFailureEventType(eventType: string) {

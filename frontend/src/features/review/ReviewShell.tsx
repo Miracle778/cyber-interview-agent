@@ -11,7 +11,7 @@ export function ReviewShell({ section, onSectionChange, actions, returnTo, child
         {returnTo ? (
           <Link className="review-run-center-return" to={returnTo}>
             <ArrowLeft size={16} aria-hidden="true" />
-            返回任务运行
+            返回运行中心
           </Link>
         ) : null}
         <h1>复习</h1>

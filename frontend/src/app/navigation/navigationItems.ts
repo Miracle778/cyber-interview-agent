@@ -19,7 +19,7 @@ export const NAVIGATION_GROUPS: NavigationGroup[] = [
       { label: "知识库", to: "/knowledge", icon: BookOpenText },
       { label: "个人画像", to: "/profile", icon: UserRound },
       { label: "求职目标", to: "/targets", icon: BriefcaseBusiness },
-      { label: "任务运行", to: "/agents", icon: Activity },
+      { label: "Agent 运行中心", to: "/agents", icon: Activity },
     ],
   },
   {

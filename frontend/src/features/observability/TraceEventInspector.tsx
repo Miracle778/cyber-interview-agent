@@ -2,7 +2,7 @@ import { AlertTriangle, LoaderCircle, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toActionableError } from "../../shared/api/errorAdvice";
 import { getTraceEventContent } from "./observabilityApi";
-import { TraceJsonViewer } from "./TraceJsonViewer";
+import { TraceJsonViewer, type TraceModelDescriptor } from "./TraceJsonViewer";
 import { friendlyEventName } from "./observabilityLabels";
 import type { TraceEventContent, TraceEventSummary } from "./observabilityTypes";
 
@@ -12,6 +12,8 @@ interface TraceEventInspectorProps {
   event: TraceEventSummary | null;
   advancedEnabled: boolean;
   recovered?: boolean;
+  resumed?: boolean;
+  modelCatalog?: Record<string, TraceModelDescriptor>;
   drawer?: boolean;
   onClose?: () => void;
 }
@@ -30,6 +32,8 @@ export function TraceEventInspector({
   event,
   advancedEnabled,
   recovered = false,
+  resumed = false,
+  modelCatalog = {},
   drawer = false,
   onClose,
 }: TraceEventInspectorProps) {
@@ -103,7 +107,7 @@ export function TraceEventInspector({
       <header>
         <div>
           <span>{event ? eventFamily(event.eventType) : "事件正文"}</span>
-          <h2>{event ? friendlyEventName(event.eventType, recovered) : "选择一个事件"}</h2>
+          <h2>{event ? friendlyEventName(event.eventType, recovered, resumed) : "选择一个事件"}</h2>
           {event ? <small>{event.eventType}</small> : null}
         </div>
         {drawer && onClose ? (
@@ -133,7 +137,9 @@ export function TraceEventInspector({
             <div><dt>正文大小</dt><dd>{event.byteLength.toLocaleString()} B</dd></div>
           </dl>
           <p className="trace-event-inspector__provider-boundary">
-            仅展示 Provider 实际返回的数据，不推测模型思维过程。
+            {event.eventType === "model.request"
+              ? "展示系统实际发送给模型的内容；敏感凭据已在写入时过滤。"
+              : "仅展示 Provider 实际返回的数据，不推测模型思维过程。"}
           </p>
 
           {event.bodyState !== "available" ? (
@@ -178,6 +184,7 @@ export function TraceEventInspector({
               content={content}
               eventType={event.eventType}
               complete={complete}
+              modelCatalog={modelCatalog}
             />
           ) : null}
 

@@ -193,7 +193,7 @@ describe("AgentRunCenterPage", () => {
 
     render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
 
-    expect(screen.getByRole("heading", { level: 1, name: "任务运行" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Agent 运行中心" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "运行质量" })).toHaveAttribute(
       "href",
       "/agents/evaluations",
