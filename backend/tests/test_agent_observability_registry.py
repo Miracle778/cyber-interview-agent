@@ -56,6 +56,18 @@ def test_non_agent_workflows_are_not_visible_in_the_agent_run_center() -> None:
         assert AGENT_OBSERVABILITY_REGISTRY[graph_id].run_center_visible is True
 
 
+def test_interview_retrospective_is_registered_as_business_agent() -> None:
+    registration = AGENT_OBSERVABILITY_REGISTRY["interview.retrospective"]
+
+    assert registration.display_name == "面试复盘"
+    assert registration.route_template == "/retrospectives"
+    assert registration.system is False
+    assert {"open_business", "cancel", "retry", "resume", "export_trace"} <= set(
+        registration.capabilities
+    )
+    assert registration.system_components == ("retrospective_analysis",)
+
+
 def test_execution_summary_resource_uses_camel_case_contract() -> None:
     resource = ExecutionSummaryResource(
         id="run-1",

@@ -88,6 +88,22 @@ class CleanupVersionRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class CleanupWorkItemRecord:
+    id: str
+    cleanup_version_id: str
+    work_key: str
+    source_start: int
+    source_end: int
+    input_digest: str
+    status: str
+    output: dict[str, object] | None
+    attempt_count: int
+    last_error_code: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
 class SegmentRecord:
     id: str
     cleanup_version_id: str

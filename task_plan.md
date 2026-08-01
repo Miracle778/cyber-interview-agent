@@ -22,7 +22,7 @@
 
 ## 当前任务：面试复盘 Agent
 
-状态：需求拷问、正式规格和实施计划已完成；Slice 1 的 Task 1–2 已完成，Task 3 的严格清洗契约、窗口切分和重叠 Reducer 已开始实现。
+状态：需求拷问、正式规格和实施计划已完成；Slice 1 的 Task 1–3 已完成代码与聚焦自动验证，准备进入 Task 4 捕获与整理工作台前端。
 
 - 每场复盘必须归属于求职目标，一轮面试对应一场复盘；
 - 首版输入为转写文本或事后回忆，不做音视频、OCR、联网核验或自动脱敏；
@@ -38,7 +38,7 @@
 - `docs/superpowers/architecture-decisions/2026-08-01-interview-retrospective-versioned-evidence-and-cross-domain-boundaries.md`
 - `docs/superpowers/plans/2026-08-01-interview-retrospective-agent.md`
 
-下一步：继续 Task 3，接入真实 Cleanup Agent、持久工作项、后台 Execution、API 和运行中心 Registry。
+下一步：执行 Task 4，接入 `/retrospectives` 列表、新建复盘流程、整理工作台和求职目标深链。
 
 ## 当前设计：Agent 可观测与质量评估工作台
 

@@ -16,6 +16,7 @@ from app.agents.single_review_agents import SingleReviewAgents
 from app.agents.review_round_agents import ReviewRoundAgents
 from app.agents.profile_agents import ProfileAgents
 from app.agents.job_target_agents import JobTargetAgents
+from app.agents.interview_retrospective_agents import InterviewRetrospectiveAgents
 from app.graphs.publication import create_publication_graph
 from app.graphs.question_curation import create_question_curation_graph
 from app.graphs.review import create_review_graph
@@ -51,6 +52,7 @@ PRODUCTION_GRAPH_KINDS = frozenset(
         "knowledge.publish",
         "job.analysis",
         "project.deep_dive",
+        "interview.retrospective",
         "diagnostic.echo",
         "diagnostic.approval",
         "diagnostic.security",
@@ -232,6 +234,52 @@ class ProductionGraphFactory:
             context_limit_tokens=context_limit_tokens,
         )
         return JobTargetAgents.create(
+            self._agents,
+            model_bindings=model_bindings,
+            middleware=middleware,
+            model_override=interaction_override,
+        )
+
+    def create_interview_retrospective_agents(
+        self,
+        *,
+        model_bindings,
+        projection,
+        audit,
+        observability,
+        publish_event=None,
+        interaction_override: ModelOverride | None = None,
+    ) -> InterviewRetrospectiveAgents:
+        context_limit_tokens = min(
+            self._agents.resolve_context_limit(
+                role,
+                model_bindings=model_bindings,
+                model_override=(
+                    interaction_override
+                    if role == "retrospective_analysis"
+                    else None
+                ),
+            )
+            for role in ("retrospective_analysis", "report_summarization")
+        )
+        middleware = build_default_middleware(
+            summary_model=self._agents.resolve_model(
+                "report_summarization", model_bindings=model_bindings
+            ),
+            summary_provider_model_id=model_bindings["report_summarization"],
+            trace_writer=self.trace_writer,
+            projection=projection,
+            policy=ToolPolicyMiddleware(
+                audit=audit,
+                required_scopes={},
+                publish_event=publish_event,
+            ),
+            observability=observability,
+            interrupt_on={},
+            budget_profile=PROFILE_CHAT_BUDGET_PROFILE,
+            context_limit_tokens=context_limit_tokens,
+        )
+        return InterviewRetrospectiveAgents.create(
             self._agents,
             model_bindings=model_bindings,
             middleware=middleware,

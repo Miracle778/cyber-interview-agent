@@ -377,7 +377,7 @@ git commit -m "feat: add retrospective lifecycle and version services"
 - Produces: `POST /api/interview-retrospectives`, source import, cleanup start/detail/update/confirm, archive/recycle/restore/delete routes.
 - Produces Agent Registry key `interview_retrospective` and execution capability metadata.
 
-- [ ] **Step 1: Write strict contract RED tests**
+- [x] **Step 1: Write strict contract RED tests**
 
 ```python
 def test_cleanup_output_rejects_unknown_fields():
@@ -398,11 +398,11 @@ def test_cleanup_output_rejects_unknown_fields():
 
 Cover ascending offsets, non-overlap, role enums, confidence `[0,1]`, bounded names/text, source-window ownership, and input-type prompt identity.
 
-- [ ] **Step 2: Write cleanup execution RED tests**
+- [x] **Step 2: Write cleanup execution RED tests**
 
 Prove create makes one visible chat Session and one system analysis Session, start cleanup returns immediately with Execution ID, completed windows reduce by source offset, restart resumes pending windows, stop preserves completed windows, and Trace failure does not fail cleanup.
 
-- [ ] **Step 3: Implement prompts, contracts, and Agent factory bindings**
+- [x] **Step 3: Implement prompts, contracts, and Agent factory bindings**
 
 Define stable prompt IDs:
 
@@ -416,15 +416,15 @@ RETROSPECTIVE_CLEANUP_PROMPT = PromptSpec(
 
 Use `retrospective_analysis` binding and no tools. Agent output must be a strict `CleanupOutput`.
 
-- [ ] **Step 4: Implement bounded cleanup Graph and reducer**
+- [x] **Step 4: Implement bounded cleanup Graph and reducer**
 
 Nodes are `normalize_source`, `create_windows`, `cleanup_window`, `reduce_segments`, `persist_review`. Windows are at most 24,000 characters with 1,000-character overlap. The reducer rejects offset regression and deduplicates overlap by `(source_start, source_end, normalized_text)`.
 
-- [ ] **Step 5: Implement application orchestration**
+- [x] **Step 5: Implement application orchestration**
 
 `create_retrospective` creates the two Sessions, then the domain record. `start_cleanup` validates source availability, creates CleanupVersion plus work items, prepares an Execution, and schedules background processing. `confirm_cleanup` verifies all included segments have known roles and atomically activates the version.
 
-- [ ] **Step 6: Add camelCase schemas and routes**
+- [x] **Step 6: Add camelCase schemas and routes**
 
 Required endpoints:
 
@@ -448,11 +448,11 @@ DELETE /api/interview-retrospectives/{id}
 
 All writes require `Idempotency-Key`; versioned writes require `expectedVersion`.
 
-- [ ] **Step 7: Register Runtime and observability metadata**
+- [x] **Step 7: Register Runtime and observability metadata**
 
 Registry display name is “面试复盘”; task titles use target/round metadata. Add `WorkspaceRuntime.interview_retrospectives` application/service access without changing existing constructors’ public behavior.
 
-- [ ] **Step 8: Run Task 3 GREEN tests**
+- [x] **Step 8: Run Task 3 GREEN tests**
 
 Run:
 
@@ -462,7 +462,7 @@ Run:
 git diff --check
 ```
 
-- [ ] **Step 9: Commit Task 3**
+- [x] **Step 9: Commit Task 3**
 
 ```bash
 git add backend/app backend/tests/test_interview_retrospective_*.py

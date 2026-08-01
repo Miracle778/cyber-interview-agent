@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
+from collections.abc import Iterable
+from typing import Protocol
 from uuid import uuid4
 
 from app.interview_retrospectives.errors import (
@@ -10,10 +13,20 @@ from app.interview_retrospectives.errors import (
 )
 from app.interview_retrospectives.models import (
     CleanupVersionRecord,
+    CleanupWorkItemRecord,
     RetrospectiveRecord,
     SegmentRecord,
     SourceVersionRecord,
 )
+
+
+class CleanupWindow(Protocol):
+    source_start: int
+    source_end: int
+    body: str
+
+    @property
+    def work_key(self) -> str: ...
 
 
 class InterviewRetrospectiveRepository:
@@ -74,6 +87,16 @@ class InterviewRetrospectiveRepository:
             raise RetrospectiveNotFound(retrospective_id)
         return _retrospective(row)
 
+    def retrospective_by_create_key(
+        self, *, workspace_id: str, idempotency_key: str
+    ) -> RetrospectiveRecord | None:
+        row = self.connection.execute(
+            "SELECT * FROM interview_retrospectives "
+            "WHERE workspace_id = ? AND create_idempotency_key = ?",
+            (workspace_id, idempotency_key),
+        ).fetchone()
+        return None if row is None else _retrospective(row)
+
     def list_retrospectives(
         self, *, workspace_id: str, lifecycle_status: str
     ) -> tuple[RetrospectiveRecord, ...]:
@@ -84,6 +107,37 @@ class InterviewRetrospectiveRepository:
             (workspace_id, lifecycle_status),
         ).fetchall()
         return tuple(_retrospective(row) for row in rows)
+
+    def update_retrospective(
+        self,
+        retrospective_id: str,
+        *,
+        title: str,
+        round_label: str,
+        interview_date: str | None,
+        outcome: str,
+        note: str,
+        expected_version: int,
+    ) -> RetrospectiveRecord:
+        cursor = self.connection.execute(
+            "UPDATE interview_retrospectives SET title = ?, round_label = ?, "
+            "interview_date = ?, outcome = ?, note = ?, version = version + 1, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ?",
+            (
+                title,
+                round_label,
+                interview_date,
+                outcome,
+                note,
+                retrospective_id,
+                expected_version,
+            ),
+        )
+        if cursor.rowcount != 1:
+            self.connection.rollback()
+            raise RetrospectiveVersionConflict("复盘版本已更新")
+        self.connection.commit()
+        return self.get_retrospective(retrospective_id)
 
     def insert_source_version(
         self,
@@ -174,6 +228,238 @@ class InterviewRetrospectiveRepository:
         if row is None:
             raise RetrospectiveNotFound(cleanup_id)
         return _cleanup(row)
+
+    def insert_cleanup_run(
+        self,
+        retrospective_id: str,
+        *,
+        source_version_id: str,
+        input_digest: str,
+        windows: Iterable[CleanupWindow],
+    ) -> CleanupVersionRecord:
+        ordinal = int(
+            self.connection.execute(
+                "SELECT COALESCE(MAX(ordinal), 0) + 1 "
+                "FROM interview_cleanup_versions WHERE retrospective_id = ?",
+                (retrospective_id,),
+            ).fetchone()[0]
+        )
+        cleanup_id = str(uuid4())
+        try:
+            self.connection.execute(
+                "INSERT INTO interview_cleanup_versions("
+                "id, retrospective_id, source_version_id, ordinal, input_digest, "
+                "status, stage) VALUES (?, ?, ?, ?, ?, 'queued', 'normalizing')",
+                (
+                    cleanup_id,
+                    retrospective_id,
+                    source_version_id,
+                    ordinal,
+                    input_digest,
+                ),
+            )
+            for window in windows:
+                digest = hashlib.sha256(window.body.encode("utf-8")).hexdigest()
+                self.connection.execute(
+                    "INSERT INTO interview_cleanup_work_items("
+                    "id, cleanup_version_id, work_key, source_start, source_end, "
+                    "input_digest) VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        str(uuid4()),
+                        cleanup_id,
+                        window.work_key,
+                        window.source_start,
+                        window.source_end,
+                        digest,
+                    ),
+                )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        return self.get_cleanup_version(cleanup_id)
+
+    def list_cleanup_work_items(
+        self, cleanup_id: str
+    ) -> tuple[CleanupWorkItemRecord, ...]:
+        rows = self.connection.execute(
+            "SELECT * FROM interview_cleanup_work_items "
+            "WHERE cleanup_version_id = ? ORDER BY source_start, rowid",
+            (cleanup_id,),
+        ).fetchall()
+        return tuple(_cleanup_work_item(row) for row in rows)
+
+    def list_resumable_cleanup_work_items(
+        self, cleanup_id: str
+    ) -> tuple[CleanupWorkItemRecord, ...]:
+        rows = self.connection.execute(
+            "SELECT * FROM interview_cleanup_work_items "
+            "WHERE cleanup_version_id = ? "
+            "AND status IN ('pending', 'retryable', 'interrupted') "
+            "ORDER BY source_start, rowid",
+            (cleanup_id,),
+        ).fetchall()
+        return tuple(_cleanup_work_item(row) for row in rows)
+
+    def claim_cleanup_work_item(self, item_id: str) -> CleanupWorkItemRecord:
+        cursor = self.connection.execute(
+            "UPDATE interview_cleanup_work_items SET status = 'running', "
+            "attempt_count = attempt_count + 1, last_error_code = NULL, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ? "
+            "AND status IN ('pending', 'retryable', 'interrupted')",
+            (item_id,),
+        )
+        if cursor.rowcount != 1:
+            self.connection.rollback()
+            raise RetrospectiveVersionConflict("整理窗口已被处理")
+        self.connection.commit()
+        return self.get_cleanup_work_item(item_id)
+
+    def get_cleanup_work_item(self, item_id: str) -> CleanupWorkItemRecord:
+        row = self.connection.execute(
+            "SELECT * FROM interview_cleanup_work_items WHERE id = ?",
+            (item_id,),
+        ).fetchone()
+        if row is None:
+            raise RetrospectiveNotFound(item_id)
+        return _cleanup_work_item(row)
+
+    def complete_cleanup_work_item(
+        self, item_id: str, *, output: dict[str, object]
+    ) -> CleanupWorkItemRecord:
+        cursor = self.connection.execute(
+            "UPDATE interview_cleanup_work_items SET status = 'completed', "
+            "output_json = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND status = 'running'",
+            (json.dumps(output, ensure_ascii=False, sort_keys=True), item_id),
+        )
+        if cursor.rowcount != 1:
+            self.connection.rollback()
+            raise RetrospectiveVersionConflict("整理窗口状态已更新")
+        self.connection.commit()
+        return self.get_cleanup_work_item(item_id)
+
+    def stop_cleanup(self, cleanup_id: str) -> CleanupVersionRecord:
+        try:
+            self.connection.execute(
+                "UPDATE interview_cleanup_work_items SET status = 'interrupted', "
+                "updated_at = CURRENT_TIMESTAMP WHERE cleanup_version_id = ? "
+                "AND status IN ('pending', 'running', 'retryable')",
+                (cleanup_id,),
+            )
+            cursor = self.connection.execute(
+                "UPDATE interview_cleanup_versions SET status = 'stopped', "
+                "stage = 'stopped', control_intent = 'stop', version = version + 1, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? "
+                "AND status IN ('queued', 'running', 'stopping')",
+                (cleanup_id,),
+            )
+            if cursor.rowcount != 1:
+                raise RetrospectiveVersionConflict("整理任务已结束")
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        return self.get_cleanup_version(cleanup_id)
+
+    def attach_cleanup_execution(
+        self, cleanup_id: str, *, execution_id: str
+    ) -> CleanupVersionRecord:
+        cursor = self.connection.execute(
+            "UPDATE interview_cleanup_versions SET execution_id = ?, "
+            "status = 'running', stage = 'cleaning', version = version + 1, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'queued'",
+            (execution_id, cleanup_id),
+        )
+        if cursor.rowcount != 1:
+            self.connection.rollback()
+            raise RetrospectiveVersionConflict("整理任务已经启动")
+        self.connection.commit()
+        return self.get_cleanup_version(cleanup_id)
+
+    def rearm_cleanup(self, cleanup_id: str) -> CleanupVersionRecord:
+        try:
+            self.connection.execute(
+                "UPDATE interview_cleanup_work_items SET status = 'interrupted', "
+                "updated_at = CURRENT_TIMESTAMP WHERE cleanup_version_id = ? "
+                "AND status = 'running'",
+                (cleanup_id,),
+            )
+            cursor = self.connection.execute(
+                "UPDATE interview_cleanup_versions SET status = 'queued', "
+                "stage = 'cleaning', control_intent = NULL, "
+                "version = version + 1, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND status IN ('stopped', 'failed')",
+                (cleanup_id,),
+            )
+            if cursor.rowcount != 1:
+                raise RetrospectiveVersionConflict("整理任务不能继续")
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        return self.get_cleanup_version(cleanup_id)
+
+    def mark_cleanup_review_pending(
+        self, cleanup_id: str
+    ) -> CleanupVersionRecord:
+        cursor = self.connection.execute(
+            "UPDATE interview_cleanup_versions SET status = 'review_pending', "
+            "stage = 'waiting_for_review', control_intent = NULL, "
+            "version = version + 1, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND status = 'running'",
+            (cleanup_id,),
+        )
+        if cursor.rowcount != 1:
+            self.connection.rollback()
+            raise RetrospectiveVersionConflict("整理任务状态已更新")
+        self.connection.commit()
+        return self.get_cleanup_version(cleanup_id)
+
+    def fail_cleanup(self, cleanup_id: str, *, error_code: str) -> None:
+        self.connection.execute(
+            "UPDATE interview_cleanup_work_items SET status = 'retryable', "
+            "last_error_code = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE cleanup_version_id = ? AND status = 'running'",
+            (error_code, cleanup_id),
+        )
+        self.connection.execute(
+            "UPDATE interview_cleanup_versions SET status = 'failed', "
+            "stage = 'failed', version = version + 1, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'running'",
+            (cleanup_id,),
+        )
+        self.connection.commit()
+
+    def reconcile_interrupted_cleanup_runs(self) -> tuple[str, ...]:
+        rows = self.connection.execute(
+            "SELECT c.id FROM interview_cleanup_versions c "
+            "JOIN agent_runs r ON r.id = c.execution_id "
+            "WHERE c.status IN ('queued', 'running', 'stopping') "
+            "AND r.status IN ('interrupted', 'cancelled') "
+            "ORDER BY c.created_at, c.id"
+        ).fetchall()
+        cleanup_ids = tuple(str(row["id"]) for row in rows)
+        try:
+            for cleanup_id in cleanup_ids:
+                self.connection.execute(
+                    "UPDATE interview_cleanup_work_items "
+                    "SET status = 'interrupted', updated_at = CURRENT_TIMESTAMP "
+                    "WHERE cleanup_version_id = ? AND status = 'running'",
+                    (cleanup_id,),
+                )
+                self.connection.execute(
+                    "UPDATE interview_cleanup_versions SET status = 'stopped', "
+                    "stage = 'stopped', control_intent = 'stop', "
+                    "version = version + 1, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE id = ?",
+                    (cleanup_id,),
+                )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        return cleanup_ids
 
     def replace_segments(
         self,
@@ -478,6 +764,23 @@ def _cleanup(row: sqlite3.Row) -> CleanupVersionRecord:
         control_intent=row["control_intent"],
         confirmed_at=row["confirmed_at"],
         version=row["version"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _cleanup_work_item(row: sqlite3.Row) -> CleanupWorkItemRecord:
+    return CleanupWorkItemRecord(
+        id=row["id"],
+        cleanup_version_id=row["cleanup_version_id"],
+        work_key=row["work_key"],
+        source_start=row["source_start"],
+        source_end=row["source_end"],
+        input_digest=row["input_digest"],
+        status=row["status"],
+        output=(None if row["output_json"] is None else json.loads(row["output_json"])),
+        attempt_count=row["attempt_count"],
+        last_error_code=row["last_error_code"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

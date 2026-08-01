@@ -1,5 +1,15 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-08-01：面试复盘 Task 3 后台整理闭环
+
+- 新增无 Tool 的 `retrospective_analysis` Cleanup Agent、严格结构化输出、24,000 字窗口与 1,000 字重叠 Reducer；偏移回退、窗口越界和未知字段会被拒绝。
+- 新增持久 CleanupVersion/WorkItem 调度：启动立即返回 Execution，停止保留已完成窗口，继续只领取未完成窗口；应用重启会把被中断的运行转换为可继续状态。
+- 新增面试复盘 camelCase API、停止/继续控制及幂等重放，覆盖创建、原文版本、整理、人工修订/确认、归档/回收/恢复和删除影响分析。
+- Runtime 已注册“面试复盘”运行中心元数据；Trace 写入失败保持 fail-open，不改变整理结果。
+- 新鲜聚焦证据：受影响后端组合 `55 passed`，Trace fail-open/停止继续补充测试 `2 passed`；Ruff、Python compileall 与 `git diff --check` 通过。完整前端回归已在迁移基线运行 `339 passed`，本任务未重复运行。
+- 产品成熟度：Slice 1 后端已可供页面调用；用户尚无前端入口，真实 Provider、浏览器和窄屏验收留到 Task 4。
+- 下一步：Task 4 捕获与整理工作台 UI。
+
 ## 2026-08-01：面试复盘迁移到最新产品基线
 
 - 确认本地 `feature/review-agent-workspace` 的 `a4fb776` 才是最新产品基线；旧复盘分支基于过期远程主线，未继续在错误基线上开发。

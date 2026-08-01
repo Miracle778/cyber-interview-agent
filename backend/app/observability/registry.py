@@ -144,6 +144,18 @@ _REGISTRATIONS = (
         system_components=("project_deep_dive",),
     ),
     _registration(
+        "interview.retrospective",
+        "面试复盘",
+        "/retrospectives",
+        "open_business",
+        "cancel",
+        "retry",
+        "resume",
+        "manual_judge",
+        "export_trace",
+        system_components=("retrospective_analysis",),
+    ),
+    _registration(
         "profile.ingest",
         "简历画像整理",
         "",

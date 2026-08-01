@@ -60,6 +60,13 @@ from app.profile.storage import MaterialStorage
 from app.job_targets.repository import JobTargetRepository
 from app.job_targets.service import JobTargetService
 from app.job_targets.application import JobTargetApplication
+from app.interview_retrospectives.application import (
+    InterviewRetrospectiveApplication,
+)
+from app.interview_retrospectives.repository import (
+    InterviewRetrospectiveRepository,
+)
+from app.interview_retrospectives.service import InterviewRetrospectiveService
 from app.observability.indexer import TraceLedgerIndexer
 from app.observability.repository import TraceIndexRepository
 from app.observability.service import AgentObservabilityService
@@ -232,6 +239,7 @@ class WorkspaceRuntime:
     profile: ProfileService
     job_targets: JobTargetService
     job_training: JobTargetApplication
+    interview_retrospectives: InterviewRetrospectiveApplication
     agent_observability: AgentObservabilityService
     agent_evaluation: AgentEvaluationService | None
     trace_retention: TraceRetentionService
@@ -442,6 +450,24 @@ class WorkspaceRuntime:
                 publish_event=events.publish,
             )
         )
+        retrospective_agents_factory = getattr(
+            graph_factory, "create_interview_retrospective_agents", None
+        )
+        retrospective_agents = (
+            None
+            if retrospective_agents_factory is None
+            or not {
+                "retrospective_analysis",
+                "report_summarization",
+            }.issubset(configured_model_bindings)
+            else retrospective_agents_factory(
+                model_bindings=configured_model_bindings,
+                projection=projection,
+                audit=audit,
+                observability=observability,
+                publish_event=events.publish,
+            )
+        )
 
         def create_job_agents(override: ModelOverride):
             if job_agents_factory is None:
@@ -572,6 +598,21 @@ class WorkspaceRuntime:
                 create_job_agents if job_agents_available else None
             ),
         )
+        retrospective_repository = InterviewRetrospectiveRepository(connection)
+        retrospective_service = InterviewRetrospectiveService(
+            workspace_id=workspace_id,
+            repository=retrospective_repository,
+            job_targets=job_targets.repository,
+        )
+        interview_retrospectives = InterviewRetrospectiveApplication(
+            workspace_id=workspace_id,
+            service=retrospective_service,
+            repository=retrospective_repository,
+            sessions=sessions,
+            executions=executions,
+            products=repository,
+            agents=retrospective_agents,
+        )
         if agent_evaluation is not None:
             async def execute_regression(
                 case,
@@ -700,6 +741,7 @@ class WorkspaceRuntime:
             profile=profile,
             job_targets=job_targets,
             job_training=job_training,
+            interview_retrospectives=interview_retrospectives,
             agent_observability=agent_observability,
             agent_evaluation=agent_evaluation,
             trace_retention=trace_retention,
@@ -1053,6 +1095,11 @@ class AgentApplication:
     def job_training(self, workspace_id: str) -> JobTargetApplication:
         return self._context(workspace_id).job_training
 
+    def interview_retrospectives(
+        self, workspace_id: str
+    ) -> InterviewRetrospectiveApplication:
+        return self._context(workspace_id).interview_retrospectives
+
     def agent_observability(
         self, workspace_id: str
     ) -> AgentObservabilityService:
@@ -1141,6 +1188,7 @@ class AgentApplication:
             context = self._context(workspace_id)
             interrupted_executions = context.executions.recover()
             recovered.extend(interrupted_executions)
+            context.interview_retrospectives.repository.reconcile_interrupted_cleanup_runs()
             # Domain reconciliation observes durable interrupted executions;
             # it never schedules Provider work without an explicit resume.
             context.review.repository.reconcile_abandoned_work()

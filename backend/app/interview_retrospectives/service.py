@@ -81,6 +81,63 @@ class InterviewRetrospectiveService:
             raise RetrospectiveTargetRequired("复盘不属于当前工作区")
         return retrospective
 
+    def list(
+        self,
+        *,
+        lifecycle_status: str = "active",
+        job_target_id: str | None = None,
+    ):
+        if lifecycle_status not in {"active", "archived", "recycled"}:
+            raise ValueError("不支持的复盘生命周期")
+        records = self.repository.list_retrospectives(
+            workspace_id=self.workspace_id,
+            lifecycle_status=lifecycle_status,
+        )
+        if job_target_id is None:
+            return records
+        return tuple(item for item in records if item.job_target_id == job_target_id)
+
+    def update(
+        self,
+        retrospective_id: str,
+        *,
+        title: str | None,
+        round_label: str | None,
+        interview_date: str | None,
+        outcome: str | None,
+        note: str | None,
+        expected_version: int,
+        idempotency_key: str,
+    ):
+        del idempotency_key
+        current = self.get(retrospective_id)
+        next_title = current.title if title is None else title.strip()
+        next_round = current.round_label if round_label is None else round_label.strip()
+        next_outcome = current.outcome if outcome is None else outcome
+        if not next_title or not next_round:
+            raise ValueError("标题和面试轮次不能为空")
+        if next_outcome not in {
+            "pending",
+            "passed",
+            "failed",
+            "cancelled",
+            "unrecorded",
+        }:
+            raise ValueError("不支持的面试结果")
+        return self.repository.update_retrospective(
+            retrospective_id,
+            title=next_title,
+            round_label=next_round,
+            interview_date=(
+                current.interview_date
+                if interview_date is None
+                else interview_date
+            ),
+            outcome=next_outcome,
+            note=current.note if note is None else note.strip(),
+            expected_version=expected_version,
+        )
+
     def add_source_version(
         self,
         retrospective_id: str,

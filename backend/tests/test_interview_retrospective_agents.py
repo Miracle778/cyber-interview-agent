@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from app.agents.interview_retrospective_agents import InterviewRetrospectiveAgents
 from app.agents.interview_retrospective_contracts import CleanupOutput
 from app.agents.prompts.interview_retrospective_prompts import (
     RETROSPECTIVE_CLEANUP_PROMPT,
@@ -87,3 +88,28 @@ def test_cleanup_prompt_has_stable_identity_and_input_kind() -> None:
     assert '"sourceKind": "transcript"' in transcript
     assert '"sourceKind": "recollection"' in recollection
     assert transcript != recollection
+
+
+def test_cleanup_agent_uses_analysis_role_without_tools() -> None:
+    captured = {}
+    runnable = object()
+
+    class StubFactory:
+        def create(self, spec, **kwargs):
+            captured["spec"] = spec
+            captured["kwargs"] = kwargs
+            return runnable
+
+    agents = InterviewRetrospectiveAgents.create(
+        StubFactory(),  # type: ignore[arg-type]
+        model_bindings={"retrospective_analysis": "model-1"},
+    )
+
+    assert agents.cleanup is runnable
+    assert captured["spec"].role == "retrospective_analysis"
+    assert captured["spec"].execution_name == "interview_retrospective_cleanup"
+    assert captured["spec"].tools == ()
+    assert captured["spec"].response_format is CleanupOutput
+    assert captured["kwargs"]["model_bindings"] == {
+        "retrospective_analysis": "model-1"
+    }
