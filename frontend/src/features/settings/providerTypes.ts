@@ -76,7 +76,9 @@ export type ModelRole =
   | "profile_extraction"
   | "profile_assessment"
   | "job_analysis"
-  | "project_deep_dive";
+  | "project_deep_dive"
+  | "retrospective_analysis"
+  | "retrospective_chat";
 
 export interface WorkspaceResource {
   id: string;

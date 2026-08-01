@@ -41,6 +41,13 @@
 - 修订 2026-07-29 规格、ADR 和计划的成熟度表述；README 改为如实说明当前“历史结果复检”和规划中的“真实回归”。
 - 新增 README 手绘图 `assets/readme/08-agent-quality-evaluation-boundary-v2.png`；旧图保留，未删除任何历史资产。
 - 本轮未修改后端、数据库或前端代码，未迁移或删除 v1 评估数据。
+## 2026-08-01：面试复盘需求冻结与 Task 1 完成
+
+- 通过 27 个单项产品决策冻结首版范围：目标归属、文字输入、说话人确认、推断问题、无总分、四类缺口、候选审核、局部重算、渐进运行、报告优先、双入口、移动端和发布边界。
+- 新增正式规格、版本/证据/跨领域 ADR 和 10 Task 实施计划；计划按四个可独立验收的纵向 Slice 执行，并由单 Agent 内联完成。
+- Task 1 在最新产品基线上使用 runtime migration 045、app migration 010，新增复盘领域 records/errors 和前后端两个模型用途；补齐整理窗口工作项这一计划自审缺口。
+- RED 明确验证缺表、缺角色和设置页缺入口；GREEN 后迁移/数据库/Provider 受影响回归 `46 passed`，设置组件 `2 passed`，TypeScript、Python compileall 与 `git diff --check` 通过。
+- 下一步：Task 2 实现复盘生命周期、源版本、整理版本与删除不变量。
 
 ## 2026-07-29：Agent 可观测与质量评估实施计划完成
 

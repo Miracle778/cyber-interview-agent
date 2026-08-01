@@ -69,6 +69,8 @@ def _all_roles(model_id: str) -> dict:
         "profile_assessment": model_id,
         "job_analysis": model_id,
         "project_deep_dive": model_id,
+        "retrospective_analysis": model_id,
+        "retrospective_chat": model_id,
     }
 
 

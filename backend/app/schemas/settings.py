@@ -195,6 +195,8 @@ ModelRole = Literal[
     "profile_assessment",
     "job_analysis",
     "project_deep_dive",
+    "retrospective_analysis",
+    "retrospective_chat",
 ]
 MODEL_ROLES = {
     "question_generation",
@@ -205,6 +207,8 @@ MODEL_ROLES = {
     "profile_assessment",
     "job_analysis",
     "project_deep_dive",
+    "retrospective_analysis",
+    "retrospective_chat",
 }
 
 

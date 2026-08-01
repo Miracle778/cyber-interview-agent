@@ -19,6 +19,25 @@
 - `docs/superpowers/plans/2026-07-31-agent-evaluation-v2-migration.md`
 
 当前执行：Phase 1–5 已完成。合成的题目整理与深入讨论案例均通过真实 Provider、v2 Judge、执行前快照、双沙箱业务重跑和匿名 A/B Judge；质量实验室浏览器验收通过。后端 `1005 passed`、前端 `333 passed`、生产构建通过。下一步只在积累足够人工校准样本并新增 ADR 后，评估是否批准少量确定性规则进入发布门禁。
+## 当前任务：面试复盘 Agent
+
+状态：需求拷问、正式规格、架构决策和 10 Task 实施计划已完成；Slice 1 / Task 1 数据契约与模型用途已实现并通过定向验证。
+
+- 每场复盘必须归属于求职目标，一轮面试对应一场复盘；
+- 首版输入为转写文本或事后回忆，不做音视频、OCR、联网核验或自动脱敏；
+- 原文、说话人整理和分析使用不可变版本链；
+- 推断问题在确认前不能进入正式题库、画像、项目讲解或岗位风险；
+- 报告优先、对话辅助，逐题结果渐进展示，不提供整场总分；
+- 模型只生成候选，跨题库、画像、项目讲解和 Knowledge 的写入由用户确认与领域 Receipt 完成；
+- 实施按捕获整理、渐进报告、候选沉淀、对话与收口四个纵向 Slice 推进。
+
+正式输入：
+
+- `docs/superpowers/specs/2026-08-01-interview-retrospective-agent-design.md`
+- `docs/superpowers/architecture-decisions/2026-08-01-interview-retrospective-versioned-evidence-and-cross-domain-boundaries.md`
+- `docs/superpowers/plans/2026-08-01-interview-retrospective-agent.md`
+
+下一步：Slice 1 / Task 2 实现 Workspace 安全的复盘生命周期、源版本、整理版本、原文清除和删除边界。
 
 ## 当前设计：Agent 可观测与质量评估工作台
 
