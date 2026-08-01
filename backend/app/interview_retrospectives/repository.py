@@ -12,8 +12,12 @@ from app.interview_retrospectives.errors import (
     RetrospectiveVersionConflict,
 )
 from app.interview_retrospectives.models import (
+    AnalysisRunRecord,
+    AnalysisWorkItemRecord,
     CleanupVersionRecord,
     CleanupWorkItemRecord,
+    QuestionAnalysisRecord,
+    QuestionUnitRecord,
     RetrospectiveRecord,
     SegmentRecord,
     SourceVersionRecord,
@@ -410,9 +414,7 @@ class InterviewRetrospectiveRepository:
             raise
         return self.get_cleanup_version(cleanup_id)
 
-    def mark_cleanup_review_pending(
-        self, cleanup_id: str
-    ) -> CleanupVersionRecord:
+    def mark_cleanup_review_pending(self, cleanup_id: str) -> CleanupVersionRecord:
         cursor = self.connection.execute(
             "UPDATE interview_cleanup_versions SET status = 'review_pending', "
             "stage = 'waiting_for_review', control_intent = NULL, "
@@ -528,6 +530,610 @@ class InterviewRetrospectiveRepository:
             (cleanup_id,),
         ).fetchall()
         return tuple(_segment(row) for row in rows)
+
+    def insert_analysis_run(
+        self,
+        retrospective_id: str,
+        *,
+        cleanup_version_id: str,
+        input_digest: str,
+        context_snapshot: dict[str, object],
+        retry_of_analysis_run_id: str | None = None,
+    ) -> AnalysisRunRecord:
+        run_id = str(uuid4())
+        try:
+            self.connection.execute(
+                "INSERT INTO interview_analysis_runs("
+                "id, retrospective_id, cleanup_version_id, "
+                "retry_of_analysis_run_id, input_digest, context_snapshot_json, "
+                "total_items) VALUES (?, ?, ?, ?, ?, ?, 1)",
+                (
+                    run_id,
+                    retrospective_id,
+                    cleanup_version_id,
+                    retry_of_analysis_run_id,
+                    input_digest,
+                    json.dumps(context_snapshot, ensure_ascii=False, sort_keys=True),
+                ),
+            )
+            self.connection.execute(
+                "INSERT INTO interview_analysis_work_items("
+                "id, analysis_run_id, work_key, input_digest) VALUES (?, ?, ?, ?)",
+                (str(uuid4()), run_id, "question_extraction", input_digest),
+            )
+            self.connection.execute(
+                "UPDATE interview_retrospectives SET active_analysis_run_id = ?, "
+                "version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (run_id, retrospective_id),
+            )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        return self.get_analysis_run(run_id)
+
+    def get_analysis_run(self, run_id: str) -> AnalysisRunRecord:
+        row = self.connection.execute(
+            "SELECT * FROM interview_analysis_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+        if row is None:
+            raise RetrospectiveNotFound(run_id)
+        return _analysis_run(row)
+
+    def current_analysis_run(self, retrospective_id: str) -> AnalysisRunRecord | None:
+        row = self.connection.execute(
+            "SELECT * FROM interview_analysis_runs WHERE retrospective_id = ? "
+            "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            (retrospective_id,),
+        ).fetchone()
+        return None if row is None else _analysis_run(row)
+
+    def analysis_run_by_digest(
+        self,
+        retrospective_id: str,
+        *,
+        cleanup_version_id: str,
+        input_digest: str,
+    ) -> AnalysisRunRecord | None:
+        row = self.connection.execute(
+            "SELECT * FROM interview_analysis_runs WHERE retrospective_id = ? "
+            "AND cleanup_version_id = ? AND input_digest = ? "
+            "AND retry_of_analysis_run_id IS NULL "
+            "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            (retrospective_id, cleanup_version_id, input_digest),
+        ).fetchone()
+        return None if row is None else _analysis_run(row)
+
+    def list_analysis_work_items(
+        self, run_id: str
+    ) -> tuple[AnalysisWorkItemRecord, ...]:
+        rows = self.connection.execute(
+            "SELECT * FROM interview_analysis_work_items WHERE analysis_run_id = ? "
+            "ORDER BY CASE work_key WHEN 'question_extraction' THEN 0 "
+            "WHEN 'gap_verification' THEN 2 WHEN 'candidate_generation' THEN 3 "
+            "WHEN 'final_projection' THEN 4 ELSE 1 END, created_at, rowid",
+            (run_id,),
+        ).fetchall()
+        return tuple(_analysis_work_item(row) for row in rows)
+
+    def replace_question_units(
+        self,
+        run_id: str,
+        *,
+        questions: tuple[dict[str, object], ...],
+    ) -> tuple[QuestionUnitRecord, ...]:
+        run = self.get_analysis_run(run_id)
+        segment_ids = {
+            row["id"]
+            for row in self.connection.execute(
+                "SELECT id FROM interview_segments WHERE cleanup_version_id = ? "
+                "AND ignored = 0",
+                (run.cleanup_version_id,),
+            ).fetchall()
+        }
+        existing = {
+            row["stable_key"]: row
+            for row in self.connection.execute(
+                "SELECT * FROM interview_question_units WHERE cleanup_version_id = ?",
+                (run.cleanup_version_id,),
+            ).fetchall()
+        }
+        current_ids: list[str] = []
+        try:
+            self.connection.execute(
+                "UPDATE interview_question_units SET ordinal = ordinal + 1000000, "
+                "decision_status = 'superseded', updated_at = CURRENT_TIMESTAMP "
+                "WHERE cleanup_version_id = ?",
+                (run.cleanup_version_id,),
+            )
+            for item in questions:
+                question_segments = tuple(item["question_segment_ids"])
+                answer_segments = tuple(item["answer_segment_ids"])
+                if set(question_segments + answer_segments) - segment_ids:
+                    raise RetrospectiveVersionConflict(
+                        "问题引用了当前整理版本之外的片段"
+                    )
+                origin = str(item["origin"])
+                question_text = str(item["question_text"]).strip()
+                stable_key = hashlib.sha256(
+                    json.dumps(
+                        {
+                            "origin": origin,
+                            "question": question_text,
+                            "questionSegments": question_segments,
+                            "answerSegments": answer_segments,
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ).encode("utf-8")
+                ).hexdigest()
+                previous = existing.get(stable_key)
+                if previous is None:
+                    question_id = str(uuid4())
+                    self.connection.execute(
+                        "INSERT INTO interview_question_units("
+                        "id, retrospective_id, cleanup_version_id, stable_key, ordinal, "
+                        "question_kind, origin, question_text, "
+                        "question_segment_ids_json, answer_segment_ids_json, "
+                        "inference_basis, confidence, decision_status) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            question_id,
+                            run.retrospective_id,
+                            run.cleanup_version_id,
+                            stable_key,
+                            int(item["ordinal"]),
+                            str(item["question_kind"]),
+                            origin,
+                            question_text,
+                            json.dumps(question_segments),
+                            json.dumps(answer_segments),
+                            str(item.get("inference_basis", "")),
+                            float(item["confidence"]),
+                            "confirmed" if origin == "original" else "pending",
+                        ),
+                    )
+                else:
+                    question_id = previous["id"]
+                    decision = previous["decision_status"]
+                    if decision == "superseded":
+                        decision = "confirmed" if origin == "original" else "pending"
+                    self.connection.execute(
+                        "UPDATE interview_question_units SET ordinal = ?, "
+                        "question_kind = ?, origin = ?, question_segment_ids_json = ?, "
+                        "answer_segment_ids_json = ?, inference_basis = ?, confidence = ?, "
+                        "decision_status = ?, version = version + 1, "
+                        "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (
+                            int(item["ordinal"]),
+                            str(item["question_kind"]),
+                            origin,
+                            json.dumps(question_segments),
+                            json.dumps(answer_segments),
+                            str(item.get("inference_basis", "")),
+                            float(item["confidence"]),
+                            decision,
+                            question_id,
+                        ),
+                    )
+                current_ids.append(question_id)
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        return tuple(self.get_question(question_id) for question_id in current_ids)
+
+    def get_question(self, question_id: str) -> QuestionUnitRecord:
+        row = self.connection.execute(
+            "SELECT * FROM interview_question_units WHERE id = ?", (question_id,)
+        ).fetchone()
+        if row is None:
+            raise RetrospectiveNotFound(question_id)
+        return _question(row)
+
+    def list_questions(
+        self,
+        retrospective_id: str,
+        *,
+        cleanup_version_id: str | None = None,
+    ) -> tuple[QuestionUnitRecord, ...]:
+        clause = "retrospective_id = ?"
+        values: list[object] = [retrospective_id]
+        if cleanup_version_id is not None:
+            clause += " AND cleanup_version_id = ?"
+            values.append(cleanup_version_id)
+        rows = self.connection.execute(
+            f"SELECT * FROM interview_question_units WHERE {clause} "
+            "ORDER BY ordinal, rowid",
+            values,
+        ).fetchall()
+        return tuple(_question(row) for row in rows)
+
+    def schedule_analysis_work_items(
+        self,
+        run_id: str,
+        *,
+        question_ids: tuple[str, ...],
+        include_finalizers: bool = True,
+    ) -> tuple[AnalysisWorkItemRecord, ...]:
+        run = self.get_analysis_run(run_id)
+        keys = [
+            (f"question_analysis:{question_id}", question_id)
+            for question_id in question_ids
+        ]
+        if include_finalizers:
+            keys.extend(
+                (
+                    ("gap_verification", None),
+                    ("candidate_generation", None),
+                    ("final_projection", None),
+                )
+            )
+        try:
+            for work_key, question_id in keys:
+                digest = hashlib.sha256(
+                    f"{run.input_digest}:{work_key}".encode("utf-8")
+                ).hexdigest()
+                self.connection.execute(
+                    "INSERT INTO interview_analysis_work_items("
+                    "id, analysis_run_id, question_unit_id, work_key, input_digest) "
+                    "VALUES (?, ?, ?, ?, ?) ON CONFLICT(analysis_run_id, work_key) "
+                    "DO UPDATE SET status = CASE "
+                    "WHEN interview_analysis_work_items.status = 'running' "
+                    "THEN 'running' ELSE 'pending' END, output_json = CASE "
+                    "WHEN interview_analysis_work_items.status = 'running' "
+                    "THEN interview_analysis_work_items.output_json ELSE NULL END, "
+                    "last_error_code = CASE "
+                    "WHEN interview_analysis_work_items.status = 'running' "
+                    "THEN 'rerun_requested' ELSE NULL END, "
+                    "updated_at = CURRENT_TIMESTAMP",
+                    (str(uuid4()), run_id, question_id, work_key, digest),
+                )
+            count = int(
+                self.connection.execute(
+                    "SELECT COUNT(*) FROM interview_analysis_work_items "
+                    "WHERE analysis_run_id = ?",
+                    (run_id,),
+                ).fetchone()[0]
+            )
+            completed = int(
+                self.connection.execute(
+                    "SELECT COUNT(*) FROM interview_analysis_work_items "
+                    "WHERE analysis_run_id = ? AND status = 'completed'",
+                    (run_id,),
+                ).fetchone()[0]
+            )
+            self.connection.execute(
+                "UPDATE interview_analysis_runs SET total_items = ?, "
+                "completed_items = ?, "
+                "status = CASE WHEN status IN ('completed','review_pending','stopped','failed') "
+                "THEN 'queued' ELSE status END, stage = 'analyzing_questions', "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (count, completed, run_id),
+            )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        return self.list_analysis_work_items(run_id)
+
+    def decide_question(
+        self,
+        question_id: str,
+        *,
+        decision: str,
+        edited_text: str | None,
+        expected_version: int,
+    ) -> QuestionUnitRecord:
+        values: list[object] = [decision]
+        assignment = "decision_status = ?"
+        if edited_text is not None:
+            assignment += ", question_text = ?"
+            values.append(edited_text)
+        cursor = self.connection.execute(
+            f"UPDATE interview_question_units SET {assignment}, "
+            "version = version + 1, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND version = ?",
+            (*values, question_id, expected_version),
+        )
+        if cursor.rowcount != 1:
+            self.connection.rollback()
+            raise RetrospectiveVersionConflict("问题版本已更新")
+        self.connection.commit()
+        return self.get_question(question_id)
+
+    def attach_analysis_execution(
+        self, run_id: str, *, execution_id: str
+    ) -> AnalysisRunRecord:
+        cursor = self.connection.execute(
+            "UPDATE interview_analysis_runs SET execution_id = ?, status = 'running', "
+            "control_intent = NULL, latest_progress_at = CURRENT_TIMESTAMP, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ? "
+            "AND status IN ('queued', 'stopped', 'failed', 'review_pending')",
+            (execution_id, run_id),
+        )
+        if cursor.rowcount != 1:
+            self.connection.rollback()
+            raise RetrospectiveVersionConflict("分析运行状态已更新")
+        self.connection.commit()
+        return self.get_analysis_run(run_id)
+
+    def list_resumable_analysis_work_items(
+        self, run_id: str
+    ) -> tuple[AnalysisWorkItemRecord, ...]:
+        return tuple(
+            item
+            for item in self.list_analysis_work_items(run_id)
+            if item.status in {"pending", "retryable", "interrupted"}
+        )
+
+    def claim_analysis_work_item(self, item_id: str) -> AnalysisWorkItemRecord:
+        cursor = self.connection.execute(
+            "UPDATE interview_analysis_work_items SET status = 'running', "
+            "attempt_count = attempt_count + 1, last_error_code = NULL, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ? "
+            "AND status IN ('pending', 'retryable', 'interrupted')",
+            (item_id,),
+        )
+        if cursor.rowcount != 1:
+            self.connection.rollback()
+            raise RetrospectiveVersionConflict("分析工作项已被处理")
+        row = self.connection.execute(
+            "SELECT analysis_run_id, work_key FROM interview_analysis_work_items "
+            "WHERE id = ?",
+            (item_id,),
+        ).fetchone()
+        stage = "analyzing_questions"
+        if row["work_key"] == "question_extraction":
+            stage = "question_extraction"
+        elif row["work_key"] == "gap_verification":
+            stage = "verifying_gaps"
+        elif row["work_key"] == "candidate_generation":
+            stage = "generating_candidates"
+        elif row["work_key"] == "final_projection":
+            stage = "finalizing"
+        self.connection.execute(
+            "UPDATE interview_analysis_runs SET status = 'running', "
+            "stage = ?, current_work_key = ?, latest_progress_at = CURRENT_TIMESTAMP, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (stage, row["work_key"], row["analysis_run_id"]),
+        )
+        self.connection.commit()
+        return self.get_analysis_work_item(item_id)
+
+    def get_analysis_work_item(self, item_id: str) -> AnalysisWorkItemRecord:
+        row = self.connection.execute(
+            "SELECT * FROM interview_analysis_work_items WHERE id = ?", (item_id,)
+        ).fetchone()
+        if row is None:
+            raise RetrospectiveNotFound(item_id)
+        return _analysis_work_item(row)
+
+    def complete_analysis_work_item(
+        self, item_id: str, *, output: dict[str, object]
+    ) -> AnalysisWorkItemRecord:
+        item = self.get_analysis_work_item(item_id)
+        cursor = self.connection.execute(
+            "UPDATE interview_analysis_work_items SET status = CASE "
+            "WHEN last_error_code = 'rerun_requested' THEN 'pending' "
+            "ELSE 'completed' END, output_json = CASE "
+            "WHEN last_error_code = 'rerun_requested' THEN NULL ELSE ? END, "
+            "last_error_code = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? "
+            "AND status = 'running'",
+            (json.dumps(output, ensure_ascii=False, sort_keys=True), item_id),
+        )
+        if cursor.rowcount != 1:
+            self.connection.rollback()
+            raise RetrospectiveVersionConflict("分析工作项未处于运行状态")
+        completed = int(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM interview_analysis_work_items "
+                "WHERE analysis_run_id = ? AND status = 'completed'",
+                (item.analysis_run_id,),
+            ).fetchone()[0]
+        )
+        self.connection.execute(
+            "UPDATE interview_analysis_runs SET completed_items = ?, "
+            "current_work_key = NULL, latest_progress_at = CURRENT_TIMESTAMP, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (completed, item.analysis_run_id),
+        )
+        self.connection.commit()
+        return self.get_analysis_work_item(item_id)
+
+    def save_question_analysis(
+        self,
+        run_id: str,
+        question_id: str,
+        *,
+        output: dict[str, object],
+        source_excerpt: str,
+        result_status: str = "formal",
+    ) -> QuestionAnalysisRecord:
+        analysis_id = str(uuid4())
+        source_hash = (
+            hashlib.sha256(source_excerpt.encode("utf-8")).hexdigest()
+            if source_excerpt
+            else None
+        )
+        existing = self.connection.execute(
+            "SELECT id FROM interview_question_analyses "
+            "WHERE analysis_run_id = ? AND question_unit_id = ?",
+            (run_id, question_id),
+        ).fetchone()
+        if existing is not None:
+            analysis_id = existing["id"]
+        try:
+            self.connection.execute(
+                "INSERT INTO interview_question_analyses("
+                "id, analysis_run_id, question_unit_id, verdict, strengths_json, "
+                "improvements_json, omissions_json, evidence_level, confidence, "
+                "improvement_outline_json, suggested_answer, source_excerpt, "
+                "source_excerpt_sha256, source_available, result_status) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?) "
+                "ON CONFLICT(analysis_run_id, question_unit_id) DO UPDATE SET "
+                "verdict = excluded.verdict, strengths_json = excluded.strengths_json, "
+                "improvements_json = excluded.improvements_json, "
+                "omissions_json = excluded.omissions_json, "
+                "evidence_level = excluded.evidence_level, "
+                "confidence = excluded.confidence, "
+                "improvement_outline_json = excluded.improvement_outline_json, "
+                "suggested_answer = excluded.suggested_answer, "
+                "source_excerpt = excluded.source_excerpt, "
+                "source_excerpt_sha256 = excluded.source_excerpt_sha256, "
+                "source_available = 1, result_status = excluded.result_status, "
+                "version = interview_question_analyses.version + 1, "
+                "updated_at = CURRENT_TIMESTAMP",
+                (
+                    analysis_id,
+                    run_id,
+                    question_id,
+                    str(output["verdict"]),
+                    json.dumps(output.get("strengths", []), ensure_ascii=False),
+                    json.dumps(output.get("improvements", []), ensure_ascii=False),
+                    json.dumps(output.get("omissions", []), ensure_ascii=False),
+                    str(output["evidenceLevel"]),
+                    float(output["confidence"]),
+                    json.dumps(
+                        output.get("improvementOutline", []), ensure_ascii=False
+                    ),
+                    str(output.get("suggestedAnswer", "")),
+                    source_excerpt,
+                    source_hash,
+                    result_status,
+                ),
+            )
+            self.connection.execute(
+                "DELETE FROM interview_gaps WHERE analysis_run_id = ? "
+                "AND question_unit_id = ?",
+                (run_id, question_id),
+            )
+            for gap in output.get("gaps", []):
+                self.connection.execute(
+                    "INSERT INTO interview_gaps("
+                    "id, analysis_run_id, question_analysis_id, question_unit_id, "
+                    "gap_kind, summary, evidence_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        str(uuid4()),
+                        run_id,
+                        analysis_id,
+                        question_id,
+                        str(gap["kind"]),
+                        str(gap["summary"]),
+                        json.dumps(
+                            gap.get("evidenceSegmentIds", []),
+                            ensure_ascii=False,
+                        ),
+                    ),
+                )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        return self.get_question_analysis(run_id, question_id)
+
+    def get_question_analysis(
+        self, run_id: str, question_id: str
+    ) -> QuestionAnalysisRecord:
+        row = self.connection.execute(
+            "SELECT * FROM interview_question_analyses "
+            "WHERE analysis_run_id = ? AND question_unit_id = ?",
+            (run_id, question_id),
+        ).fetchone()
+        if row is None:
+            raise RetrospectiveNotFound(question_id)
+        return _question_analysis(row)
+
+    def list_question_analyses(self, run_id: str) -> tuple[QuestionAnalysisRecord, ...]:
+        rows = self.connection.execute(
+            "SELECT a.* FROM interview_question_analyses a "
+            "JOIN interview_question_units q ON q.id = a.question_unit_id "
+            "WHERE a.analysis_run_id = ? ORDER BY q.ordinal, a.rowid",
+            (run_id,),
+        ).fetchall()
+        return tuple(_question_analysis(row) for row in rows)
+
+    def mark_analysis_completed(
+        self, run_id: str, *, summary: dict[str, object]
+    ) -> AnalysisRunRecord:
+        self.connection.execute(
+            "UPDATE interview_analysis_runs SET status = 'completed', "
+            "stage = 'completed', control_intent = NULL, current_work_key = NULL, "
+            "summary_json = ?, latest_progress_at = CURRENT_TIMESTAMP, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (json.dumps(summary, ensure_ascii=False, sort_keys=True), run_id),
+        )
+        self.connection.commit()
+        return self.get_analysis_run(run_id)
+
+    def stop_analysis(self, run_id: str) -> AnalysisRunRecord:
+        try:
+            self.connection.execute(
+                "UPDATE interview_analysis_work_items SET status = 'interrupted', "
+                "updated_at = CURRENT_TIMESTAMP WHERE analysis_run_id = ? "
+                "AND status = 'running'",
+                (run_id,),
+            )
+            self.connection.execute(
+                "UPDATE interview_analysis_runs SET status = 'stopped', "
+                "stage = 'stopped', control_intent = NULL, current_work_key = NULL, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? "
+                "AND status IN ('queued','running','stopping')",
+                (run_id,),
+            )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        return self.get_analysis_run(run_id)
+
+    def request_analysis_stop(self, run_id: str) -> AnalysisRunRecord:
+        self.connection.execute(
+            "UPDATE interview_analysis_runs SET status = 'stopping', "
+            "control_intent = 'stop', updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND status IN ('queued','running')",
+            (run_id,),
+        )
+        self.connection.commit()
+        return self.get_analysis_run(run_id)
+
+    def rearm_analysis(self, run_id: str) -> AnalysisRunRecord:
+        try:
+            self.connection.execute(
+                "UPDATE interview_analysis_work_items SET status = 'pending', "
+                "updated_at = CURRENT_TIMESTAMP WHERE analysis_run_id = ? "
+                "AND status IN ('interrupted','retryable')",
+                (run_id,),
+            )
+            self.connection.execute(
+                "UPDATE interview_analysis_runs SET status = 'queued', "
+                "stage = CASE WHEN completed_items = 0 THEN 'question_extraction' "
+                "ELSE 'analyzing_questions' END, control_intent = NULL, "
+                "current_work_key = NULL, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND status IN ('stopped','failed')",
+                (run_id,),
+            )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        return self.get_analysis_run(run_id)
+
+    def fail_analysis(self, run_id: str, *, error_code: str) -> AnalysisRunRecord:
+        self.connection.execute(
+            "UPDATE interview_analysis_work_items SET status = 'retryable', "
+            "last_error_code = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE analysis_run_id = ? AND status = 'running'",
+            (error_code, run_id),
+        )
+        self.connection.execute(
+            "UPDATE interview_analysis_runs SET status = 'failed', stage = 'failed', "
+            "control_intent = NULL, current_work_key = NULL, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (run_id,),
+        )
+        self.connection.commit()
+        return self.get_analysis_run(run_id)
 
     def confirm_cleanup(
         self, retrospective_id: str, cleanup_id: str, *, expected_version: int
@@ -810,6 +1416,90 @@ def _segment(row: sqlite3.Row) -> SegmentRecord:
         confidence=row["confidence"],
         uncertainty_reason=row["uncertainty_reason"],
         ignored=bool(row["ignored"]),
+        version=row["version"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _analysis_run(row: sqlite3.Row) -> AnalysisRunRecord:
+    return AnalysisRunRecord(
+        id=row["id"],
+        retrospective_id=row["retrospective_id"],
+        cleanup_version_id=row["cleanup_version_id"],
+        execution_id=row["execution_id"],
+        retry_of_analysis_run_id=row["retry_of_analysis_run_id"],
+        input_digest=row["input_digest"],
+        context_snapshot_json=row["context_snapshot_json"],
+        status=row["status"],
+        stage=row["stage"],
+        control_intent=row["control_intent"],
+        completed_items=row["completed_items"],
+        total_items=row["total_items"],
+        current_work_key=row["current_work_key"],
+        cumulative_elapsed_ms=row["cumulative_elapsed_ms"],
+        latest_progress_at=row["latest_progress_at"],
+        summary_json=row["summary_json"],
+        version=row["version"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _analysis_work_item(row: sqlite3.Row) -> AnalysisWorkItemRecord:
+    return AnalysisWorkItemRecord(
+        id=row["id"],
+        analysis_run_id=row["analysis_run_id"],
+        question_unit_id=row["question_unit_id"],
+        work_key=row["work_key"],
+        input_digest=row["input_digest"],
+        status=row["status"],
+        output=None if row["output_json"] is None else json.loads(row["output_json"]),
+        attempt_count=row["attempt_count"],
+        last_error_code=row["last_error_code"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _question(row: sqlite3.Row) -> QuestionUnitRecord:
+    return QuestionUnitRecord(
+        id=row["id"],
+        retrospective_id=row["retrospective_id"],
+        cleanup_version_id=row["cleanup_version_id"],
+        stable_key=row["stable_key"],
+        ordinal=row["ordinal"],
+        question_kind=row["question_kind"],
+        origin=row["origin"],
+        question_text=row["question_text"],
+        question_segment_ids=tuple(json.loads(row["question_segment_ids_json"])),
+        answer_segment_ids=tuple(json.loads(row["answer_segment_ids_json"])),
+        inference_basis=row["inference_basis"],
+        confidence=row["confidence"],
+        decision_status=row["decision_status"],
+        version=row["version"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _question_analysis(row: sqlite3.Row) -> QuestionAnalysisRecord:
+    return QuestionAnalysisRecord(
+        id=row["id"],
+        analysis_run_id=row["analysis_run_id"],
+        question_unit_id=row["question_unit_id"],
+        verdict=row["verdict"],
+        strengths=tuple(json.loads(row["strengths_json"])),
+        improvements=tuple(json.loads(row["improvements_json"])),
+        omissions=tuple(json.loads(row["omissions_json"])),
+        evidence_level=row["evidence_level"],
+        confidence=row["confidence"],
+        improvement_outline=tuple(json.loads(row["improvement_outline_json"])),
+        suggested_answer=row["suggested_answer"],
+        source_excerpt=row["source_excerpt"],
+        source_excerpt_sha256=row["source_excerpt_sha256"],
+        source_available=bool(row["source_available"]),
+        result_status=row["result_status"],
         version=row["version"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],

@@ -149,3 +149,98 @@ class DeletionImpactResource(AgentModel):
     preserves_review_questions: bool
     preserves_profile_and_projects: bool
     preserves_knowledge: bool
+
+
+class StartAnalysisCommand(AgentModel):
+    workspace_id: str
+    cleanup_version_id: str
+
+
+class AnalysisControlCommand(AgentModel):
+    workspace_id: str
+
+
+class AnalysisStartResource(AgentModel):
+    analysis_run_id: str
+    execution_id: str
+
+
+class AnalysisRunResource(AgentModel):
+    id: str
+    retrospective_id: str
+    cleanup_version_id: str
+    execution_id: str | None
+    retry_of_analysis_run_id: str | None
+    status: str
+    stage: str
+    control_intent: str | None
+    completed_items: int
+    total_items: int
+    current_work_key: str | None
+    cumulative_elapsed_ms: int
+    latest_progress_at: str | None
+    summary: dict[str, object] | None
+    version: int
+    created_at: str
+    updated_at: str
+
+
+class QuestionResource(AgentModel):
+    id: str
+    retrospective_id: str
+    cleanup_version_id: str
+    ordinal: int
+    question_kind: str
+    origin: Literal["original", "inferred"]
+    question_text: str
+    question_segment_ids: list[str]
+    answer_segment_ids: list[str]
+    inference_basis: str
+    confidence: float
+    decision_status: Literal["pending", "confirmed", "rejected", "superseded"]
+    version: int
+    created_at: str
+    updated_at: str
+
+
+class QuestionDecisionCommand(AgentModel):
+    workspace_id: str
+    decision: Literal["confirmed", "rejected", "superseded"]
+    edited_text: str | None = Field(default=None, min_length=1, max_length=4_000)
+    expected_version: int = Field(ge=1)
+
+
+class QuestionAnalysisResource(AgentModel):
+    id: str
+    analysis_run_id: str
+    question_unit_id: str
+    verdict: str
+    strengths: list[dict[str, object]]
+    improvements: list[dict[str, object]]
+    omissions: list[dict[str, object]]
+    evidence_level: str
+    confidence: float
+    improvement_outline: list[str]
+    suggested_answer: str
+    source_excerpt: str
+    source_available: bool
+    result_status: str
+    version: int
+
+
+class AnalysisWorkItemResource(AgentModel):
+    id: str
+    question_unit_id: str | None
+    work_key: str
+    status: str
+    attempt_count: int
+    last_error_code: str | None
+    updated_at: str
+
+
+class AnalysisReportResource(AgentModel):
+    analysis_run: AnalysisRunResource
+    questions: list[QuestionResource]
+    analyses: list[QuestionAnalysisResource]
+    items: list[AnalysisWorkItemResource]
+    summary: dict[str, object]

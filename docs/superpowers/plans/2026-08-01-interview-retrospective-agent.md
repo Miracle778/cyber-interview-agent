@@ -568,11 +568,11 @@ git commit -m "feat: add interview capture and cleanup workbench"
 - Consumes: confirmed CleanupVersion.
 - Produces: question list, progressive AnalysisRun, question decision, partial retry, stop/resume, and report endpoints.
 
-- [ ] **Step 1: Write RED analysis tests**
+- [x] **Step 1: Write RED analysis tests**
 
 Prove: unconfirmed cleanup is rejected; questions persist before analysis completion; original/inferred provenance survives projection; inferred questions default pending; completed question work survives stop/restart; finalizer excludes pending inferred questions; no overall score exists; same digest is idempotent.
 
-- [ ] **Step 2: Define strict outputs**
+- [x] **Step 2: Define strict outputs**
 
 ```python
 class QuestionAnalysisOutput(BaseModel):
@@ -592,7 +592,7 @@ class QuestionAnalysisOutput(BaseModel):
 
 Question extraction output carries ordered segment IDs, origin, inference evidence, kind, and confidence.
 
-- [ ] **Step 3: Implement analysis work items**
+- [x] **Step 3: Implement analysis work items**
 
 Create stable work keys:
 
@@ -606,15 +606,15 @@ final_projection
 
 The application persists question units after extraction, then creates one work item per question. A single reducer writes final ordering and aggregate summary. Stop prevents new claims; critical sections persist one completed item atomically.
 
-- [ ] **Step 4: Implement frozen bounded context**
+- [x] **Step 4: Implement frozen bounded context**
 
 Freeze target ID/document version, confirmed Profile context version, relevant question IDs, Knowledge refs, and prompt/model identity in the run input digest. Provider payload uses bounded excerpts rather than storage paths or full Profile documents.
 
-- [ ] **Step 5: Implement question decisions and partial rerun**
+- [x] **Step 5: Implement question decisions and partial rerun**
 
 `decide_question(question_id, decision, edited_text, expected_version, idempotency_key)` confirms/rejects/supersedes. Confirming or editing an inferred question schedules only that question plus aggregate/candidate finalizers. Changing segment boundaries invalidates affected question units and requires a new CleanupVersion.
 
-- [ ] **Step 6: Add analysis endpoints**
+- [x] **Step 6: Add analysis endpoints**
 
 ```text
 POST /{id}/analysis-runs
@@ -629,7 +629,7 @@ GET  /{id}/report
 
 Report returns progressive items with `pending/running/completed/failed/blocked` state and never synthesizes missing results client-side.
 
-- [ ] **Step 7: Run GREEN tests**
+- [x] **Step 7: Run GREEN tests**
 
 Run:
 
@@ -639,7 +639,7 @@ Run:
 git diff --check
 ```
 
-- [ ] **Step 8: Commit Task 5**
+- [x] **Step 8: Commit Task 5**
 
 ```bash
 git add backend/app backend/tests/test_interview_*.py

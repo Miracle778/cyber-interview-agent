@@ -7,7 +7,11 @@ from fastapi import APIRouter, Depends, Header, Query, Response, status
 from app.api.dependencies import get_agent_application
 from app.application.workspace_runtime import AgentApplication
 from app.interview_retrospectives.projection import (
+    analysis_run_resource,
+    analysis_work_item_resource,
     cleanup_version_resource,
+    question_analysis_resource,
+    question_resource,
     retrospective_resource,
     source_version_resource,
 )
@@ -25,6 +29,13 @@ from app.schemas.interview_retrospectives import (
     UpdateRetrospectiveCommand,
     UpdateSegmentsCommand,
     VersionedRetrospectiveCommand,
+    AnalysisControlCommand,
+    AnalysisReportResource,
+    AnalysisRunResource,
+    AnalysisStartResource,
+    QuestionDecisionCommand,
+    QuestionResource,
+    StartAnalysisCommand,
 )
 
 
@@ -38,17 +49,11 @@ def _application(application: AgentApplication, workspace_id: str):
     return application.interview_retrospectives(workspace_id)
 
 
-@router.get(
-    "/api/interview-retrospectives", response_model=list[RetrospectiveResource]
-)
+@router.get("/api/interview-retrospectives", response_model=list[RetrospectiveResource])
 def list_retrospectives(
     workspace_id: Annotated[str, Query(alias="workspaceId")],
-    lifecycle_status: Annotated[
-        str, Query(alias="lifecycleStatus")
-    ] = "active",
-    job_target_id: Annotated[
-        str | None, Query(alias="jobTargetId")
-    ] = None,
+    lifecycle_status: Annotated[str, Query(alias="lifecycleStatus")] = "active",
+    job_target_id: Annotated[str | None, Query(alias="jobTargetId")] = None,
     application: AgentApplication = Depends(get_agent_application),
 ):
     records = _application(application, workspace_id).list_retrospectives(
@@ -69,9 +74,9 @@ async def create_retrospective(
     application: AgentApplication = Depends(get_agent_application),
 ):
     values = command.model_dump(exclude={"workspace_id"})
-    record = await _application(
-        application, command.workspace_id
-    ).create_retrospective(**values, idempotency_key=idempotency_key)
+    record = await _application(application, command.workspace_id).create_retrospective(
+        **values, idempotency_key=idempotency_key
+    )
     return retrospective_resource(record)
 
 
@@ -84,9 +89,7 @@ def get_retrospective(
     workspace_id: Annotated[str, Query(alias="workspaceId")],
     application: AgentApplication = Depends(get_agent_application),
 ):
-    record = _application(application, workspace_id).get_retrospective(
-        retrospective_id
-    )
+    record = _application(application, workspace_id).get_retrospective(retrospective_id)
     return retrospective_resource(record)
 
 
@@ -299,31 +302,56 @@ def _lifecycle(retrospective_id, command, idempotency_key, application, action):
     "/api/interview-retrospectives/{retrospective_id}/archive",
     response_model=RetrospectiveResource,
 )
-def archive_retrospective(retrospective_id: str, command: VersionedRetrospectiveCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
-    return _lifecycle(retrospective_id, command, idempotency_key, application, "archive")
+def archive_retrospective(
+    retrospective_id: str,
+    command: VersionedRetrospectiveCommand,
+    idempotency_key: IdempotencyKey,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    return _lifecycle(
+        retrospective_id, command, idempotency_key, application, "archive"
+    )
 
 
 @router.post(
     "/api/interview-retrospectives/{retrospective_id}/recycle",
     response_model=RetrospectiveResource,
 )
-def recycle_retrospective(retrospective_id: str, command: VersionedRetrospectiveCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
-    return _lifecycle(retrospective_id, command, idempotency_key, application, "recycle")
+def recycle_retrospective(
+    retrospective_id: str,
+    command: VersionedRetrospectiveCommand,
+    idempotency_key: IdempotencyKey,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    return _lifecycle(
+        retrospective_id, command, idempotency_key, application, "recycle"
+    )
 
 
 @router.post(
     "/api/interview-retrospectives/{retrospective_id}/restore",
     response_model=RetrospectiveResource,
 )
-def restore_retrospective(retrospective_id: str, command: VersionedRetrospectiveCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
-    return _lifecycle(retrospective_id, command, idempotency_key, application, "restore")
+def restore_retrospective(
+    retrospective_id: str,
+    command: VersionedRetrospectiveCommand,
+    idempotency_key: IdempotencyKey,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    return _lifecycle(
+        retrospective_id, command, idempotency_key, application, "restore"
+    )
 
 
 @router.get(
     "/api/interview-retrospectives/{retrospective_id}/deletion-impact",
     response_model=DeletionImpactResource,
 )
-def deletion_impact(retrospective_id: str, workspace_id: Annotated[str, Query(alias="workspaceId")], application: AgentApplication = Depends(get_agent_application)):
+def deletion_impact(
+    retrospective_id: str,
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    application: AgentApplication = Depends(get_agent_application),
+):
     return _application(application, workspace_id).deletion_impact(retrospective_id)
 
 
@@ -331,10 +359,186 @@ def deletion_impact(retrospective_id: str, workspace_id: Annotated[str, Query(al
     "/api/interview-retrospectives/{retrospective_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-def delete_retrospective(retrospective_id: str, command: DeleteRetrospectiveCommand, idempotency_key: IdempotencyKey, application: AgentApplication = Depends(get_agent_application)):
+def delete_retrospective(
+    retrospective_id: str,
+    command: DeleteRetrospectiveCommand,
+    idempotency_key: IdempotencyKey,
+    application: AgentApplication = Depends(get_agent_application),
+):
     _application(application, command.workspace_id).delete_permanently(
         retrospective_id,
         expected_version=command.expected_version,
         idempotency_key=idempotency_key,
     )
     return Response(status_code=204)
+
+
+@router.post(
+    "/api/interview-retrospectives/{retrospective_id}/analysis-runs",
+    response_model=AnalysisStartResource,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def start_analysis(
+    retrospective_id: str,
+    command: StartAnalysisCommand,
+    idempotency_key: IdempotencyKey,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    return await _application(application, command.workspace_id).start_analysis(
+        retrospective_id,
+        cleanup_version_id=command.cleanup_version_id,
+        idempotency_key=idempotency_key,
+    )
+
+
+@router.get(
+    "/api/interview-retrospectives/{retrospective_id}/analysis-runs/{run_id}",
+    response_model=AnalysisRunResource,
+)
+def get_analysis_run(
+    retrospective_id: str,
+    run_id: str,
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    application: AgentApplication = Depends(get_agent_application),
+):
+    return analysis_run_resource(
+        _application(application, workspace_id).get_analysis_run(
+            retrospective_id, run_id
+        )
+    )
+
+
+async def _analysis_control(
+    retrospective_id, run_id, command, idempotency_key, application, action
+):
+    result = await getattr(_application(application, command.workspace_id), action)(
+        retrospective_id,
+        run_id,
+        idempotency_key=idempotency_key,
+    )
+    if isinstance(result, dict):
+        return result
+    return analysis_run_resource(result)
+
+
+@router.post(
+    "/api/interview-retrospectives/{retrospective_id}/analysis-runs/{run_id}/stop",
+    response_model=AnalysisRunResource,
+)
+async def stop_analysis(
+    retrospective_id: str,
+    run_id: str,
+    command: AnalysisControlCommand,
+    idempotency_key: IdempotencyKey,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    return await _analysis_control(
+        retrospective_id, run_id, command, idempotency_key, application, "stop_analysis"
+    )
+
+
+@router.post(
+    "/api/interview-retrospectives/{retrospective_id}/analysis-runs/{run_id}/resume",
+    response_model=AnalysisStartResource,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def resume_analysis(
+    retrospective_id: str,
+    run_id: str,
+    command: AnalysisControlCommand,
+    idempotency_key: IdempotencyKey,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    return await _analysis_control(
+        retrospective_id,
+        run_id,
+        command,
+        idempotency_key,
+        application,
+        "resume_analysis",
+    )
+
+
+@router.post(
+    "/api/interview-retrospectives/{retrospective_id}/analysis-runs/{run_id}/retry",
+    response_model=AnalysisStartResource,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_analysis(
+    retrospective_id: str,
+    run_id: str,
+    command: AnalysisControlCommand,
+    idempotency_key: IdempotencyKey,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    return await _analysis_control(
+        retrospective_id,
+        run_id,
+        command,
+        idempotency_key,
+        application,
+        "retry_analysis",
+    )
+
+
+@router.get(
+    "/api/interview-retrospectives/{retrospective_id}/questions",
+    response_model=list[QuestionResource],
+)
+def list_questions(
+    retrospective_id: str,
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    application: AgentApplication = Depends(get_agent_application),
+):
+    return [
+        question_resource(item)
+        for item in _application(application, workspace_id).list_questions(
+            retrospective_id
+        )
+    ]
+
+
+@router.post(
+    "/api/interview-retrospectives/{retrospective_id}/questions/{question_id}/decision",
+    response_model=QuestionResource,
+)
+async def decide_question(
+    retrospective_id: str,
+    question_id: str,
+    command: QuestionDecisionCommand,
+    idempotency_key: IdempotencyKey,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    return question_resource(
+        await _application(application, command.workspace_id).decide_question(
+            retrospective_id,
+            question_id,
+            decision=command.decision,
+            edited_text=command.edited_text,
+            expected_version=command.expected_version,
+            idempotency_key=idempotency_key,
+        )
+    )
+
+
+@router.get(
+    "/api/interview-retrospectives/{retrospective_id}/report",
+    response_model=AnalysisReportResource | None,
+)
+def get_report(
+    retrospective_id: str,
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    application: AgentApplication = Depends(get_agent_application),
+):
+    result = _application(application, workspace_id).report(retrospective_id)
+    if result is None:
+        return None
+    run, questions, analyses, items = result
+    run_resource = analysis_run_resource(run)
+    return {
+        "analysisRun": run_resource,
+        "questions": [question_resource(item) for item in questions],
+        "analyses": [question_analysis_resource(item) for item in analyses],
+        "items": [analysis_work_item_resource(item) for item in items],
+        "summary": run_resource["summary"] or {},
+    }

@@ -1,5 +1,13 @@
 # Agent Runtime 框架收敛关键发现
 
+## 2026-08-02：面试复盘渐进分析的身份与恢复边界
+
+- QuestionUnit 归属于确认后的 CleanupVersion，而不是某一次 AnalysisRun；重试时删除再插入会级联删除旧逐题分析。实现必须按服务端 stable key 对账并复用 QuestionUnit ID，未再次出现的问题标记 superseded，才能保留运行历史。
+- “工作项完成后再停止”不等于重新跑整场。问题提取和每道题都要独立提交；继续时只领取 pending/retryable/interrupted，已完成提取的 attempt count 保持不变。
+- 渐进页面允许用户在后台仍运行时确认推断题。若直接把 running finalizer 改回 pending，旧处理会在完成时发生状态冲突；使用 `rerun_requested` 标记，让当前临界区落盘后自动回到 pending，可以保证修订不被迟到结果覆盖。
+- 同一个已确认 CleanupVersion 和冻结上下文摘要必须幂等复用；显式 retry 通过 `retry_of_analysis_run_id` 创建新运行。两者不能混为一种，否则刷新会制造重复分析，或真正重试会覆盖历史。
+- 推断题可以先生成 draft 逐题分析用于预览，但只有 confirmed 问题进入最终汇总；rejected、superseded 和 pending 都不能进入正式报告、候选资产或整场统计。
+
 ## 2026-08-01：Evaluation v2 真实回归验收
 
 - 同一输入、同一模型配置仍可能产生不同业务结果；真实题目整理 A/B 中一边出现模型补充截断，另一边完整，说明回归必须比较重新生成的 Outcome，不能只重新 Judge 历史文本。

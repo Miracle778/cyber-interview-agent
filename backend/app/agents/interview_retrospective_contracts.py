@@ -52,8 +52,74 @@ class CleanupOutput(RetrospectiveAgentModel):
         if source_start < 0 or source_end <= source_start:
             raise ValueError("当前文字窗口无效")
         if any(
-            segment.source_start < source_start
-            or segment.source_end > source_end
+            segment.source_start < source_start or segment.source_end > source_end
             for segment in self.segments
         ):
             raise ValueError("整理片段不属于当前文字窗口")
+
+
+QuestionKind = Literal[
+    "technical_knowledge",
+    "project_experience",
+    "system_design",
+    "behavioral_collaboration",
+    "motivation_hr",
+    "unknown",
+]
+
+
+class ExtractedQuestion(RetrospectiveAgentModel):
+    ordinal: int = Field(ge=1)
+    question_kind: QuestionKind
+    origin: Literal["original", "inferred"]
+    question_text: str = Field(min_length=1, max_length=4_000)
+    question_segment_ids: list[str] = Field(default_factory=list, max_length=20)
+    answer_segment_ids: list[str] = Field(default_factory=list, max_length=50)
+    inference_basis: str = Field(default="", max_length=2_000)
+    confidence: float = Field(ge=0, le=1)
+
+    @model_validator(mode="after")
+    def validate_provenance(self) -> "ExtractedQuestion":
+        if self.origin == "original" and not self.question_segment_ids:
+            raise ValueError("original 问题必须包含 questionSegmentIds")
+        if self.origin == "inferred" and not self.inference_basis.strip():
+            raise ValueError("inferred 问题必须包含 inferenceBasis")
+        if not self.answer_segment_ids:
+            raise ValueError("问题必须包含 answerSegmentIds")
+        return self
+
+
+class QuestionExtractionOutput(RetrospectiveAgentModel):
+    questions: list[ExtractedQuestion] = Field(default_factory=list, max_length=200)
+
+    @model_validator(mode="after")
+    def validate_order(self) -> "QuestionExtractionOutput":
+        ordinals = [item.ordinal for item in self.questions]
+        if ordinals != list(range(1, len(ordinals) + 1)):
+            raise ValueError("问题 ordinal 必须从 1 开始连续递增")
+        return self
+
+
+class BoundedPoint(RetrospectiveAgentModel):
+    summary: str = Field(min_length=1, max_length=1_000)
+    evidence_segment_ids: list[str] = Field(default_factory=list, max_length=20)
+
+
+class GapOutput(RetrospectiveAgentModel):
+    kind: Literal["material", "expression", "knowledge", "experience"]
+    summary: str = Field(min_length=1, max_length=1_000)
+    evidence_segment_ids: list[str] = Field(default_factory=list, max_length=20)
+
+
+class QuestionAnalysisOutput(RetrospectiveAgentModel):
+    verdict: Literal["strong", "improvable", "high_risk", "insufficient_evidence"]
+    strengths: list[BoundedPoint] = Field(default_factory=list, max_length=12)
+    improvements: list[BoundedPoint] = Field(default_factory=list, max_length=12)
+    omissions: list[BoundedPoint] = Field(default_factory=list, max_length=12)
+    gaps: list[GapOutput] = Field(default_factory=list, max_length=12)
+    evidence_level: Literal[
+        "internal_evidence", "profile_conflict", "model_judgment", "insufficient"
+    ]
+    confidence: float = Field(ge=0, le=1)
+    improvement_outline: list[str] = Field(default_factory=list, max_length=8)
+    suggested_answer: str = Field(default="", max_length=6_000)

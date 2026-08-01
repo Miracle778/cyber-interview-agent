@@ -1,5 +1,17 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-08-02：面试复盘 Task 5 渐进分析后端闭环
+
+- 新增严格的问题提取与逐题分析输出：保留 original/inferred 来源、片段引用、推断依据、证据等级、四类缺口和建议答案，不提供整场总分。
+- 分析按 `question_extraction -> question_analysis:* -> gap_verification -> candidate_generation -> final_projection` 持久工作项渐进执行；问题在整场完成前即可读取，单题完成后原子保留。
+- 冻结求职目标、当前 JD 摘要、已确认画像版本与有限条目、Prompt/模型身份、题目/Knowledge 引用集合；Provider 只收到有界片段，不收到存储路径或完整画像文档。
+- 停止保留已完成提取和逐题结果，继续只处理未完成项；相同摘要幂等复用，显式重试复用稳定 QuestionUnit 并保留旧 AnalysisRun 历史。
+- 推断题默认 pending；确认/编辑只重跑该题和聚合 finalizer，拒绝/废弃只重跑聚合。并发决策使用 rerun 标记避免覆盖正在完成的旧工作项。
+- 新增分析启动、详情、停止、继续、重试、问题列表、问题决策和渐进报告 API；报告只投影真实持久状态与已完成结果，不在客户端合成缺失项。
+- 新鲜证据：Task 5 聚焦 `30 passed`；复盘全域、画像上下文和数据库组合 `54 passed`；岗位域回归 `7 passed`；Ruff、Python compileall 与 `git diff --check` 通过。计划中已不存在的 `test_execution_cancellation.py` 由新增的真实后台停止/继续集成用例覆盖。
+- 产品成熟度：后端渐进报告能力可供前端调用；用户仍看不到报告优先页面，真实 Provider 分析质量与浏览器验收留到 Task 6。
+- 下一步：Task 6 报告优先渐进工作台。
+
 ## 2026-08-01：面试复盘 Slice 1 捕获与整理闭环
 
 - 新增一级入口 `/retrospectives` 与求职目标深链，提供进行中/已归档/回收站生命周期页签、稳定目标筛选、复盘列表和响应式主从工作台。

@@ -129,9 +129,7 @@ class InterviewRetrospectiveService:
             title=next_title,
             round_label=next_round,
             interview_date=(
-                current.interview_date
-                if interview_date is None
-                else interview_date
+                current.interview_date if interview_date is None else interview_date
             ),
             outcome=next_outcome,
             note=current.note if note is None else note.strip(),
@@ -156,7 +154,10 @@ class InterviewRetrospectiveService:
             raise RetrospectiveSourceTooLarge("记录内容不能超过 500000 个字符")
         clean_file_name = None if file_name is None else PurePath(file_name).name
         if clean_file_name is not None:
-            if PurePath(clean_file_name).suffix.lower() not in SUPPORTED_SOURCE_SUFFIXES:
+            if (
+                PurePath(clean_file_name).suffix.lower()
+                not in SUPPORTED_SOURCE_SUFFIXES
+            ):
                 raise RetrospectiveSourceUnsupported("只支持 .txt 和 .md 文件")
         request = {
             "source_kind": source_kind,
@@ -170,9 +171,7 @@ class InterviewRetrospectiveService:
         if replay is not None:
             saved_hash, result = replay
             if saved_hash != request_hash:
-                raise RetrospectiveIdempotencyConflict(
-                    "同一幂等键不能提交不同记录"
-                )
+                raise RetrospectiveIdempotencyConflict("同一幂等键不能提交不同记录")
             return self.repository.get_source_version(str(result["source_version_id"]))
         source = self.repository.insert_source_version(
             retrospective_id,
@@ -213,9 +212,7 @@ class InterviewRetrospectiveService:
         if replay is not None:
             saved_hash, result = replay
             if saved_hash != request_hash:
-                raise RetrospectiveIdempotencyConflict(
-                    "同一幂等键不能创建不同整理版本"
-                )
+                raise RetrospectiveIdempotencyConflict("同一幂等键不能创建不同整理版本")
             return self.repository.get_cleanup_version(str(result["cleanup_id"]))
         cleanup = self.repository.insert_cleanup_version(
             retrospective_id,
@@ -292,9 +289,7 @@ class InterviewRetrospectiveService:
             not segment.ignored and segment.speaker_role == "unknown"
             for segment in segments
         ):
-            raise RetrospectiveCleanupNotConfirmed(
-                "请先确认所有保留片段的说话人"
-            )
+            raise RetrospectiveCleanupNotConfirmed("请先确认所有保留片段的说话人")
         return self.repository.confirm_cleanup(
             retrospective_id,
             cleanup_id,
@@ -325,9 +320,7 @@ class InterviewRetrospectiveService:
         if replay is not None:
             saved_hash, _ = replay
             if saved_hash != request_hash:
-                raise RetrospectiveIdempotencyConflict(
-                    "同一幂等键不能清除不同记录"
-                )
+                raise RetrospectiveIdempotencyConflict("同一幂等键不能清除不同记录")
             return self.repository.get_source_version(source_version_id)
         cleared = self.repository.clear_source(
             retrospective_id,
@@ -342,6 +335,132 @@ class InterviewRetrospectiveService:
             result={"source_version_id": source_version_id},
         )
         return cleared
+
+    def create_analysis_run(
+        self,
+        retrospective_id: str,
+        cleanup_id: str,
+        *,
+        input_digest: str,
+        context_snapshot: dict[str, object],
+        idempotency_key: str,
+        retry_of_analysis_run_id: str | None = None,
+    ):
+        self.get(retrospective_id)
+        cleanup = self.repository.get_cleanup_version(cleanup_id)
+        if cleanup.retrospective_id != retrospective_id:
+            raise RetrospectiveTargetRequired("整理版本不属于当前复盘")
+        if cleanup.status != "confirmed":
+            raise RetrospectiveCleanupNotConfirmed("请先确认说话人整理结果")
+        request_hash = _digest(
+            {
+                "cleanup_id": cleanup_id,
+                "input_digest": input_digest,
+                "context_snapshot": context_snapshot,
+                "retry_of_analysis_run_id": retry_of_analysis_run_id,
+            }
+        )
+        replay = self.repository.receipt(
+            retrospective_id, "start_analysis", idempotency_key
+        )
+        if replay is not None:
+            saved_hash, result = replay
+            if saved_hash != request_hash:
+                raise RetrospectiveIdempotencyConflict("同一幂等键不能启动不同分析")
+            return self.repository.get_analysis_run(str(result["analysis_run_id"]))
+        existing = None
+        if retry_of_analysis_run_id is None:
+            existing = self.repository.analysis_run_by_digest(
+                retrospective_id,
+                cleanup_version_id=cleanup_id,
+                input_digest=input_digest,
+            )
+        if existing is not None:
+            self.repository.save_receipt(
+                retrospective_id,
+                scope="start_analysis",
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+                result={"analysis_run_id": existing.id},
+            )
+            return existing
+        active = self.repository.current_analysis_run(retrospective_id)
+        if active is not None and active.status in {
+            "queued",
+            "running",
+            "stopping",
+        }:
+            raise RetrospectiveBusy("面试复盘分析正在进行")
+        run = self.repository.insert_analysis_run(
+            retrospective_id,
+            cleanup_version_id=cleanup_id,
+            input_digest=input_digest,
+            context_snapshot=context_snapshot,
+            retry_of_analysis_run_id=retry_of_analysis_run_id,
+        )
+        self.repository.save_receipt(
+            retrospective_id,
+            scope="start_analysis",
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+            result={"analysis_run_id": run.id},
+        )
+        return run
+
+    def decide_question(
+        self,
+        retrospective_id: str,
+        question_id: str,
+        *,
+        decision: str,
+        edited_text: str | None,
+        expected_version: int,
+        idempotency_key: str,
+    ):
+        self.get(retrospective_id)
+        question = self.repository.get_question(question_id)
+        if question.retrospective_id != retrospective_id:
+            raise RetrospectiveTargetRequired("问题不属于当前复盘")
+        if decision not in {"confirmed", "rejected", "superseded"}:
+            raise ValueError("不支持的问题决策")
+        clean_text = None if edited_text is None else edited_text.strip()
+        if edited_text is not None and not clean_text:
+            raise ValueError("问题正文不能为空")
+        scope = f"decide_question:{question_id}"
+        request_hash = _digest(
+            {
+                "decision": decision,
+                "edited_text": clean_text,
+                "expected_version": expected_version,
+            }
+        )
+        replay = self.repository.receipt(retrospective_id, scope, idempotency_key)
+        if replay is not None:
+            saved_hash, result = replay
+            if saved_hash != request_hash:
+                raise RetrospectiveIdempotencyConflict("同一幂等键不能提交不同问题决策")
+            return self.repository.get_question(str(result["question_id"]))
+        updated = self.repository.decide_question(
+            question_id,
+            decision=decision,
+            edited_text=clean_text,
+            expected_version=expected_version,
+        )
+        run = self.repository.current_analysis_run(retrospective_id)
+        if run is not None:
+            self.repository.schedule_analysis_work_items(
+                run.id,
+                question_ids=(question_id,) if decision == "confirmed" else (),
+                include_finalizers=True,
+            )
+        self.repository.save_receipt(
+            retrospective_id,
+            scope=scope,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+            result={"question_id": updated.id},
+        )
+        return updated
 
     def archive(
         self,
@@ -414,7 +533,6 @@ class InterviewRetrospectiveService:
             "preservesProfileAndProjects": True,
             "preservesKnowledge": True,
         }
-
 
 
 def _digest(value: object) -> str:

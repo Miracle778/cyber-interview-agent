@@ -11,9 +11,7 @@ InterviewOutcome: TypeAlias = Literal[
 SourceKind: TypeAlias = Literal["transcript", "recollection"]
 SpeakerRole: TypeAlias = Literal["candidate", "interviewer", "unknown"]
 QuestionOrigin: TypeAlias = Literal["original", "inferred"]
-QuestionDecision: TypeAlias = Literal[
-    "pending", "confirmed", "rejected", "superseded"
-]
+QuestionDecision: TypeAlias = Literal["pending", "confirmed", "rejected", "superseded"]
 QuestionKind: TypeAlias = Literal[
     "technical_knowledge",
     "project_experience",
@@ -28,9 +26,7 @@ AnalysisVerdict: TypeAlias = Literal[
 EvidenceLevel: TypeAlias = Literal[
     "internal_evidence", "profile_conflict", "model_judgment", "insufficient"
 ]
-GapKind: TypeAlias = Literal[
-    "material", "expression", "knowledge", "experience"
-]
+GapKind: TypeAlias = Literal["material", "expression", "knowledge", "experience"]
 CandidateKind: TypeAlias = Literal[
     "review_question", "profile_claim", "project_narrative", "summary"
 ]
@@ -166,19 +162,52 @@ class AnalysisRunRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class AnalysisWorkItemRecord:
+    id: str
+    analysis_run_id: str
+    question_unit_id: str | None
+    work_key: str
+    input_digest: str
+    status: str
+    output: dict[str, object] | None
+    attempt_count: int
+    last_error_code: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
 class QuestionAnalysisRecord:
     id: str
     analysis_run_id: str
     question_unit_id: str
     verdict: AnalysisVerdict
+    strengths: tuple[dict[str, object], ...]
+    improvements: tuple[dict[str, object], ...]
+    omissions: tuple[dict[str, object], ...]
     evidence_level: EvidenceLevel
     confidence: float
+    improvement_outline: tuple[str, ...]
     suggested_answer: str
     source_excerpt: str
     source_excerpt_sha256: str | None
     source_available: bool
     result_status: str
     version: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class GapRecord:
+    id: str
+    analysis_run_id: str
+    question_analysis_id: str
+    question_unit_id: str
+    gap_kind: GapKind
+    summary: str
+    evidence: tuple[dict[str, object], ...]
+    status: str
     created_at: str
     updated_at: str
 

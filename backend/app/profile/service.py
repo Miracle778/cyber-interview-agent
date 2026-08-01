@@ -77,7 +77,12 @@ _ACTION_PLAN_OPERATIONS = frozenset(
     }
 )
 _CONFIRMED_PROFILE_PURPOSES = frozenset(
-    {"job_target_analysis", "project_deep_dive", "interview_training"}
+    {
+        "job_target_analysis",
+        "project_deep_dive",
+        "interview_training",
+        "interview_retrospective",
+    }
 )
 _CLAIM_TYPES = frozenset(
     {
@@ -304,7 +309,9 @@ class ProfileService:
                 request=request,
             )
             if existing is not None:
-                return self.product_repository.get_execution(str(existing["executionId"]))
+                return self.product_repository.get_execution(
+                    str(existing["executionId"])
+                )
         latest = self.product_repository.latest_execution(version_id)
         if latest is not None and latest.status in _ACTIVE_EXECUTION_STATUSES:
             raise SessionBusyError("该材料版本仍有进行中的摄入任务，请稍后重试")
@@ -411,9 +418,7 @@ class ProfileService:
         )
 
     def get_material(self, material_id: str) -> ProfileMaterialRecord:
-        return self.repository.get_material(
-            material_id, workspace_id=self.workspace_id
-        )
+        return self.repository.get_material(material_id, workspace_id=self.workspace_id)
 
     def list_materials(
         self, *, include_archived: bool = False
@@ -428,9 +433,7 @@ class ProfileService:
         self.get_material(material_id)
         return self.repository.list_material_versions(material_id)
 
-    def get_material_version(
-        self, version_id: str
-    ) -> ProfileMaterialVersionRecord:
+    def get_material_version(self, version_id: str) -> ProfileMaterialVersionRecord:
         return self._require_workspace_version(version_id)
 
     def read_material_document(self, version_id: str) -> MaterialDocumentResult:
@@ -929,9 +932,9 @@ class ProfileService:
     ) -> ProfileActionPlanRecord:
         if command.workspace_id != self.workspace_id:
             raise ProfileActionPlanNotFound("workspace")
-        current_version = self.repository.profile_snapshot(
-            self.workspace_id
-        ).profile_version or ""
+        current_version = (
+            self.repository.profile_snapshot(self.workspace_id).profile_version or ""
+        )
         if command.base_profile_version != current_version:
             raise ProfileClaimVersionConflict("action plan base profile is stale")
         if not command.items:
@@ -950,7 +953,9 @@ class ProfileService:
             self._validate_action_plan_item(item)
         plan = self.repository.create_action_plan(command)
         if plan.status == "proposed":
-            plan = self.repository.update_action_plan_status(plan.id, status="validated")
+            plan = self.repository.update_action_plan_status(
+                plan.id, status="validated"
+            )
             self._emit_action_plan_event(
                 plan,
                 "profile.action_plan.created",
@@ -1153,23 +1158,33 @@ class ProfileService:
         if item.operation in {"propose_claim_update", "propose_claim_reject"}:
             claim_id = item.target.get("claimId")
             if not claim_id or item.expected_version is None:
-                raise ProfileActionPlanInvalid("claim mutation requires target and version")
+                raise ProfileActionPlanInvalid(
+                    "claim mutation requires target and version"
+                )
             claim = self.repository.get_claim(str(claim_id))
-            if claim.workspace_id != self.workspace_id or claim.version != item.expected_version:
+            if (
+                claim.workspace_id != self.workspace_id
+                or claim.version != item.expected_version
+            ):
                 raise ProfileClaimVersionConflict("target claim changed")
             current = self.repository.get_claim_version(
                 claim.current_confirmed_version_id or ""
             )
             if item.before is not None and item.before != current.value:
                 raise ProfileClaimVersionConflict("action plan before snapshot changed")
-        elif item.operation == "propose_claim_create" and item.expected_version not in {None, 0}:
+        elif item.operation == "propose_claim_create" and item.expected_version not in {
+            None,
+            0,
+        }:
             raise ProfileActionPlanInvalid("claim create expected version must be zero")
         elif item.operation == "propose_material_derived_version":
             material = self.get_material(str(item.target.get("materialId", "")))
             source = self.repository.get_material_version(
                 str(item.target.get("sourceVersionId", ""))
             )
-            if source.material_id != material.id or not str(item.after.get("content", "")):
+            if source.material_id != material.id or not str(
+                item.after.get("content", "")
+            ):
                 raise ProfileActionPlanInvalid("derived version input is invalid")
         elif item.operation == "set_publication_selection":
             version_ids = tuple(item.after.get("claimVersionIds", []))
@@ -1251,9 +1266,7 @@ class ProfileService:
         payload: dict[str, object],
     ) -> None:
         if self._publish_event is not None and plan.session_id is not None:
-            self._publish_event(
-                plan.session_id, plan.execution_id, event_type, payload
-            )
+            self._publish_event(plan.session_id, plan.execution_id, event_type, payload)
 
     # --- Permanent deletion ---
 
@@ -1272,9 +1285,7 @@ class ProfileService:
         impact = self.repository.build_material_deletion_impact(
             material_id, workspace_id=self.workspace_id
         )
-        expires_at = (
-            datetime.now(timezone.utc) + timedelta(minutes=15)
-        ).isoformat()
+        expires_at = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
         return self.repository.create_material_deletion_plan(
             workspace_id=self.workspace_id,
             material_id=material_id,
@@ -1305,12 +1316,8 @@ class ProfileService:
                 "workspace has pending profile proposals"
             )
         if not impact.get("replacementVersions"):
-            raise ProfileDeletionPlanConflict(
-                "cannot delete the only material version"
-            )
-        expires_at = (
-            datetime.now(timezone.utc) + timedelta(minutes=15)
-        ).isoformat()
+            raise ProfileDeletionPlanConflict("cannot delete the only material version")
+        expires_at = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
         return self.repository.create_material_deletion_plan(
             workspace_id=self.workspace_id,
             material_id=material.id,
@@ -1359,16 +1366,16 @@ class ProfileService:
             raise ProfileDeletionPlanConflict("deletion plan is no longer executable")
         expires_at = datetime.fromisoformat(plan.expires_at.replace("Z", "+00:00"))
         if expires_at <= datetime.now(timezone.utc):
-            self.repository.set_material_deletion_plan_status(
-                plan.id, status="expired"
-            )
+            self.repository.set_material_deletion_plan_status(plan.id, status="expired")
             raise ProfileDeletionPlanExpired("deletion plan expired")
         if active_publication_action == "cancel" or "cancel" in claim_choices.values():
             cancelled = MaterialDeletionResult(
                 plan_id=plan.id, status="cancelled", items=()
             )
             self.repository.set_material_deletion_plan_status(
-                plan.id, status="cancelled", result=self._deletion_result_payload(cancelled)
+                plan.id,
+                status="cancelled",
+                result=self._deletion_result_payload(cancelled),
             )
             return cancelled
         if plan.active_publication_ids:
@@ -1423,9 +1430,7 @@ class ProfileService:
                 if not ref:
                     continue
                 remaining = self.repository.artifact_reference_count(ref)
-                deleted = self.storage.delete_ref(
-                    ref, remaining_references=remaining
-                )
+                deleted = self.storage.delete_ref(ref, remaining_references=remaining)
                 receipts.append(
                     DeletionItemReceipt(
                         kind="artifact",
@@ -1434,7 +1439,9 @@ class ProfileService:
                         action=(
                             "retain_shared"
                             if remaining
-                            else "delete" if deleted else "already_absent"
+                            else "delete"
+                            if deleted
+                            else "already_absent"
                         ),
                     )
                 )
@@ -1497,19 +1504,12 @@ class ProfileService:
         ):
             raise ProfileDeletionPlanConflict("deletion plan target mismatch")
         if plan.status not in {"planned", "failed"}:
-            raise ProfileDeletionPlanConflict(
-                "deletion plan is no longer executable"
-            )
+            raise ProfileDeletionPlanConflict("deletion plan is no longer executable")
         expires_at = datetime.fromisoformat(plan.expires_at.replace("Z", "+00:00"))
         if expires_at <= datetime.now(timezone.utc):
-            self.repository.set_material_deletion_plan_status(
-                plan.id, status="expired"
-            )
+            self.repository.set_material_deletion_plan_status(plan.id, status="expired")
             raise ProfileDeletionPlanExpired("deletion plan expired")
-        if (
-            active_publication_action == "cancel"
-            or "cancel" in claim_choices.values()
-        ):
+        if active_publication_action == "cancel" or "cancel" in claim_choices.values():
             cancelled = MaterialDeletionResult(
                 plan_id=plan.id, status="cancelled", items=()
             )
@@ -1529,9 +1529,7 @@ class ProfileService:
                     "publication revocation is not wired yet"
                 )
         elif active_publication_action not in {"not_applicable", "revoke"}:
-            raise ProfileDeletionPlanConflict(
-                "invalid publication deletion choice"
-            )
+            raise ProfileDeletionPlanConflict("invalid publication deletion choice")
 
         receipts = [
             self._deletion_receipt(item)
@@ -1543,9 +1541,7 @@ class ProfileService:
             for item in receipts
             if item.status == "completed"
         }
-        self.repository.set_material_deletion_plan_status(
-            plan.id, status="executing"
-        )
+        self.repository.set_material_deletion_plan_status(plan.id, status="executing")
         try:
             for publication_id in plan.active_publication_ids:
                 if ("publication", publication_id) in completed_targets:
@@ -1576,9 +1572,7 @@ class ProfileService:
                 if not ref:
                     continue
                 remaining = self.repository.artifact_reference_count(ref)
-                deleted = self.storage.delete_ref(
-                    ref, remaining_references=remaining
-                )
+                deleted = self.storage.delete_ref(ref, remaining_references=remaining)
                 receipts.append(
                     DeletionItemReceipt(
                         kind="artifact",
@@ -1587,7 +1581,9 @@ class ProfileService:
                         action=(
                             "retain_shared"
                             if remaining
-                            else "delete" if deleted else "already_absent"
+                            else "delete"
+                            if deleted
+                            else "already_absent"
                         ),
                     )
                 )
