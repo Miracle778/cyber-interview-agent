@@ -22,7 +22,7 @@
 
 ## 当前任务：面试复盘 Agent
 
-状态：需求拷问、正式规格和实施计划已完成；Slice 1 的 Task 1–4、Slice 2 的 Task 5–6 与 Slice 3 的 Task 7–8 已完成，已具备问题提取、逐题渐进分析、报告优先工作台、候选人工审核、行动清单和安全 Knowledge 草稿闭环。
+状态：需求拷问、正式规格和实施计划已完成；Slice 1 的 Task 1–4、Slice 2 的 Task 5–6、Slice 3 的 Task 7–8 与 Slice 4 的 Task 9 已完成，已具备问题提取、逐题渐进分析、候选人工审核、安全发布、受限讨论、纠正确认和局部重算。
 
 - 每场复盘必须归属于求职目标，一轮面试对应一场复盘；
 - 首版输入为转写文本或事后回忆，不做音视频、OCR、联网核验或自动脱敏；
@@ -38,7 +38,7 @@
 - `docs/superpowers/architecture-decisions/2026-08-01-interview-retrospective-versioned-evidence-and-cross-domain-boundaries.md`
 - `docs/superpowers/plans/2026-08-01-interview-retrospective-agent.md`
 
-下一步：执行 Task 9，新增受限复盘对话、纠正建议确认和局部重算。
+下一步：执行 Task 10，补齐求职目标聚合、原文清除、删除影响、完整浏览器验收和阶段资料。
 
 ## 当前设计：Agent 可观测与质量评估工作台
 

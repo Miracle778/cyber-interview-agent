@@ -15,14 +15,17 @@ from app.agents.interview_retrospective_contracts import (
     CleanupOutput,
     QuestionAnalysisOutput,
     QuestionExtractionOutput,
+    RetrospectiveChatOutput,
 )
 from app.agents.prompts.interview_retrospective_prompts import (
     RETROSPECTIVE_ANALYSIS_PROMPT,
     RETROSPECTIVE_CLEANUP_PROMPT,
+    RETROSPECTIVE_CHAT_PROMPT,
     RETROSPECTIVE_QUESTION_EXTRACTION_PROMPT,
     render_question_analysis_input,
     render_question_extraction_input,
     render_cleanup_window,
+    render_chat_input,
 )
 
 
@@ -31,6 +34,7 @@ class InterviewRetrospectiveAgents:
     cleanup: AgentRunnable
     question_extraction: AgentRunnable
     question_analysis: AgentRunnable
+    chat: AgentRunnable
 
     @classmethod
     def create(
@@ -41,14 +45,21 @@ class InterviewRetrospectiveAgents:
         middleware: tuple[AgentMiddleware, ...] = (),
         model_override: ModelOverride | None = None,
         checkpointer=None,
+        chat_tools: tuple = (),
     ) -> "InterviewRetrospectiveAgents":
-        def create_agent(execution_name, prompt, response_format):
+        def create_agent(
+            execution_name,
+            prompt,
+            response_format,
+            tools=(),
+            role="retrospective_analysis",
+        ):
             return factory.create(
                 AgentSpec(
-                    role="retrospective_analysis",
+                    role=role,
                     execution_name=execution_name,
                     prompt=prompt,
-                    tools=(),
+                    tools=tools,
                     middleware=middleware,
                     response_format=response_format,
                 ),
@@ -72,6 +83,13 @@ class InterviewRetrospectiveAgents:
                 "interview_retrospective_question_analysis",
                 RETROSPECTIVE_ANALYSIS_PROMPT,
                 QuestionAnalysisOutput,
+            ),
+            chat=create_agent(
+                "interview_retrospective_chat",
+                RETROSPECTIVE_CHAT_PROMPT,
+                RetrospectiveChatOutput,
+                chat_tools,
+                "retrospective_chat",
             ),
         )
 
@@ -165,3 +183,31 @@ class InterviewRetrospectiveAgents:
         if "structured_response" not in result:
             raise ValueError("模型未生成结构化逐题分析")
         return QuestionAnalysisOutput.model_validate(result["structured_response"])
+
+    async def discuss(
+        self,
+        *,
+        message: str,
+        selected_question_id: str | None,
+        conversation: list[dict[str, str]],
+        context: AgentContext,
+        config: dict[str, Any],
+    ) -> RetrospectiveChatOutput:
+        result = await self.chat.ainvoke(
+            {
+                "messages": [
+                    HumanMessage(
+                        content=render_chat_input(
+                            message=message,
+                            selected_question_id=selected_question_id,
+                            conversation=conversation,
+                        )
+                    )
+                ]
+            },
+            isolated_thread_config(config, context, "retrospective_chat"),
+            context=context,
+        )
+        if "structured_response" not in result:
+            raise ValueError("模型未生成结构化复盘讨论结果")
+        return RetrospectiveChatOutput.model_validate(result["structured_response"])

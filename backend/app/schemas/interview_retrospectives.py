@@ -362,3 +362,63 @@ class PublicationDraftResource(AgentModel):
 class ImmediatePracticeResource(AgentModel):
     question_id: str
     href: str
+
+
+class RetrospectiveChatCommand(AgentModel):
+    workspace_id: str
+    message: str = Field(min_length=1, max_length=20_000)
+    selected_question_id: str | None = None
+
+
+class RetrospectiveChatControlCommand(AgentModel):
+    workspace_id: str
+
+
+class CorrectionDecisionCommand(AgentModel):
+    workspace_id: str
+    decision: Literal["confirmed", "rejected"]
+
+
+class ConversationMessageResource(AgentModel):
+    id: str
+    execution_id: str | None
+    role: str
+    content: str
+    message_kind: str
+    payload: dict[str, object]
+    created_at: str
+
+
+class CorrectionProposalResource(AgentModel):
+    id: str
+    retrospective_id: str
+    chat_message_id: str | None
+    proposal_type: str
+    target_question_id: str | None
+    source_cleanup_version_id: str
+    source_analysis_run_id: str | None
+    before: dict[str, object]
+    after: dict[str, object]
+    rationale: str
+    expected_version: int
+    status: str
+    resulting_cleanup_version_id: str | None
+    resulting_analysis_run_id: str | None
+    version: int
+    created_at: str
+    updated_at: str
+
+
+class ConversationExecutionResource(AgentModel):
+    id: str
+    status: str
+    error_code: str | None
+    created_at: str
+    finished_at: str | None
+
+
+class RetrospectiveConversationResource(AgentModel):
+    session_id: str
+    messages: list[ConversationMessageResource]
+    proposals: list[CorrectionProposalResource]
+    latest_execution: ConversationExecutionResource | None

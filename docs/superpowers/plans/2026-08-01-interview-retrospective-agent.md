@@ -849,11 +849,11 @@ git commit -m "feat: add retrospective review and publication UI"
 - Consumes: chat Session from Task 2 and analysis versions from Task 5.
 - Produces: explanation messages, typed correction proposals, proposal confirmation, affected-question rerun, and full-rerun command.
 
-- [ ] **Step 1: Write RED tool and chat tests**
+- [x] **Step 1: Write RED tool and chat tests**
 
 Assert tools only read the current retrospective and bounded authorized contexts, arbitrary IDs and paths fail, chat cannot write domains, explanation does not create a version, correction confirmation creates a version, and one-question correction schedules only one question plus finalizers.
 
-- [ ] **Step 2: Implement read-only tool allowlist**
+- [x] **Step 2: Implement read-only tool allowlist**
 
 Provide exact tools:
 
@@ -869,7 +869,7 @@ search_active_knowledge
 
 Each returns at most 20 items and 2,000 characters per excerpt; Workspace/retrospective IDs come from `AgentContext`, never model arguments.
 
-- [ ] **Step 3: Implement typed chat result**
+- [x] **Step 3: Implement typed chat result**
 
 Chat output is either explanation text or one of:
 
@@ -882,11 +882,11 @@ analysis_reconsideration
 
 Correction proposals persist with source version and expected version. Confirming invokes deterministic application commands; rejecting only updates proposal state.
 
-- [ ] **Step 4: Implement secondary conversation panel**
+- [x] **Step 4: Implement secondary conversation panel**
 
 Reuse shared `AgentComposer`, keyboard hook, message rendering, stop/retry, and execution summary. The panel opens without replacing report selection. Correction proposals use explicit before/after and confirm/reject actions.
 
-- [ ] **Step 5: Run GREEN tests and commit**
+- [x] **Step 5: Run GREEN tests and commit**
 
 ```bash
 ./.venv/bin/pytest -q tests/test_interview_retrospective_chat.py tests/test_interview_retrospective_reanalysis.py tests/test_agent_tool_guards.py

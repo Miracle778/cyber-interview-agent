@@ -1,9 +1,12 @@
 import { useState } from "react";
+import { MessageCircle } from "lucide-react";
 import { AnalysisProgress } from "./AnalysisProgress";
 import { QuestionAnalysisPanel } from "./QuestionAnalysisPanel";
 import { QuestionTimeline } from "./QuestionTimeline";
 import { RetrospectiveActions } from "./RetrospectiveActions";
 import { RetrospectiveCandidates } from "./RetrospectiveCandidates";
+import { RetrospectiveConversation } from "./RetrospectiveConversation";
+import { Button } from "../../shared/ui/Button";
 import { TaskWorkspace, TaskWorkspacePane } from "../../shared/ui/TaskWorkspace";
 import type {
   AnalysisReport,
@@ -17,7 +20,7 @@ import type {
 
 type WorkspaceView = "analysis" | "assets" | "actions";
 
-export function RetrospectiveWorkspace({ retrospective, report, candidates, actions, publicationDraft, selectedQuestionId, busy, candidateBusy, actionBusy, publicationBusy, onSelectQuestion, onStop, onResume, onRetry, onDecision, onCandidateDecision, onBatchCandidateDecision, onActionDecision, onCreateDraft }: {
+export function RetrospectiveWorkspace({ retrospective, report, candidates, actions, publicationDraft, selectedQuestionId, busy, candidateBusy, actionBusy, publicationBusy, onSelectQuestion, onStop, onResume, onRetry, onDecision, onCandidateDecision, onBatchCandidateDecision, onActionDecision, onCreateDraft, onCorrectionConfirmed }: {
   retrospective: InterviewRetrospective;
   report: AnalysisReport;
   candidates: RetrospectiveCandidate[];
@@ -37,14 +40,16 @@ export function RetrospectiveWorkspace({ retrospective, report, candidates, acti
   onBatchCandidateDecision: (candidates: RetrospectiveCandidate[]) => void;
   onActionDecision: (action: RetrospectiveActionItem, decision: "completed" | "dismissed") => void;
   onCreateDraft: (sections: PublicationSection[]) => void;
+  onCorrectionConfirmed?: () => void;
 }) {
   const [view, setView] = useState<WorkspaceView>("analysis");
+  const [conversationOpen, setConversationOpen] = useState(false);
   const question = report.questions.find((item) => item.id === selectedQuestionId) ?? report.questions[0] ?? null;
   const analysis = report.analyses.find((item) => item.questionUnitId === question?.id) ?? null;
   const item = report.items.find((candidate) => candidate.questionUnitId === question?.id) ?? null;
   const returnTo = `/retrospectives?retrospectiveId=${encodeURIComponent(retrospective.id)}${question ? `&questionId=${encodeURIComponent(question.id)}` : ""}`;
   return <div className="retrospective-workbench">
-    <header className="retrospective-workbench__header"><div><p>{retrospective.roundLabel}</p><h2>{retrospective.title}</h2></div><span>{report.analysisRun.status === "completed" ? "分析完成" : "渐进分析"}</span></header>
+    <header className="retrospective-workbench__header"><div><p>{retrospective.roundLabel}</p><h2>{retrospective.title}</h2></div><div className="retrospective-workbench__header-actions"><span>{report.analysisRun.status === "completed" ? "分析完成" : "渐进分析"}</span><Button variant="secondary" onClick={() => setConversationOpen(true)}><MessageCircle size={16} />讨论与纠正</Button></div></header>
     <AnalysisProgress run={report.analysisRun} busy={busy} onStop={onStop} onResume={onResume} onRetry={onRetry} />
     <nav className="retrospective-workbench__views" role="tablist" aria-label="复盘工作区">
       <button type="button" role="tab" aria-selected={view === "analysis"} onClick={() => setView("analysis")}>逐题复盘 <span>{report.questions.length}</span></button>
@@ -62,5 +67,6 @@ export function RetrospectiveWorkspace({ retrospective, report, candidates, acti
         {view === "assets" ? <RetrospectiveCandidates retrospectiveId={retrospective.id} candidates={candidates} questions={report.questions} busy={candidateBusy} onDecision={onCandidateDecision} onBatchDecision={onBatchCandidateDecision} /> : null}
         {view === "actions" ? <RetrospectiveActions actions={actions} busy={actionBusy || publicationBusy} draft={publicationDraft} onDecision={onActionDecision} onCreateDraft={onCreateDraft} /> : null}
       </div>}
+    {conversationOpen ? <RetrospectiveConversation workspaceId={retrospective.workspaceId} retrospectiveId={retrospective.id} selectedQuestionId={question?.id ?? null} onClose={() => setConversationOpen(false)} onCorrectionConfirmed={onCorrectionConfirmed} /> : null}
   </div>;
 }

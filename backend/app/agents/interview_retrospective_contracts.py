@@ -123,3 +123,40 @@ class QuestionAnalysisOutput(RetrospectiveAgentModel):
     confidence: float = Field(ge=0, le=1)
     improvement_outline: list[str] = Field(default_factory=list, max_length=8)
     suggested_answer: str = Field(default="", max_length=6_000)
+
+
+CorrectionProposalType = Literal[
+    "question_text_correction",
+    "question_segment_rebind",
+    "speaker_correction",
+    "analysis_reconsideration",
+]
+
+
+class RetrospectiveChatOutput(RetrospectiveAgentModel):
+    result_type: Literal[
+        "explanation",
+        "question_text_correction",
+        "question_segment_rebind",
+        "speaker_correction",
+        "analysis_reconsideration",
+    ]
+    explanation: str = Field(default="", max_length=8_000)
+    question_id: str | None = Field(default=None, max_length=128)
+    before: dict[str, object] = Field(default_factory=dict)
+    after: dict[str, object] = Field(default_factory=dict)
+    rationale: str = Field(default="", max_length=2_000)
+
+    @model_validator(mode="after")
+    def validate_result(self) -> "RetrospectiveChatOutput":
+        if self.result_type == "explanation":
+            if not self.explanation.strip():
+                raise ValueError("解释结果不能为空")
+            if self.before or self.after or self.question_id:
+                raise ValueError("解释结果不能携带纠正字段")
+            return self
+        if not self.rationale.strip() or not self.after:
+            raise ValueError("纠正建议必须包含修改内容和理由")
+        if self.result_type != "speaker_correction" and not self.question_id:
+            raise ValueError("问题纠正必须指定 questionId")
+        return self

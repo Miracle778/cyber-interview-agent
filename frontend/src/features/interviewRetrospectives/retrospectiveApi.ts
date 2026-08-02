@@ -18,6 +18,8 @@ import type {
   SegmentEdit,
   SourceKind,
   SourceVersion,
+  RetrospectiveConversation,
+  RetrospectiveCorrectionProposal,
 } from "./retrospectiveTypes";
 
 const commandKey = (prefix: string) =>
@@ -250,6 +252,52 @@ export function decideQuestion(
       { workspaceId, decision, expectedVersion, editedText },
       "retrospective-question-decision",
     ),
+  );
+}
+
+export function getRetrospectiveConversation(
+  workspaceId: string,
+  retrospectiveId: string,
+  signal?: AbortSignal,
+) {
+  return apiGet<RetrospectiveConversation>(
+    `/api/interview-retrospectives/${retrospectiveId}/conversation?workspaceId=${encodeURIComponent(workspaceId)}`,
+    { signal },
+  );
+}
+
+export function sendRetrospectiveMessage(
+  workspaceId: string,
+  retrospectiveId: string,
+  message: string,
+  selectedQuestionId: string | null,
+) {
+  return apiRequest<{ executionId: string; status: string }>(
+    `/api/interview-retrospectives/${retrospectiveId}/conversation/messages`,
+    { method: "POST", body: JSON.stringify({ workspaceId, message, selectedQuestionId }) },
+  );
+}
+
+export function stopRetrospectiveMessage(
+  workspaceId: string,
+  retrospectiveId: string,
+  executionId: string,
+) {
+  return apiRequest<{ executionId: string; status: string }>(
+    `/api/interview-retrospectives/${retrospectiveId}/conversation/executions/${executionId}/stop`,
+    { method: "POST", body: JSON.stringify({ workspaceId }) },
+  );
+}
+
+export function decideRetrospectiveCorrection(
+  workspaceId: string,
+  retrospectiveId: string,
+  proposalId: string,
+  decision: "confirmed" | "rejected",
+) {
+  return apiRequest<RetrospectiveCorrectionProposal>(
+    `/api/interview-retrospectives/${retrospectiveId}/corrections/${proposalId}/decision`,
+    command("POST", { workspaceId, decision }, "retrospective-correction"),
   );
 }
 

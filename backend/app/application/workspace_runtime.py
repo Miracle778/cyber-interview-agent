@@ -55,6 +55,10 @@ from app.review.service import ReviewDomainService
 from app.review.selector import QuestionSelector
 from app.review.repository import ReviewRepository
 from app.tools.audit import ToolAuditRepository
+from app.tools.interview_retrospective_tools import (
+    create_interview_retrospective_tools,
+)
+from app.tools.profile_tools import search_active_knowledge
 from app.agents.context import AgentContext
 from app.diagnostics.agent_trace import (
     AgentTraceWriter,
@@ -446,24 +450,6 @@ class WorkspaceRuntime:
                 publish_event=events.publish,
             )
         )
-        retrospective_agents_factory = getattr(
-            graph_factory, "create_interview_retrospective_agents", None
-        )
-        retrospective_agents = (
-            None
-            if retrospective_agents_factory is None
-            or not {
-                "retrospective_analysis",
-                "report_summarization",
-            }.issubset(configured_model_bindings)
-            else retrospective_agents_factory(
-                model_bindings=configured_model_bindings,
-                projection=projection,
-                audit=audit,
-                observability=observability,
-                publish_event=events.publish,
-            )
-        )
 
         def create_job_agents(override: ModelOverride):
             if job_agents_factory is None:
@@ -598,6 +584,98 @@ class WorkspaceRuntime:
             workspace_id=workspace_id,
             repository=retrospective_repository,
             job_targets=job_targets.repository,
+        )
+        retrospective_agents_factory = getattr(
+            graph_factory, "create_interview_retrospective_agents", None
+        )
+
+        def _target_search(context, query, limit, excerpt_limit):
+            retrospective = retrospective_repository.get_retrospective(
+                context.retrospective_id
+            )
+            rows = job_targets.list_preparation_requirements(
+                retrospective.job_target_id
+            )
+            return [
+                {
+                    "id": item.id,
+                    "text": item.text[:excerpt_limit],
+                    "confirmationStatus": item.confirmation_status,
+                    "preparationStatus": item.preparation_status,
+                }
+                for item in rows
+                if query.casefold() in item.text.casefold()
+            ][:limit]
+
+        def _profile_search(_context, query, limit, excerpt_limit):
+            snapshot = profile.confirmed_profile_context(
+                purpose="interview_retrospective", limit=min(20, limit)
+            )
+            values = []
+            for item in snapshot.items:
+                rendered = json.dumps(item.value, ensure_ascii=False)
+                if query.casefold() not in rendered.casefold():
+                    continue
+                values.append(
+                    {
+                        "id": item.claim_id,
+                        "type": item.claim_type,
+                        "value": rendered[:excerpt_limit],
+                        "supportStatus": item.support_status,
+                    }
+                )
+            return values[:limit]
+
+        def _review_search(_context, query, limit, excerpt_limit):
+            return [
+                {
+                    "id": item.snapshot.question_id,
+                    "title": item.snapshot.title[:excerpt_limit],
+                    "questionText": item.snapshot.question_text[:excerpt_limit],
+                }
+                for item in review.list_questions()
+                if query.casefold()
+                in (item.snapshot.title + " " + item.snapshot.question_text).casefold()
+            ][:limit]
+
+        def _knowledge_search(context, query, limit, excerpt_limit):
+            knowledge_context = AgentContext(
+                workspace_id=context.workspace_id,
+                workspace_root=context.workspace_root,
+                session_id=context.session_id,
+                run_id=context.run_id,
+                allowed_tools=frozenset({"search_active_knowledge"}),
+                allowed_scopes=frozenset({"knowledge.active"}),
+                tool_result_item_limit=min(20, limit),
+                tool_excerpt_char_limit=min(2_000, excerpt_limit),
+            )
+            result = search_active_knowledge(
+                profile.repository, knowledge_context, query=query
+            )
+            return list(result.get("items", []))
+
+        retrospective_agents = (
+            None
+            if retrospective_agents_factory is None
+            or not {
+                "retrospective_analysis",
+                "retrospective_chat",
+                "report_summarization",
+            }.issubset(configured_model_bindings)
+            else retrospective_agents_factory(
+                model_bindings=configured_model_bindings,
+                projection=projection,
+                audit=audit,
+                observability=observability,
+                publish_event=events.publish,
+                chat_tools=create_interview_retrospective_tools(
+                    retrospective_repository,
+                    target_search=_target_search,
+                    profile_search=_profile_search,
+                    review_search=_review_search,
+                    knowledge_search=_knowledge_search,
+                ),
+            )
         )
         interview_retrospectives = InterviewRetrospectiveApplication(
             workspace_id=workspace_id,

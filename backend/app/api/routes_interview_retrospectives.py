@@ -46,6 +46,11 @@ from app.schemas.interview_retrospectives import (
     PublicationDraftResource,
     QuestionDecisionCommand,
     QuestionResource,
+    RetrospectiveChatCommand,
+    RetrospectiveChatControlCommand,
+    CorrectionDecisionCommand,
+    CorrectionProposalResource,
+    RetrospectiveConversationResource,
     StartAnalysisCommand,
 )
 
@@ -735,3 +740,113 @@ async def create_publication_draft(
         "status": draft.status,
         "version": draft.version,
     }
+
+
+def _correction_resource(item):
+    return {
+        "id": item.id,
+        "retrospectiveId": item.retrospective_id,
+        "chatMessageId": item.chat_message_id,
+        "proposalType": item.proposal_type,
+        "targetQuestionId": item.target_question_id,
+        "sourceCleanupVersionId": item.source_cleanup_version_id,
+        "sourceAnalysisRunId": item.source_analysis_run_id,
+        "before": item.before,
+        "after": item.after,
+        "rationale": item.rationale,
+        "expectedVersion": item.expected_version,
+        "status": item.status,
+        "resultingCleanupVersionId": item.resulting_cleanup_version_id,
+        "resultingAnalysisRunId": item.resulting_analysis_run_id,
+        "version": item.version,
+        "createdAt": item.created_at,
+        "updatedAt": item.updated_at,
+    }
+
+
+@router.get(
+    "/api/interview-retrospectives/{retrospective_id}/conversation",
+    response_model=RetrospectiveConversationResource,
+)
+def get_conversation(
+    retrospective_id: str,
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    application: AgentApplication = Depends(get_agent_application),
+):
+    result = _application(application, workspace_id).conversation(retrospective_id)
+    latest = result["latestExecution"]
+    return {
+        "sessionId": result["sessionId"],
+        "messages": [
+            {
+                "id": item.id,
+                "executionId": item.execution_id,
+                "role": item.role,
+                "content": item.content,
+                "messageKind": item.message_kind,
+                "payload": item.payload,
+                "createdAt": item.created_at,
+            }
+            for item in result["messages"]
+        ],
+        "proposals": [_correction_resource(item) for item in result["proposals"]],
+        "latestExecution": None
+        if latest is None
+        else {
+            "id": latest.id,
+            "status": latest.status,
+            "errorCode": latest.error_code,
+            "createdAt": latest.created_at,
+            "finishedAt": latest.finished_at,
+        },
+    }
+
+
+@router.post(
+    "/api/interview-retrospectives/{retrospective_id}/conversation/messages",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def send_conversation_message(
+    retrospective_id: str,
+    command: RetrospectiveChatCommand,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    execution = await _application(application, command.workspace_id).send_chat_message(
+        retrospective_id,
+        message=command.message,
+        selected_question_id=command.selected_question_id,
+    )
+    return {"executionId": execution.id, "status": execution.status}
+
+
+@router.post(
+    "/api/interview-retrospectives/{retrospective_id}/conversation/executions/{execution_id}/stop"
+)
+async def stop_conversation(
+    retrospective_id: str,
+    execution_id: str,
+    command: RetrospectiveChatControlCommand,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    execution = await _application(application, command.workspace_id).stop_chat(
+        retrospective_id, execution_id
+    )
+    return {"executionId": execution.id, "status": execution.status}
+
+
+@router.post(
+    "/api/interview-retrospectives/{retrospective_id}/corrections/{proposal_id}/decision",
+    response_model=CorrectionProposalResource,
+)
+async def decide_correction(
+    retrospective_id: str,
+    proposal_id: str,
+    command: CorrectionDecisionCommand,
+    idempotency_key: IdempotencyKey,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    del idempotency_key
+    proposal = await _application(application, command.workspace_id).decide_correction(
+        retrospective_id, proposal_id, decision=command.decision
+    )
+    return _correction_resource(proposal)

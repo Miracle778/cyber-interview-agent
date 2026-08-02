@@ -267,3 +267,46 @@ export interface RetrospectivePublicationDraft {
   status: string;
   version: number;
 }
+
+export interface RetrospectiveConversationMessage {
+  id: string;
+  executionId: string | null;
+  role: string;
+  content: string;
+  messageKind: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface RetrospectiveCorrectionProposal {
+  id: string;
+  retrospectiveId: string;
+  chatMessageId: string | null;
+  proposalType: "question_text_correction" | "question_segment_rebind" | "speaker_correction" | "analysis_reconsideration";
+  targetQuestionId: string | null;
+  sourceCleanupVersionId: string;
+  sourceAnalysisRunId: string | null;
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+  rationale: string;
+  expectedVersion: number;
+  status: "pending" | "confirmed" | "rejected";
+  resultingCleanupVersionId: string | null;
+  resultingAnalysisRunId: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RetrospectiveConversation {
+  sessionId: string;
+  messages: RetrospectiveConversationMessage[];
+  proposals: RetrospectiveCorrectionProposal[];
+  latestExecution: null | {
+    id: string;
+    status: string;
+    errorCode: string | null;
+    createdAt: string;
+    finishedAt: string | null;
+  };
+}

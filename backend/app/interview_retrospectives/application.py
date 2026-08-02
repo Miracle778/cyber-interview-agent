@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from urllib.parse import urlencode
 
 from app.agents.context import AgentContext
 from app.agents.interview_retrospective_agents import InterviewRetrospectiveAgents
+from app.tools.interview_retrospective_tools import (
+    RETROSPECTIVE_TOOL_NAMES,
+    RETROSPECTIVE_TOOL_SCOPE,
+)
 from app.application.execution_service import (
     AgentExecutionService,
     ExecutionCancellation,
@@ -26,6 +31,7 @@ from app.interview_retrospectives.errors import (
     RetrospectiveModelNotConfigured,
     RetrospectiveSourceCleared,
     RetrospectiveTargetRequired,
+    RetrospectiveVersionConflict,
 )
 from app.interview_retrospectives.repository import (
     InterviewRetrospectiveRepository,
@@ -705,6 +711,276 @@ class InterviewRetrospectiveApplication:
     def list_actions(self, retrospective_id: str):
         self.service.get(retrospective_id)
         return self.repository.list_action_items(retrospective_id)
+
+    def conversation(self, retrospective_id: str) -> dict[str, object]:
+        retrospective = self.service.get(retrospective_id)
+        session = self.products.get_session(retrospective.chat_session_id)
+        latest = self.products.latest_execution(session.id)
+        return {
+            "sessionId": session.id,
+            "messages": self.products.list_messages(session.id),
+            "proposals": self.repository.list_correction_proposals(retrospective_id),
+            "latestExecution": latest,
+        }
+
+    async def send_chat_message(
+        self,
+        retrospective_id: str,
+        *,
+        message: str,
+        selected_question_id: str | None,
+    ):
+        if self.agents is None:
+            raise RetrospectiveModelNotConfigured("请先配置面试复盘分析模型")
+        retrospective = self.service.get(retrospective_id)
+        if selected_question_id is not None:
+            question = self.repository.get_question(selected_question_id)
+            if question.retrospective_id != retrospective_id:
+                raise RetrospectiveTargetRequired("问题不属于当前复盘")
+        session = self.products.get_session(retrospective.chat_session_id)
+        user_message = self.products.append_user_message(session.id, content=message)
+        execution = await self.executions.prepare_for_message(
+            session,
+            input_message_id=user_message.id,
+            input={
+                "message": message.strip(),
+                "selectedQuestionId": selected_question_id,
+                "retrospectiveId": retrospective_id,
+            },
+        )
+
+        async def handle_chat(current, cancellation):
+            cancellation.raise_if_requested()
+            context = replace(
+                self.executions.context(current),
+                allowed_tools=frozenset(RETROSPECTIVE_TOOL_NAMES),
+                allowed_scopes=frozenset({RETROSPECTIVE_TOOL_SCOPE}),
+                retrospective_id=retrospective_id,
+                tool_result_item_limit=20,
+                tool_excerpt_char_limit=2_000,
+                progress_scope=("interview_retrospective_chat",),
+            )
+            history = [
+                {"role": item.role, "content": item.content}
+                for item in self.products.list_messages(session.id)
+                if item.id != user_message.id
+            ]
+            result = await self.agents.discuss(
+                message=message.strip(),
+                selected_question_id=selected_question_id,
+                conversation=history,
+                context=context,
+                config={"configurable": {"thread_id": session.id}},
+            )
+            cancellation.raise_if_requested()
+            if result.result_type == "explanation":
+                self.products.append_message(
+                    session.id,
+                    execution_id=current.id,
+                    role="assistant",
+                    content=result.explanation,
+                )
+                return
+            question = None
+            if result.question_id is not None:
+                question = self.repository.get_question(result.question_id)
+                if question.retrospective_id != retrospective_id:
+                    raise RetrospectiveTargetRequired("纠正问题不属于当前复盘")
+            cleanup_id = (
+                question.cleanup_version_id
+                if question is not None
+                else retrospective.active_cleanup_version_id
+            )
+            if cleanup_id is None:
+                raise ValueError("复盘尚无可纠正的整理版本")
+            if question is not None:
+                before = {
+                    "questionText": question.question_text,
+                    "questionSegmentIds": list(question.question_segment_ids),
+                    "answerSegmentIds": list(question.answer_segment_ids),
+                }
+                expected_version = question.version
+            else:
+                cleanup = self.repository.get_cleanup_version(cleanup_id)
+                before = {"cleanupVersionId": cleanup.id}
+                expected_version = cleanup.version
+            assistant = self.products.append_message(
+                session.id,
+                execution_id=current.id,
+                role="assistant",
+                content="我整理了一条纠正建议。确认前不会修改当前复盘。",
+                message_kind="proposal_card",
+                payload={"proposalType": result.result_type},
+            )
+            self.repository.create_correction_proposal(
+                retrospective_id,
+                chat_message_id=assistant.id,
+                proposal_type=result.result_type,
+                target_question_id=None if question is None else question.id,
+                source_cleanup_version_id=cleanup_id,
+                source_analysis_run_id=retrospective.active_analysis_run_id,
+                before=before,
+                after=result.after,
+                rationale=result.rationale,
+                expected_version=expected_version,
+            )
+
+        self.executions.run_background(execution, handle_chat)
+        return execution
+
+    async def stop_chat(self, retrospective_id: str, execution_id: str):
+        retrospective = self.service.get(retrospective_id)
+        execution = self.products.get_execution(execution_id)
+        if execution.session_id != retrospective.chat_session_id:
+            raise RetrospectiveTargetRequired("讨论运行不属于当前复盘")
+        return await self.executions.cancel(execution_id)
+
+    async def decide_correction(
+        self,
+        retrospective_id: str,
+        proposal_id: str,
+        *,
+        decision: str,
+    ):
+        retrospective = self.service.get(retrospective_id)
+        proposal = self.repository.get_correction_proposal(proposal_id)
+        if proposal.retrospective_id != retrospective_id:
+            raise RetrospectiveTargetRequired("纠正建议不属于当前复盘")
+        if proposal.status == decision:
+            return proposal
+        if proposal.status != "pending":
+            raise ValueError("纠正建议已经处理")
+        if decision == "rejected":
+            return self.repository.decide_correction_proposal(
+                proposal_id, status="rejected"
+            )
+        if decision != "confirmed":
+            raise ValueError("不支持的纠正决定")
+        if proposal.proposal_type == "speaker_correction":
+            cleanup = self.repository.get_cleanup_version(
+                proposal.source_cleanup_version_id
+            )
+            if (
+                cleanup.version != proposal.expected_version
+                or retrospective.active_cleanup_version_id != cleanup.id
+            ):
+                raise RetrospectiveVersionConflict("整理版本已经更新，请重新提出纠正")
+            changes = proposal.after.get("segments", [])
+            if not isinstance(changes, list):
+                raise ValueError("说话人纠正内容格式不正确")
+            by_id = {
+                str(item.get("segmentId")): item
+                for item in changes
+                if isinstance(item, dict) and item.get("segmentId")
+            }
+            source_segments = self.repository.list_segments(cleanup.id)
+            if set(by_id) - {item.id for item in source_segments}:
+                raise RetrospectiveTargetRequired("说话人片段不属于当前整理版本")
+            digest = _digest({"proposalId": proposal.id, "after": proposal.after})
+            next_cleanup = self.service.create_cleanup_version(
+                retrospective_id,
+                source_version_id=cleanup.source_version_id,
+                input_digest=digest,
+                idempotency_key=f"correction-cleanup-{proposal.id}",
+            )
+            next_cleanup = self.service.replace_segments(
+                retrospective_id,
+                next_cleanup.id,
+                expected_version=next_cleanup.version,
+                segments=tuple(
+                    {
+                        "speaker_role": str(
+                            by_id.get(item.id, {}).get("speakerRole", item.speaker_role)
+                        ),
+                        "raw_speaker_label": item.raw_speaker_label,
+                        "display_name": str(
+                            by_id.get(item.id, {}).get("displayName", item.display_name)
+                        ),
+                        "body": item.body,
+                        "source_start": item.source_start,
+                        "source_end": item.source_end,
+                        "confidence": item.confidence,
+                        "uncertainty_reason": item.uncertainty_reason,
+                        "ignored": item.ignored,
+                    }
+                    for item in source_segments
+                ),
+            )
+            next_cleanup = self.service.confirm_cleanup(
+                retrospective_id,
+                next_cleanup.id,
+                expected_version=next_cleanup.version,
+                idempotency_key=f"correction-confirm-{proposal.id}",
+            )
+            run = self.service.create_analysis_run(
+                retrospective_id,
+                next_cleanup.id,
+                input_digest=_digest({"cleanup": next_cleanup.input_digest}),
+                context_snapshot=self._analysis_context_snapshot(retrospective),
+                idempotency_key=f"correction-analysis-{proposal.id}",
+            )
+            decided = self.repository.decide_correction_proposal(
+                proposal_id,
+                status="confirmed",
+                resulting_cleanup_version_id=next_cleanup.id,
+                resulting_analysis_run_id=run.id,
+            )
+            await self._schedule_analysis(retrospective, run.id)
+            return decided
+        if (
+            proposal.target_question_id is None
+            or proposal.source_analysis_run_id is None
+        ):
+            raise ValueError("纠正建议缺少目标问题或分析版本")
+        after = proposal.after
+        if proposal.proposal_type == "question_text_correction":
+            self.repository.apply_question_correction(
+                proposal.target_question_id,
+                expected_version=proposal.expected_version,
+                question_text=str(after.get("questionText", "")),
+            )
+        elif proposal.proposal_type == "question_segment_rebind":
+            self.repository.apply_question_correction(
+                proposal.target_question_id,
+                expected_version=proposal.expected_version,
+                question_segment_ids=tuple(
+                    str(item) for item in after.get("questionSegmentIds", [])
+                ),
+                answer_segment_ids=tuple(
+                    str(item) for item in after.get("answerSegmentIds", [])
+                ),
+            )
+        elif proposal.proposal_type != "analysis_reconsideration":
+            raise ValueError("不支持的纠正类型")
+        else:
+            question = self.repository.get_question(proposal.target_question_id)
+            if question.version != proposal.expected_version:
+                raise ValueError("问题已经更新，请重新提出分析建议")
+        source_run = self.repository.get_analysis_run(proposal.source_analysis_run_id)
+        if retrospective.active_analysis_run_id != source_run.id:
+            raise RetrospectiveVersionConflict("分析版本已经更新，请重新提出纠正")
+        if source_run.status in {"queued", "running", "stopping"}:
+            raise ValueError("当前分析仍在运行，请完成或停止后再确认纠正")
+        run = self.repository.insert_local_reanalysis_run(
+            retrospective_id,
+            source_run_id=source_run.id,
+            question_id=proposal.target_question_id,
+            input_digest=_digest({"proposalId": proposal.id, "after": proposal.after}),
+            context_snapshot={
+                **json.loads(source_run.context_snapshot_json),
+                "correction": {
+                    "type": proposal.proposal_type,
+                    "rationale": proposal.rationale,
+                },
+            },
+        )
+        decided = self.repository.decide_correction_proposal(
+            proposal_id,
+            status="confirmed",
+            resulting_analysis_run_id=run.id,
+        )
+        await self._schedule_analysis(retrospective, run.id)
+        return decided
 
     def decide_action(
         self,

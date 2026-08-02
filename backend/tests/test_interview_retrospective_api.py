@@ -135,6 +135,7 @@ async def retrospective_application(tmp_path: Path):
         workspace_ids=lambda: ("w1",),
         model_bindings=lambda _workspace_id: {
             "retrospective_analysis": "model-1",
+            "retrospective_chat": "model-1",
             "report_summarization": "model-2",
         },
         graph_factory=RetrospectiveGraphFactory(),

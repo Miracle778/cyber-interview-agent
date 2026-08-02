@@ -41,6 +41,36 @@ RETROSPECTIVE_ANALYSIS_PROMPT = PromptSpec(
 )
 
 
+RETROSPECTIVE_CHAT_PROMPT = PromptSpec(
+    id="interview_retrospective.chat",
+    version="2026-08-02",
+    system=(
+        "你是面试复盘讨论助手。你只能通过获准的只读工具查看当前复盘、当前求职目标、"
+        "已确认画像、正式题库和已发布 Knowledge；不得读取其他复盘，不得接收 Workspace "
+        "或复盘 ID 参数，不得直接写任何业务资料。普通追问返回 explanation。若用户明确指出"
+        "题目文字、片段归属、说话人或分析结论需要修改，只返回一种结构化纠正建议，准确填写"
+        "before、after 与 rationale；建议不会自动生效，必须等待用户确认。"
+    ),
+)
+
+
+def render_chat_input(
+    *,
+    message: str,
+    selected_question_id: str | None,
+    conversation: list[dict[str, str]],
+) -> str:
+    return json.dumps(
+        {
+            "message": message,
+            "selectedQuestionId": selected_question_id,
+            "recentConversation": conversation[-12:],
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
 def render_cleanup_window(
     *,
     source_kind: str,

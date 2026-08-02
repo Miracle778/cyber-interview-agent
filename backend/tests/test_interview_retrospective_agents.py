@@ -128,6 +128,7 @@ def test_cleanup_agent_uses_analysis_role_without_tools() -> None:
         specs["interview_retrospective_question_analysis"][0].response_format
         is QuestionAnalysisOutput
     )
+    assert specs["interview_retrospective_chat"][0].role == "retrospective_chat"
     assert all(spec.tools == () for spec, _kwargs, _runnable in captured)
 
 

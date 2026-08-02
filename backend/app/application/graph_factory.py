@@ -249,6 +249,7 @@ class ProductionGraphFactory:
         observability,
         publish_event=None,
         interaction_override: ModelOverride | None = None,
+        chat_tools: tuple = (),
     ) -> InterviewRetrospectiveAgents:
         context_limit_tokens = min(
             self._agents.resolve_context_limit(
@@ -260,7 +261,11 @@ class ProductionGraphFactory:
                     else None
                 ),
             )
-            for role in ("retrospective_analysis", "report_summarization")
+            for role in (
+                "retrospective_analysis",
+                "retrospective_chat",
+                "report_summarization",
+            )
         )
         middleware = build_default_middleware(
             summary_model=self._agents.resolve_model(
@@ -284,6 +289,7 @@ class ProductionGraphFactory:
             model_bindings=model_bindings,
             middleware=middleware,
             model_override=interaction_override,
+            chat_tools=chat_tools,
         )
 
     def create_review_round_agents(

@@ -18,6 +18,7 @@ from app.interview_retrospectives.models import (
     AssetCandidateRecord,
     CleanupVersionRecord,
     CleanupWorkItemRecord,
+    CorrectionProposalRecord,
     GapRecord,
     QuestionAnalysisRecord,
     QuestionUnitRecord,
@@ -1065,6 +1066,234 @@ class InterviewRetrospectiveRepository:
         ).fetchall()
         return tuple(_gap(row) for row in rows)
 
+    def create_correction_proposal(
+        self,
+        retrospective_id: str,
+        *,
+        chat_message_id: str | None,
+        proposal_type: str,
+        target_question_id: str | None,
+        source_cleanup_version_id: str,
+        source_analysis_run_id: str | None,
+        before: dict[str, object],
+        after: dict[str, object],
+        rationale: str,
+        expected_version: int,
+    ) -> CorrectionProposalRecord:
+        proposal_id = str(uuid4())
+        self.connection.execute(
+            "INSERT INTO interview_retrospective_corrections("
+            "id, retrospective_id, chat_message_id, proposal_type, "
+            "target_question_id, source_cleanup_version_id, source_analysis_run_id, "
+            "before_json, after_json, rationale, expected_version) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                proposal_id,
+                retrospective_id,
+                chat_message_id,
+                proposal_type,
+                target_question_id,
+                source_cleanup_version_id,
+                source_analysis_run_id,
+                json.dumps(before, ensure_ascii=False, sort_keys=True),
+                json.dumps(after, ensure_ascii=False, sort_keys=True),
+                rationale,
+                expected_version,
+            ),
+        )
+        self.connection.commit()
+        return self.get_correction_proposal(proposal_id)
+
+    def get_correction_proposal(self, proposal_id: str) -> CorrectionProposalRecord:
+        row = self.connection.execute(
+            "SELECT * FROM interview_retrospective_corrections WHERE id = ?",
+            (proposal_id,),
+        ).fetchone()
+        if row is None:
+            raise RetrospectiveNotFound(proposal_id)
+        return _correction_proposal(row)
+
+    def list_correction_proposals(
+        self, retrospective_id: str
+    ) -> tuple[CorrectionProposalRecord, ...]:
+        rows = self.connection.execute(
+            "SELECT * FROM interview_retrospective_corrections "
+            "WHERE retrospective_id = ? ORDER BY created_at, rowid",
+            (retrospective_id,),
+        ).fetchall()
+        return tuple(_correction_proposal(row) for row in rows)
+
+    def decide_correction_proposal(
+        self,
+        proposal_id: str,
+        *,
+        status: str,
+        resulting_cleanup_version_id: str | None = None,
+        resulting_analysis_run_id: str | None = None,
+    ) -> CorrectionProposalRecord:
+        cursor = self.connection.execute(
+            "UPDATE interview_retrospective_corrections SET status = ?, "
+            "resulting_cleanup_version_id = ?, resulting_analysis_run_id = ?, "
+            "version = version + 1, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND status = 'pending'",
+            (
+                status,
+                resulting_cleanup_version_id,
+                resulting_analysis_run_id,
+                proposal_id,
+            ),
+        )
+        if cursor.rowcount != 1:
+            self.connection.rollback()
+            raise RetrospectiveVersionConflict("纠正建议已经处理")
+        self.connection.commit()
+        return self.get_correction_proposal(proposal_id)
+
+    def apply_question_correction(
+        self,
+        question_id: str,
+        *,
+        expected_version: int,
+        question_text: str | None = None,
+        question_segment_ids: tuple[str, ...] | None = None,
+        answer_segment_ids: tuple[str, ...] | None = None,
+    ) -> QuestionUnitRecord:
+        question = self.get_question(question_id)
+        segment_ids = {
+            item.id for item in self.list_segments(question.cleanup_version_id)
+        }
+        requested = (question_segment_ids or ()) + (answer_segment_ids or ())
+        if set(requested) - segment_ids:
+            raise RetrospectiveVersionConflict("问题引用了当前整理版本之外的片段")
+        next_text = (
+            question.question_text if question_text is None else question_text.strip()
+        )
+        if not next_text:
+            raise ValueError("问题正文不能为空")
+        next_question_segments = (
+            question.question_segment_ids
+            if question_segment_ids is None
+            else question_segment_ids
+        )
+        next_answer_segments = (
+            question.answer_segment_ids
+            if answer_segment_ids is None
+            else answer_segment_ids
+        )
+        if not next_answer_segments:
+            raise ValueError("问题必须至少关联一个回答片段")
+        if question.origin == "original" and not next_question_segments:
+            raise ValueError("原文问题必须至少关联一个问题片段")
+        cursor = self.connection.execute(
+            "UPDATE interview_question_units SET question_text = ?, "
+            "question_segment_ids_json = ?, answer_segment_ids_json = ?, "
+            "version = version + 1, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND version = ?",
+            (
+                next_text,
+                json.dumps(next_question_segments),
+                json.dumps(next_answer_segments),
+                question_id,
+                expected_version,
+            ),
+        )
+        if cursor.rowcount != 1:
+            self.connection.rollback()
+            raise RetrospectiveVersionConflict("问题版本已更新")
+        self.connection.commit()
+        return self.get_question(question_id)
+
+    def insert_local_reanalysis_run(
+        self,
+        retrospective_id: str,
+        *,
+        source_run_id: str,
+        question_id: str,
+        input_digest: str,
+        context_snapshot: dict[str, object],
+    ) -> AnalysisRunRecord:
+        source = self.get_analysis_run(source_run_id)
+        question = self.get_question(question_id)
+        if (
+            source.retrospective_id != retrospective_id
+            or question.retrospective_id != retrospective_id
+            or question.cleanup_version_id != source.cleanup_version_id
+        ):
+            raise RetrospectiveVersionConflict("局部重算来源不属于当前复盘版本")
+        run_id = str(uuid4())
+        keys = (
+            (f"question_analysis:{question_id}", question_id),
+            ("gap_verification", None),
+            ("candidate_generation", None),
+            ("final_projection", None),
+        )
+        try:
+            self.connection.execute(
+                "INSERT INTO interview_analysis_runs("
+                "id, retrospective_id, cleanup_version_id, retry_of_analysis_run_id, "
+                "input_digest, context_snapshot_json, total_items, stage) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'analyzing_questions')",
+                (
+                    run_id,
+                    retrospective_id,
+                    source.cleanup_version_id,
+                    source_run_id,
+                    input_digest,
+                    json.dumps(context_snapshot, ensure_ascii=False, sort_keys=True),
+                    len(keys),
+                ),
+            )
+            for work_key, target_question_id in keys:
+                digest = hashlib.sha256(
+                    f"{input_digest}:{work_key}".encode("utf-8")
+                ).hexdigest()
+                self.connection.execute(
+                    "INSERT INTO interview_analysis_work_items("
+                    "id, analysis_run_id, question_unit_id, work_key, input_digest) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (str(uuid4()), run_id, target_question_id, work_key, digest),
+                )
+            self.connection.execute(
+                "UPDATE interview_retrospectives SET active_analysis_run_id = ?, "
+                "version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (run_id, retrospective_id),
+            )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        gaps_by_question: dict[str, list[GapRecord]] = {}
+        for gap in self.list_gaps(source_run_id):
+            gaps_by_question.setdefault(gap.question_unit_id, []).append(gap)
+        for analysis in self.list_question_analyses(source_run_id):
+            if analysis.question_unit_id == question_id:
+                continue
+            self.save_question_analysis(
+                run_id,
+                analysis.question_unit_id,
+                output={
+                    "verdict": analysis.verdict,
+                    "strengths": list(analysis.strengths),
+                    "improvements": list(analysis.improvements),
+                    "omissions": list(analysis.omissions),
+                    "evidenceLevel": analysis.evidence_level,
+                    "confidence": analysis.confidence,
+                    "improvementOutline": list(analysis.improvement_outline),
+                    "suggestedAnswer": analysis.suggested_answer,
+                    "gaps": [
+                        {
+                            "kind": gap.gap_kind,
+                            "summary": gap.summary,
+                            "evidenceSegmentIds": list(gap.evidence),
+                        }
+                        for gap in gaps_by_question.get(analysis.question_unit_id, [])
+                    ],
+                },
+                source_excerpt=analysis.source_excerpt,
+                result_status=analysis.result_status,
+            )
+        return self.get_analysis_run(run_id)
+
     def upsert_asset_candidate(
         self,
         retrospective_id: str,
@@ -1637,6 +1866,28 @@ def _analysis_work_item(row: sqlite3.Row) -> AnalysisWorkItemRecord:
         output=None if row["output_json"] is None else json.loads(row["output_json"]),
         attempt_count=row["attempt_count"],
         last_error_code=row["last_error_code"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _correction_proposal(row: sqlite3.Row) -> CorrectionProposalRecord:
+    return CorrectionProposalRecord(
+        id=row["id"],
+        retrospective_id=row["retrospective_id"],
+        chat_message_id=row["chat_message_id"],
+        proposal_type=row["proposal_type"],
+        target_question_id=row["target_question_id"],
+        source_cleanup_version_id=row["source_cleanup_version_id"],
+        source_analysis_run_id=row["source_analysis_run_id"],
+        before=json.loads(row["before_json"]),
+        after=json.loads(row["after_json"]),
+        rationale=row["rationale"],
+        expected_version=row["expected_version"],
+        status=row["status"],
+        resulting_cleanup_version_id=row["resulting_cleanup_version_id"],
+        resulting_analysis_run_id=row["resulting_analysis_run_id"],
+        version=row["version"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

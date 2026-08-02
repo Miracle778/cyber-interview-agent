@@ -30,6 +30,12 @@ GapKind: TypeAlias = Literal["material", "expression", "knowledge", "experience"
 CandidateKind: TypeAlias = Literal[
     "review_question", "profile_claim", "project_narrative", "summary"
 ]
+CorrectionType: TypeAlias = Literal[
+    "question_text_correction",
+    "question_segment_rebind",
+    "speaker_correction",
+    "analysis_reconsideration",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,5 +250,26 @@ class ActionItemRecord:
     status: str
     version: int
     completed_at: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class CorrectionProposalRecord:
+    id: str
+    retrospective_id: str
+    chat_message_id: str | None
+    proposal_type: CorrectionType
+    target_question_id: str | None
+    source_cleanup_version_id: str
+    source_analysis_run_id: str | None
+    before: dict[str, object]
+    after: dict[str, object]
+    rationale: str
+    expected_version: int
+    status: str
+    resulting_cleanup_version_id: str | None
+    resulting_analysis_run_id: str | None
+    version: int
     created_at: str
     updated_at: str

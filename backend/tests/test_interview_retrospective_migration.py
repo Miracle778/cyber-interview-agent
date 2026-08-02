@@ -21,6 +21,7 @@ RETROSPECTIVE_TABLES = {
     "interview_asset_candidates",
     "interview_action_items",
     "interview_write_receipts",
+    "interview_retrospective_corrections",
 }
 
 
@@ -45,7 +46,7 @@ def test_runtime_migration_adds_versioned_retrospective_domain(
         connection.close()
 
     assert RETROSPECTIVE_TABLES <= tables
-    assert migrations == list(range(1, 47))
+    assert migrations == list(range(1, 48))
 
 
 def test_app_migration_backfills_retrospective_model_roles(

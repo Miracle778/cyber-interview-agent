@@ -1475,3 +1475,13 @@
 - 自动证据：Task 8 前端组件/页面聚焦 `12 passed`，后端候选聚焦 `6 passed`，TypeScript、Ruff、production build 与差异检查通过。
 - 隔离浏览器验收：桌面端完成题库关联、行动完成、Knowledge 草稿生成；390px 下无页面横向溢出、行动/发布单列展示，浏览器控制台 error 为 0。验收使用虚构 API 数据，未调用真实 Provider。
 - 下一步：Task 9 受限对话、纠正建议确认与局部重算。
+
+## 2026-08-02：面试复盘 Task 9 受限讨论与纠正重算
+
+- 新增七个精确只读复盘 Tool，统一限制当前 Workspace/复盘、最多 20 项和单段 2,000 字；Tool schema 不接受 Workspace、复盘 ID 或任意文件路径。
+- 对话输出严格区分普通解释与四类纠正建议。解释只追加用户/助手消息；纠正建议保存来源 Cleanup/Analysis、目标问题、服务端实际 before、模型建议 after 和 expected version，确认前不修改业务数据。
+- 问题文字、片段归属和分析重判确认后创建局部 AnalysisRun，只重算目标问题与三个 finalizer，并复制其他题的正式分析；说话人纠正创建新 CleanupVersion 后全量重算。拒绝不创建版本。
+- 新增次级“讨论与纠正”抽屉，不替换当前报告/问题选择；复用共享 AgentComposer 的 IME 键盘、停止和失败重试体验，纠正卡以可读 before/after 提供明确确认与拒绝动作，390px 使用全屏单列。
+- 自动证据：复盘后端全组 `63 passed`；Task 9 核心后端 `9 passed`；前端讨论/工作台 `4 passed`，TypeScript、Ruff、production build 与差异检查通过。整套前端并发回归中新增用例全部通过，两个既有设置页因并发超时，随后单独复验 `5 passed`。
+- 产品成熟度：受限追问、显式纠正和局部重算链路可用；求职目标聚合、原文清除/删除影响、完整真实页面验收和最终用户指南留给 Task 10。
+- 下一步：Task 10 聚合、生命周期收口、完整浏览器验收与阶段文档门禁。
