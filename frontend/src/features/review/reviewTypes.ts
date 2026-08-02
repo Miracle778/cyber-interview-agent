@@ -1,4 +1,5 @@
 export type ReviewMode = "weak-point" | "random-mixed" | "topic-focused" | "recent-mistake" | "source-file";
+export type ReviewQuestionScope = "ordinary" | "job_target" | "project";
 export type MasteryState = "unknown" | "weak" | "partial" | "stable" | "strong";
 export type Difficulty = "easy" | "medium" | "hard";
 
@@ -407,6 +408,10 @@ export interface ReviewRound {
     answer_model_id: string;
     reasoning_effort: "none" | "low" | "medium" | "high";
     source_id?: string | null;
+    question_scope?: ReviewQuestionScope;
+    source_job_target_id?: string | null;
+    project_claim_id?: string | null;
+    scope_label?: string | null;
   };
   status: "waiting_for_input" | "running" | "report_pending" | "completed" | "failed" | "cancelled";
   executionStatus: string | null;
@@ -455,4 +460,8 @@ export interface CreateReviewRoundRequest {
   answerModelId: string;
   reasoningEffort: "none" | "low" | "medium" | "high";
   sourceId?: string;
+  questionScope?: ReviewQuestionScope;
+  sourceJobTargetId?: string;
+  projectClaimId?: string;
+  scopeLabel?: string;
 }

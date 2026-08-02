@@ -57,6 +57,7 @@ from app.review.models import (
     ReviewInputReceipt,
     ReviewInputRequestRecord,
     ReviewMode,
+    ReviewQuestionScope,
     ReviewRoundRecord,
     ReviewRoundSettings,
     RoundStatus,
@@ -5030,6 +5031,24 @@ class ReviewRepository:
                 None
                 if data.get("source_id") is None
                 else str(data["source_id"])
+            ),
+            question_scope=cast(
+                ReviewQuestionScope, data.get("question_scope", "ordinary")
+            ),
+            source_job_target_id=(
+                None
+                if data.get("source_job_target_id") is None
+                else str(data["source_job_target_id"])
+            ),
+            project_claim_id=(
+                None
+                if data.get("project_claim_id") is None
+                else str(data["project_claim_id"])
+            ),
+            scope_label=(
+                None
+                if data.get("scope_label") is None
+                else str(data["scope_label"])
             ),
         )
 

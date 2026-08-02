@@ -57,4 +57,16 @@ describe("ReviewHistory", () => {
     expect(screen.getByText("3/3 已完成")).toBeInTheDocument();
     expect(screen.queryByText("0/3 已完成")).toBeNull();
   });
+
+  it("shows the frozen review origin instead of an internal scope id", () => {
+    const scoped = round("waiting_for_input", 0);
+    scoped.settings.question_scope = "project";
+    scoped.settings.project_claim_id = "claim-opaque-id";
+    scoped.settings.scope_label = "订单系统";
+
+    render(<ReviewHistory rounds={[scoped]} selectedId={null} onSelect={vi.fn()} />);
+
+    expect(screen.getByText("项目专项 · 订单系统 · 3 题")).toBeInTheDocument();
+    expect(screen.queryByText(/claim-opaque-id/)).toBeNull();
+  });
 });

@@ -1,4 +1,6 @@
 from app.schemas.review import QuestionBatchResource, ReviewRoundSettings
+from pydantic import ValidationError
+import pytest
 
 
 def test_review_round_settings_accept_model_and_reasoning_snapshot() -> None:
@@ -19,6 +21,47 @@ def test_review_round_settings_accept_model_and_reasoning_snapshot() -> None:
     assert settings.reasoning_effort == "medium"
     assert settings.difficulties == ["medium", "hard"]
     assert settings.model_dump(by_alias=True)["allowFollowUp"] is True
+
+
+def test_review_round_settings_accept_job_target_scope() -> None:
+    settings = ReviewRoundSettings.model_validate(
+        {
+            "selectedTopics": [],
+            "difficulties": ["medium"],
+            "questionCount": 5,
+            "mode": "random-mixed",
+            "answerModelId": "model-1",
+            "questionScope": "job_target",
+            "sourceJobTargetId": "target-1",
+            "scopeLabel": "后端开发岗",
+        }
+    )
+
+    assert settings.question_scope == "job_target"
+    assert settings.source_job_target_id == "target-1"
+    assert settings.scope_label == "后端开发岗"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"questionScope": "job_target"},
+        {"questionScope": "project"},
+        {"questionScope": "ordinary", "sourceJobTargetId": "target-1"},
+    ],
+)
+def test_review_round_settings_reject_invalid_scope(payload: dict[str, str]) -> None:
+    with pytest.raises(ValidationError):
+        ReviewRoundSettings.model_validate(
+            {
+                "selectedTopics": [],
+                "difficulties": ["medium"],
+                "questionCount": 5,
+                "mode": "random-mixed",
+                "answerModelId": "model-1",
+                **payload,
+            }
+        )
 
 
 def test_question_batch_resource_projects_durable_control_fields() -> None:

@@ -152,6 +152,36 @@ describe("R2 ReviewPage", () => {
     expect(screen.queryByRole("region", { name: "当前复习轮次" })).toBeNull();
   });
 
+  it("opens a job-target scoped setup without broadening to other questions", async () => {
+    const questions = activeQuestions(2).map((question, index) => ({
+      ...question,
+      sourceJobTargetId: index === 0 ? "target-1" : "target-2",
+    }));
+    mockApi([], questions);
+    render(<ReviewPage workspace={workspace} />, {
+      wrapper: wrapperAt(
+        "/review?create=1&scope=job-target&jobTargetId=target-1&scopeLabel=Agent%20%E5%BC%80%E5%8F%91%E5%B2%97&returnTo=%2Ftargets%3Ftarget%3Dtarget-1&returnLabel=%E8%BF%94%E5%9B%9E%E6%B1%82%E8%81%8C%E7%9B%AE%E6%A0%87",
+      ),
+    });
+
+    expect(await screen.findByRole("region", { name: "本轮复习范围" })).toHaveTextContent("岗位专项");
+    expect(screen.getByRole("region", { name: "本轮复习范围" })).toHaveTextContent("Agent 开发岗");
+    expect(await screen.findByText("匹配题目 1 道")).toBeInTheDocument();
+    expect(screen.queryByText("复习模式")).toBeNull();
+    expect(screen.getByRole("link", { name: "返回求职目标" })).toHaveAttribute("href", "/targets?target=target-1");
+  });
+
+  it("does not fall back to ordinary questions when a scoped setup has no match", async () => {
+    mockApi([], activeQuestions(2));
+    render(<ReviewPage workspace={workspace} />, {
+      wrapper: wrapperAt("/review?create=1&scope=project&projectClaimId=project-1&scopeLabel=%E8%AE%A2%E5%8D%95%E7%B3%BB%E7%BB%9F"),
+    });
+
+    expect(await screen.findByText("当前范围还没有可复习题目")).toBeInTheDocument();
+    expect(screen.getByText("匹配题目 0 道")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "开始项目专项复习" })).toBeDisabled();
+  });
+
   it("opens completed and skipped questions in read-only review mode and returns to the active question", async () => {
     const roundWithHistory = {
       ...waitingRound,

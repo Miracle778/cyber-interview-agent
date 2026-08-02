@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Button } from "../../shared/ui/Button";
 import { formatBeijingTimestamp } from "../../shared/time";
 import type { ReviewRound } from "./reviewTypes";
+import { reviewScopeTitle } from "./reviewScope";
 
 const statusText: Record<string, string> = { waiting_for_input: "等待回答", running: "进行中", report_pending: "报告待确认", completed: "已完成", failed: "失败", cancelled: "已结束" };
 const RECOMMENDED_QUESTION_COUNT = 10;
@@ -25,7 +26,7 @@ function RoundRow({ round, onOpen, onArchive, archived = false, onRestore }: { r
   const completed = round.attempts.filter((attempt) => attempt.status === "completed").length;
   const terminal = ["completed", "cancelled", "failed"].includes(round.status);
   const stage = !terminal && round.executionStatus === "failed" ? "需要恢复" : statusText[round.status] ?? round.status;
-  return <article className="review-history-row"><button type="button" className="review-history-row__open" onClick={onOpen}><div><strong>{modeText[round.settings.mode]} · {round.questionCount} 题</strong><small>{round.settings.difficulties.map((item) => `${difficultyText[item]}难度`).join(" / ")}{roundDate(round.createdAt) ? ` · ${roundDate(round.createdAt)}` : ""}</small></div><span>{stage} · 已完成 {completed}/{round.questionCount}</span><ArrowRight size={17} /></button>{archived ? <Button size="sm" variant="ghost" onClick={onRestore}><RotateCcw size={15} />恢复</Button> : terminal ? <Button size="sm" variant="ghost" onClick={onArchive}><Archive size={15} />归档</Button> : null}</article>;
+  return <article className="review-history-row"><button type="button" className="review-history-row__open" onClick={onOpen}><div><strong>{reviewScopeTitle(round)} · {round.questionCount} 题</strong><small>{modeText[round.settings.mode]} · {round.settings.difficulties.map((item) => `${difficultyText[item]}难度`).join(" / ")}{roundDate(round.createdAt) ? ` · ${roundDate(round.createdAt)}` : ""}</small></div><span>{stage} · 已完成 {completed}/{round.questionCount}</span><ArrowRight size={17} /></button>{archived ? <Button size="sm" variant="ghost" onClick={onRestore}><RotateCcw size={15} />恢复</Button> : terminal ? <Button size="sm" variant="ghost" onClick={onArchive}><Archive size={15} />归档</Button> : null}</article>;
 }
 
 export function ReviewLanding({ rounds, questionCount, onCreate, onOpen, onCatalog, onArchive, onRestore }: { rounds: ReviewRound[]; questionCount: number | null; onCreate: () => void; onOpen: (id: string) => void; onCatalog: () => void; onArchive: (round: ReviewRound) => void; onRestore: (round: ReviewRound) => void }) {

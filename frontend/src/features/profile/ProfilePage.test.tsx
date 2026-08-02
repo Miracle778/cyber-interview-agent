@@ -25,9 +25,15 @@ const api = vi.hoisted(() => ({
 
 vi.mock("./profileApi", () => api);
 
-function renderPage() {
+function renderPage(workspace = { id: "w1", workspacePath: "/workspace", vaultPath: "/vault" }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(<MemoryRouter><QueryClientProvider client={client}><ProfilePage workspace={{ id: "w1", workspacePath: "/workspace", vaultPath: "/vault" }} /></QueryClientProvider></MemoryRouter>);
+  const view = render(<MemoryRouter><QueryClientProvider client={client}><ProfilePage workspace={workspace} /></QueryClientProvider></MemoryRouter>);
+  return {
+    ...view,
+    rerenderWorkspace(nextWorkspace: typeof workspace) {
+      view.rerender(<MemoryRouter><QueryClientProvider client={client}><ProfilePage workspace={nextWorkspace} /></QueryClientProvider></MemoryRouter>);
+    },
+  };
 }
 
 describe("ProfilePage", () => {
@@ -156,5 +162,36 @@ describe("ProfilePage", () => {
     expect(await screen.findByRole("heading", { name: "待确认" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "画像助手" }));
     expect(await screen.findByRole("heading", { name: "开始第一次画像对话" })).toBeInTheDocument();
+  });
+
+  it("does not request a stale material version after switching workspaces", async () => {
+    const material = {
+      id: "m1", workspaceId: "w1", type: "resume", title: "测试简历",
+      primaryRole: "resume", currentVersionId: "v1", lifecycleStatus: "active",
+      version: 1, versionCount: 1, latestProcessingStatus: "ready",
+      createdAt: "now", updatedAt: "now",
+    };
+    const version = {
+      id: "v1", materialId: "m1", versionNumber: 1, sourceType: "upload",
+      fileName: "resume.md", mimeType: "text/markdown", processingStatus: "ready",
+      canRetry: false, createdAt: "now", stages: [],
+    };
+    api.listProfileMaterials.mockImplementation(async (workspaceId: string) => workspaceId === "w1" ? [material] : []);
+    api.listMaterialVersions.mockResolvedValue([version]);
+    api.getMaterialVersion.mockResolvedValue({
+      ...version,
+      material,
+      evidencePage: { items: [], offset: 0, limit: 50, total: 0, hasMore: false },
+      proposalCounts: { total: 0, pending: 0, accepted: 0, rejected: 0, superseded: 0 },
+      execution: null,
+    });
+    api.getUnifiedProfile.mockImplementation(async (workspaceId: string) => ({ ...emptyProfile, workspaceId }));
+
+    const page = renderPage();
+    await waitFor(() => expect(api.getMaterialVersion).toHaveBeenCalledWith("w1", "v1", expect.anything()));
+
+    page.rerenderWorkspace({ id: "w2", workspacePath: "/workspace-2", vaultPath: "/vault-2" });
+    await waitFor(() => expect(api.listProfileMaterials).toHaveBeenCalledWith("w2", true, expect.anything()));
+    expect(api.getMaterialVersion).not.toHaveBeenCalledWith("w2", "v1", expect.anything());
   });
 });

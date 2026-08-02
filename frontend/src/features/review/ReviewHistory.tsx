@@ -1,6 +1,7 @@
 import { History } from "lucide-react";
 import { formatBeijingDate } from "../../shared/time";
 import type { ReviewRound } from "./reviewTypes";
+import { reviewScopeTitle } from "./reviewScope";
 
 function progressLabel(round: ReviewRound): string {
   if (round.status === "completed") {
@@ -23,7 +24,7 @@ export function ReviewHistory({ rounds, selectedId, onSelect }: { rounds: Review
       {rounds.length === 0 ? <p className="status-note">还没有复习轮次</p> : null}
       {ordered.map((round) => (
         <button key={round.id} type="button" className="review-history__item" aria-current={round.id === selectedId} onClick={() => onSelect(round.id)}>
-          <strong>{round.questionCount} 题 · {round.settings.mode}</strong>
+          <strong>{reviewScopeTitle(round)} · {round.questionCount} 题</strong>
           <span>{progressLabel(round)}</span>
           <small>{round.status} · {formatBeijingDate(round.updatedAt) ?? round.updatedAt}</small>
         </button>

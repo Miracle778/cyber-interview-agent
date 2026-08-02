@@ -938,6 +938,21 @@ class JobTargetApplication:
     def readiness(self, target_id: str) -> dict:
         requirements = self.service.list_preparation_requirements(target_id)
         priorities = self.repository.list_project_priorities(target_id)
+        requirement_counts = {
+            status: sum(
+                1
+                for item in requirements
+                if item.confirmation_status == status
+            )
+            for status in ("pending", "confirmed", "rejected")
+        }
+        analysis = self.repository.current_analysis_run(target_id)
+        confirmed_project_questions = self.repository.connection.execute(
+            "SELECT COUNT(*) FROM project_question_candidates candidate "
+            "JOIN project_deep_dives dive ON dive.id = candidate.deep_dive_id "
+            "WHERE dive.job_target_id = ? AND candidate.status = 'confirmed'",
+            (target_id,),
+        ).fetchone()[0]
         if any(item.confirmation_status == "pending" for item in requirements):
             status = "requirements_pending"
         elif not priorities:
@@ -971,6 +986,11 @@ class JobTargetApplication:
             "jobTargetId": target_id,
             "status": status,
             "requirements": len(requirements),
+            "pendingRequirements": requirement_counts["pending"],
+            "confirmedRequirements": requirement_counts["confirmed"],
+            "rejectedRequirements": requirement_counts["rejected"],
+            "confirmedProjectQuestions": confirmed_project_questions,
+            "profileVersion": None if analysis is None else analysis["profile_version"],
             "coreProjectId": next(
                 (
                     row["project_claim_id"]

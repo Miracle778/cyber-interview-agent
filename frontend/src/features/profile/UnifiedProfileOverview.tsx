@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertTriangle, ArrowRight, BriefcaseBusiness, CheckCircle2, FileUp, Pencil, Plus, Sparkles, Target, UserRound } from "lucide-react";
+import { AlertTriangle, ArrowRight, BookOpenCheck, BriefcaseBusiness, CheckCircle2, ChevronDown, FileUp, Pencil, Plus, Sparkles, Target, UserRound } from "lucide-react";
 import { Button } from "../../shared/ui/Button";
 import { ProfileActionableGaps } from "./ProfileActionableGaps";
 import { ProfileSourceBadge } from "./ProfileSourceBadge";
@@ -69,19 +69,24 @@ function ProfileSection({
   onCreate,
   onEdit,
   onShowAll,
+  optionalCreate,
+  createLabel,
 }: {
   category: ProfileCardCategory;
   cards: UnifiedProfileCard[];
   onCreate: (category: ProfileCardCategory) => void;
   onEdit: (card: UnifiedProfileCard) => void;
   onShowAll?: () => void;
+  optionalCreate?: { category: ProfileCardCategory; label: string };
+  createLabel?: string;
 }) {
   return <section className="unified-profile-section" aria-labelledby={`profile-${category}-title`}>
     <header>
       <div><h2 id={`profile-${category}-title`}>{sectionLabels[category] ?? category}</h2><span>{cards.length} 条</span></div>
       <div className="unified-profile-section__actions">
         {onShowAll ? <button type="button" onClick={onShowAll}>查看全部<ArrowRight size={14} /></button> : null}
-        <button type="button" onClick={() => onCreate(category)}><Plus size={16} />添加</button>
+        {optionalCreate ? <button className="unified-profile-section__optional-action" type="button" onClick={() => onCreate(optionalCreate.category)}><Plus size={15} />{optionalCreate.label}</button> : null}
+        <button type="button" onClick={() => onCreate(category)}><Plus size={16} />{createLabel ?? "添加"}</button>
       </div>
     </header>
     {cards.length ? <div className="unified-profile-section__cards">{cards.map((card) => <ProfileCard key={card.claimId} card={card} onEdit={onEdit} />)}</div>
@@ -98,6 +103,8 @@ export function UnifiedProfileOverview({
   onOpenPending,
   onOpenSupportReview,
   onSetPrimaryDirection,
+  onCreateJobTarget,
+  onOpenReview,
 }: {
   profile: UnifiedProfile | null;
   loading: boolean;
@@ -107,6 +114,8 @@ export function UnifiedProfileOverview({
   onOpenPending: () => void;
   onOpenSupportReview: (filter: "related" | "unsupported") => void;
   onSetPrimaryDirection: (claimId: string) => void;
+  onCreateJobTarget: () => void;
+  onOpenReview: () => void;
 }) {
   const [activeView, setActiveView] = useState<ProfileView>("overview");
   const [skillsExpanded, setSkillsExpanded] = useState(false);
@@ -149,25 +158,41 @@ export function UnifiedProfileOverview({
     </section>;
   }
 
+  const attentionCount = relatedCount + unsupportedCount + profile.pendingCount;
+
   return <main className="unified-profile">
     <section className="unified-profile-hero">
       <div className="unified-profile-hero__content">
-        <span>职业名片</span>
+        <span>我的职业资产</span>
         <h2>{heroCard?.title ?? "尚未设置职业定位"}</h2>
-        {heroCard && supportLabel(heroCard) ? <span className="unified-profile-card__support" data-status={heroCard.supportStatus}><AlertTriangle size={13} />{supportLabel(heroCard)}</span> : null}
+        {heroCard && supportLabel(heroCard) ? <span className="unified-profile-card__support" data-status={heroCard.supportStatus}>{heroCard.supportStatus === "manual" ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />}{supportLabel(heroCard)}</span> : null}
         {primaryDirection && typeof primaryDirection.value.description === "string" ? <p>{primaryDirection.value.description}</p> : null}
         <div className="unified-profile-hero__meta">
           <span><CheckCircle2 size={15} />{cardCount} 条已确认资料</span>
-          {relatedCount ? <button type="button" className="unified-profile-hero__related" onClick={() => onOpenSupportReview("related")}><AlertTriangle size={15} />{relatedCount} 条相关内容待核对<ArrowRight size={14} /></button> : null}
-          {unsupportedCount ? <button type="button" className="unified-profile-hero__unsupported" onClick={() => onOpenSupportReview("unsupported")}><AlertTriangle size={15} />{unsupportedCount} 条内容缺少直接依据<ArrowRight size={14} /></button> : null}
-          {profile.pendingCount ? <button type="button" onClick={onOpenPending}>{profile.pendingCount} 条内容等你确认<ArrowRight size={14} /></button> : <span>当前没有待确认内容</span>}
+          <span>{profile.projects.length} 个代表项目</span>
+          <span>{profile.skills.length} 项技能</span>
         </div>
       </div>
       <div className="unified-profile-hero__actions">
-        <Button variant="secondary" onClick={() => primaryDirection ? onEdit(primaryDirection) : onCreate("direction")}><Target size={16} />{primaryDirection ? "编辑定位" : "设置职业定位"}</Button>
-        <button type="button" onClick={() => onCreate(profile.summary ? "highlight" : "summary")}><Plus size={15} />补充其他资料</button>
+        <Button onClick={onCreateJobTarget}><Target size={16} />创建求职目标</Button>
+        <Button variant="secondary" onClick={onOpenReview}><BookOpenCheck size={16} />进入自主复习</Button>
+        <button type="button" onClick={() => primaryDirection ? onEdit(primaryDirection) : onCreate("direction")}><Pencil size={15} />{primaryDirection ? "编辑定位" : "设置职业定位"}</button>
       </div>
     </section>
+
+    <details className="unified-profile-data-health">
+      <summary>
+        <span><CheckCircle2 size={17} />资料质量</span>
+        <small>{attentionCount ? `${attentionCount} 项需要处理` : "当前资料状态正常"}</small>
+        <ChevronDown size={16} aria-hidden="true" />
+      </summary>
+      <div>
+        {profile.pendingCount ? <button type="button" onClick={onOpenPending}>{profile.pendingCount} 条画像建议等待确认<ArrowRight size={14} /></button> : <span><CheckCircle2 size={15} />没有待确认的画像建议</span>}
+        {relatedCount ? <button type="button" className="unified-profile-hero__related" onClick={() => onOpenSupportReview("related")}><AlertTriangle size={15} />{relatedCount} 条相关内容待核对<ArrowRight size={14} /></button> : null}
+        {unsupportedCount ? <button type="button" className="unified-profile-hero__unsupported" onClick={() => onOpenSupportReview("unsupported")}><AlertTriangle size={15} />{unsupportedCount} 条内容缺少直接依据<ArrowRight size={14} /></button> : null}
+        {!attentionCount ? <span><CheckCircle2 size={15} />已确认资料目前不需要额外处理</span> : null}
+      </div>
+    </details>
 
     <nav className="unified-profile-view-nav" aria-label="画像内容分类">
       {views.map((view) => <button
@@ -203,11 +228,11 @@ export function UnifiedProfileOverview({
               </div> : <button className="unified-profile-skills__empty" type="button" onClick={() => onCreate("skill")}>添加掌握的技能</button>}
             </section>
 
-            <ProfileActionableGaps gaps={profile.actionableGaps} onEdit={(claimId) => {
+            {profile.actionableGaps.length ? <ProfileActionableGaps gaps={profile.actionableGaps} onEdit={(claimId) => {
               const cards = [...profile.projects, ...profile.experiences];
               const card = cards.find((item) => item.claimId === claimId);
               if (card) onEdit(card);
-            }} />
+            }} /> : null}
           </div>
 
           {profile.highlights.length ? <section className="unified-profile-highlights" aria-labelledby="profile-highlights-title">
@@ -221,10 +246,11 @@ export function UnifiedProfileOverview({
         {activeView === "experience" ? <ProfileSection category="experience" cards={profile.experiences} onCreate={onCreate} onEdit={onEdit} /> : null}
         {activeView === "project" ? <ProfileSection category="project" cards={profile.projects} onCreate={onCreate} onEdit={onEdit} /> : null}
         {activeView === "education" ? <ProfileSection category="education" cards={profile.education} onCreate={onCreate} onEdit={onEdit} /> : null}
-        {activeView === "achievement" ? <div className="unified-profile-pair">
-          <ProfileSection category="certification" cards={profile.certifications} onCreate={onCreate} onEdit={onEdit} />
-          <ProfileSection category="achievement" cards={profile.achievements} onCreate={onCreate} onEdit={onEdit} />
-        </div> : null}
+        {activeView === "achievement" ? profile.certifications.length && profile.achievements.length ? <div className="unified-profile-pair">
+          <ProfileSection category="certification" cards={profile.certifications} onCreate={onCreate} onEdit={onEdit} createLabel="添加证书" />
+          <ProfileSection category="achievement" cards={profile.achievements} onCreate={onCreate} onEdit={onEdit} createLabel="添加成果" />
+        </div> : profile.certifications.length ? <ProfileSection category="certification" cards={profile.certifications} onCreate={onCreate} onEdit={onEdit} createLabel="添加证书" optionalCreate={{ category: "achievement", label: "添加成果" }} />
+          : <ProfileSection category="achievement" cards={profile.achievements} onCreate={onCreate} onEdit={onEdit} createLabel="添加成果" optionalCreate={{ category: "certification", label: "添加证书（可选）" }} /> : null}
     </div>
   </main>;
 }
