@@ -16,7 +16,9 @@ from app.interview_retrospectives.models import (
 import json
 
 
-def retrospective_resource(record: RetrospectiveRecord) -> dict[str, object]:
+def retrospective_resource(
+    record: RetrospectiveRecord, *, active_source_available: bool
+) -> dict[str, object]:
     return {
         "id": record.id,
         "workspaceId": record.workspace_id,
@@ -28,6 +30,7 @@ def retrospective_resource(record: RetrospectiveRecord) -> dict[str, object]:
         "note": record.note,
         "lifecycleStatus": record.lifecycle_status,
         "activeSourceVersionId": record.active_source_version_id,
+        "activeSourceAvailable": active_source_available,
         "activeCleanupVersionId": record.active_cleanup_version_id,
         "activeAnalysisRunId": record.active_analysis_run_id,
         "version": record.version,

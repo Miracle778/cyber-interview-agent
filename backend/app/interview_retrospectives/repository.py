@@ -1657,6 +1657,48 @@ class InterviewRetrospectiveRepository:
             )
         return counts
 
+    def target_summary(self, job_target_id: str) -> dict[str, object]:
+        rows = self.connection.execute(
+            "SELECT id, title, round_label, interview_date, outcome, "
+            "lifecycle_status, created_at FROM interview_retrospectives "
+            "WHERE job_target_id = ? AND lifecycle_status != 'recycled' "
+            "ORDER BY COALESCE(interview_date, created_at) DESC, created_at DESC, id",
+            (job_target_id,),
+        ).fetchall()
+        gap_rows = self.connection.execute(
+            "SELECT g.gap_kind, COUNT(*) AS count FROM interview_gaps g "
+            "JOIN interview_retrospectives r ON r.active_analysis_run_id = g.analysis_run_id "
+            "WHERE r.job_target_id = ? AND r.lifecycle_status != 'recycled' "
+            "AND g.status = 'open' GROUP BY g.gap_kind ORDER BY g.gap_kind",
+            (job_target_id,),
+        ).fetchall()
+        action_row = self.connection.execute(
+            "SELECT COUNT(*) FROM interview_action_items a "
+            "JOIN interview_retrospectives r ON r.id = a.retrospective_id "
+            "WHERE r.job_target_id = ? AND r.lifecycle_status != 'recycled' "
+            "AND a.status = 'pending'",
+            (job_target_id,),
+        ).fetchone()
+
+        def timeline_item(row) -> dict[str, object]:
+            return {
+                "retrospectiveId": row["id"],
+                "title": row["title"],
+                "roundLabel": row["round_label"],
+                "interviewDate": row["interview_date"],
+                "outcome": row["outcome"],
+                "lifecycleStatus": row["lifecycle_status"],
+            }
+
+        timeline = [timeline_item(row) for row in rows]
+        return {
+            "retrospectiveCount": len(timeline),
+            "latest": timeline[0] if timeline else None,
+            "unresolvedActionCount": int(action_row[0]),
+            "gapCounts": {row["gap_kind"]: int(row["count"]) for row in gap_rows},
+            "timeline": timeline,
+        }
+
     def transition_lifecycle(
         self,
         retrospective_id: str,

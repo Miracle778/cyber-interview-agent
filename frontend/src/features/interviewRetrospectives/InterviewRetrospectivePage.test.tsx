@@ -31,6 +31,10 @@ const api = vi.hoisted(() => ({
   listActions: vi.fn(),
   decideAction: vi.fn(),
   createPublicationDraft: vi.fn(),
+  clearSourceVersion: vi.fn(),
+  transitionRetrospective: vi.fn(),
+  getRetrospectiveDeletionImpact: vi.fn(),
+  permanentlyDeleteRetrospective: vi.fn(),
 }));
 
 vi.mock("./retrospectiveApi", () => api);
@@ -86,6 +90,7 @@ describe("InterviewRetrospectivePage", () => {
         note: "",
         lifecycleStatus: "active",
         activeSourceVersionId: "source-1",
+        activeSourceAvailable: true,
         activeCleanupVersionId: null,
         activeAnalysisRunId: null,
         version: 1,
@@ -111,6 +116,42 @@ describe("InterviewRetrospectivePage", () => {
     expect(screen.getByLabelText("求职目标")).toHaveValue("target-1");
     expect(screen.getAllByText("星河科技后端一面")[0]).toBeVisible();
     expect(screen.getAllByText("2026/08/01")[0]).toBeVisible();
+  });
+
+  it("does not request a null cleanup after the source is cleared", async () => {
+    api.clearSourceVersion.mockResolvedValue({});
+    renderPage("/retrospectives?jobTargetId=target-1");
+
+    fireEvent.click(await screen.findByRole("button", { name: "清除原文" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认清除原文" }));
+
+    await waitFor(() => expect(api.clearSourceVersion).toHaveBeenCalled());
+    expect(api.getCleanup).not.toHaveBeenCalled();
+  });
+
+  it("keeps a saved retrospective when cleanup cannot start", async () => {
+    const saved = {
+      id: "retro-saved", workspaceId: "w1", jobTargetId: "target-1", title: "星河科技后端一面",
+      roundLabel: "一面", interviewDate: "2026-08-01", outcome: "unrecorded", note: "",
+      lifecycleStatus: "active", activeSourceVersionId: "source-saved", activeSourceAvailable: true, activeCleanupVersionId: null,
+      activeAnalysisRunId: null, version: 2, createdAt: "now", updatedAt: "now",
+    };
+    api.listRetrospectives.mockResolvedValue([]);
+    api.createRetrospective.mockResolvedValue(saved);
+    api.addSourceVersion.mockResolvedValue({ id: "source-saved" });
+    api.startCleanup.mockRejectedValue(new Error("请先配置面试复盘分析模型"));
+
+    renderPage("/retrospectives?jobTargetId=target-1");
+    fireEvent.click(await screen.findByRole("button", { name: "新建复盘" }));
+    fireEvent.change(screen.getByLabelText("复盘名称"), { target: { value: "星河科技后端一面" } });
+    fireEvent.change(screen.getByLabelText("面试轮次"), { target: { value: "一面" } });
+    fireEvent.change(screen.getByLabelText("面试文字"), { target: { value: "面试官：介绍项目。\n候选人：这是我的回答。" } });
+    fireEvent.click(screen.getByRole("button", { name: "开始整理" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("复盘和原文已保存");
+    expect(screen.queryByRole("dialog", { name: "先保存文字，再交给 Agent 整理" })).toBeNull();
+    expect(api.createRetrospective).toHaveBeenCalledTimes(1);
+    expect(api.addSourceVersion).toHaveBeenCalledTimes(1);
   });
 
   it("restores cleanup progress from the URL and refreshes after a version conflict", async () => {
@@ -184,7 +225,7 @@ describe("InterviewRetrospectivePage", () => {
 
   it("opens the failed question first and keeps completed results visible while analysis runs", async () => {
     api.listRetrospectives.mockResolvedValue([{
-      id: "retro-1", workspaceId: "w1", jobTargetId: "target-1", title: "星河科技后端一面", roundLabel: "一面", interviewDate: "2026-08-01", outcome: "pending", note: "", lifecycleStatus: "active", activeSourceVersionId: "source-1", activeCleanupVersionId: "cleanup-1", activeAnalysisRunId: "run-1", version: 2, createdAt: "now", updatedAt: "now",
+      id: "retro-1", workspaceId: "w1", jobTargetId: "target-1", title: "星河科技后端一面", roundLabel: "一面", interviewDate: "2026-08-01", outcome: "pending", note: "", lifecycleStatus: "active", activeSourceVersionId: "source-1", activeSourceAvailable: true, activeCleanupVersionId: "cleanup-1", activeAnalysisRunId: "run-1", version: 2, createdAt: "now", updatedAt: "now",
     }]);
     api.getAnalysisReport.mockResolvedValue({
       analysisRun: { id: "run-1", retrospectiveId: "retro-1", cleanupVersionId: "cleanup-1", executionId: "execution-1", retryOfAnalysisRunId: null, status: "running", stage: "question_analysis", controlIntent: null, completedItems: 1, totalItems: 3, currentWorkKey: "question_analysis:q-2", cumulativeElapsedMs: 2_000, latestProgressAt: "now", summary: null, version: 2, createdAt: "now", updatedAt: "now" },

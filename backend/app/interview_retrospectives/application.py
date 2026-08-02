@@ -136,6 +136,12 @@ class InterviewRetrospectiveApplication:
             raise RetrospectiveTargetRequired("原始记录不属于当前复盘")
         return source
 
+    def clear_source(self, retrospective_id: str, version_id: str, **values):
+        return self.service.clear_source(retrospective_id, version_id, **values)
+
+    def target_summary(self, job_target_id: str):
+        return self.service.target_summary(job_target_id)
+
     def replace_segments(self, retrospective_id: str, cleanup_id: str, **values):
         return self.service.replace_segments(retrospective_id, cleanup_id, **values)
 

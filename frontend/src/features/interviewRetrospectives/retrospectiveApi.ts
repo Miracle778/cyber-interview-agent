@@ -20,6 +20,7 @@ import type {
   SourceVersion,
   RetrospectiveConversation,
   RetrospectiveCorrectionProposal,
+  RetrospectiveDeletionImpact,
 } from "./retrospectiveTypes";
 
 const commandKey = (prefix: string) =>
@@ -74,6 +75,37 @@ export function addSourceVersion(
   return apiRequest<SourceVersion>(
     `/api/interview-retrospectives/${retrospectiveId}/sources`,
     command("POST", { workspaceId, ...input }, "retrospective-source"),
+  );
+}
+
+export function clearSourceVersion(workspaceId: string, retrospective: InterviewRetrospective) {
+  return apiRequest<SourceVersion>(
+    `/api/interview-retrospectives/${retrospective.id}/sources/${retrospective.activeSourceVersionId}/clear`,
+    command("POST", { workspaceId, expectedVersion: retrospective.version }, "retrospective-source-clear"),
+  );
+}
+
+export function transitionRetrospective(
+  workspaceId: string,
+  retrospective: InterviewRetrospective,
+  action: "archive" | "recycle" | "restore",
+) {
+  return apiRequest<InterviewRetrospective>(
+    `/api/interview-retrospectives/${retrospective.id}/${action}`,
+    command("POST", { workspaceId, expectedVersion: retrospective.version }, `retrospective-${action}`),
+  );
+}
+
+export function getRetrospectiveDeletionImpact(workspaceId: string, retrospectiveId: string) {
+  return apiGet<RetrospectiveDeletionImpact>(
+    `/api/interview-retrospectives/${retrospectiveId}/deletion-impact?workspaceId=${encodeURIComponent(workspaceId)}`,
+  );
+}
+
+export function permanentlyDeleteRetrospective(workspaceId: string, retrospective: InterviewRetrospective) {
+  return apiRequest<void>(
+    `/api/interview-retrospectives/${retrospective.id}`,
+    command("DELETE", { workspaceId, expectedVersion: retrospective.version }, "retrospective-delete"),
   );
 }
 

@@ -8,9 +8,34 @@ import { ProjectQuestionCandidates } from "./ProjectQuestionCandidates";
 import { getTargetIdentity, JobTargetWorkspace } from "./JobTargetWorkspace";
 import { JobTargetList } from "./JobTargetList";
 import { ProjectPriorityPanel } from "./ProjectPriorityPanel";
-import type { DeepDiveResource, JobAnalysis, JobRequirement } from "./jobTargetTypes";
+import { JobTargetOverview } from "./JobTargetOverview";
+import type { DeepDiveResource, JobAnalysis, JobRequirement, JobTargetRetrospectiveSummary } from "./jobTargetTypes";
 
 describe("job target workspace", () => {
+  it("summarizes multi-round interview feedback without exposing report bodies", () => {
+    const onOpenRetrospectives = vi.fn();
+    const target = {
+      id: "t", workspaceId: "w", companyName: "示例公司", roleName: "后端工程师", seniority: "3-5 年",
+      sourceUrl: null, lifecycleStatus: "active", currentDocumentVersionId: "d", version: 1, createdAt: "", updatedAt: "",
+    } satisfies import("./jobTargetTypes").JobTarget;
+    const summary = {
+      retrospectiveCount: 3,
+      latest: { retrospectiveId: "r3", title: "三面复盘", roundLabel: "三面", interviewDate: "2026-08-01", outcome: "passed", lifecycleStatus: "active" },
+      unresolvedActionCount: 2,
+      gapCounts: { knowledge: 3, expression: 2 },
+      timeline: [],
+    } satisfies JobTargetRetrospectiveSummary;
+
+    render(<JobTargetOverview target={target} retrospectiveSummary={summary} onEditJd={vi.fn()} onStartAnalysis={vi.fn()} onControl={vi.fn()} onNavigate={vi.fn()} onOpenRetrospectives={onOpenRetrospectives} />);
+
+    expect(screen.getByText("3")).toBeVisible();
+    expect(screen.getByText("最近一轮 · 通过")).toBeVisible();
+    expect(screen.getByText("2")).toBeVisible();
+    expect(screen.getByText(/知识 3 · 表达 2/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "查看全部复盘" }));
+    expect(onOpenRetrospectives).toHaveBeenCalledOnce();
+  });
+
   it("offers a compact target selector instead of forcing the desktop sidebar on mobile", () => {
     const onSelect = vi.fn();
     const targets = [

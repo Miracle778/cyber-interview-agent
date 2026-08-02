@@ -25,6 +25,28 @@ export interface JobTarget {
   updatedAt: string;
 }
 
+export interface JobTargetRetrospectiveSummary {
+  retrospectiveCount: number;
+  latest: null | {
+    retrospectiveId: string;
+    title: string;
+    roundLabel: string;
+    interviewDate: string | null;
+    outcome: string;
+    lifecycleStatus: string;
+  };
+  unresolvedActionCount: number;
+  gapCounts: Record<string, number>;
+  timeline: Array<{
+    retrospectiveId: string;
+    title: string;
+    roundLabel: string;
+    interviewDate: string | null;
+    outcome: string;
+    lifecycleStatus: string;
+  }>;
+}
+
 export interface JobDocumentVersion {
   id: string;
   jobTargetId: string;

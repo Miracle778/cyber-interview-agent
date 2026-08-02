@@ -20,6 +20,7 @@ export interface InterviewRetrospective {
   note: string;
   lifecycleStatus: RetrospectiveLifecycle;
   activeSourceVersionId: string | null;
+  activeSourceAvailable: boolean;
   activeCleanupVersionId: string | null;
   activeAnalysisRunId: string | null;
   version: number;
@@ -38,6 +39,17 @@ export interface SourceVersion {
   body?: string | null;
   clearedAt: string | null;
   createdAt: string;
+}
+
+export interface RetrospectiveDeletionImpact {
+  sourceVersions: number;
+  cleanupVersions: number;
+  analysisRuns: number;
+  candidates: number;
+  actionItems: number;
+  preservesReviewQuestions: boolean;
+  preservesProfileAndProjects: boolean;
+  preservesKnowledge: boolean;
 }
 
 export interface CleanupSegment {

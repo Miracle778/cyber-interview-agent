@@ -97,6 +97,15 @@ class InterviewRetrospectiveService:
             return records
         return tuple(item for item in records if item.job_target_id == job_target_id)
 
+    def target_summary(self, job_target_id: str) -> dict[str, object]:
+        try:
+            target = self.job_targets.get_target(job_target_id)
+        except JobTargetNotFound as error:
+            raise RetrospectiveTargetRequired("请选择有效求职目标") from error
+        if target.workspace_id != self.workspace_id:
+            raise RetrospectiveTargetRequired("求职目标不属于当前工作区")
+        return self.repository.target_summary(job_target_id)
+
     def update(
         self,
         retrospective_id: str,
@@ -305,6 +314,8 @@ class InterviewRetrospectiveService:
         idempotency_key: str,
     ):
         self.get(retrospective_id)
+        if self.repository.active_execution_count(retrospective_id):
+            raise RetrospectiveBusy("复盘仍有运行中的任务")
         source = self.repository.get_source_version(source_version_id)
         if source.retrospective_id != retrospective_id:
             raise RetrospectiveTargetRequired("原始记录不属于当前复盘")
@@ -352,6 +363,9 @@ class InterviewRetrospectiveService:
             raise RetrospectiveTargetRequired("整理版本不属于当前复盘")
         if cleanup.status != "confirmed":
             raise RetrospectiveCleanupNotConfirmed("请先确认说话人整理结果")
+        source = self.repository.get_source_version(cleanup.source_version_id)
+        if source.cleared_at is not None:
+            raise RetrospectiveSourceCleared("原始记录已清除，不能重新分析")
         request_hash = _digest(
             {
                 "cleanup_id": cleanup_id,

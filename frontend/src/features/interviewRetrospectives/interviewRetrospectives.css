@@ -363,3 +363,18 @@
   .retrospective-create fieldset label { min-height: 92px; }
   .cleanup-workbench__footer > div:last-child { grid-template-columns: 1fr; }
 }
+
+.retrospective-page__detail-pane { display: flex; min-height: 0; flex-direction: column; }
+.retrospective-page__detail-pane > .retrospective-workbench,
+.retrospective-page__detail-pane > .cleanup-workbench,
+.retrospective-page__detail-pane > .retrospective-summary { min-height: 0; flex: 1; }
+.retrospective-lifecycle-actions { display: flex; min-height: 48px; flex: none; align-items: center; justify-content: flex-end; gap: var(--space-2); padding: 6px var(--space-4); background: var(--surface); border-bottom: 1px solid var(--border); }
+.retrospective-confirm-backdrop { position: fixed; z-index: 80; display: grid; place-items: center; padding: var(--space-4); background: color-mix(in srgb, var(--text) 38%, transparent); inset: 0; }
+.retrospective-confirm { display: grid; width: min(520px, 100%); grid-template-columns: auto minmax(0, 1fr); gap: var(--space-3); padding: var(--space-5); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); }
+.retrospective-confirm > svg { color: var(--danger); }
+.retrospective-confirm h3 { margin: 0; font-size: 1rem; }
+.retrospective-confirm p { margin: var(--space-2) 0 0; color: var(--text-muted); font-size: .78rem; line-height: 1.65; }
+.retrospective-confirm label { display: grid; gap: 6px; margin-top: var(--space-4); color: var(--text-muted); font-size: .74rem; font-weight: 700; }
+.retrospective-confirm input { min-height: 44px; padding: 0 var(--space-3); color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-md); font: inherit; }
+.retrospective-confirm footer { display: flex; grid-column: 1 / -1; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-2); }
+@media (max-width: 767px) { .retrospective-page__detail-pane { display: block; } .retrospective-lifecycle-actions { overflow-x: auto; justify-content: flex-start; } }

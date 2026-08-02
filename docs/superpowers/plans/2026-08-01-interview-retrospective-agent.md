@@ -924,19 +924,19 @@ git commit -m "feat: add retrospective discussion and corrections"
 - Consumes: all previous tasks.
 - Produces: target summary counts/timeline, safe source-clear UX, deletion impact, final user guide, and closure evidence.
 
-- [ ] **Step 1: Write lifecycle and aggregation RED tests**
+- [x] **Step 1: Write lifecycle and aggregation RED tests**
 
 Cover cross-round repeated gap counts, target filter, actual outcome updates without analysis mutation, source clear removing all excerpts, cleared-source reanalysis refusal, active-run delete blocker, target cascade, and preservation of external receipt targets.
 
-- [ ] **Step 2: Implement target aggregation**
+- [x] **Step 2: Implement target aggregation**
 
 Expose retrospective count, latest round/date/outcome, unresolved action count, and gap counts by kind. Do not aggregate overall score or copy report bodies into Job Target tables.
 
-- [ ] **Step 3: Implement source clear and deletion UX**
+- [x] **Step 3: Implement source clear and deletion UX**
 
 Source-clear dialog lists lost capabilities. Deletion impact separates private records removed from external assets preserved. Require explicit confirmation text only for permanent deletion, not archive/recycle.
 
-- [ ] **Step 4: Run integrated automated verification**
+- [x] **Step 4: Run integrated automated verification**
 
 Run targeted affected tests first, then the one planned backend full regression:
 
@@ -951,7 +951,7 @@ git diff --check
 
 Do not repeat the frontend full suite here because the worktree baseline already consumed that stage-wide run; run it only if shared frontend acceptance fixes require it.
 
-- [ ] **Step 5: Run complete browser acceptance**
+- [x] **Step 5: Run complete browser acceptance**
 
 Using isolated feature ports/data, verify:
 
@@ -968,11 +968,11 @@ Using isolated feature ports/data, verify:
 11. run-center advanced-detail navigation and return;
 12. 1440/1024/768/390 layout, keyboard, IME, focus, and console checks.
 
-- [ ] **Step 6: Update user guide and ownership material**
+- [x] **Step 6: Update user guide and ownership material**
 
 Reshape `docs/verification/interview-retrospective.md` as the final user guide, create the seven-file learning pack using the appropriate risk profile, compare with the previous same-profile stage, and update README/formal roadmap status without modifying `docs/my_idea.md`.
 
-- [ ] **Step 7: Run documentation gate**
+- [x] **Step 7: Run documentation gate**
 
 ```bash
 python3 scripts/check_stage_docs.py \
@@ -983,7 +983,7 @@ python3 scripts/check_stage_docs.py \
 
 Expected: PASS with browser acceptance checked and evidence internally consistent.
 
-- [ ] **Step 8: Final commit**
+- [x] **Step 8: Final commit**
 
 ```bash
 git add backend frontend README.md task_plan.md findings.md progress.md docs/superpowers

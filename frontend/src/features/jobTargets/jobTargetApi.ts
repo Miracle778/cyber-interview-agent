@@ -1,5 +1,5 @@
 import { apiGet, apiRequest } from "../../shared/api/client";
-import type { DeepDiveResource, JobAnalysis, JobDocumentVersion, JobRequirement, JobTarget, TargetReadiness } from "./jobTargetTypes";
+import type { DeepDiveResource, JobAnalysis, JobDocumentVersion, JobRequirement, JobTarget, JobTargetRetrospectiveSummary, TargetReadiness } from "./jobTargetTypes";
 
 const key = (prefix: string) => `${prefix}-${globalThis.crypto?.randomUUID?.() ?? Date.now()}`;
 const json = (method: string, body: unknown, prefix: string) => ({
@@ -50,6 +50,9 @@ export const controlAnalysis = (workspaceId: string, targetId: string, analysis:
 
 export const getReadiness = (workspaceId: string, targetId: string, signal?: AbortSignal) =>
   apiGet<TargetReadiness>(`/api/job-targets/${targetId}/readiness?workspaceId=${workspaceId}`, { signal });
+
+export const getRetrospectiveSummary = (workspaceId: string, targetId: string, signal?: AbortSignal) =>
+  apiGet<JobTargetRetrospectiveSummary>(`/api/job-targets/${targetId}/retrospective-summary?workspaceId=${encodeURIComponent(workspaceId)}`, { signal });
 
 export const setProjectPriorities = (workspaceId: string, target: JobTarget, coreProjectId: string, supplementaryProjectIds: string[]) =>
   apiRequest<{ jobTargetId: string; coreProjectId: string; supplementaryProjectIds: string[]; version: number }>(

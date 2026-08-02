@@ -41,6 +41,7 @@ class RetrospectiveResource(AgentModel):
     note: str
     lifecycle_status: str
     active_source_version_id: str | None
+    active_source_available: bool
     active_cleanup_version_id: str | None
     active_analysis_run_id: str | None
     version: int

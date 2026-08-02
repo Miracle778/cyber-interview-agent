@@ -65,6 +65,18 @@ def _application(application: AgentApplication, workspace_id: str):
     return application.interview_retrospectives(workspace_id)
 
 
+def _retrospective_resource(service, record):
+    source_available = False
+    if record.active_source_version_id is not None:
+        source = service.get_source_version(
+            record.id, record.active_source_version_id
+        )
+        source_available = source.cleared_at is None
+    return retrospective_resource(
+        record, active_source_available=source_available
+    )
+
+
 @router.get("/api/interview-retrospectives", response_model=list[RetrospectiveResource])
 def list_retrospectives(
     workspace_id: Annotated[str, Query(alias="workspaceId")],
@@ -72,11 +84,12 @@ def list_retrospectives(
     job_target_id: Annotated[str | None, Query(alias="jobTargetId")] = None,
     application: AgentApplication = Depends(get_agent_application),
 ):
-    records = _application(application, workspace_id).list_retrospectives(
+    service = _application(application, workspace_id)
+    records = service.list_retrospectives(
         lifecycle_status=lifecycle_status,
         job_target_id=job_target_id,
     )
-    return [retrospective_resource(item) for item in records]
+    return [_retrospective_resource(service, item) for item in records]
 
 
 @router.post(
@@ -90,10 +103,11 @@ async def create_retrospective(
     application: AgentApplication = Depends(get_agent_application),
 ):
     values = command.model_dump(exclude={"workspace_id"})
-    record = await _application(application, command.workspace_id).create_retrospective(
+    service = _application(application, command.workspace_id)
+    record = await service.create_retrospective(
         **values, idempotency_key=idempotency_key
     )
-    return retrospective_resource(record)
+    return _retrospective_resource(service, record)
 
 
 @router.get(
@@ -105,8 +119,9 @@ def get_retrospective(
     workspace_id: Annotated[str, Query(alias="workspaceId")],
     application: AgentApplication = Depends(get_agent_application),
 ):
-    record = _application(application, workspace_id).get_retrospective(retrospective_id)
-    return retrospective_resource(record)
+    service = _application(application, workspace_id)
+    record = service.get_retrospective(retrospective_id)
+    return _retrospective_resource(service, record)
 
 
 @router.patch(
@@ -120,10 +135,11 @@ def update_retrospective(
     application: AgentApplication = Depends(get_agent_application),
 ):
     values = command.model_dump(exclude={"workspace_id"})
-    record = _application(application, command.workspace_id).update_retrospective(
+    service = _application(application, command.workspace_id)
+    record = service.update_retrospective(
         retrospective_id, **values, idempotency_key=idempotency_key
     )
-    return retrospective_resource(record)
+    return _retrospective_resource(service, record)
 
 
 @router.post(
@@ -160,6 +176,27 @@ def get_source(
         retrospective_id, version_id
     )
     return source_version_resource(record, include_body=True)
+
+
+@router.post(
+    "/api/interview-retrospectives/{retrospective_id}/sources/{version_id}/clear",
+    response_model=SourceVersionResource,
+    response_model_exclude_none=True,
+)
+def clear_source(
+    retrospective_id: str,
+    version_id: str,
+    command: VersionedRetrospectiveCommand,
+    idempotency_key: IdempotencyKey,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    record = _application(application, command.workspace_id).clear_source(
+        retrospective_id,
+        version_id,
+        expected_version=command.expected_version,
+        idempotency_key=idempotency_key,
+    )
+    return source_version_resource(record, include_body=False)
 
 
 @router.post(
@@ -311,7 +348,7 @@ def _lifecycle(retrospective_id, command, idempotency_key, application, action):
         expected_version=command.expected_version,
         idempotency_key=idempotency_key,
     )
-    return retrospective_resource(record)
+    return _retrospective_resource(service, record)
 
 
 @router.post(

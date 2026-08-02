@@ -12,6 +12,7 @@ import { CleanupWorkbench } from "./CleanupWorkbench";
 import { RetrospectiveWorkspace } from "./RetrospectiveWorkspace";
 import { RetrospectiveCreateFlow, type RetrospectiveCreateValues } from "./RetrospectiveCreateFlow";
 import { RetrospectiveList } from "./RetrospectiveList";
+import { RetrospectiveLifecycleActions } from "./RetrospectiveLifecycleActions";
 import {
   addSourceVersion,
   batchDecideCandidates,
@@ -134,14 +135,22 @@ export function InterviewRetrospectivePage({ workspace }: { workspace: Workspace
         body: values.body,
         fileName: values.fileName,
       });
-      const receipt = await startCleanup(workspaceId, retrospective.id, source.id);
-      return { retrospective, receipt };
+      try {
+        const receipt = await startCleanup(workspaceId, retrospective.id, source.id);
+        return { retrospective, receipt, startError: null };
+      } catch (reason) {
+        return {
+          retrospective,
+          receipt: null,
+          startError: reason instanceof Error ? reason.message : "整理暂时没有启动",
+        };
+      }
     },
-    onSuccess: async ({ retrospective, receipt }) => {
+    onSuccess: async ({ retrospective, receipt, startError }) => {
       await queryClient.invalidateQueries({ queryKey: ["retrospectives", workspaceId] });
-      patchSearch({ retrospectiveId: retrospective.id, cleanupId: receipt.cleanupVersionId, lifecycle: "active" });
+      patchSearch({ retrospectiveId: retrospective.id, cleanupId: receipt?.cleanupVersionId ?? null, lifecycle: "active" });
       setCreateOpen(false);
-      setError(null);
+      setError(startError ? `复盘和原文已保存；${startError}，可以稍后继续整理。` : null);
     },
     onError: (reason) => setError(reason instanceof Error ? reason.message : "新建复盘失败"),
   });
@@ -295,6 +304,16 @@ export function InterviewRetrospectivePage({ workspace }: { workspace: Workspace
           <RetrospectiveList items={listQuery.data ?? []} targets={targetsQuery.data ?? []} selectedId={selected?.id} loading={listQuery.isLoading} onSelect={(id) => patchSearch({ retrospectiveId: id, cleanupId: null })} />
         </TaskWorkspacePane>
         <TaskWorkspacePane className="retrospective-page__detail-pane" scroll={false} aria-label="复盘详情">
+          {selected ? <RetrospectiveLifecycleActions retrospective={selected} onError={setError} onChanged={(kind) => {
+            void queryClient.invalidateQueries({ queryKey: ["retrospectives", workspaceId] });
+            void queryClient.invalidateQueries({ queryKey: ["job-targets", workspaceId, selected.jobTargetId, "retrospective-summary"] });
+            if (kind === "source") {
+              void reportQuery.refetch();
+              if (effectiveCleanupId) void cleanupQuery.refetch();
+            } else {
+              patchSearch({ retrospectiveId: null, cleanupId: null, questionId: null });
+            }
+          }} /> : null}
           {selected && reportQuery.data ? <RetrospectiveWorkspace
             retrospective={selected}
             report={reportQuery.data}
@@ -316,7 +335,7 @@ export function InterviewRetrospectivePage({ workspace }: { workspace: Workspace
             onActionDecision={(action, decision) => actionDecisionMutation.mutate({ action, decision })}
             onCreateDraft={(sections) => publicationMutation.mutate(sections)}
             onCorrectionConfirmed={() => { void reportQuery.refetch(); void listQuery.refetch(); void candidatesQuery.refetch(); void actionsQuery.refetch(); }}
-          /> : cleanupQuery.data && cleanupQuery.data.status !== "confirmed" ? <CleanupWorkbench cleanup={cleanupQuery.data} busy={segmentMutation.isPending || confirmMutation.isPending || controlMutation.isPending} onSave={(segments, version) => segmentMutation.mutate({ segments, version })} onConfirm={(version) => confirmMutation.mutate(version)} onStop={() => controlMutation.mutate("stop")} onResume={() => controlMutation.mutate("resume")} /> : selected?.activeAnalysisRunId && reportQuery.isPending ? <div className="retrospective-page__empty-detail"><RotateCcw size={28} /><h2>正在读取分析结果</h2><p>已经完成的问题马上会显示在这里。</p></div> : selected ? <RetrospectiveSummary retrospective={selected} actionLabel={selected.activeCleanupVersionId || cleanupQuery.data?.status === "confirmed" ? "开始分析" : "开始整理"} busy={analysisStartMutation.isPending} onStart={selected.activeCleanupVersionId || cleanupQuery.data?.status === "confirmed" ? () => analysisStartMutation.mutate(selected.activeCleanupVersionId ?? cleanupQuery.data!.id) : selected.activeSourceVersionId ? async () => {
+          /> : cleanupQuery.data && cleanupQuery.data.status !== "confirmed" ? <CleanupWorkbench cleanup={cleanupQuery.data} busy={segmentMutation.isPending || confirmMutation.isPending || controlMutation.isPending} onSave={(segments, version) => segmentMutation.mutate({ segments, version })} onConfirm={(version) => confirmMutation.mutate(version)} onStop={() => controlMutation.mutate("stop")} onResume={() => controlMutation.mutate("resume")} /> : selected?.activeAnalysisRunId && reportQuery.isPending ? <div className="retrospective-page__empty-detail"><RotateCcw size={28} /><h2>正在读取分析结果</h2><p>已经完成的问题马上会显示在这里。</p></div> : selected ? <RetrospectiveSummary retrospective={selected} actionLabel={selected.activeCleanupVersionId || cleanupQuery.data?.status === "confirmed" ? "开始分析" : "开始整理"} busy={analysisStartMutation.isPending} onStart={selected.activeCleanupVersionId || cleanupQuery.data?.status === "confirmed" ? () => analysisStartMutation.mutate(selected.activeCleanupVersionId ?? cleanupQuery.data!.id) : selected.activeSourceVersionId && selected.activeSourceAvailable ? async () => {
             try {
               const receipt = await startCleanup(workspaceId, selected.id, selected.activeSourceVersionId!);
               patchSearch({ retrospectiveId: selected.id, cleanupId: receipt.cleanupVersionId, questionId: null });
@@ -335,7 +354,8 @@ export function InterviewRetrospectivePage({ workspace }: { workspace: Workspace
 }
 
 function RetrospectiveSummary({ retrospective, actionLabel = "开始整理", busy = false, onStart }: { retrospective: import("./retrospectiveTypes").InterviewRetrospective; actionLabel?: string; busy?: boolean; onStart?: () => void }) {
-  return <div className="retrospective-summary"><span className="retrospective-summary__icon"><MessageSquareText size={24} /></span><p>{retrospective.roundLabel}</p><h2>{retrospective.title}</h2><dl><div><dt>面试日期</dt><dd>{retrospective.interviewDate?.replaceAll("-", "/") ?? "未记录"}</dd></div><div><dt>当前阶段</dt><dd>{retrospective.activeCleanupVersionId ? "整理结果已确认" : retrospective.activeSourceVersionId ? "文字已保存" : "等待文字"}</dd></div></dl>{onStart ? <Button onClick={onStart} loading={busy}>{actionLabel}</Button> : null}</div>;
+  const stage = retrospective.activeCleanupVersionId ? "整理结果已确认" : retrospective.activeSourceVersionId && !retrospective.activeSourceAvailable ? "原文已清除" : retrospective.activeSourceVersionId ? "文字已保存" : "等待文字";
+  return <div className="retrospective-summary"><span className="retrospective-summary__icon"><MessageSquareText size={24} /></span><p>{retrospective.roundLabel}</p><h2>{retrospective.title}</h2><dl><div><dt>面试日期</dt><dd>{retrospective.interviewDate?.replaceAll("-", "/") ?? "未记录"}</dd></div><div><dt>当前阶段</dt><dd>{stage}</dd></div></dl>{onStart ? <Button onClick={onStart} loading={busy}>{actionLabel}</Button> : null}</div>;
 }
 
 function chooseQuestionId(report: AnalysisReport | null, requestedId: string | null) {

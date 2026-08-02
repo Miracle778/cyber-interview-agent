@@ -31,3 +31,11 @@
 .requirement-workbench__detail-heading .btn__label{color:inherit;font:inherit}
 @media(max-width:1439px){.job-target-list__collapse{display:none}}
 @media(max-width:767px){.job-analysis-status{padding:16px}.job-analysis-status__links{grid-template-columns:1fr}.job-analysis-status__process{padding:14px}.job-analysis-status__timeline{grid-template-columns:1fr;gap:12px}.job-analysis-status__timeline li{min-height:42px;padding:0}.job-analysis-status__timeline li:not(:last-child)::after{top:29px;right:auto;bottom:-14px;left:14px;width:1px;height:auto}.job-analysis-status__facts{display:grid;gap:7px}.job-analysis-status__actions{align-items:stretch;flex-direction:column}.job-analysis-status__actions .btn{width:100%}}
+
+.job-target-overview__retrospectives{margin-top:18px;padding:20px;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-sm)}
+.job-target-overview__retrospectives>header{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.job-target-overview__retrospectives>header>div{display:flex;align-items:center;gap:8px;font-weight:750}.job-target-overview__retrospectives>header svg{color:var(--primary)}
+.job-target-overview__retrospective-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;margin-top:16px;overflow:hidden;background:var(--border);border:1px solid var(--border);border-radius:12px}
+.job-target-overview__retrospective-metrics>div{display:grid;gap:4px;padding:16px;background:var(--surface-subtle)}.job-target-overview__retrospective-metrics strong{font-size:1.05rem}.job-target-overview__retrospective-metrics span,.job-target-overview__retrospectives>p,.job-target-overview__retrospective-empty p{color:var(--text-muted);font-size:.8rem}
+.job-target-overview__retrospectives>p{margin:14px 0 0}.job-target-overview__retrospective-empty{padding:24px 0 4px;text-align:center}.job-target-overview__retrospective-empty p{margin:6px 0 0}
+@media(max-width:767px){.job-target-overview{padding:16px}.job-target-overview__retrospectives>header{align-items:stretch;flex-direction:column}.job-target-overview__retrospective-metrics{grid-template-columns:1fr}.job-target-overview__lead{align-items:stretch;flex-direction:column}.job-target-overview__lead-actions{display:grid;grid-template-columns:1fr 1fr}}
