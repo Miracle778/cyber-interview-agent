@@ -86,6 +86,16 @@ class QuestionSelector:
             snapshot = record.snapshot
             if not record.active or snapshot.question_id in seen:
                 continue
+            if (
+                settings.question_scope == "job_target"
+                and record.source_job_target_id != settings.source_job_target_id
+            ):
+                continue
+            if (
+                settings.question_scope == "project"
+                and record.project_claim_id != settings.project_claim_id
+            ):
+                continue
             if snapshot.difficulty not in difficulty_filter:
                 continue
             if (

@@ -57,6 +57,10 @@ class ReviewRoundSettings(ReviewModel):
     answer_model_id: str = Field(min_length=1)
     reasoning_effort: Literal["none", "low", "medium", "high"] = "none"
     source_id: str | None = Field(default=None, min_length=1)
+    question_scope: Literal["ordinary", "job_target", "project"] = "ordinary"
+    source_job_target_id: str | None = Field(default=None, min_length=1)
+    project_claim_id: str | None = Field(default=None, min_length=1)
+    scope_label: str | None = Field(default=None, min_length=1, max_length=160)
 
     @model_validator(mode="after")
     def validate_mode_filters(self) -> ReviewRoundSettings:
@@ -64,6 +68,18 @@ class ReviewRoundSettings(ReviewModel):
             raise ValueError("专题复习需要至少选择一个主题")
         if self.mode == "source-file" and self.source_id is None:
             raise ValueError("按资料复习需要先选择一份资料")
+        if self.question_scope == "ordinary":
+            if self.source_job_target_id is not None or self.project_claim_id is not None:
+                raise ValueError("自主复习不能携带岗位或项目范围")
+            if self.scope_label is not None:
+                raise ValueError("自主复习不能携带范围名称")
+        elif self.question_scope == "job_target":
+            if self.source_job_target_id is None or self.project_claim_id is not None:
+                raise ValueError("岗位专项复习需要且只能指定一个求职目标")
+        elif self.project_claim_id is None or self.source_job_target_id is not None:
+            raise ValueError("项目专项复习需要且只能指定一个项目")
+        if self.mode == "source-file" and self.question_scope != "ordinary":
+            raise ValueError("按资料复习不能与岗位或项目范围同时使用")
         return self
 
 

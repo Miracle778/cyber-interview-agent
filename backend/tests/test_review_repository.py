@@ -59,6 +59,16 @@ def _settings(count: int = 1) -> ReviewRoundSettings:
     )
 
 
+def test_historical_round_settings_default_to_ordinary_scope() -> None:
+    value = json.dumps(asdict(_settings()))
+
+    restored = ReviewRepository._settings(value)  # noqa: SLF001
+
+    assert restored.question_scope == "ordinary"
+    assert restored.source_job_target_id is None
+    assert restored.project_claim_id is None
+
+
 def _mastery(version: int = 0) -> MasteryProjection:
     return MasteryProjection(
         workspace_id="w1",

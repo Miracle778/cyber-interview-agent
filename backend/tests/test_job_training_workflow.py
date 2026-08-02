@@ -215,6 +215,11 @@ async def test_analysis_deep_dive_and_project_question_library(tmp_path: Path):
         readiness = training.readiness(target.id)
         assert readiness["coreProjectId"] == project.claim_id
         assert readiness["supplementaryProjectIds"] == []
+        assert readiness["pendingRequirements"] == 3
+        assert readiness["confirmedRequirements"] == 0
+        assert readiness["rejectedRequirements"] == 0
+        assert readiness["confirmedProjectQuestions"] == 0
+        assert readiness["profileVersion"]
         dive = await training.create_deep_dive(target.id, project.claim_id)
         original = training.product_repository.append_user_message(
             dive["sessionId"],

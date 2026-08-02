@@ -601,6 +601,10 @@ async def create_review_round(
             answer_model_id=command.answer_model_id,
             reasoning_effort=command.reasoning_effort,
             source_id=command.source_id,
+            question_scope=command.question_scope,
+            source_job_target_id=command.source_job_target_id,
+            project_claim_id=command.project_claim_id,
+            scope_label=command.scope_label,
         )
     )
     return await review.round_resource(round_record.id)
