@@ -34,7 +34,7 @@ from app.evaluation.views import (
     EvaluationView,
     build_task_evaluation_view,
 )
-from app.observability.registry import AGENT_OBSERVABILITY_REGISTRY
+from app.observability.registry import resolve_observability_registration
 
 
 class EvaluationNotSupportedError(ValueError):
@@ -184,7 +184,7 @@ class AgentEvaluationService:
         eval_pack_id: str | None = None,
     ) -> EvaluationRunRecord:
         execution = self.observability._run(execution_id)
-        registration = AGENT_OBSERVABILITY_REGISTRY.get(execution["graph_id"])
+        registration = resolve_observability_registration(execution["graph_id"])
         if registration is None or registration.eval_pack_id is None:
             raise EvaluationNotSupportedError("该 Agent 暂不支持质量评估")
         if execution["graph_id"] == "evaluation.judge":

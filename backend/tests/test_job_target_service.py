@@ -15,6 +15,22 @@ def _service(tmp_path):
     )
 
 
+def test_lightweight_target_allows_role_without_seniority(tmp_path):
+    service = _service(tmp_path)
+
+    target = service.create_target(
+        role_name="云原生开发",
+        seniority="",
+        company_name="字节跳动",
+        source_url=None,
+        idempotency_key="create-lightweight-target",
+    )
+
+    assert target.role_name == "云原生开发"
+    assert target.seniority == ""
+    assert target.company_name == "字节跳动"
+
+
 def test_document_version_is_immutable_until_explicitly_confirmed(tmp_path):
     service = _service(tmp_path)
     target = service.create_target(

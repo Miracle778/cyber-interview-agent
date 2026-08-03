@@ -19,7 +19,9 @@ describe("QuestionTimeline", () => {
     render(<QuestionTimeline questions={questions} analyses={analyses} items={items} selectedId="q-1" onSelect={onSelect} />);
     expect(screen.getByRole("button", { name: /你如何治理缓存/ })).toHaveAttribute("data-state", "failed");
     expect(screen.getByText("分析失败")).toBeVisible();
-    expect(screen.getByText("推断题")).toBeVisible();
+    expect(screen.getByText("需确认 · 待分析")).toBeVisible();
+    expect(screen.queryByText("推断题")).not.toBeInTheDocument();
+    expect(screen.queryByText("原始问题")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /缓存击穿如何处理/ }));
     expect(onSelect).toHaveBeenCalledWith("q-2");
   });

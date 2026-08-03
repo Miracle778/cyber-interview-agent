@@ -186,7 +186,12 @@ function FriendlyResponseValue({ value }: { value: unknown }) {
     return (
       <ul>
         {value.map((item, index) => (
-          <li key={`${index}-${String(item)}`}><FriendlyResponseValue value={item} /></li>
+          <li
+            key={`${index}-${String(item)}`}
+            data-value-kind={asRecord(item) ? "record" : "scalar"}
+          >
+            <FriendlyResponseValue value={item} />
+          </li>
         ))}
       </ul>
     );

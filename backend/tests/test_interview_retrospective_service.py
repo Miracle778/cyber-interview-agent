@@ -13,7 +13,10 @@ from app.interview_retrospectives.errors import (
     RetrospectiveNotFound,
 )
 from app.interview_retrospectives.repository import InterviewRetrospectiveRepository
-from app.interview_retrospectives.service import InterviewRetrospectiveService
+from app.interview_retrospectives.service import (
+    InterviewRetrospectiveService,
+    _document_anchor_segments,
+)
 from app.job_targets.repository import JobTargetRepository
 
 
@@ -202,6 +205,92 @@ def test_cleanup_confirmation_requires_known_included_speakers(tmp_path) -> None
     connection.close()
 
 
+def test_confirmed_document_anchor_plan_depends_only_on_the_final_document() -> None:
+    document = (
+        "面试官：介绍一下缓存治理。\n\n"
+        "候选人：我参与了缓存一致性项目。\n\n"
+        "这是一段没有可靠说话人标签的事后补充。"
+    )
+
+    first_plan = _document_anchor_segments(document)
+    second_plan = _document_anchor_segments(document)
+
+    assert first_plan == second_plan
+    assert [item["speaker_role"] for item in first_plan] == [
+        "interviewer",
+        "candidate",
+        "unknown",
+    ]
+    assert "".join(str(item["body"]) for item in first_plan) == document.replace(
+        "\n\n", ""
+    )
+
+
+def test_clean_transcript_confirmation_requires_resolved_issues_and_valid_hash(
+    tmp_path,
+) -> None:
+    connection, service, retrospective = _retrospective(tmp_path)
+    source = service.add_source_version(
+        retrospective.id,
+        source_kind="transcript",
+        body="我做过数字签明服务。",
+        file_name=None,
+        idempotency_key="source-document-confirm",
+    )
+    cleanup = service.create_cleanup_version(
+        retrospective.id,
+        source_version_id=source.id,
+        input_digest="f" * 64,
+        idempotency_key="cleanup-document-confirm",
+    )
+    cleanup = service.repository.replace_clean_transcript_document(
+        cleanup.id,
+        expected_version=cleanup.version,
+        document_body="候选人：我做过数字签明服务。",
+        review_issues=(
+            {
+                "document_start": 7,
+                "document_end": 11,
+                "excerpt": "数字签明",
+                "suggestion": "数字签名",
+                "issue_kind": "uncertain_term",
+                "reason": "术语需要确认",
+                "confidence": 0.7,
+            },
+        ),
+    )
+
+    with pytest.raises(RetrospectiveCleanupNotConfirmed, match="待核对"):
+        service.confirm_cleanup(
+            retrospective.id,
+            cleanup.id,
+            expected_version=cleanup.version,
+            idempotency_key="confirm-pending-document",
+        )
+
+    issue = service.repository.list_transcript_review_issues(cleanup.id)[0]
+    cleanup = service.update_clean_transcript_document(
+        retrospective.id,
+        cleanup.id,
+        expected_version=cleanup.version,
+        document_body="候选人：我做过数字签名服务。",
+        review_issue_decisions=({"id": issue.id, "decision": "accepted"},),
+    )
+    connection.execute(
+        "UPDATE interview_cleanup_versions SET document_sha256 = ? WHERE id = ?",
+        ("0" * 64, cleanup.id),
+    )
+    connection.commit()
+    with pytest.raises(RetrospectiveCleanupNotConfirmed, match="校验失败"):
+        service.confirm_cleanup(
+            retrospective.id,
+            cleanup.id,
+            expected_version=cleanup.version,
+            idempotency_key="confirm-invalid-document-hash",
+        )
+    connection.close()
+
+
 def test_clear_source_removes_recoverable_text_but_keeps_version_metadata(
     tmp_path,
 ) -> None:
@@ -218,6 +307,22 @@ def test_clear_source_removes_recoverable_text_but_keeps_version_metadata(
         source_version_id=source.id,
         input_digest="b" * 64,
         idempotency_key="cleanup-clear",
+    )
+    cleanup = service.repository.replace_clean_transcript_document(
+        cleanup.id,
+        expected_version=cleanup.version,
+        document_body="面试官：解释缓存一致性\n\n候选人：先介绍更新策略。",
+        review_issues=(
+            {
+                "document_start": 4,
+                "document_end": 6,
+                "excerpt": "解释",
+                "suggestion": None,
+                "issue_kind": "semantic",
+                "reason": "需要确认",
+                "confidence": 0.5,
+            },
+        ),
     )
     service.replace_segments(
         retrospective.id,
@@ -249,6 +354,10 @@ def test_clear_source_removes_recoverable_text_but_keeps_version_metadata(
     assert cleared.cleared_at is not None
     assert len(cleared.content_sha256) == 64
     assert service.repository.list_segments(cleanup.id)[0].body == ""
+    cleared_cleanup = service.repository.get_cleanup_version(cleanup.id)
+    assert cleared_cleanup.document_body is None
+    assert cleared_cleanup.document_sha256 is None
+    assert service.repository.list_transcript_review_issues(cleanup.id) == ()
     connection.close()
 
 

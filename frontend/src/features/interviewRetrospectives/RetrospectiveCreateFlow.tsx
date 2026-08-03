@@ -3,7 +3,7 @@ import { FileText, Plus } from "lucide-react";
 import { Button } from "../../shared/ui/Button";
 import { SelectControl } from "../../shared/ui/SelectControl";
 import type { JobTarget } from "../jobTargets/jobTargetTypes";
-import type { SourceKind } from "./retrospectiveTypes";
+import type { RecordingCoverage, SourceKind } from "./retrospectiveTypes";
 
 export interface RetrospectiveCreateValues {
   targetId: string;
@@ -11,6 +11,7 @@ export interface RetrospectiveCreateValues {
   roundLabel: string;
   interviewDate: string | null;
   sourceKind: SourceKind;
+  recordingCoverage: RecordingCoverage;
   body: string;
   fileName: string | null;
 }
@@ -39,6 +40,7 @@ export function RetrospectiveCreateFlow({
   const [roundLabel, setRoundLabel] = useState("");
   const [interviewDate, setInterviewDate] = useState("");
   const [sourceKind, setSourceKind] = useState<SourceKind>("transcript");
+  const [recordingCoverage, setRecordingCoverage] = useState<RecordingCoverage>("mixed_unknown");
   const [body, setBody] = useState("");
   const [fileName, setFileName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -88,6 +90,7 @@ export function RetrospectiveCreateFlow({
       roundLabel: roundLabel.trim(),
       interviewDate: interviewDate || null,
       sourceKind,
+      recordingCoverage: sourceKind === "transcript" ? recordingCoverage : "mixed_unknown",
       body,
       fileName,
     });
@@ -122,10 +125,10 @@ export function RetrospectiveCreateFlow({
             </button>
             {creatingTarget ? (
               <div className="retrospective-create__target-draft">
-                <label><span>公司</span><input value={targetDraft.companyName} onChange={(event) => setTargetDraft({ ...targetDraft, companyName: event.target.value })} /></label>
+                <label><span>公司（可选）</span><input aria-label="公司" value={targetDraft.companyName} onChange={(event) => setTargetDraft({ ...targetDraft, companyName: event.target.value })} /></label>
                 <label><span>岗位</span><input value={targetDraft.roleName} onChange={(event) => setTargetDraft({ ...targetDraft, roleName: event.target.value })} /></label>
-                <label><span>经验或职级</span><input value={targetDraft.seniority} onChange={(event) => setTargetDraft({ ...targetDraft, seniority: event.target.value })} /></label>
-                <Button size="sm" variant="secondary" disabled={!targetDraft.roleName || !targetDraft.seniority} onClick={async () => {
+                <label><span>经验或职级（可选）</span><input aria-label="经验或职级" value={targetDraft.seniority} onChange={(event) => setTargetDraft({ ...targetDraft, seniority: event.target.value })} /></label>
+                <Button size="sm" variant="secondary" disabled={!targetDraft.roleName.trim()} onClick={async () => {
                   const target = await onCreateTarget(targetDraft);
                   setTargetId(target.id);
                   setCreatingTarget(false);
@@ -145,6 +148,14 @@ export function RetrospectiveCreateFlow({
               <label data-selected={sourceKind === "transcript"}><input type="radio" name="source-kind" checked={sourceKind === "transcript"} onChange={() => setSourceKind("transcript")} /><strong>录音转写</strong><span>保留原对话顺序，Agent 会整理说话人和段落。</span></label>
               <label data-selected={sourceKind === "recollection"}><input type="radio" name="source-kind" checked={sourceKind === "recollection"} onChange={() => setSourceKind("recollection")} /><strong>事后回忆</strong><span>按现有文字整理，不补写没有记录的对话。</span></label>
             </fieldset>
+            {sourceKind === "transcript" ? (
+              <fieldset className="retrospective-create__coverage">
+                <legend>这份转写包含谁的声音？</legend>
+                <label data-selected={recordingCoverage === "full_dialogue"}><input type="radio" name="recording-coverage" checked={recordingCoverage === "full_dialogue"} onChange={() => setRecordingCoverage("full_dialogue")} /><strong>包含双方对话</strong><span>问题和回答基本都被录入。</span></label>
+                <label data-selected={recordingCoverage === "candidate_only"}><input type="radio" name="recording-coverage" checked={recordingCoverage === "candidate_only"} onChange={() => setRecordingCoverage("candidate_only")} /><strong>主要只有我的讲话</strong><span>Agent 会根据回答谨慎反推可能的问题。</span></label>
+                <label data-selected={recordingCoverage === "mixed_unknown"}><input type="radio" name="recording-coverage" checked={recordingCoverage === "mixed_unknown"} onChange={() => setRecordingCoverage("mixed_unknown")} /><strong>不确定或混合内容</strong><span>仅依据实际文字判断，不补写缺失对话。</span></label>
+              </fieldset>
+            ) : null}
             <label className="retrospective-create__text">
               <span>面试文字</span>
               <textarea aria-label="面试文字" value={body} maxLength={500_000} onChange={(event) => { setBody(event.target.value); setFileName(null); setError(null); }} placeholder="粘贴手机录音转写，或按顺序写下你记得的问答。" />

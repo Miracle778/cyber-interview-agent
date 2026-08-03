@@ -49,6 +49,14 @@ const EMPTY_FILTERS: ExecutionFilters = {
 };
 
 const STATUS_GROUPS: Record<string, Set<string>> = {
+  focused: new Set([
+    "running",
+    "queued",
+    "waiting_for_input",
+    "waiting_for_approval",
+    "partial_success",
+    "failed",
+  ]),
   needs_me: new Set([
     "queued",
     "waiting_for_input",
@@ -65,6 +73,8 @@ const STATUS_GROUPS: Record<string, Set<string>> = {
   stopped: new Set(["interrupted", "cancelled"]),
 };
 
+const CURRENT_EXECUTION_STATUS_FILTERS = new Set(["focused", "needs_me"]);
+
 function matchesFilters(
   execution: ExecutionSummary,
   filters: ExecutionFilters,
@@ -72,15 +82,15 @@ function matchesFilters(
 ) {
   if (!filters.includeSystemAgents && execution.system) return false;
   if (
-    filters.status === "needs_me"
+    CURRENT_EXECUTION_STATUS_FILTERS.has(filters.status)
     && (
       !currentExecutionIds.has(execution.id)
-      || !STATUS_GROUPS.needs_me.has(execution.status)
+      || !STATUS_GROUPS[filters.status].has(execution.status)
     )
   ) return false;
   if (
     filters.status &&
-    filters.status !== "needs_me" &&
+    !CURRENT_EXECUTION_STATUS_FILTERS.has(filters.status) &&
     (STATUS_GROUPS[filters.status]
       ? !STATUS_GROUPS[filters.status].has(execution.status)
       : execution.status !== filters.status)
@@ -234,6 +244,13 @@ export function AgentRunCenterPage({
     ),
     [allExecutions, currentExecutionIds],
   );
+  const focusedItems = useMemo(
+    () => allExecutions.filter((execution) =>
+      currentExecutionIds.has(execution.id)
+      && STATUS_GROUPS.focused.has(execution.status)
+    ),
+    [allExecutions, currentExecutionIds],
+  );
   const totalPages = Math.max(1, Math.ceil(executions.length / PAGE_SIZE));
   const visibleExecutions = executions.slice(
     (page - 1) * PAGE_SIZE,
@@ -247,12 +264,12 @@ export function AgentRunCenterPage({
       query.isError
     ) return;
     defaultStatusApplied.current = true;
-    if (!searchParams.has("status") && actionItems.length > 0) {
+    if (!searchParams.has("status") && focusedItems.length > 0) {
       setFilters((current) => (
-        current.status ? current : { ...current, status: "needs_me" }
+        current.status ? current : { ...current, status: "focused" }
       ));
     }
-  }, [actionItems.length, query.isError, query.isPending, searchParams]);
+  }, [focusedItems.length, query.isError, query.isPending, searchParams]);
 
   useEffect(() => {
     setPage(1);
@@ -285,11 +302,11 @@ export function AgentRunCenterPage({
   );
   const counts = useMemo(() => ({
     all: allExecutions.length,
-    needsMe: actionItems.length,
-    running: countStatuses(allExecutions, "running"),
+    focused: focusedItems.length,
     completed: countStatuses(allExecutions, "completed"),
     failed: countStatuses(allExecutions, "failed"),
-  }), [actionItems.length, allExecutions]);
+    stopped: countStatuses(allExecutions, STATUS_GROUPS.stopped),
+  }), [allExecutions, focusedItems.length]);
   const exactAttentionStatus = ["partial_success", "failed"].includes(filters.status)
     ? filters.status
     : "";
@@ -384,10 +401,10 @@ export function AgentRunCenterPage({
               <nav className="agent-run-status-tabs" aria-label="任务状态">
                 {[
                   ["", "全部", counts.all],
-                  ["needs_me", "需要我", counts.needsMe],
-                  ["running", "进行中", counts.running],
+                  ["focused", "关注中", counts.focused],
                   ["completed", "已完成", counts.completed],
                   ["failed", "失败", counts.failed],
+                  ["stopped", "已暂停/取消", counts.stopped],
                 ].map(([value, label, count]) => (
                   <button
                     key={String(value)}
@@ -486,8 +503,9 @@ export function AgentRunCenterPage({
                 }
               >
                 <option value="">全部状态</option>
-                <option value="needs_me">需要我处理</option>
-                <option value="running">进行中</option>
+                <option value="focused">关注中（需处理或进行中）</option>
+                <option value="needs_me">仅需要我处理</option>
+                <option value="running">仅进行中</option>
                 <option value="waiting">等待处理</option>
                 <option value="completed">已完成</option>
                 <option value="attention">需要关注</option>

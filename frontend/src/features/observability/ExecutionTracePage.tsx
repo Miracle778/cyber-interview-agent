@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
+import { parseApiTimestamp } from "../../shared/time";
 import { TaskWorkspace, TaskWorkspacePane } from "../../shared/ui/TaskWorkspace";
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import { getAgentDiagnosticsSettings, listProviders } from "../settings/settingsApi";
@@ -49,6 +50,13 @@ import "./observability.css";
 
 interface ExecutionTracePageProps {
   workspace: WorkspaceConfig | null;
+}
+
+const LIVE_TRACE_REFRESH_MS = 1_000;
+const LIVE_TRACE_STATUSES = new Set(["queued", "running"]);
+
+function isLiveTraceStatus(status: string | null | undefined) {
+  return Boolean(status && LIVE_TRACE_STATUSES.has(status));
 }
 
 function failureGuidance(execution: ExecutionSummary) {
@@ -90,25 +98,39 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
   const [mobileView, setMobileView] = useState<"process" | "detail">("process");
   const [exportOpen, setExportOpen] = useState(false);
   const [narrowScreen, setNarrowScreen] = useState(false);
+  const [liveNow, setLiveNow] = useState(() => Date.now());
   const defaultFailureSelectionRun = useRef<string | null>(null);
   const userSelectionRun = useRef<string | null>(null);
+  const previousExecutionStatus = useRef<string | null>(null);
   const executionQuery = useQuery({
     queryKey: ["agent-observability", "execution", workspace?.id, runId],
     enabled: Boolean(workspace && runId),
     queryFn: ({ signal }) =>
       getObservabilityExecution(workspace!.id, runId, signal),
+    refetchInterval: (query) =>
+      isLiveTraceStatus(query.state.data?.status)
+        ? LIVE_TRACE_REFRESH_MS
+        : false,
   });
   const operationsQuery = useQuery({
     queryKey: ["agent-observability", "operations", workspace?.id, runId],
     enabled: Boolean(workspace && runId),
     queryFn: ({ signal }) =>
       listObservabilityOperations(workspace!.id, runId, signal),
+    refetchInterval: () =>
+      isLiveTraceStatus(executionQuery.data?.status)
+        ? LIVE_TRACE_REFRESH_MS
+        : false,
   });
   const eventsQuery = useQuery({
     queryKey: ["agent-observability", "events", workspace?.id, runId],
     enabled: Boolean(workspace && runId),
     queryFn: ({ signal }) =>
       listObservabilityEvents(workspace!.id, runId, signal),
+    refetchInterval: () =>
+      isLiveTraceStatus(executionQuery.data?.status)
+        ? LIVE_TRACE_REFRESH_MS
+        : false,
   });
   const diagnosticsQuery = useQuery({
     queryKey: ["agent-diagnostics-settings"],
@@ -137,6 +159,31 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
     ),
     [providersQuery.data],
   );
+
+  useEffect(() => {
+    const status = executionQuery.data?.status ?? null;
+    const previousStatus = previousExecutionStatus.current;
+    previousExecutionStatus.current = status;
+    if (
+      isLiveTraceStatus(previousStatus)
+      && status
+      && !isLiveTraceStatus(status)
+    ) {
+      void operationsQuery.refetch();
+      void eventsQuery.refetch();
+    }
+  }, [
+    eventsQuery.refetch,
+    executionQuery.data?.status,
+    operationsQuery.refetch,
+  ]);
+
+  useEffect(() => {
+    if (!isLiveTraceStatus(executionQuery.data?.status)) return;
+    setLiveNow(Date.now());
+    const timer = window.setInterval(() => setLiveNow(Date.now()), LIVE_TRACE_REFRESH_MS);
+    return () => window.clearInterval(timer);
+  }, [executionQuery.data?.status, runId]);
 
   useEffect(() => {
     if (selectedId && operations.some((item) => item.id === selectedId)) return;
@@ -238,6 +285,12 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
   }
 
   const execution = executionQuery.data;
+  const startedAtMs = execution.startedAt
+    ? parseApiTimestamp(execution.startedAt).getTime()
+    : Number.NaN;
+  const displayedLatencyMs = isLiveTraceStatus(execution.status) && Number.isFinite(startedAtMs)
+    ? Math.max(execution.latencyMs ?? 0, liveNow - startedAtMs)
+    : execution.latencyMs;
   const businessDestination = executionBusinessDestination(execution, returnTo);
   const needsRecovery = ["failed", "partial_success"].includes(execution.status);
   const guidance = needsRecovery ? failureGuidance(execution) : null;
@@ -334,7 +387,7 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
       ) : null}
 
       <ul className="execution-trace__metrics" aria-label="运行指标">
-        <TraceMetric icon={<Clock3 />} label="总耗时" value={formatDuration(execution.latencyMs)} />
+        <TraceMetric icon={<Clock3 />} label="总耗时" value={formatDuration(displayedLatencyMs)} />
         <TraceMetric icon={<Cpu />} label="模型调用" value={String(execution.modelCallCount)} />
         <TraceMetric icon={<Database />} label="Token" value={formatCompactNumber(execution.totalTokens)} />
         <TraceMetric icon={<RotateCcw />} label="重试" value={String(execution.retryCount)} />

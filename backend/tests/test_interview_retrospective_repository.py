@@ -59,3 +59,81 @@ def test_repository_lists_only_the_current_workspace(tmp_path) -> None:
     assert rows[0].workspace_id == "w1"
     assert rows[0].job_target_id == first_target.id
     connection.close()
+
+
+def test_repository_replaces_clean_document_and_sparse_review_issues_atomically(
+    tmp_path,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+    products = ProductRepository(connection)
+    targets = JobTargetRepository(connection)
+    target = targets.create_target(
+        workspace_id="w1",
+        role_name="后端工程师",
+        seniority="3-5 年",
+        company_name="甲公司",
+        source_url=None,
+    )
+    analysis = products.create_session(
+        workspace_id="w1",
+        kind="interview.retrospective.analysis",
+        title="复盘分析",
+        visibility="system",
+    )
+    chat = products.create_session(
+        workspace_id="w1",
+        kind="interview.retrospective.chat",
+        title="复盘讨论",
+    )
+    repository = InterviewRetrospectiveRepository(connection)
+    retrospective = repository.create_retrospective(
+        workspace_id="w1",
+        job_target_id=target.id,
+        title="甲公司一面复盘",
+        round_label="一面",
+        interview_date=None,
+        outcome="unrecorded",
+        note="",
+        analysis_session_id=analysis.id,
+        chat_session_id=chat.id,
+        create_idempotency_key="create-clean-document",
+    )
+    source = repository.insert_source_version(
+        retrospective.id,
+        source_kind="transcript",
+        file_name="round.md",
+        body="我做过数字签明服务。",
+        content_sha256="a" * 64,
+    )
+    cleanup = repository.insert_cleanup_version(
+        retrospective.id,
+        source_version_id=source.id,
+        input_digest="b" * 64,
+    )
+
+    updated = repository.replace_clean_transcript_document(
+        cleanup.id,
+        expected_version=cleanup.version,
+        document_body="候选人：我做过数字签名服务。",
+        review_issues=(
+            {
+                "document_start": 7,
+                "document_end": 11,
+                "excerpt": "数字签名",
+                "suggestion": None,
+                "issue_kind": "uncertain_term",
+                "reason": "需要确认业务术语",
+                "confidence": 0.7,
+            },
+        ),
+    )
+
+    issues = repository.list_transcript_review_issues(cleanup.id)
+    assert updated.document_body == "候选人：我做过数字签名服务。"
+    assert updated.document_sha256 == (
+        "588258e59acd5d596d49977ca2b035f6c3f94172d67d6a374f50ffa58f00a2dc"
+    )
+    assert [(issue.ordinal, issue.excerpt, issue.decision) for issue in issues] == [
+        (1, "数字签名", "pending")
+    ]
+    connection.close()

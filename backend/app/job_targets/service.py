@@ -49,8 +49,8 @@ class JobTargetService:
     ) -> JobTargetRecord:
         clean_role = role_name.strip()
         clean_seniority = seniority.strip()
-        if bool(clean_role) != bool(clean_seniority):
-            raise ValueError("岗位名称和职级需要同时填写，或交给岗位分析识别")
+        if clean_seniority and not clean_role:
+            raise ValueError("填写职级前请先填写岗位名称，或交给岗位分析识别")
         operation = "create_target"
         replay = self.repository.receipt(
             self.workspace_id, operation, idempotency_key

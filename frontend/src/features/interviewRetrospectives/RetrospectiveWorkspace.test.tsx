@@ -32,7 +32,7 @@ describe("RetrospectiveWorkspace", () => {
   it("renders completed questions before finalization without an overall score", () => {
     render(<MemoryRouter><RetrospectiveWorkspace {...workspaceProps} retrospective={retrospective} report={report} selectedQuestionId="q-1" busy={false} onSelectQuestion={vi.fn()} onStop={vi.fn()} onResume={vi.fn()} onRetry={vi.fn()} onDecision={vi.fn()} /></MemoryRouter>);
     expect(screen.getByRole("heading", { name: "介绍一下缓存治理" })).toBeVisible();
-    expect(screen.getByText("结构清晰")).toBeVisible();
+    expect(screen.getAllByText("结构清晰")[0]).toBeVisible();
     expect(screen.queryByText(/总分/)).not.toBeInTheDocument();
     expect(screen.getByText("分析仍在继续，已完成的问题可以先看")).toBeVisible();
   });
@@ -45,5 +45,39 @@ describe("RetrospectiveWorkspace", () => {
     fireEvent.click(screen.getByRole("tab", { name: /准备资产 0/ }));
     expect(screen.getByRole("heading", { name: "沉淀本次复盘" })).toBeVisible();
     expect(screen.getByRole("tab", { name: /逐题复盘 1/ })).toBeVisible();
+  });
+
+  it("keeps confirmed transcript revisions available from the analysis workspace", () => {
+    render(<MemoryRouter><RetrospectiveWorkspace
+      {...workspaceProps}
+      retrospective={retrospective}
+      report={report}
+      corrections={[{
+        id: "correction-1",
+        segmentId: "s-2",
+        sourceStart: 10,
+        sourceEnd: 14,
+        originalText: "卡夫卡",
+        suggestedText: "Kafka",
+        adoptedText: "Kafka",
+        changeType: "recognition",
+        riskLevel: "low",
+        reason: "技术名词识别修正",
+        confidence: 0.96,
+        decision: "auto_accepted",
+      }]}
+      selectedQuestionId="q-1"
+      busy={false}
+      onSelectQuestion={vi.fn()}
+      onStop={vi.fn()}
+      onResume={vi.fn()}
+      onRetry={vi.fn()}
+      onDecision={vi.fn()}
+    /></MemoryRouter>);
+
+    fireEvent.click(screen.getByText("已修订 1 处 · 查看原文对照"));
+    expect(screen.getByText("卡夫卡")).toBeVisible();
+    expect(screen.getByText("Kafka")).toBeVisible();
+    expect(screen.getByText("技术名词识别修正")).toBeVisible();
   });
 });

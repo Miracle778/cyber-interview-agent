@@ -572,6 +572,94 @@ describe("ExecutionTracePage", () => {
     expect(screen.getByText("这一步曾发生异常，后续已恢复")).toBeInTheDocument();
   });
 
+  it("refreshes a running trace until the atomic model response appears", async () => {
+    let executionRequests = 0;
+    let operationRequests = 0;
+    let eventRequests = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/api/settings/agent-diagnostics")) {
+        return Response.json({ advancedEnabled: false, updatedAt: "2026-08-02T09:00:00Z" });
+      }
+      if (url.includes("/operations?")) {
+        operationRequests += 1;
+        return Response.json({
+          items: operations.map((operation) => ({
+            ...operation,
+            status: operationRequests === 1 ? "running" : "completed",
+            finishedAt: operationRequests === 1 ? null : operation.finishedAt,
+          })),
+        });
+      }
+      if (url.includes("/events?")) {
+        eventRequests += 1;
+        const items = [{
+          eventId: "request-live",
+          operationId: "model-1",
+          eventType: "model.request",
+          observedAt: "2026-08-02T09:00:00Z",
+          byteLength: 800,
+          sequence: 1,
+        }];
+        if (eventRequests > 1) {
+          items.push({
+            eventId: "response-live",
+            operationId: "model-1",
+            eventType: "model.response",
+            observedAt: "2026-08-02T09:00:01Z",
+            byteLength: 900,
+            sequence: 2,
+          });
+        }
+        return Response.json({ items });
+      }
+      if (url.includes("/api/agent-observability/executions/run-1?")) {
+        executionRequests += 1;
+        return Response.json({
+          ...execution,
+          status: executionRequests === 1 ? "running" : "completed",
+          finishedAt: executionRequests === 1 ? null : execution.finishedAt,
+        });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+
+    renderTrace();
+
+    expect(await screen.findByRole("treeitem", { name: /模型请求/ })).toBeInTheDocument();
+    expect(screen.queryByRole("treeitem", { name: /模型响应/ })).not.toBeInTheDocument();
+    expect(await screen.findByRole("treeitem", { name: /模型响应/ }, { timeout: 2_500 })).toBeInTheDocument();
+    expect(executionRequests).toBeGreaterThanOrEqual(2);
+    expect(operationRequests).toBeGreaterThanOrEqual(2);
+    expect(eventRequests).toBeGreaterThanOrEqual(2);
+    const settledRequestCounts = {
+      executionRequests,
+      operationRequests,
+      eventRequests,
+    };
+    await new Promise((resolve) => window.setTimeout(resolve, 1_100));
+    expect({ executionRequests, operationRequests, eventRequests }).toEqual(settledRequestCounts);
+  });
+
+  it("treats a SQLite running start timestamp as UTC when showing live elapsed time", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(
+      new Date("2026-08-02T09:00:23Z").getTime(),
+    );
+    mockTrace({
+      ...execution,
+      status: "running",
+      startedAt: "2026-08-02 09:00:00",
+      finishedAt: null,
+      latencyMs: 0,
+    });
+
+    renderTrace();
+
+    const metrics = await screen.findByRole("list", { name: "运行指标" });
+    expect(within(metrics).getByText("23 秒")).toBeInTheDocument();
+    expect(within(metrics).queryByText(/480/)).not.toBeInTheDocument();
+  });
+
   it("does not query without a selected workspace", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     render(

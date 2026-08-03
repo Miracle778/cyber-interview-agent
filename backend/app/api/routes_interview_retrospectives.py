@@ -31,6 +31,7 @@ from app.schemas.interview_retrospectives import (
     SourceVersionResource,
     StartCleanupCommand,
     UpdateRetrospectiveCommand,
+    UpdateCleanTranscriptCommand,
     UpdateSegmentsCommand,
     VersionedRetrospectiveCommand,
     AnalysisControlCommand,
@@ -261,6 +262,11 @@ def _cleanup_resource(service, retrospective_id: str, cleanup_id: str):
     return cleanup_version_resource(
         cleanup,
         segments=service.list_segments(retrospective_id, cleanup_id),
+        corrections=service.list_corrections(retrospective_id, cleanup_id),
+        review_issues=service.list_transcript_review_issues(
+            retrospective_id, cleanup_id
+        ),
+        work_items=service.list_cleanup_work_items(retrospective_id, cleanup_id),
     )
 
 
@@ -280,6 +286,11 @@ def get_current_cleanup(
     return cleanup_version_resource(
         cleanup,
         segments=service.list_segments(retrospective_id, cleanup.id),
+        corrections=service.list_corrections(retrospective_id, cleanup.id),
+        review_issues=service.list_transcript_review_issues(
+            retrospective_id, cleanup.id
+        ),
+        work_items=service.list_cleanup_work_items(retrospective_id, cleanup.id),
     )
 
 
@@ -316,6 +327,34 @@ def update_segments(
         cleanup_id,
         expected_version=command.expected_version,
         segments=tuple(item.model_dump() for item in command.segments),
+        correction_decisions=tuple(
+            item.model_dump() for item in command.correction_decisions
+        ),
+    )
+    return _cleanup_resource(service, retrospective_id, cleanup_id)
+
+
+@router.put(
+    "/api/interview-retrospectives/{retrospective_id}/cleanup-runs/{cleanup_id}/document",
+    response_model=CleanupVersionResource,
+)
+def update_clean_transcript_document(
+    retrospective_id: str,
+    cleanup_id: str,
+    command: UpdateCleanTranscriptCommand,
+    idempotency_key: IdempotencyKey,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    del idempotency_key
+    service = _application(application, command.workspace_id)
+    service.update_clean_transcript_document(
+        retrospective_id,
+        cleanup_id,
+        expected_version=command.expected_version,
+        document_body=command.document_body,
+        review_issue_decisions=tuple(
+            item.model_dump() for item in command.review_issue_decisions
+        ),
     )
     return _cleanup_resource(service, retrospective_id, cleanup_id)
 

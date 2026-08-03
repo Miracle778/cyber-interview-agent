@@ -66,7 +66,8 @@ def test_confirming_inferred_question_schedules_only_local_recompute(tmp_path) -
     assert replay.version == decided.version
     assert decided.question_text == "双写失败时如何恢复一致性？"
     assert work_keys == [
-        "question_extraction",
+        "question_extraction:1:2",
+        "question_reduce",
         f"question_analysis:{question.id}",
         "gap_verification",
         "candidate_generation",

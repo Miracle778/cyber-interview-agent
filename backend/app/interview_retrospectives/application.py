@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from dataclasses import replace
@@ -22,10 +23,17 @@ from app.application.session_service import (
     ProductRepository,
 )
 from app.graphs.interview_retrospective_cleanup import (
-    create_source_windows,
-    reduce_cleanup_segments,
+    TARGET_CONTEXT_CHARACTERS,
+    assemble_cleanup_document,
+    create_cleanup_target_windows,
+    split_cleanup_target_window,
 )
 from app.graphs.interview_retrospective_analysis import finalize_report
+from app.graphs.interview_retrospective_question_extraction import (
+    QuestionWindow,
+    reduce_extracted_questions,
+    split_question_window,
+)
 from app.interview_retrospectives.errors import (
     RetrospectiveIdempotencyConflict,
     RetrospectiveModelNotConfigured,
@@ -41,6 +49,22 @@ from app.knowledge.drafts import CreateDraftCommand, KnowledgeDraftService
 from app.profile.models import CreateClaimProposalSpec
 from app.profile.service import ProfileService
 from app.review.question_similarity import question_similarity
+
+
+MAX_CLEANUP_CONCURRENCY = 2
+MAX_CLEANUP_ATTEMPTS = 2
+NON_RETRYABLE_CLEANUP_ERRORS = frozenset(
+    {"schema_validation_error", "structured_output_missing"}
+)
+MAX_QUESTION_EXTRACTION_CONCURRENCY = 2
+MAX_QUESTION_EXTRACTION_ATTEMPTS = 2
+NON_RETRYABLE_QUESTION_EXTRACTION_ERRORS = frozenset(
+    {"schema_validation_error", "structured_output_missing"}
+)
+MAX_QUESTION_ANALYSIS_ATTEMPTS = 2
+RETRYABLE_QUESTION_ANALYSIS_ERRORS = frozenset(
+    {"provider_timeout", "network_error", "rate_limited", "provider_server_error"}
+)
 
 
 class InterviewRetrospectiveApplication:
@@ -95,13 +119,13 @@ class InterviewRetrospectiveApplication:
             raise RetrospectiveTargetRequired("求职目标不属于当前工作区")
         chat = await self.sessions.create(
             workspace_id=self.workspace_id,
-            kind="interview.retrospective.chat",
+            kind="interview.retrospective",
             title=f"复盘讨论：{title.strip()}",
             visibility="user",
         )
         analysis = await self.sessions.create(
             workspace_id=self.workspace_id,
-            kind="interview.retrospective.analysis",
+            kind="interview.retrospective",
             title=f"复盘分析：{title.strip()}",
             visibility="system",
         )
@@ -145,6 +169,13 @@ class InterviewRetrospectiveApplication:
     def replace_segments(self, retrospective_id: str, cleanup_id: str, **values):
         return self.service.replace_segments(retrospective_id, cleanup_id, **values)
 
+    def update_clean_transcript_document(
+        self, retrospective_id: str, cleanup_id: str, **values
+    ):
+        return self.service.update_clean_transcript_document(
+            retrospective_id, cleanup_id, **values
+        )
+
     def confirm_cleanup(self, retrospective_id: str, cleanup_id: str, **values):
         return self.service.confirm_cleanup(retrospective_id, cleanup_id, **values)
 
@@ -177,6 +208,20 @@ class InterviewRetrospectiveApplication:
     def list_segments(self, retrospective_id: str, cleanup_id: str):
         self.get_cleanup(retrospective_id, cleanup_id)
         return self.repository.list_segments(cleanup_id)
+
+    def list_corrections(self, retrospective_id: str, cleanup_id: str):
+        self.service.get(retrospective_id)
+        return self.repository.list_corrections(cleanup_id)
+
+    def list_transcript_review_issues(
+        self, retrospective_id: str, cleanup_id: str
+    ):
+        self.get_cleanup(retrospective_id, cleanup_id)
+        return self.repository.list_transcript_review_issues(cleanup_id)
+
+    def list_cleanup_work_items(self, retrospective_id: str, cleanup_id: str):
+        self.get_cleanup(retrospective_id, cleanup_id)
+        return self.repository.list_cleanup_work_items(cleanup_id)
 
     async def start_analysis(
         self,
@@ -1216,7 +1261,7 @@ class InterviewRetrospectiveApplication:
             "relevantQuestionIds": [],
             "knowledgeRefs": [],
             "prompts": {
-                "questionExtraction": "interview_retrospective.question_extraction@2026-08-02",
+                "questionExtraction": "interview_retrospective.question_extraction@2026-08-03-transcript-only-v2",
                 "questionAnalysis": "interview_retrospective.question_analysis@2026-08-02",
             },
             "model": {
@@ -1255,40 +1300,100 @@ class InterviewRetrospectiveApplication:
         run = self.repository.get_analysis_run(run_id)
         context_snapshot = json.loads(run.context_snapshot_json)
         context = self.executions.context(execution)
+        deferred_question_items: dict[str, str] = {}
         try:
             while True:
-                pending = self.repository.list_resumable_analysis_work_items(run_id)
+                resumable = self.repository.list_resumable_analysis_work_items(run_id)
+                resumable_question_items = tuple(
+                    item
+                    for item in resumable
+                    if item.work_key.startswith("question_analysis:")
+                )
+                pending_question_items = tuple(
+                    item
+                    for item in resumable_question_items
+                    if item.id not in deferred_question_items
+                )
+                if pending_question_items:
+                    pending = pending_question_items
+                elif resumable_question_items:
+                    raise _QuestionAnalysisItemsIncomplete(
+                        next(iter(deferred_question_items.values()))
+                    )
+                else:
+                    pending = resumable
                 if not pending:
+                    if self.repository.unblock_question_reduce(run_id):
+                        continue
                     break
+                extraction_items = tuple(
+                    item
+                    for item in pending
+                    if item.work_key == "question_extraction"
+                    or item.work_key.startswith("question_extraction:")
+                )
+                if extraction_items:
+                    await asyncio.gather(
+                        *(
+                            self._process_question_extraction_item(
+                                run=run,
+                                item=item,
+                                execution=execution,
+                                cancellation=cancellation,
+                                context=context,
+                            )
+                            for item in extraction_items[
+                                :MAX_QUESTION_EXTRACTION_CONCURRENCY
+                            ]
+                        )
+                    )
+                    self.repository.unblock_question_reduce(run_id)
+                    continue
                 for item in pending:
                     cancellation.raise_if_requested()
                     current = self.repository.claim_analysis_work_item(item.id)
-                    if current.work_key == "question_extraction":
+                    if current.work_key == "question_reduce":
                         segments = self.repository.list_segments(run.cleanup_version_id)
-                        payload = _bounded_segments(segments)
-                        output = await self.agents.extract_questions(
-                            segments=payload,
-                            context_snapshot=context_snapshot,
-                            context=_analysis_context(context, current.work_key),
-                            config={
-                                "configurable": {
-                                    "thread_id": f"{execution.session_id}:{run_id}"
-                                }
-                            },
+                        segment_order = {
+                            segment.id: segment.ordinal
+                            for segment in segments
+                            if not segment.ignored
+                        }
+                        extraction_outputs = []
+                        extraction_items = sorted(
+                            self.repository.list_analysis_work_items(run_id),
+                            key=lambda candidate: _question_work_order(
+                                candidate.work_key
+                            ),
+                        )
+                        for extraction_item in extraction_items:
+                            if not (
+                                extraction_item.work_key == "question_extraction"
+                                or extraction_item.work_key.startswith(
+                                    "question_extraction:"
+                                )
+                            ) or extraction_item.status != "completed":
+                                continue
+                            persisted = extraction_item.output or {"questions": []}
+                            extraction_outputs.append(persisted.get("questions", []))
+                        reduced = reduce_extracted_questions(
+                            extraction_outputs,
+                            segment_order=segment_order,
                         )
                         with cancellation.critical_section():
                             questions = self.repository.replace_question_units(
                                 run_id,
                                 questions=tuple(
-                                    _domain_question(
-                                        question.model_dump(by_alias=False)
-                                    )
-                                    for question in output.questions
+                                    _domain_question_alias(question)
+                                    for question in reduced
                                 ),
                             )
                             self.repository.complete_analysis_work_item(
                                 current.id,
-                                output=output.model_dump(by_alias=True),
+                                output={
+                                    "questionCount": len(reduced),
+                                    "questions": reduced,
+                                },
                             )
                             self.repository.schedule_analysis_work_items(
                                 run_id,
@@ -1314,17 +1419,32 @@ class InterviewRetrospectiveApplication:
                             )
                             if segment_id in segments
                         ]
-                        output = await self.agents.analyze_question(
-                            question=_question_payload(question),
-                            segments=_bounded_segments(selected),
-                            context_snapshot=context_snapshot,
-                            context=_analysis_context(context, current.work_key),
-                            config={
-                                "configurable": {
-                                    "thread_id": f"{execution.session_id}:{run_id}"
-                                }
-                            },
-                        )
+                        try:
+                            output = await self.agents.analyze_question(
+                                question=_question_payload(question),
+                                segments=_bounded_segments(selected),
+                                context_snapshot=context_snapshot,
+                                context=_analysis_context(context, current.work_key),
+                                config={
+                                    "configurable": {
+                                        "thread_id": f"{execution.session_id}:{run_id}"
+                                    }
+                                },
+                            )
+                        except Exception as error:
+                            error_code = _retrospective_error_code(
+                                error, fallback="retrospective_question_analysis_failed"
+                            )
+                            self.repository.retry_analysis_work_item(
+                                current.id, error_code=error_code
+                            )
+                            if (
+                                error_code not in RETRYABLE_QUESTION_ANALYSIS_ERRORS
+                                or current.attempt_count
+                                >= MAX_QUESTION_ANALYSIS_ATTEMPTS
+                            ):
+                                deferred_question_items[current.id] = error_code
+                            continue
                         _validate_analysis_evidence(
                             output,
                             allowed_segment_ids={segment.id for segment in selected},
@@ -1420,7 +1540,76 @@ class InterviewRetrospectiveApplication:
         except Exception as error:
             self.repository.fail_analysis(
                 run_id,
-                error_code=str(getattr(error, "code", "retrospective_analysis_failed")),
+                error_code=_retrospective_error_code(
+                    error, fallback="retrospective_analysis_failed"
+                ),
+            )
+            raise
+
+    async def _process_question_extraction_item(
+        self,
+        *,
+        run,
+        item,
+        execution: ExecutionRecord,
+        cancellation: ExecutionCancellation,
+        context: AgentContext,
+    ) -> None:
+        assert self.agents is not None
+        cancellation.raise_if_requested()
+        current = self.repository.claim_analysis_work_item(item.id)
+        segments = tuple(
+            segment
+            for segment in self.repository.list_segments(run.cleanup_version_id)
+            if not segment.ignored
+        )
+        selected = _segments_for_question_work_key(segments, current.work_key)
+        cleanup = self.repository.get_cleanup_version(run.cleanup_version_id)
+        source = self.repository.get_source_version(cleanup.source_version_id)
+        try:
+            output = await self.agents.extract_questions(
+                segments=_question_extraction_segments(selected),
+                recording_coverage=source.recording_coverage,
+                work_key=current.work_key,
+                context=_analysis_context(context, current.work_key),
+                config={
+                    "configurable": {
+                        "thread_id": f"{execution.session_id}:{run.id}"
+                    }
+                },
+            )
+            with cancellation.critical_section():
+                self.repository.complete_analysis_work_item(
+                    current.id, output=output.model_dump(by_alias=True)
+                )
+        except Exception as error:
+            error_code = _retrospective_error_code(
+                error, fallback="retrospective_question_extraction_failed"
+            )
+            if error_code == "provider_timeout" and len(selected) > 1:
+                window = QuestionWindow(
+                    first_ordinal=selected[0].ordinal,
+                    last_ordinal=selected[-1].ordinal,
+                    segments=tuple(_question_extraction_segments(selected)),
+                )
+                children = split_question_window(window)
+                self.repository.split_question_extraction_item(
+                    current.id,
+                    child_work_keys=tuple(child.work_key for child in children),
+                )
+                return
+            if error_code in NON_RETRYABLE_QUESTION_EXTRACTION_ERRORS:
+                self.repository.retry_analysis_work_item(
+                    current.id, error_code=error_code
+                )
+                raise
+            if current.attempt_count < MAX_QUESTION_EXTRACTION_ATTEMPTS:
+                self.repository.retry_analysis_work_item(
+                    current.id, error_code=error_code
+                )
+                return
+            self.repository.retry_analysis_work_item(
+                current.id, error_code=error_code
             )
             raise
 
@@ -1456,7 +1645,7 @@ class InterviewRetrospectiveApplication:
                 "cleanupVersionId": str(result["cleanup_version_id"]),
                 "executionId": str(result["execution_id"]),
             }
-        windows = create_source_windows(source.body)
+        windows = create_cleanup_target_windows(source.body)
         cleanup = self.repository.insert_cleanup_run(
             retrospective_id,
             source_version_id=source.id,
@@ -1546,6 +1735,10 @@ class InterviewRetrospectiveApplication:
         source = self.get_source_version(retrospective_id, cleanup.source_version_id)
         if source.cleared_at is not None:
             raise RetrospectiveSourceCleared("原始记录已清除")
+        self.repository.replace_cleanup_work_items_if_none_completed(
+            cleanup_id,
+            windows=create_cleanup_target_windows(source.body),
+        )
         self.repository.rearm_cleanup(cleanup_id)
         receipt = await self._schedule_cleanup(
             retrospective=retrospective,
@@ -1585,6 +1778,7 @@ class InterviewRetrospectiveApplication:
         cleanup = self.repository.attach_cleanup_execution(
             cleanup_id, execution_id=execution.id
         )
+        terminology_hints = self._cleanup_terminology_hints(retrospective)
 
         async def handler(
             current_execution: ExecutionRecord,
@@ -1594,7 +1788,9 @@ class InterviewRetrospectiveApplication:
                 retrospective_id=retrospective.id,
                 cleanup_id=cleanup.id,
                 source_kind=source.source_kind,
+                recording_coverage=source.recording_coverage,
                 source_body=source.body,
+                terminology_hints=terminology_hints,
                 execution=current_execution,
                 cancellation=cancellation,
             )
@@ -1611,52 +1807,229 @@ class InterviewRetrospectiveApplication:
         retrospective_id: str,
         cleanup_id: str,
         source_kind: str,
+        recording_coverage: str,
         source_body: str,
+        terminology_hints: tuple[str, ...],
         execution: ExecutionRecord,
         cancellation: ExecutionCancellation,
     ) -> None:
         assert self.agents is not None
-        context = self.executions.context(execution)
         try:
-            for item in self.repository.list_resumable_cleanup_work_items(cleanup_id):
+            while True:
                 cancellation.raise_if_requested()
-                current = self.repository.claim_cleanup_work_item(item.id)
-                output = await self.agents.cleanup_window(
-                    source_kind=source_kind,
-                    source_start=current.source_start,
-                    source_end=current.source_end,
-                    body=source_body[current.source_start : current.source_end],
-                    context=_cleanup_context(context, current.work_key),
-                    config={
-                        "configurable": {
-                            "thread_id": f"{execution.session_id}:{cleanup_id}"
-                        }
-                    },
+                candidates = self._eligible_cleanup_items(cleanup_id)
+                if not candidates:
+                    break
+                await asyncio.gather(
+                    *(
+                        self._process_cleanup_item(
+                            cleanup_id=cleanup_id,
+                            item=item,
+                            source_kind=source_kind,
+                            recording_coverage=recording_coverage,
+                            source_body=source_body,
+                            execution=execution,
+                            cancellation=cancellation,
+                            terminology_hints=terminology_hints,
+                        )
+                        for item in candidates[:MAX_CLEANUP_CONCURRENCY]
+                    )
                 )
-                self.repository.complete_cleanup_work_item(
-                    current.id,
-                    output=output.model_dump(by_alias=True),
+
+            unfinished = [
+                item
+                for item in self.repository.list_cleanup_work_items(cleanup_id)
+                if item.status not in {"completed", "skipped"}
+            ]
+            if unfinished:
+                raise _CleanupWindowsIncomplete(
+                    next(
+                        (
+                            item.last_error_code
+                            for item in unfinished
+                            if item.last_error_code
+                        ),
+                        "retrospective_cleanup_failed",
+                    )
                 )
             outputs = [
-                item.output.get("segments", [])
+                (item.source_start, item.source_end, item.output)
                 for item in self.repository.list_cleanup_work_items(cleanup_id)
                 if item.status == "completed" and item.output is not None
             ]
-            reduced = reduce_cleanup_segments(outputs)
+            assembled = assemble_cleanup_document(
+                outputs,
+                source_length=len(source_body),
+            )
             cleanup = self.repository.get_cleanup_version(cleanup_id)
-            self.service.replace_segments(
-                retrospective_id,
+            self.repository.replace_clean_transcript_document(
                 cleanup_id,
                 expected_version=cleanup.version,
-                segments=tuple(_domain_segment(item) for item in reduced),
+                document_body=assembled.document_body,
+                review_issues=assembled.review_issues,
             )
             self.repository.mark_cleanup_review_pending(cleanup_id)
         except Exception as error:
             self.repository.fail_cleanup(
                 cleanup_id,
-                error_code=str(getattr(error, "code", "retrospective_cleanup_failed")),
+                error_code=_retrospective_error_code(
+                    error, fallback="retrospective_cleanup_failed"
+                ),
             )
             raise
+
+    def _eligible_cleanup_items(self, cleanup_id: str):
+        return tuple(
+            item
+            for item in self.repository.list_resumable_cleanup_work_items(cleanup_id)
+            if item.attempt_count < MAX_CLEANUP_ATTEMPTS
+            and item.last_error_code not in NON_RETRYABLE_CLEANUP_ERRORS
+        )
+
+    async def _process_cleanup_item(
+        self,
+        *,
+        cleanup_id: str,
+        item,
+        source_kind: str,
+        recording_coverage: str,
+        source_body: str,
+        execution: ExecutionRecord,
+        cancellation: ExecutionCancellation,
+        terminology_hints: tuple[str, ...],
+    ) -> str | None:
+        assert self.agents is not None
+        cancellation.raise_if_requested()
+        current = self.repository.claim_cleanup_work_item(item.id)
+        context = self.executions.context(execution)
+        try:
+            output = await self.agents.cleanup_window(
+                source_kind=source_kind,
+                recording_coverage=recording_coverage,
+                target_start=current.source_start,
+                target_end=current.source_end,
+                before_context=source_body[
+                    max(0, current.source_start - TARGET_CONTEXT_CHARACTERS) :
+                    current.source_start
+                ],
+                target_text=source_body[current.source_start : current.source_end],
+                after_context=source_body[
+                    current.source_end : min(
+                        len(source_body),
+                        current.source_end + TARGET_CONTEXT_CHARACTERS,
+                    )
+                ],
+                terminology_hints=terminology_hints,
+                context=_cleanup_context(context, current.work_key),
+                config={
+                    "configurable": {
+                        "thread_id": f"{execution.session_id}:{cleanup_id}"
+                    }
+                },
+            )
+        except ExecutionCancelled:
+            raise
+        except Exception as error:
+            error_code = _retrospective_error_code(
+                error, fallback="retrospective_cleanup_failed"
+            )
+            children = (
+                split_cleanup_target_window(
+                    source_body,
+                    target_start=current.source_start,
+                    target_end=current.source_end,
+                )
+                if error_code
+                in {
+                    "provider_timeout",
+                    "output_truncated",
+                }
+                else ()
+            )
+            if children:
+                self.repository.replace_cleanup_work_item_with_windows(
+                    current.id,
+                    windows=children,
+                )
+            else:
+                self.repository.fail_cleanup_work_item(
+                    current.id,
+                    error_code=error_code,
+                )
+            return error_code
+        self.repository.complete_cleanup_work_item(
+            current.id,
+            output=output.model_dump(by_alias=True),
+        )
+        return None
+
+    def _cleanup_terminology_hints(self, retrospective) -> tuple[str, ...]:
+        target = self.service.job_targets.get_target(retrospective.job_target_id)
+        values = [target.company_name, target.role_name, target.seniority]
+        values.extend(
+            requirement.text
+            for requirement in self.service.job_targets.list_requirements(target.id)
+            if requirement.confirmation_status not in {"rejected", "superseded"}
+        )
+        result: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            normalized = " ".join(str(value or "").split())[:240]
+            key = normalized.casefold()
+            if not normalized or key in seen:
+                continue
+            seen.add(key)
+            result.append(normalized)
+            if len(result) >= 24:
+                break
+        return tuple(result)
+
+
+class _CleanupWindowsIncomplete(RuntimeError):
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+class _QuestionAnalysisItemsIncomplete(RuntimeError):
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+def _retrospective_error_code(error: BaseException, *, fallback: str) -> str:
+    stable_code = getattr(error, "code", None)
+    if isinstance(stable_code, str):
+        normalized = stable_code.strip().casefold().replace("-", "_")
+        aliases = {
+            "timeout": "provider_timeout",
+            "provider_timeout": "provider_timeout",
+            "rate_limit": "rate_limited",
+            "rate_limited": "rate_limited",
+            "network_error": "network_error",
+            "connection_error": "network_error",
+            "provider_error": "provider_error",
+            "provider_server_error": "provider_server_error",
+            "protocol_error": "protocol_error",
+            "schema_validation_error": "schema_validation_error",
+            "output_truncated": "output_truncated",
+            "structured_output_missing": "structured_output_missing",
+        }
+        if normalized in aliases:
+            return aliases[normalized]
+    class_names = {base.__name__.casefold() for base in type(error).__mro__}
+    if isinstance(error, TimeoutError) or any("timeout" in item for item in class_names):
+        return "provider_timeout"
+    status_code = getattr(error, "status_code", None)
+    if status_code in {429, 529} or any("ratelimit" in item for item in class_names):
+        return "rate_limited"
+    if isinstance(status_code, int) and status_code >= 500:
+        return "provider_server_error"
+    if isinstance(error, (ConnectionError, OSError)) or any(
+        "connectionerror" in item or "networkerror" in item for item in class_names
+    ):
+        return "network_error"
+    return fallback
 
 
 def _cleanup_context(context: AgentContext, work_key: str) -> AgentContext:
@@ -1704,6 +2077,52 @@ def _bounded_segments(segments) -> list[dict[str, object]]:
     return result
 
 
+def _question_extraction_segments(segments) -> list[dict[str, object]]:
+    return [
+        {
+            "id": segment.id,
+            "ordinal": segment.ordinal,
+            "speakerRole": segment.speaker_role,
+            "displayName": segment.display_name,
+            "body": segment.body,
+            "confidence": segment.confidence,
+        }
+        for segment in segments
+        if not segment.ignored
+    ]
+
+
+def _segments_for_question_work_key(segments, work_key: str):
+    if work_key == "question_extraction":
+        return tuple(segments)
+    try:
+        _, first, last = work_key.split(":", 2)
+        first_ordinal = int(first)
+        last_ordinal = int(last)
+    except (TypeError, ValueError) as error:
+        raise ValueError("问题提取工作项范围无效") from error
+    selected = tuple(
+        segment
+        for segment in segments
+        if first_ordinal <= segment.ordinal <= last_ordinal
+    )
+    if not selected:
+        raise ValueError("问题提取工作项没有对应段落")
+    return selected
+
+
+def _question_work_order(work_key: str) -> tuple[int, int]:
+    if work_key == "question_extraction":
+        return (0, 0)
+    if not work_key.startswith("question_extraction:"):
+        return (10**9, 10**9)
+    try:
+        _, first, last = work_key.split(":", 2)
+        return (int(first), int(last))
+    except ValueError:
+        return (10**9, 10**9)
+
+
 def _domain_question(item: dict[str, object]) -> dict[str, object]:
     return {
         "ordinal": item["ordinal"],
@@ -1713,6 +2132,19 @@ def _domain_question(item: dict[str, object]) -> dict[str, object]:
         "question_segment_ids": tuple(item["question_segment_ids"]),
         "answer_segment_ids": tuple(item["answer_segment_ids"]),
         "inference_basis": item["inference_basis"],
+        "confidence": item["confidence"],
+    }
+
+
+def _domain_question_alias(item: dict[str, object]) -> dict[str, object]:
+    return {
+        "ordinal": item["ordinal"],
+        "question_kind": item["questionKind"],
+        "origin": item["origin"],
+        "question_text": item["questionText"],
+        "question_segment_ids": tuple(item["questionSegmentIds"]),
+        "answer_segment_ids": tuple(item["answerSegmentIds"]),
+        "inference_basis": item["inferenceBasis"],
         "confidence": item["confidence"],
     }
 
@@ -1758,6 +2190,20 @@ def _domain_segment(item: dict[str, object]) -> dict[str, object]:
         "confidence": item["confidence"],
         "uncertainty_reason": item.get("uncertaintyReason"),
         "ignored": False,
+    }
+
+
+def _domain_correction(item: dict[str, object]) -> dict[str, object]:
+    return {
+        "segment_ordinal": item["segmentOrdinal"],
+        "source_start": item["sourceStart"],
+        "source_end": item["sourceEnd"],
+        "original_text": item["originalText"],
+        "suggested_text": item.get("suggestedText"),
+        "change_type": item["changeType"],
+        "risk_level": item["riskLevel"],
+        "reason": item["reason"],
+        "confidence": item["confidence"],
     }
 
 

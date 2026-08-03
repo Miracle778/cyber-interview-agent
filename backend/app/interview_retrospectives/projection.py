@@ -1,19 +1,24 @@
 from __future__ import annotations
 
+import json
+
+from app.graphs.interview_retrospective_cleanup import reduce_cleanup_segments
 from app.interview_retrospectives.models import (
     ActionItemRecord,
     AnalysisRunRecord,
     AnalysisWorkItemRecord,
     AssetCandidateRecord,
     CleanupVersionRecord,
+    CleanupWorkItemRecord,
     GapRecord,
     QuestionAnalysisRecord,
     QuestionUnitRecord,
     RetrospectiveRecord,
     SegmentRecord,
     SourceVersionRecord,
+    TranscriptCorrectionRecord,
+    TranscriptReviewIssueRecord,
 )
-import json
 
 
 def retrospective_resource(
@@ -48,6 +53,7 @@ def source_version_resource(
         "retrospectiveId": record.retrospective_id,
         "ordinal": record.ordinal,
         "sourceKind": record.source_kind,
+        "recordingCoverage": record.recording_coverage,
         "fileName": record.file_name,
         "contentSha256": record.content_sha256,
         "bodyAvailable": available,
@@ -76,11 +82,83 @@ def segment_resource(record: SegmentRecord) -> dict[str, object]:
     }
 
 
+def correction_resource(record: TranscriptCorrectionRecord) -> dict[str, object]:
+    return {
+        "id": record.id,
+        "segmentId": record.segment_id,
+        "sourceStart": record.source_start,
+        "sourceEnd": record.source_end,
+        "originalText": record.original_text,
+        "suggestedText": record.suggested_text,
+        "adoptedText": record.adopted_text,
+        "changeType": record.change_type,
+        "riskLevel": record.risk_level,
+        "reason": record.reason,
+        "confidence": record.confidence,
+        "decision": record.decision,
+    }
+
+
+def transcript_review_issue_resource(
+    record: TranscriptReviewIssueRecord,
+) -> dict[str, object]:
+    return {
+        "id": record.id,
+        "ordinal": record.ordinal,
+        "documentStart": record.document_start,
+        "documentEnd": record.document_end,
+        "excerpt": record.excerpt,
+        "suggestion": record.suggestion,
+        "issueKind": record.issue_kind,
+        "reason": record.reason,
+        "confidence": record.confidence,
+        "decision": record.decision,
+    }
+
+
 def cleanup_version_resource(
     record: CleanupVersionRecord,
     *,
     segments: tuple[SegmentRecord, ...],
+    corrections: tuple[TranscriptCorrectionRecord, ...] = (),
+    review_issues: tuple[TranscriptReviewIssueRecord, ...] = (),
+    work_items: tuple[CleanupWorkItemRecord, ...] = (),
 ) -> dict[str, object]:
+    completed_items = sum(item.status == "completed" for item in work_items)
+    active_items = sum(item.status == "running" for item in work_items)
+    failed_items = sum(item.status == "retryable" for item in work_items)
+    current_item = next(
+        (
+            item
+            for item in work_items
+            if item.status in {"running", "retryable", "interrupted", "pending"}
+        ),
+        None,
+    )
+    failed_item = next(
+        (item for item in work_items if item.last_error_code is not None),
+        None,
+    )
+    running_items = tuple(item for item in work_items if item.status == "running")
+    active_since = min(
+        (item.updated_at for item in running_items),
+        default=None,
+    )
+    latest_progress_at = max(
+        (item.updated_at for item in work_items),
+        default=None,
+    )
+    segment_items = [segment_resource(item) for item in segments]
+    if not segment_items:
+        completed_outputs = [
+            item.output.get("segments", [])
+            for item in work_items
+            if item.status == "completed" and item.output is not None
+        ]
+        segment_items = [
+            _preview_segment_resource(record.id, item)
+            for item in reduce_cleanup_segments(completed_outputs)
+        ]
     return {
         "id": record.id,
         "retrospectiveId": record.retrospective_id,
@@ -91,10 +169,46 @@ def cleanup_version_resource(
         "stage": record.stage,
         "controlIntent": record.control_intent,
         "confirmedAt": record.confirmed_at,
+        "documentBody": record.document_body,
+        "documentSha256": record.document_sha256,
+        "completedItems": completed_items,
+        "totalItems": len(work_items),
+        "activeItems": active_items,
+        "failedItems": failed_items,
+        "currentWorkKey": None if current_item is None else current_item.work_key,
+        "lastErrorCode": (
+            None if failed_item is None else failed_item.last_error_code
+        ),
+        "activeSince": active_since,
+        "latestProgressAt": latest_progress_at,
         "version": record.version,
         "createdAt": record.created_at,
         "updatedAt": record.updated_at,
-        "segments": [segment_resource(item) for item in segments],
+        "segments": segment_items,
+        "corrections": [correction_resource(item) for item in corrections],
+        "reviewIssues": [
+            transcript_review_issue_resource(item) for item in review_issues
+        ],
+    }
+
+
+def _preview_segment_resource(
+    cleanup_id: str, item: dict[str, object]
+) -> dict[str, object]:
+    ordinal = int(item["ordinal"])
+    return {
+        "id": f"{cleanup_id}:preview:{ordinal}",
+        "ordinal": ordinal,
+        "speakerRole": item["speakerRole"],
+        "rawSpeakerLabel": item.get("rawSpeakerLabel"),
+        "displayName": item["displayName"],
+        "body": item["text"],
+        "sourceStart": item["sourceStart"],
+        "sourceEnd": item["sourceEnd"],
+        "confidence": item["confidence"],
+        "uncertaintyReason": item.get("uncertaintyReason"),
+        "ignored": False,
+        "version": 1,
     }
 
 

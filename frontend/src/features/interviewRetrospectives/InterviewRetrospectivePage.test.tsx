@@ -78,8 +78,8 @@ describe("InterviewRetrospectivePage", () => {
         version: 1,
       },
     ]);
-    api.listRetrospectives.mockResolvedValue([
-      {
+    api.listRetrospectives.mockImplementation((_workspaceId, filters) => Promise.resolve(
+      filters.lifecycle === "active" ? [{
         id: "retro-1",
         workspaceId: "w1",
         jobTargetId: "target-1",
@@ -96,8 +96,8 @@ describe("InterviewRetrospectivePage", () => {
         version: 1,
         createdAt: "2026-08-01 00:00:00",
         updatedAt: "2026-08-01 01:00:00",
-      },
-    ]);
+      }] : [],
+    ));
     api.getCurrentCleanup.mockResolvedValue(null);
     api.getCleanup.mockResolvedValue(null);
     api.getAnalysisReport.mockResolvedValue(null);
@@ -112,16 +112,70 @@ describe("InterviewRetrospectivePage", () => {
     expect(screen.getByRole("tab", { name: /进行中/ })).toBeVisible();
     expect(screen.getByRole("tab", { name: /已归档/ })).toBeVisible();
     expect(screen.getByRole("tab", { name: /回收站/ })).toBeVisible();
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "进行中 1" })).toBeVisible();
+      expect(screen.getByRole("tab", { name: "已归档 0" })).toBeVisible();
+      expect(screen.getByRole("tab", { name: "回收站 0" })).toBeVisible();
+    });
     await screen.findByRole("option", { name: "星河科技 / 后端工程师" });
     expect(screen.getByLabelText("求职目标")).toHaveValue("target-1");
     expect(screen.getAllByText("星河科技后端一面")[0]).toBeVisible();
     expect(screen.getAllByText("2026/08/01")[0]).toBeVisible();
   });
 
+  it("uses one full workspace empty state without leaving a duplicate detail pane", async () => {
+    renderPage("/retrospectives?lifecycle=archived");
+
+    expect(await screen.findByRole("heading", { name: "暂无已归档复盘" })).toBeVisible();
+    expect(screen.queryByText("选择一场复盘")).not.toBeInTheDocument();
+    expect(document.querySelector(".retrospective-page__workspace--empty")).toBeInTheDocument();
+    expect(document.querySelector(".retrospective-page__controls")).toBeInTheDocument();
+    expect(document.querySelector(".retrospective-page")?.children).toHaveLength(3);
+  });
+
+  it("enters a focused two-pane layout while reviewing the clean transcript", async () => {
+    api.getCleanup.mockResolvedValue({
+      id: "cleanup-1",
+      retrospectiveId: "retro-1",
+      sourceVersionId: "source-1",
+      ordinal: 1,
+      executionId: "execution-1",
+      status: "review_pending",
+      stage: "review_pending",
+      controlIntent: null,
+      confirmedAt: null,
+      documentBody: "候选人：这是整理后的完整文字。",
+      documentSha256: "sha256",
+      completedItems: 1,
+      totalItems: 1,
+      activeItems: 0,
+      failedItems: 0,
+      currentWorkKey: null,
+      lastErrorCode: null,
+      version: 2,
+      createdAt: "2026-08-01 00:00:00",
+      updatedAt: "2026-08-01 00:00:04",
+      segments: [],
+      reviewIssues: [],
+    });
+
+    renderPage("/retrospectives?cleanupId=cleanup-1");
+
+    expect(await screen.findByRole("button", { name: "复盘列表" })).toBeVisible();
+    expect(await screen.findByLabelText("整理后的完整文字")).toBeVisible();
+    expect(screen.queryByLabelText("面试复盘记录")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { name: "星河科技后端一面" })).toHaveLength(1);
+    expect(document.querySelector(".retrospective-page__workspace--focused")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "复盘列表" }));
+    expect(await screen.findByLabelText("面试复盘记录")).toBeVisible();
+  });
+
   it("does not request a null cleanup after the source is cleared", async () => {
     api.clearSourceVersion.mockResolvedValue({});
     renderPage("/retrospectives?jobTargetId=target-1");
 
+    fireEvent.click(await screen.findByText("更多操作"));
     fireEvent.click(await screen.findByRole("button", { name: "清除原文" }));
     fireEvent.click(screen.getByRole("button", { name: "确认清除原文" }));
 
@@ -188,10 +242,10 @@ describe("InterviewRetrospectivePage", () => {
     );
 
     renderPage("/retrospectives?retrospectiveId=retro-1&cleanupId=cleanup-1");
-    expect(await screen.findByText("1 段需要确认")).toBeVisible();
+    expect(await screen.findByText("还需处理 1 项")).toBeVisible();
     expect(api.getCleanup).toHaveBeenCalledWith("w1", "retro-1", "cleanup-1", expect.any(AbortSignal));
     fireEvent.change(screen.getByLabelText("第 1 段说话人"), { target: { value: "candidate" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存并稍后继续" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("已为你重新载入最新版本");
     await waitFor(() => expect(api.getCleanup).toHaveBeenCalledTimes(2));
@@ -218,7 +272,7 @@ describe("InterviewRetrospectivePage", () => {
 
     renderPage("/retrospectives");
 
-    expect(await screen.findByText("刷新或离开不会丢失已完成结果。")).toBeVisible();
+    expect(await screen.findByText(/刷新或离开不会丢失已完成结果。/)).toBeVisible();
     expect(api.getCurrentCleanup).toHaveBeenCalledWith("w1", "retro-1", expect.any(AbortSignal));
     expect(api.getCleanup).toHaveBeenCalledWith("w1", "retro-1", "cleanup-current", expect.any(AbortSignal));
   });
@@ -244,8 +298,30 @@ describe("InterviewRetrospectivePage", () => {
     renderPage("/retrospectives?retrospectiveId=retro-1");
 
     expect(await screen.findByRole("heading", { name: "分析失败的问题" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "复盘列表" })).toBeVisible();
+    expect(screen.queryByLabelText("面试复盘记录")).not.toBeInTheDocument();
     expect(screen.getByText("这道题分析失败")).toBeVisible();
     expect(screen.getByRole("button", { name: /已经完成的问题/ })).toBeVisible();
     expect(screen.queryByText(/总分/)).not.toBeInTheDocument();
+  });
+
+  it("retries only unfinished work in the existing failed analysis run", async () => {
+    api.listRetrospectives.mockResolvedValue([{
+      id: "retro-1", workspaceId: "w1", jobTargetId: "target-1", title: "星河科技后端一面", roundLabel: "一面", interviewDate: "2026-08-01", outcome: "pending", note: "", lifecycleStatus: "active", activeSourceVersionId: "source-1", activeSourceAvailable: true, activeCleanupVersionId: "cleanup-1", activeAnalysisRunId: "run-1", version: 2, createdAt: "now", updatedAt: "now",
+    }]);
+    api.getAnalysisReport.mockResolvedValue({
+      analysisRun: { id: "run-1", retrospectiveId: "retro-1", cleanupVersionId: "cleanup-1", executionId: "execution-1", retryOfAnalysisRunId: null, status: "failed", stage: "failed", controlIntent: null, completedItems: 2, totalItems: 4, currentWorkKey: null, cumulativeElapsedMs: 90_000, latestProgressAt: "now", summary: null, version: 2, createdAt: "now", updatedAt: "now" },
+      questions: [{ id: "q-1", retrospectiveId: "retro-1", cleanupVersionId: "cleanup-1", ordinal: 1, questionKind: "project", origin: "original", questionText: "分析失败的问题", questionSegmentIds: [], answerSegmentIds: [], inferenceBasis: "", confidence: .9, decisionStatus: "confirmed", version: 1, createdAt: "now", updatedAt: "now" }],
+      analyses: [],
+      items: [{ id: "i-1", questionUnitId: "q-1", workKey: "question_analysis:q-1", status: "retryable", attemptCount: 2, lastErrorCode: "provider_timeout", updatedAt: "now" }],
+      summary: {},
+    });
+    api.resumeAnalysis.mockResolvedValue({ analysisRunId: "run-1", executionId: "execution-2" });
+
+    renderPage("/retrospectives?retrospectiveId=retro-1");
+    fireEvent.click(await screen.findByRole("button", { name: "重试失败步骤" }));
+
+    await waitFor(() => expect(api.resumeAnalysis).toHaveBeenCalledWith("w1", "retro-1", "run-1"));
+    expect(api.retryAnalysis).not.toHaveBeenCalled();
   });
 });

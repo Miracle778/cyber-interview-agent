@@ -71,7 +71,7 @@ describe("TraceEventInspector", () => {
     );
 
     expect(await screen.findByText("正文超过 200 KB")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "继续加载" }));
+    fireEvent.click(screen.getByRole("button", { name: /继续加载剩余正文/ }));
     const formatted = await screen.findByLabelText("可读 JSON");
     expect(formatted).toHaveTextContent('"messages"');
     expect(formatted).toHaveTextContent('"tools"');
@@ -80,6 +80,46 @@ describe("TraceEventInspector", () => {
       expect.stringContaining("offset=64"),
       expect.anything(),
     );
+  });
+
+  it("automatically completes ordinary model responses before formatting them", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({
+        eventId: "event-small",
+        eventType: "model.response",
+        content: "{\"duration_ms\":61872,\"response\":{\"structured_response\":",
+        contentEncoding: "utf-8-json",
+        offset: 0,
+        nextOffset: 65536,
+        complete: false,
+        sha256: "small",
+        redactionsApplied: true,
+      }))
+      .mockResolvedValueOnce(Response.json({
+        eventId: "event-small",
+        eventType: "model.response",
+        content: "{\"segments\":[{\"display_name\":\"候选人\"}]},\"result\":[]}}",
+        contentEncoding: "utf-8-json",
+        offset: 65536,
+        nextOffset: null,
+        complete: true,
+        sha256: "small",
+        redactionsApplied: true,
+      }));
+
+    render(
+      <TraceEventInspector
+        workspaceId="workspace-1"
+        runId="run-1"
+        event={{ ...event, eventId: "event-small", eventType: "model.response", byteLength: 102_903 }}
+        advancedEnabled
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "结构化结果" })).toBeInTheDocument();
+    expect(screen.getByText("候选人")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /继续加载/ })).not.toBeInTheDocument();
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
   it("shows a readable review answer before the raw model request", async () => {
@@ -239,6 +279,7 @@ describe("TraceEventInspector", () => {
             covered_key_points: ["事务"],
             missing_key_points: ["锁机制"],
             follow_up_prompt: "请继续说明锁机制",
+            speakers: [{ display_name: "面试官", confidence: 0.8 }],
           },
           result: [{
             type: "ai",
@@ -273,6 +314,8 @@ describe("TraceEventInspector", () => {
     expect(screen.getByText("事务")).toBeInTheDocument();
     expect(screen.getByText("待完善关键点")).toBeInTheDocument();
     expect(screen.getByText("锁机制")).toBeInTheDocument();
+    expect(screen.getByText("事务").closest("li")).toHaveAttribute("data-value-kind", "scalar");
+    expect(screen.getByText("面试官").closest("li")).toHaveAttribute("data-value-kind", "record");
     expect(screen.getByText("请继续说明锁机制")).toBeInTheDocument();
     expect(screen.getByText("120 毫秒")).toBeInTheDocument();
     expect(screen.getByText("640")).toBeInTheDocument();

@@ -52,6 +52,9 @@ class RetrospectiveResource(AgentModel):
 class AddSourceVersionCommand(AgentModel):
     workspace_id: str
     source_kind: Literal["transcript", "recollection"]
+    recording_coverage: Literal[
+        "full_dialogue", "candidate_only", "mixed_unknown"
+    ] = "mixed_unknown"
     body: str = Field(min_length=1, max_length=500_000)
     file_name: str | None = Field(default=None, max_length=255)
 
@@ -61,6 +64,7 @@ class SourceVersionResource(AgentModel):
     retrospective_id: str
     ordinal: int
     source_kind: str
+    recording_coverage: str
     file_name: str | None
     content_sha256: str
     body_available: bool
@@ -98,6 +102,41 @@ class SegmentResource(AgentModel):
     version: int
 
 
+class TranscriptCorrectionResource(AgentModel):
+    id: str
+    segment_id: str
+    source_start: int
+    source_end: int
+    original_text: str | None
+    suggested_text: str | None
+    adopted_text: str | None
+    change_type: Literal["formatting", "recognition", "semantic"]
+    risk_level: Literal["low", "high"]
+    reason: str | None
+    confidence: float
+    decision: Literal[
+        "auto_accepted",
+        "pending",
+        "accepted",
+        "kept_original",
+        "manual",
+        "superseded",
+    ]
+
+
+class TranscriptReviewIssueResource(AgentModel):
+    id: str
+    ordinal: int
+    document_start: int
+    document_end: int
+    excerpt: str
+    suggestion: str | None
+    issue_kind: Literal["uncertain_term", "speaker", "semantic"]
+    reason: str
+    confidence: float
+    decision: Literal["pending", "accepted", "kept", "manual"]
+
+
 class CleanupVersionResource(AgentModel):
     id: str
     retrospective_id: str
@@ -108,10 +147,22 @@ class CleanupVersionResource(AgentModel):
     stage: str
     control_intent: str | None
     confirmed_at: str | None
+    document_body: str | None
+    document_sha256: str | None
+    completed_items: int
+    total_items: int
+    active_items: int
+    failed_items: int
+    current_work_key: str | None
+    last_error_code: str | None
+    active_since: str | None
+    latest_progress_at: str | None
     version: int
     created_at: str
     updated_at: str
     segments: list[SegmentResource]
+    corrections: list[TranscriptCorrectionResource]
+    review_issues: list[TranscriptReviewIssueResource]
 
 
 class SegmentEdit(AgentModel):
@@ -126,10 +177,33 @@ class SegmentEdit(AgentModel):
     ignored: bool = False
 
 
+class CorrectionDecisionEdit(AgentModel):
+    id: str = Field(min_length=1, max_length=128)
+    decision: Literal["accepted", "kept_original", "manual"]
+    manual_text: str | None = Field(default=None, max_length=24_000)
+
+
 class UpdateSegmentsCommand(AgentModel):
     workspace_id: str
     expected_version: int = Field(ge=1)
     segments: list[SegmentEdit] = Field(min_length=1, max_length=500)
+    correction_decisions: list[CorrectionDecisionEdit] = Field(
+        default_factory=list, max_length=5_000
+    )
+
+
+class TranscriptReviewIssueDecisionEdit(AgentModel):
+    id: str = Field(min_length=1, max_length=128)
+    decision: Literal["accepted", "kept", "manual"]
+
+
+class UpdateCleanTranscriptCommand(AgentModel):
+    workspace_id: str
+    expected_version: int = Field(ge=1)
+    document_body: str = Field(min_length=1, max_length=500_000)
+    review_issue_decisions: list[TranscriptReviewIssueDecisionEdit] = Field(
+        default_factory=list, max_length=5_000
+    )
 
 
 class VersionedRetrospectiveCommand(AgentModel):

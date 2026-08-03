@@ -1342,7 +1342,23 @@ button.agent-run-metric[aria-pressed="true"] {
   margin: 0;
 }
 
-.trace-event-inspector__load-more,
+.trace-event-inspector__load-more {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 40px;
+  align-items: center;
+  justify-self: start;
+  padding: 7px 12px;
+  color: var(--primary);
+  font: inherit;
+  font-size: .74rem;
+  font-weight: 700;
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--primary) 32%, var(--border));
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
 .trace-export-dialog__generate {
   min-height: 44px;
   padding: 7px 12px;
@@ -1574,13 +1590,13 @@ button.agent-run-metric[aria-pressed="true"] {
   min-width: 0;
   gap: 6px;
   padding: 12px 14px;
-  background: var(--success-soft);
-  border: 1px solid color-mix(in srgb, var(--success) 22%, var(--border));
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
 }
 
 .trace-model-response__result > span {
-  color: var(--success);
+  color: var(--primary);
   font-size: .68rem;
   font-weight: 700;
 }
@@ -1602,7 +1618,7 @@ button.agent-run-metric[aria-pressed="true"] {
   grid-template-columns: minmax(110px, 32%) minmax(0, 1fr);
   gap: var(--space-3);
   padding: 8px 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--success) 14%, var(--border));
+  border-bottom: 1px solid var(--border);
 }
 
 .trace-model-response__result dl > div:last-child {
@@ -1633,10 +1649,24 @@ button.agent-run-metric[aria-pressed="true"] {
   list-style: none;
 }
 
-.trace-model-response__result li {
+.trace-model-response__result li[data-value-kind="scalar"] {
   padding: 2px 7px;
-  background: var(--surface);
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
   border-radius: 999px;
+}
+
+.trace-model-response__result li[data-value-kind="record"] {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.trace-model-response__result li[data-value-kind="record"] > dl > div {
+  padding: 6px 0;
 }
 
 .execution-trace__detail .trace-model-response__metrics {

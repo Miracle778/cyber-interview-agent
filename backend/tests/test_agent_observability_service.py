@@ -263,6 +263,55 @@ def test_cursor_filters_and_system_agent_visibility_are_stable(
         service.get_execution("run-publication")
 
 
+def test_business_agent_stays_visible_when_its_session_is_internal(
+    tmp_path: Path,
+) -> None:
+    service, connection = _service(tmp_path)
+    _insert_run(
+        connection,
+        run_id="run-retrospective",
+        graph_id="interview.retrospective",
+        status="running",
+        created_at="2026-08-02T05:00:15+00:00",
+        visibility="system",
+        title="复盘分析：示例公司后端二面",
+    )
+
+    page = service.list_executions(limit=50)
+
+    assert [item.id for item in page.items] == ["run-retrospective"]
+    assert page.items[0].display_name == "面试复盘"
+    assert page.items[0].system is False
+    connection.close()
+
+
+def test_legacy_retrospective_graph_alias_remains_observable(
+    tmp_path: Path,
+) -> None:
+    service, connection = _service(tmp_path)
+    _insert_run(
+        connection,
+        run_id="run-retrospective-legacy",
+        graph_id="interview.retrospective.analysis",
+        status="failed",
+        created_at="2026-08-02T05:01:47+00:00",
+        visibility="system",
+        title="复盘分析：示例公司后端二面",
+    )
+
+    page = service.list_executions(limit=50)
+    canonical_filter = service.list_executions(
+        agent="interview.retrospective", limit=50
+    )
+
+    assert [item.id for item in page.items] == ["run-retrospective-legacy"]
+    assert [item.id for item in canonical_filter.items] == [
+        "run-retrospective-legacy"
+    ]
+    assert service.get_execution("run-retrospective-legacy").display_name == "面试复盘"
+    connection.close()
+
+
 def test_status_filters_group_internal_runtime_states(
     tmp_path: Path,
 ) -> None:

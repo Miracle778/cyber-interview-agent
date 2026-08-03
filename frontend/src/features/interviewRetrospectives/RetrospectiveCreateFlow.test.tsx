@@ -84,6 +84,39 @@ describe("RetrospectiveCreateFlow", () => {
     expect(screen.getByText("4 / 500,000 字符")).toBeInTheDocument();
   });
 
+  it("records when a transcript mainly contains the candidate voice", () => {
+    const onSubmit = vi.fn();
+    render(
+      <RetrospectiveCreateFlow
+        targets={targets}
+        initialTargetId="target-1"
+        busy={false}
+        onCancel={vi.fn()}
+        onCreateTarget={vi.fn()}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("复盘名称"), {
+      target: { value: "星河科技后端一面" },
+    });
+    fireEvent.change(screen.getByLabelText("面试轮次"), {
+      target: { value: "一面" },
+    });
+    fireEvent.click(screen.getByRole("radio", { name: /主要只有我的讲话/ }));
+    fireEvent.change(screen.getByLabelText("面试文字"), {
+      target: { value: "我当时使用 Redis 处理了并发执行问题。" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "开始整理" }));
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceKind: "transcript",
+        recordingCoverage: "candidate_only",
+      }),
+    );
+  });
+
   it("creates a lightweight target inline and selects it for the retrospective", async () => {
     const onCreateTarget = vi.fn().mockResolvedValue(targets[0]);
     render(
@@ -99,13 +132,13 @@ describe("RetrospectiveCreateFlow", () => {
     fireEvent.click(screen.getByRole("button", { name: "快速新建求职目标" }));
     fireEvent.change(screen.getByLabelText("公司"), { target: { value: "星河科技" } });
     fireEvent.change(screen.getByLabelText("岗位"), { target: { value: "后端工程师" } });
-    fireEvent.change(screen.getByLabelText("经验或职级"), { target: { value: "3-5 年" } });
+    expect(screen.getByRole("button", { name: "保存目标" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "保存目标" }));
 
     await waitFor(() => expect(onCreateTarget).toHaveBeenCalledWith({
       companyName: "星河科技",
       roleName: "后端工程师",
-      seniority: "3-5 年",
+      seniority: "",
     }));
     expect(screen.getByLabelText("求职目标")).toHaveValue("target-1");
   });

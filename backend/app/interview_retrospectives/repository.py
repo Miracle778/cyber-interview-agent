@@ -25,6 +25,8 @@ from app.interview_retrospectives.models import (
     RetrospectiveRecord,
     SegmentRecord,
     SourceVersionRecord,
+    TranscriptCorrectionRecord,
+    TranscriptReviewIssueRecord,
 )
 
 
@@ -152,6 +154,7 @@ class InterviewRetrospectiveRepository:
         retrospective_id: str,
         *,
         source_kind: str,
+        recording_coverage: str = "mixed_unknown",
         file_name: str | None,
         body: str,
         content_sha256: str,
@@ -167,13 +170,14 @@ class InterviewRetrospectiveRepository:
         try:
             self.connection.execute(
                 "INSERT INTO interview_source_versions("
-                "id, retrospective_id, ordinal, source_kind, file_name, body, "
-                "content_sha256) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "id, retrospective_id, ordinal, source_kind, recording_coverage, "
+                "file_name, body, content_sha256) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     version_id,
                     retrospective_id,
                     ordinal,
                     source_kind,
+                    recording_coverage,
                     file_name,
                     body,
                     content_sha256,
@@ -236,6 +240,110 @@ class InterviewRetrospectiveRepository:
         if row is None:
             raise RetrospectiveNotFound(cleanup_id)
         return _cleanup(row)
+
+    def replace_clean_transcript_document(
+        self,
+        cleanup_id: str,
+        *,
+        expected_version: int,
+        document_body: str,
+        review_issues: tuple[dict[str, object], ...] = (),
+    ) -> CleanupVersionRecord:
+        if not document_body:
+            raise ValueError("准确转写文档不能为空")
+        document_sha256 = hashlib.sha256(document_body.encode("utf-8")).hexdigest()
+        try:
+            self.connection.execute(
+                "DELETE FROM interview_transcript_review_issues "
+                "WHERE cleanup_version_id = ?",
+                (cleanup_id,),
+            )
+            for ordinal, issue in enumerate(review_issues, start=1):
+                document_start = int(issue["document_start"])
+                document_end = int(issue["document_end"])
+                excerpt = str(issue["excerpt"])
+                if document_body[document_start:document_end] != excerpt:
+                    raise ValueError("核对问题摘录必须属于准确转写文档")
+                self.connection.execute(
+                    "INSERT INTO interview_transcript_review_issues("
+                    "id, cleanup_version_id, ordinal, document_start, document_end, "
+                    "excerpt, suggestion, issue_kind, reason, confidence"
+                    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        str(uuid4()),
+                        cleanup_id,
+                        ordinal,
+                        document_start,
+                        document_end,
+                        excerpt,
+                        issue.get("suggestion"),
+                        issue["issue_kind"],
+                        issue["reason"],
+                        issue["confidence"],
+                    ),
+                )
+            cursor = self.connection.execute(
+                "UPDATE interview_cleanup_versions SET document_body = ?, "
+                "document_sha256 = ?, version = version + 1, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ?",
+                (document_body, document_sha256, cleanup_id, expected_version),
+            )
+            if cursor.rowcount != 1:
+                raise RetrospectiveVersionConflict("整理版本已更新")
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        return self.get_cleanup_version(cleanup_id)
+
+    def list_transcript_review_issues(
+        self, cleanup_id: str
+    ) -> tuple[TranscriptReviewIssueRecord, ...]:
+        rows = self.connection.execute(
+            "SELECT * FROM interview_transcript_review_issues "
+            "WHERE cleanup_version_id = ? ORDER BY ordinal, rowid",
+            (cleanup_id,),
+        ).fetchall()
+        return tuple(_transcript_review_issue(row) for row in rows)
+
+    def update_clean_transcript_document(
+        self,
+        cleanup_id: str,
+        *,
+        expected_version: int,
+        document_body: str,
+        review_issue_decisions: tuple[dict[str, object], ...] = (),
+    ) -> CleanupVersionRecord:
+        if not document_body.strip():
+            raise ValueError("准确转写文档不能为空")
+        document_sha256 = hashlib.sha256(document_body.encode("utf-8")).hexdigest()
+        try:
+            for edit in review_issue_decisions:
+                decision = str(edit["decision"])
+                if decision not in {"accepted", "kept", "manual"}:
+                    raise ValueError("不支持的核对决定")
+                cursor = self.connection.execute(
+                    "UPDATE interview_transcript_review_issues SET decision = ?, "
+                    "updated_at = CURRENT_TIMESTAMP WHERE id = ? "
+                    "AND cleanup_version_id = ?",
+                    (decision, str(edit["id"]), cleanup_id),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("核对问题不存在")
+            cursor = self.connection.execute(
+                "UPDATE interview_cleanup_versions SET document_body = ?, "
+                "document_sha256 = ?, version = version + 1, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ? "
+                "AND status = 'review_pending'",
+                (document_body, document_sha256, cleanup_id, expected_version),
+            )
+            if cursor.rowcount != 1:
+                raise RetrospectiveVersionConflict("整理版本已更新或不可编辑")
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        return self.get_cleanup_version(cleanup_id)
 
     def latest_cleanup_version(
         self, retrospective_id: str
@@ -307,6 +415,50 @@ class InterviewRetrospectiveRepository:
         ).fetchall()
         return tuple(_cleanup_work_item(row) for row in rows)
 
+    def replace_cleanup_work_items_if_none_completed(
+        self,
+        cleanup_id: str,
+        *,
+        windows: Iterable[CleanupWindow],
+    ) -> bool:
+        """Replan a legacy failed run without discarding saved model output."""
+        planned_windows = tuple(windows)
+        try:
+            completed_count = int(
+                self.connection.execute(
+                    "SELECT COUNT(*) FROM interview_cleanup_work_items "
+                    "WHERE cleanup_version_id = ? AND status = 'completed'",
+                    (cleanup_id,),
+                ).fetchone()[0]
+            )
+            if completed_count:
+                return False
+            self.connection.execute(
+                "DELETE FROM interview_cleanup_work_items "
+                "WHERE cleanup_version_id = ?",
+                (cleanup_id,),
+            )
+            for window in planned_windows:
+                digest = hashlib.sha256(window.body.encode("utf-8")).hexdigest()
+                self.connection.execute(
+                    "INSERT INTO interview_cleanup_work_items("
+                    "id, cleanup_version_id, work_key, source_start, source_end, "
+                    "input_digest) VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        str(uuid4()),
+                        cleanup_id,
+                        window.work_key,
+                        window.source_start,
+                        window.source_end,
+                        digest,
+                    ),
+                )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        return True
+
     def list_resumable_cleanup_work_items(
         self, cleanup_id: str
     ) -> tuple[CleanupWorkItemRecord, ...]:
@@ -357,6 +509,65 @@ class InterviewRetrospectiveRepository:
         self.connection.commit()
         return self.get_cleanup_work_item(item_id)
 
+    def fail_cleanup_work_item(
+        self, item_id: str, *, error_code: str
+    ) -> CleanupWorkItemRecord:
+        cursor = self.connection.execute(
+            "UPDATE interview_cleanup_work_items SET status = 'retryable', "
+            "last_error_code = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND status = 'running'",
+            (error_code, item_id),
+        )
+        if cursor.rowcount != 1:
+            self.connection.rollback()
+            raise RetrospectiveVersionConflict("整理窗口状态已更新")
+        self.connection.commit()
+        return self.get_cleanup_work_item(item_id)
+
+    def replace_cleanup_work_item_with_windows(
+        self,
+        item_id: str,
+        *,
+        windows: Iterable[CleanupWindow],
+    ) -> tuple[CleanupWorkItemRecord, ...]:
+        planned_windows = tuple(windows)
+        if len(planned_windows) < 2:
+            raise ValueError("拆分后的整理窗口不足")
+        current = self.get_cleanup_work_item(item_id)
+        try:
+            cursor = self.connection.execute(
+                "DELETE FROM interview_cleanup_work_items "
+                "WHERE id = ? AND status = 'running'",
+                (item_id,),
+            )
+            if cursor.rowcount != 1:
+                raise RetrospectiveVersionConflict("整理窗口状态已更新")
+            for window in planned_windows:
+                digest = hashlib.sha256(window.body.encode("utf-8")).hexdigest()
+                self.connection.execute(
+                    "INSERT INTO interview_cleanup_work_items("
+                    "id, cleanup_version_id, work_key, source_start, source_end, "
+                    "input_digest) VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        str(uuid4()),
+                        current.cleanup_version_id,
+                        window.work_key,
+                        window.source_start,
+                        window.source_end,
+                        digest,
+                    ),
+                )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        child_keys = {window.work_key for window in planned_windows}
+        return tuple(
+            item
+            for item in self.list_cleanup_work_items(current.cleanup_version_id)
+            if item.work_key in child_keys
+        )
+
     def stop_cleanup(self, cleanup_id: str) -> CleanupVersionRecord:
         try:
             self.connection.execute(
@@ -401,6 +612,13 @@ class InterviewRetrospectiveRepository:
                 "UPDATE interview_cleanup_work_items SET status = 'interrupted', "
                 "updated_at = CURRENT_TIMESTAMP WHERE cleanup_version_id = ? "
                 "AND status = 'running'",
+                (cleanup_id,),
+            )
+            self.connection.execute(
+                "UPDATE interview_cleanup_work_items SET status = 'pending', "
+                "attempt_count = 0, last_error_code = NULL, "
+                "updated_at = CURRENT_TIMESTAMP WHERE cleanup_version_id = ? "
+                "AND status = 'retryable'",
                 (cleanup_id,),
             )
             cursor = self.connection.execute(
@@ -483,36 +701,195 @@ class InterviewRetrospectiveRepository:
         *,
         expected_version: int,
         segments: tuple[dict[str, object], ...],
+        corrections: tuple[dict[str, object], ...] = (),
+        correction_decisions: tuple[dict[str, object], ...] = (),
     ) -> CleanupVersionRecord:
         current = self.get_cleanup_version(cleanup_id)
         if current.version != expected_version:
             raise RetrospectiveVersionConflict("整理版本已更新")
         try:
-            self.connection.execute(
-                "DELETE FROM interview_segments WHERE cleanup_version_id = ?",
-                (cleanup_id,),
-            )
-            for ordinal, segment in enumerate(segments, start=1):
+            existing = self.list_segments(cleanup_id)
+            existing_corrections = self.list_corrections(cleanup_id)
+            segment_ids_by_ordinal: dict[int, str] = {}
+            manually_overridden_segment_ids: set[str] = set()
+            if existing and existing_corrections and not corrections:
+                if len(existing) != len(segments):
+                    raise ValueError("审核阶段不能新增或删除整理片段")
+                for ordinal, (record, segment) in enumerate(
+                    zip(existing, segments, strict=True), start=1
+                ):
+                    manual_override = record.body != str(segment["body"])
+                    self.connection.execute(
+                        "UPDATE interview_segments SET ordinal = ?, speaker_role = ?, "
+                        "raw_speaker_label = ?, display_name = ?, body = ?, "
+                        "source_start = ?, source_end = ?, confidence = ?, "
+                        "uncertainty_reason = ?, ignored = ?, version = version + 1, "
+                        "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (
+                            ordinal,
+                            segment["speaker_role"],
+                            segment["raw_speaker_label"],
+                            segment["display_name"],
+                            segment["body"],
+                            segment["source_start"],
+                            segment["source_end"],
+                            segment["confidence"],
+                            segment["uncertainty_reason"],
+                            int(bool(segment["ignored"])),
+                            record.id,
+                        ),
+                    )
+                    segment_ids_by_ordinal[ordinal] = record.id
+                    if manual_override:
+                        manually_overridden_segment_ids.add(record.id)
+                        self.connection.execute(
+                            "UPDATE interview_corrections SET decision = 'superseded', "
+                            "updated_at = CURRENT_TIMESTAMP "
+                            "WHERE segment_id = ? AND decision != 'superseded'",
+                            (record.id,),
+                        )
+                        source_row = self.connection.execute(
+                            "SELECT s.body FROM interview_source_versions s "
+                            "JOIN interview_cleanup_versions c "
+                            "ON c.source_version_id = s.id WHERE c.id = ?",
+                            (cleanup_id,),
+                        ).fetchone()
+                        if source_row is None:
+                            raise ValueError("整理版本没有对应原文")
+                        start = int(segment["source_start"])
+                        end = int(segment["source_end"])
+                        original_text = str(source_row["body"])[start:end]
+                        adopted_text = str(segment["body"])
+                        self.connection.execute(
+                            "INSERT INTO interview_corrections("
+                            "id, cleanup_version_id, segment_id, source_start, "
+                            "source_end, original_text, original_sha256, "
+                            "suggested_text, adopted_text, change_type, risk_level, "
+                            "reason, confidence, decision"
+                            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'semantic', "
+                            "'high', ?, 1.0, 'manual')",
+                            (
+                                str(uuid4()),
+                                cleanup_id,
+                                record.id,
+                                start,
+                                end,
+                                original_text,
+                                hashlib.sha256(original_text.encode("utf-8")).hexdigest(),
+                                adopted_text,
+                                adopted_text,
+                                "用户手工修改了整个段落",
+                            ),
+                        )
+            else:
                 self.connection.execute(
-                    "INSERT INTO interview_segments("
-                    "id, cleanup_version_id, ordinal, speaker_role, "
-                    "raw_speaker_label, display_name, body, source_start, "
-                    "source_end, confidence, uncertainty_reason, ignored"
-                    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        str(uuid4()),
-                        cleanup_id,
-                        ordinal,
-                        segment["speaker_role"],
-                        segment["raw_speaker_label"],
-                        segment["display_name"],
-                        segment["body"],
-                        segment["source_start"],
-                        segment["source_end"],
-                        segment["confidence"],
-                        segment["uncertainty_reason"],
-                        int(bool(segment["ignored"])),
-                    ),
+                    "DELETE FROM interview_segments WHERE cleanup_version_id = ?",
+                    (cleanup_id,),
+                )
+                for ordinal, segment in enumerate(segments, start=1):
+                    segment_id = str(uuid4())
+                    self.connection.execute(
+                        "INSERT INTO interview_segments("
+                        "id, cleanup_version_id, ordinal, speaker_role, "
+                        "raw_speaker_label, display_name, body, source_start, "
+                        "source_end, confidence, uncertainty_reason, ignored"
+                        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            segment_id,
+                            cleanup_id,
+                            ordinal,
+                            segment["speaker_role"],
+                            segment["raw_speaker_label"],
+                            segment["display_name"],
+                            segment["body"],
+                            segment["source_start"],
+                            segment["source_end"],
+                            segment["confidence"],
+                            segment["uncertainty_reason"],
+                            int(bool(segment["ignored"])),
+                        ),
+                    )
+                    segment_ids_by_ordinal[ordinal] = segment_id
+                for correction in corrections:
+                    segment_id = segment_ids_by_ordinal[int(correction["segment_ordinal"])]
+                    risk_level = str(correction["risk_level"])
+                    original_text = str(correction["original_text"])
+                    suggested_text = correction.get("suggested_text")
+                    decision = "auto_accepted" if risk_level == "low" else "pending"
+                    # During review the segment body is the provider's
+                    # corrected text. Pending only blocks confirmation; it does
+                    # not silently replace the visible suggestion with source.
+                    adopted_text = suggested_text if suggested_text is not None else original_text
+                    self.connection.execute(
+                        "INSERT INTO interview_corrections("
+                        "id, cleanup_version_id, segment_id, source_start, source_end, "
+                        "original_text, original_sha256, suggested_text, adopted_text, "
+                        "change_type, risk_level, reason, confidence, decision"
+                        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            str(uuid4()),
+                            cleanup_id,
+                            segment_id,
+                            correction["source_start"],
+                            correction["source_end"],
+                            original_text,
+                            hashlib.sha256(original_text.encode("utf-8")).hexdigest(),
+                            suggested_text,
+                            adopted_text,
+                            correction["change_type"],
+                            risk_level,
+                            correction["reason"],
+                            correction["confidence"],
+                            decision,
+                        ),
+                    )
+            for edit in correction_decisions:
+                correction = self.connection.execute(
+                    "SELECT * FROM interview_corrections "
+                    "WHERE id = ? AND cleanup_version_id = ?",
+                    (edit["id"], cleanup_id),
+                ).fetchone()
+                if correction is None:
+                    raise ValueError("修订记录不存在")
+                if str(correction["segment_id"]) in manually_overridden_segment_ids:
+                    # An explicit segment edit is the user's final decision for the
+                    # whole segment. Ignore stale per-correction decisions submitted
+                    # in the same batch after preserving them as superseded history.
+                    continue
+                decision = str(edit["decision"])
+                if decision == "accepted":
+                    adopted_text = correction["suggested_text"]
+                    if adopted_text is None:
+                        raise ValueError("该修订没有可接受的建议文本")
+                elif decision == "kept_original":
+                    adopted_text = correction["original_text"]
+                elif decision == "manual":
+                    adopted_text = str(edit.get("manual_text") or "").strip()
+                    if not adopted_text:
+                        raise ValueError("手工修订文本不能为空")
+                else:
+                    raise ValueError("不支持的修订决定")
+                previous_text = correction["adopted_text"]
+                segment_row = self.connection.execute(
+                    "SELECT body FROM interview_segments WHERE id = ?",
+                    (correction["segment_id"],),
+                ).fetchone()
+                if segment_row is None:
+                    raise ValueError("修订对应的整理片段不存在")
+                body = str(segment_row["body"])
+                if previous_text != adopted_text:
+                    if previous_text not in body:
+                        raise ValueError("修订对应正文已变化，请刷新后重试")
+                    body = body.replace(str(previous_text), str(adopted_text), 1)
+                    self.connection.execute(
+                        "UPDATE interview_segments SET body = ?, version = version + 1, "
+                        "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (body, correction["segment_id"]),
+                    )
+                self.connection.execute(
+                    "UPDATE interview_corrections SET decision = ?, adopted_text = ?, "
+                    "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (decision, adopted_text, correction["id"]),
                 )
             cursor = self.connection.execute(
                 "UPDATE interview_cleanup_versions SET version = version + 1, "
@@ -535,6 +912,18 @@ class InterviewRetrospectiveRepository:
         ).fetchall()
         return tuple(_segment(row) for row in rows)
 
+    def list_corrections(
+        self, cleanup_id: str
+    ) -> tuple[TranscriptCorrectionRecord, ...]:
+        rows = self.connection.execute(
+            "SELECT c.* FROM interview_corrections c "
+            "JOIN interview_segments s ON s.id = c.segment_id "
+            "WHERE c.cleanup_version_id = ? "
+            "ORDER BY s.ordinal, c.source_start, c.source_end, c.created_at, c.rowid",
+            (cleanup_id,),
+        ).fetchall()
+        return tuple(_transcript_correction(row) for row in rows)
+
     def insert_analysis_run(
         self,
         retrospective_id: str,
@@ -543,14 +932,16 @@ class InterviewRetrospectiveRepository:
         input_digest: str,
         context_snapshot: dict[str, object],
         retry_of_analysis_run_id: str | None = None,
+        question_work_keys: tuple[str, ...] = ("question_extraction",),
     ) -> AnalysisRunRecord:
         run_id = str(uuid4())
+        work_keys = (*question_work_keys, "question_reduce")
         try:
             self.connection.execute(
                 "INSERT INTO interview_analysis_runs("
                 "id, retrospective_id, cleanup_version_id, "
                 "retry_of_analysis_run_id, input_digest, context_snapshot_json, "
-                "total_items) VALUES (?, ?, ?, ?, ?, ?, 1)",
+                "total_items) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     run_id,
                     retrospective_id,
@@ -558,13 +949,25 @@ class InterviewRetrospectiveRepository:
                     retry_of_analysis_run_id,
                     input_digest,
                     json.dumps(context_snapshot, ensure_ascii=False, sort_keys=True),
+                    len(work_keys),
                 ),
             )
-            self.connection.execute(
-                "INSERT INTO interview_analysis_work_items("
-                "id, analysis_run_id, work_key, input_digest) VALUES (?, ?, ?, ?)",
-                (str(uuid4()), run_id, "question_extraction", input_digest),
-            )
+            for work_key in work_keys:
+                item_digest = hashlib.sha256(
+                    f"{input_digest}:{work_key}".encode("utf-8")
+                ).hexdigest()
+                self.connection.execute(
+                    "INSERT INTO interview_analysis_work_items("
+                    "id, analysis_run_id, work_key, input_digest, status) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (
+                        str(uuid4()),
+                        run_id,
+                        work_key,
+                        item_digest,
+                        "blocked" if work_key == "question_reduce" else "pending",
+                    ),
+                )
             self.connection.execute(
                 "UPDATE interview_retrospectives SET active_analysis_run_id = ?, "
                 "version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -613,9 +1016,12 @@ class InterviewRetrospectiveRepository:
     ) -> tuple[AnalysisWorkItemRecord, ...]:
         rows = self.connection.execute(
             "SELECT * FROM interview_analysis_work_items WHERE analysis_run_id = ? "
-            "ORDER BY CASE work_key WHEN 'question_extraction' THEN 0 "
-            "WHEN 'gap_verification' THEN 2 WHEN 'candidate_generation' THEN 3 "
-            "WHEN 'final_projection' THEN 4 ELSE 1 END, created_at, rowid",
+            "ORDER BY CASE WHEN work_key LIKE 'question_extraction:%' THEN 0 "
+            "WHEN work_key = 'question_extraction' THEN 0 "
+            "WHEN work_key = 'question_reduce' THEN 1 "
+            "WHEN work_key = 'gap_verification' THEN 3 "
+            "WHEN work_key = 'candidate_generation' THEN 4 "
+            "WHEN work_key = 'final_projection' THEN 5 ELSE 2 END, created_at, rowid",
             (run_id,),
         ).fetchall()
         return tuple(_analysis_work_item(row) for row in rows)
@@ -888,7 +1294,9 @@ class InterviewRetrospectiveRepository:
             (item_id,),
         ).fetchone()
         stage = "analyzing_questions"
-        if row["work_key"] == "question_extraction":
+        if row["work_key"] == "question_extraction" or row[
+            "work_key"
+        ].startswith("question_extraction:") or row["work_key"] == "question_reduce":
             stage = "question_extraction"
         elif row["work_key"] == "gap_verification":
             stage = "verifying_gaps"
@@ -932,7 +1340,7 @@ class InterviewRetrospectiveRepository:
         completed = int(
             self.connection.execute(
                 "SELECT COUNT(*) FROM interview_analysis_work_items "
-                "WHERE analysis_run_id = ? AND status = 'completed'",
+                "WHERE analysis_run_id = ? AND status IN ('completed', 'skipped')",
                 (item.analysis_run_id,),
             ).fetchone()[0]
         )
@@ -944,6 +1352,95 @@ class InterviewRetrospectiveRepository:
         )
         self.connection.commit()
         return self.get_analysis_work_item(item_id)
+
+    def retry_analysis_work_item(
+        self, item_id: str, *, error_code: str
+    ) -> AnalysisWorkItemRecord:
+        cursor = self.connection.execute(
+            "UPDATE interview_analysis_work_items SET status = 'retryable', "
+            "last_error_code = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND status = 'running'",
+            (error_code, item_id),
+        )
+        if cursor.rowcount != 1:
+            self.connection.rollback()
+            raise RetrospectiveVersionConflict("分析工作项未处于运行状态")
+        self.connection.commit()
+        return self.get_analysis_work_item(item_id)
+
+    def split_question_extraction_item(
+        self, item_id: str, *, child_work_keys: tuple[str, ...]
+    ) -> tuple[AnalysisWorkItemRecord, ...]:
+        item = self.get_analysis_work_item(item_id)
+        if not item.work_key.startswith("question_extraction:"):
+            raise RetrospectiveVersionConflict("只能拆分问题提取窗口")
+        try:
+            cursor = self.connection.execute(
+                "UPDATE interview_analysis_work_items SET status = 'skipped', "
+                "last_error_code = 'provider_timeout_split', "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'running'",
+                (item_id,),
+            )
+            if cursor.rowcount != 1:
+                raise RetrospectiveVersionConflict("问题提取窗口未处于运行状态")
+            run = self.get_analysis_run(item.analysis_run_id)
+            for work_key in child_work_keys:
+                digest = hashlib.sha256(
+                    f"{run.input_digest}:{work_key}".encode("utf-8")
+                ).hexdigest()
+                self.connection.execute(
+                    "INSERT INTO interview_analysis_work_items("
+                    "id, analysis_run_id, work_key, input_digest) "
+                    "VALUES (?, ?, ?, ?) ON CONFLICT(analysis_run_id, work_key) "
+                    "DO NOTHING",
+                    (str(uuid4()), item.analysis_run_id, work_key, digest),
+                )
+            total = int(
+                self.connection.execute(
+                    "SELECT COUNT(*) FROM interview_analysis_work_items "
+                    "WHERE analysis_run_id = ?",
+                    (item.analysis_run_id,),
+                ).fetchone()[0]
+            )
+            completed = int(
+                self.connection.execute(
+                    "SELECT COUNT(*) FROM interview_analysis_work_items "
+                    "WHERE analysis_run_id = ? AND status IN ('completed', 'skipped')",
+                    (item.analysis_run_id,),
+                ).fetchone()[0]
+            )
+            self.connection.execute(
+                "UPDATE interview_analysis_runs SET total_items = ?, "
+                "completed_items = ?, latest_progress_at = CURRENT_TIMESTAMP, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (total, completed, item.analysis_run_id),
+            )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        return self.list_analysis_work_items(item.analysis_run_id)
+
+    def unblock_question_reduce(self, run_id: str) -> bool:
+        unfinished = int(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM interview_analysis_work_items "
+                "WHERE analysis_run_id = ? "
+                "AND work_key LIKE 'question_extraction%' "
+                "AND status NOT IN ('completed', 'skipped')",
+                (run_id,),
+            ).fetchone()[0]
+        )
+        if unfinished:
+            return False
+        cursor = self.connection.execute(
+            "UPDATE interview_analysis_work_items SET status = 'pending', "
+            "updated_at = CURRENT_TIMESTAMP WHERE analysis_run_id = ? "
+            "AND work_key = 'question_reduce' AND status = 'blocked'",
+            (run_id,),
+        )
+        self.connection.commit()
+        return cursor.rowcount == 1
 
     def save_question_analysis(
         self,
@@ -1566,6 +2063,82 @@ class InterviewRetrospectiveRepository:
         self.connection.commit()
         return self.get_cleanup_version(cleanup_id)
 
+    def confirm_clean_transcript(
+        self,
+        retrospective_id: str,
+        cleanup_id: str,
+        *,
+        expected_version: int,
+        segments: tuple[dict[str, object], ...],
+    ) -> CleanupVersionRecord:
+        if not segments:
+            raise ValueError("准确转写文档没有可供分析的内容")
+        try:
+            cleanup = self.connection.execute(
+                "SELECT document_body, document_sha256 FROM interview_cleanup_versions "
+                "WHERE id = ? AND retrospective_id = ? AND version = ? "
+                "AND status = 'review_pending'",
+                (cleanup_id, retrospective_id, expected_version),
+            ).fetchone()
+            if cleanup is None:
+                raise RetrospectiveVersionConflict("整理版本已更新或不可确认")
+            document_body = str(cleanup["document_body"] or "")
+            document_sha256 = hashlib.sha256(document_body.encode("utf-8")).hexdigest()
+            if cleanup["document_sha256"] != document_sha256:
+                raise ValueError("准确转写文档摘要不一致")
+            pending = self.connection.execute(
+                "SELECT 1 FROM interview_transcript_review_issues "
+                "WHERE cleanup_version_id = ? AND decision = 'pending' LIMIT 1",
+                (cleanup_id,),
+            ).fetchone()
+            if pending is not None:
+                raise ValueError("仍有待处理的核对问题")
+            self.connection.execute(
+                "DELETE FROM interview_segments WHERE cleanup_version_id = ?",
+                (cleanup_id,),
+            )
+            for ordinal, segment in enumerate(segments, start=1):
+                self.connection.execute(
+                    "INSERT INTO interview_segments("
+                    "id, cleanup_version_id, ordinal, speaker_role, "
+                    "raw_speaker_label, display_name, body, source_start, "
+                    "source_end, confidence, uncertainty_reason, ignored"
+                    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+                    (
+                        str(uuid4()),
+                        cleanup_id,
+                        ordinal,
+                        segment["speaker_role"],
+                        None,
+                        segment["display_name"],
+                        segment["body"],
+                        segment["source_start"],
+                        segment["source_end"],
+                        1.0,
+                        None,
+                    ),
+                )
+            cursor = self.connection.execute(
+                "UPDATE interview_cleanup_versions SET status = 'confirmed', "
+                "stage = 'confirmed', confirmed_at = CURRENT_TIMESTAMP, "
+                "version = version + 1, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND retrospective_id = ? AND version = ? "
+                "AND status = 'review_pending'",
+                (cleanup_id, retrospective_id, expected_version),
+            )
+            if cursor.rowcount != 1:
+                raise RetrospectiveVersionConflict("整理版本已更新或不可确认")
+            self.connection.execute(
+                "UPDATE interview_retrospectives SET active_cleanup_version_id = ?, "
+                "version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (cleanup_id, retrospective_id),
+            )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        return self.get_cleanup_version(cleanup_id)
+
     def clear_source(
         self,
         retrospective_id: str,
@@ -1599,10 +2172,30 @@ class InterviewRetrospectiveRepository:
                 (source_version_id,),
             )
             self.connection.execute(
+                "UPDATE interview_corrections SET original_text = NULL, "
+                "suggested_text = NULL, adopted_text = NULL, reason = NULL, "
+                "updated_at = CURRENT_TIMESTAMP WHERE cleanup_version_id IN ("
+                "SELECT id FROM interview_cleanup_versions "
+                "WHERE source_version_id = ?)",
+                (source_version_id,),
+            )
+            self.connection.execute(
                 "UPDATE interview_cleanup_work_items SET output_json = NULL, "
                 "updated_at = CURRENT_TIMESTAMP WHERE cleanup_version_id IN ("
                 "SELECT id FROM interview_cleanup_versions "
                 "WHERE source_version_id = ?)",
+                (source_version_id,),
+            )
+            self.connection.execute(
+                "DELETE FROM interview_transcript_review_issues "
+                "WHERE cleanup_version_id IN (SELECT id FROM "
+                "interview_cleanup_versions WHERE source_version_id = ?)",
+                (source_version_id,),
+            )
+            self.connection.execute(
+                "UPDATE interview_cleanup_versions SET document_body = NULL, "
+                "document_sha256 = NULL, updated_at = CURRENT_TIMESTAMP "
+                "WHERE source_version_id = ?",
                 (source_version_id,),
             )
             self.connection.execute(
@@ -1810,6 +2403,7 @@ def _source(row: sqlite3.Row) -> SourceVersionRecord:
         retrospective_id=row["retrospective_id"],
         ordinal=row["ordinal"],
         source_kind=row["source_kind"],
+        recording_coverage=row["recording_coverage"],
         file_name=row["file_name"],
         body=row["body"],
         content_sha256=row["content_sha256"],
@@ -1831,6 +2425,26 @@ def _cleanup(row: sqlite3.Row) -> CleanupVersionRecord:
         control_intent=row["control_intent"],
         confirmed_at=row["confirmed_at"],
         version=row["version"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+        document_body=row["document_body"],
+        document_sha256=row["document_sha256"],
+    )
+
+
+def _transcript_review_issue(row: sqlite3.Row) -> TranscriptReviewIssueRecord:
+    return TranscriptReviewIssueRecord(
+        id=row["id"],
+        cleanup_version_id=row["cleanup_version_id"],
+        ordinal=row["ordinal"],
+        document_start=row["document_start"],
+        document_end=row["document_end"],
+        excerpt=row["excerpt"],
+        suggestion=row["suggestion"],
+        issue_kind=row["issue_kind"],
+        reason=row["reason"],
+        confidence=row["confidence"],
+        decision=row["decision"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -1908,6 +2522,27 @@ def _analysis_work_item(row: sqlite3.Row) -> AnalysisWorkItemRecord:
         output=None if row["output_json"] is None else json.loads(row["output_json"]),
         attempt_count=row["attempt_count"],
         last_error_code=row["last_error_code"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _transcript_correction(row: sqlite3.Row) -> TranscriptCorrectionRecord:
+    return TranscriptCorrectionRecord(
+        id=row["id"],
+        cleanup_version_id=row["cleanup_version_id"],
+        segment_id=row["segment_id"],
+        source_start=row["source_start"],
+        source_end=row["source_end"],
+        original_text=row["original_text"],
+        original_sha256=row["original_sha256"],
+        suggested_text=row["suggested_text"],
+        adopted_text=row["adopted_text"],
+        change_type=row["change_type"],
+        risk_level=row["risk_level"],
+        reason=row["reason"],
+        confidence=row["confidence"],
+        decision=row["decision"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

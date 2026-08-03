@@ -22,6 +22,8 @@ RETROSPECTIVE_TABLES = {
     "interview_action_items",
     "interview_write_receipts",
     "interview_retrospective_corrections",
+    "interview_corrections",
+    "interview_transcript_review_issues",
 }
 
 
@@ -42,11 +44,102 @@ def test_runtime_migration_adds_versioned_retrospective_domain(
                 "SELECT version FROM runtime_schema_migrations ORDER BY version"
             )
         ]
+        source_columns = {
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(interview_source_versions)"
+            )
+        }
     finally:
         connection.close()
 
     assert RETROSPECTIVE_TABLES <= tables
-    assert migrations == list(range(1, 48))
+    assert migrations == list(range(1, 51))
+    assert "recording_coverage" in source_columns
+
+
+def test_runtime_migration_adds_clean_transcript_document_artifact(
+    tmp_path: Path,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+    try:
+        cleanup_columns = {
+            row["name"]: row
+            for row in connection.execute(
+                "PRAGMA table_info(interview_cleanup_versions)"
+            )
+        }
+        issue_columns = {
+            row["name"]: row
+            for row in connection.execute(
+                "PRAGMA table_info(interview_transcript_review_issues)"
+            )
+        }
+        issue_foreign_keys = {
+            (row["from"], row["table"], row["on_delete"])
+            for row in connection.execute(
+                "PRAGMA foreign_key_list(interview_transcript_review_issues)"
+            )
+        }
+    finally:
+        connection.close()
+
+    assert {"document_body", "document_sha256"} <= cleanup_columns.keys()
+    assert {
+        "cleanup_version_id",
+        "ordinal",
+        "document_start",
+        "document_end",
+        "excerpt",
+        "suggestion",
+        "issue_kind",
+        "reason",
+        "confidence",
+        "decision",
+    } <= issue_columns.keys()
+    assert (
+        "cleanup_version_id",
+        "interview_cleanup_versions",
+        "CASCADE",
+    ) in issue_foreign_keys
+
+
+def test_runtime_migration_adds_cleanup_correction_audit_fields(
+    tmp_path: Path,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+    try:
+        columns = {
+            row["name"]: row
+            for row in connection.execute("PRAGMA table_info(interview_corrections)")
+        }
+        foreign_keys = {
+            (row["from"], row["table"], row["on_delete"])
+            for row in connection.execute("PRAGMA foreign_key_list(interview_corrections)")
+        }
+    finally:
+        connection.close()
+
+    assert {
+        "cleanup_version_id",
+        "segment_id",
+        "source_start",
+        "source_end",
+        "original_text",
+        "suggested_text",
+        "adopted_text",
+        "change_type",
+        "risk_level",
+        "reason",
+        "confidence",
+        "decision",
+    } <= columns.keys()
+    assert (
+        "cleanup_version_id",
+        "interview_cleanup_versions",
+        "CASCADE",
+    ) in foreign_keys
+    assert ("segment_id", "interview_segments", "CASCADE") in foreign_keys
 
 
 def test_app_migration_backfills_retrospective_model_roles(

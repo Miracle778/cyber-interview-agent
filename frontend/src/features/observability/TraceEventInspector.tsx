@@ -18,6 +18,8 @@ interface TraceEventInspectorProps {
   onClose?: () => void;
 }
 
+const AUTO_LOAD_BODY_LIMIT = 200 * 1024;
+
 function eventFamily(eventType: string) {
   if (eventType === "model.request") return "请求";
   if (eventType === "model.response") return "响应";
@@ -48,15 +50,23 @@ export function TraceEventInspector({
     if (!event || !advancedEnabled || event.bodyState !== "available") return;
     const controller = new AbortController();
     setLoading(true);
-    void getTraceEventContent(
-      workspaceId,
-      runId,
-      event.eventId,
-      0,
-      controller.signal,
-    ).then((page) => {
-      setPages([page]);
-    }).catch((reason: unknown) => {
+    void (async () => {
+      const loadedPages: TraceEventContent[] = [];
+      let offset = 0;
+      do {
+        const page = await getTraceEventContent(
+          workspaceId,
+          runId,
+          event.eventId,
+          offset,
+          controller.signal,
+        );
+        loadedPages.push(page);
+        if (page.nextOffset === null || event.byteLength > AUTO_LOAD_BODY_LIMIT) break;
+        offset = page.nextOffset;
+      } while (!controller.signal.aborted);
+      if (!controller.signal.aborted) setPages(loadedPages);
+    })().catch((reason: unknown) => {
       if (!controller.signal.aborted) setError(reason);
     }).finally(() => {
       if (!controller.signal.aborted) setLoading(false);
@@ -156,7 +166,7 @@ export function TraceEventInspector({
             </div>
           ) : null}
 
-          {event.bodyState === "available" && event.byteLength > 200 * 1024 ? (
+          {event.bodyState === "available" && event.byteLength > AUTO_LOAD_BODY_LIMIT ? (
             <p className="trace-event-inspector__size-warning">
               <AlertTriangle size={16} aria-hidden="true" />
               <span>
@@ -195,7 +205,9 @@ export function TraceEventInspector({
               disabled={loadingMore}
               onClick={() => void loadMore()}
             >
-              {loadingMore ? "正在加载…" : "继续加载"}
+              {loadingMore
+                ? "正在加载…"
+                : `继续加载剩余正文（已加载 ${Math.min(nextOffset, event.byteLength).toLocaleString()} / ${event.byteLength.toLocaleString()} B）`}
             </button>
           ) : null}
 

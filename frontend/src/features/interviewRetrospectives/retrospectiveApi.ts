@@ -7,6 +7,7 @@ import type {
   CandidateDecisionInput,
   CleanupReceipt,
   CleanupVersion,
+  CorrectionDecisionEdit,
   InterviewRetrospective,
   InterviewQuestion,
   RetrospectiveLifecycle,
@@ -16,7 +17,9 @@ import type {
   PublicationSection,
   RetrospectiveOutcome,
   SegmentEdit,
+  TranscriptReviewIssueDecisionEdit,
   SourceKind,
+  RecordingCoverage,
   SourceVersion,
   RetrospectiveConversation,
   RetrospectiveCorrectionProposal,
@@ -70,7 +73,7 @@ export function createRetrospective(
 export function addSourceVersion(
   workspaceId: string,
   retrospectiveId: string,
-  input: { sourceKind: SourceKind; body: string; fileName?: string | null },
+  input: { sourceKind: SourceKind; recordingCoverage: RecordingCoverage; body: string; fileName?: string | null },
 ) {
   return apiRequest<SourceVersion>(
     `/api/interview-retrospectives/${retrospectiveId}/sources`,
@@ -165,13 +168,32 @@ export function updateSegments(
   cleanupId: string,
   expectedVersion: number,
   segments: SegmentEdit[],
+  correctionDecisions: CorrectionDecisionEdit[] = [],
 ) {
   return apiRequest<CleanupVersion>(
     `/api/interview-retrospectives/${retrospectiveId}/cleanup-runs/${cleanupId}/segments`,
     command(
       "PATCH",
-      { workspaceId, expectedVersion, segments },
+      { workspaceId, expectedVersion, segments, correctionDecisions },
       "retrospective-segments",
+    ),
+  );
+}
+
+export function updateCleanTranscriptDocument(
+  workspaceId: string,
+  retrospectiveId: string,
+  cleanupId: string,
+  expectedVersion: number,
+  documentBody: string,
+  reviewIssueDecisions: TranscriptReviewIssueDecisionEdit[] = [],
+) {
+  return apiRequest<CleanupVersion>(
+    `/api/interview-retrospectives/${retrospectiveId}/cleanup-runs/${cleanupId}/document`,
+    command(
+      "PUT",
+      { workspaceId, expectedVersion, documentBody, reviewIssueDecisions },
+      "retrospective-document",
     ),
   );
 }

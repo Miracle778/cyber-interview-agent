@@ -5,8 +5,8 @@ from typing import Any
 
 from app.observability.models import ObservabilityCapability, TraceHealth
 from app.observability.registry import (
-    AGENT_OBSERVABILITY_REGISTRY,
     AgentObservabilityRegistration,
+    resolve_observability_registration,
 )
 from app.observability.repository import TraceIndexRepository
 from app.schemas.observability import (
@@ -30,7 +30,9 @@ class ExecutionSummaryAssembler:
         self.trace_repository = trace_repository
 
     def assemble(self, run: dict[str, Any]) -> ExecutionSummaryResource:
-        registration = AGENT_OBSERVABILITY_REGISTRY[run["graph_id"]]
+        registration = resolve_observability_registration(run["graph_id"])
+        if registration is None:
+            raise LookupError(f"unregistered Agent graph: {run['graph_id']}")
         trace = self.trace_repository.get_execution(run["id"])
         operations = self.trace_repository.list_operations(run["id"])
         usage = self._usage(run["id"])
@@ -56,7 +58,7 @@ class ExecutionSummaryAssembler:
             workspace_id=self.workspace_id,
             graph_id=run["graph_id"],
             display_name=registration.display_name,
-            system=registration.system or run["visibility"] == "system",
+            system=registration.system,
             title=run["title"],
             status=run["status"],
             trace_health=trace_health,

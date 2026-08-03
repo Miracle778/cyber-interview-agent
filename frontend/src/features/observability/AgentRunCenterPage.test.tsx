@@ -103,6 +103,26 @@ const failedExecution: ExecutionSummary = {
   errorCode: "provider_unavailable",
 };
 
+const interruptedExecution: ExecutionSummary = {
+  ...runningExecution,
+  id: "run-interrupted",
+  sessionId: "session-interrupted",
+  title: "暂停的复盘分析",
+  displayName: "面试复盘",
+  status: "interrupted",
+  capabilities: ["open_business", "resume"],
+};
+
+const cancelledExecution: ExecutionSummary = {
+  ...runningExecution,
+  id: "run-cancelled",
+  sessionId: "session-cancelled",
+  title: "取消的复盘分析",
+  displayName: "面试复盘",
+  status: "cancelled",
+  capabilities: ["open_business"],
+};
+
 const recoveredCurationFailure: ExecutionSummary = {
   ...runningExecution,
   id: "run-curation-failed",
@@ -199,11 +219,11 @@ describe("AgentRunCenterPage", () => {
       "/agents/evaluations",
     );
     const tabs = await screen.findByRole("navigation", { name: "任务状态" });
-    expect(within(tabs).getByRole("button", { name: "全部 2" })).toHaveAttribute(
+    expect(within(tabs).getByRole("button", { name: "关注中 1" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
-    expect(within(tabs).getByRole("button", { name: "进行中 1" })).toBeInTheDocument();
+    expect(within(tabs).queryByRole("button", { name: "进行中 1" })).not.toBeInTheDocument();
     expect(within(tabs).getByRole("button", { name: "已完成 1" })).toBeInTheDocument();
 
     const row = within(taskList()).getByRole("button", {
@@ -235,8 +255,11 @@ describe("AgentRunCenterPage", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", {
         name: "查看需要你处理的 2 个任务",
-      })).toHaveAttribute("aria-pressed", "true");
+      })).toHaveAttribute("aria-pressed", "false");
     });
+    expect(within(screen.getByRole("navigation", { name: "任务状态" }))
+      .getByRole("button", { name: "关注中 3" }))
+      .toHaveAttribute("aria-pressed", "true");
     expect(actionCenter).not.toHaveTextContent("补充项目背景");
     expect(actionCenter).not.toHaveTextContent("项目深入讨论");
     expect(within(taskList()).getByRole("button", {
@@ -258,7 +281,7 @@ describe("AgentRunCenterPage", () => {
     const tabs = await screen.findByRole("navigation", { name: "任务状态" });
 
     await waitFor(() => {
-      expect(within(tabs).getByRole("button", { name: "需要我 2" })).toHaveAttribute(
+      expect(within(tabs).getByRole("button", { name: "关注中 2" })).toHaveAttribute(
         "aria-pressed",
         "true",
       );
@@ -299,10 +322,10 @@ describe("AgentRunCenterPage", () => {
     render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
     const tabs = await screen.findByRole("navigation", { name: "任务状态" });
 
-    fireEvent.click(within(tabs).getByRole("button", { name: "需要我 2" }));
-    expect(within(taskList()).queryByRole("button", {
+    fireEvent.click(within(tabs).getByRole("button", { name: "关注中 3" }));
+    expect(within(taskList()).getByRole("button", {
       name: /MyBatis 拦截器资料整理/,
-    })).not.toBeInTheDocument();
+    })).toBeInTheDocument();
     expect(within(taskList()).getByRole("button", {
       name: /补充项目背景/,
     })).toBeInTheDocument();
@@ -317,6 +340,33 @@ describe("AgentRunCenterPage", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("offers a quick filter for paused and cancelled tasks", async () => {
+    mockPage(page([
+      completedExecution,
+      interruptedExecution,
+      cancelledExecution,
+    ]));
+
+    render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
+    const tabs = await screen.findByRole("navigation", { name: "任务状态" });
+    const stoppedTab = within(tabs).getByRole("button", {
+      name: "已暂停/取消 2",
+    });
+
+    fireEvent.click(stoppedTab);
+
+    expect(stoppedTab).toHaveAttribute("aria-pressed", "true");
+    expect(within(taskList()).getByRole("button", {
+      name: /暂停的复盘分析/,
+    })).toBeInTheDocument();
+    expect(within(taskList()).getByRole("button", {
+      name: /取消的复盘分析/,
+    })).toBeInTheDocument();
+    expect(within(taskList()).queryByRole("button", {
+      name: /简历 v3 画像建议/,
+    })).not.toBeInTheDocument();
+  });
+
   it("uses one responsive filter panel for Agent, detailed status, and system tasks", async () => {
     const fetchSpy = mockPage();
 
@@ -328,9 +378,16 @@ describe("AgentRunCenterPage", () => {
     const filters = screen.getByRole("region", { name: "运行筛选" });
     expect(trigger).toHaveAttribute("aria-expanded", "true");
     expect(screen.getAllByLabelText("运行状态")).toHaveLength(1);
-    expect(within(filters).getByRole("option", { name: "需要我处理" })).toBeInTheDocument();
+    expect(within(filters).getByRole("option", {
+      name: "关注中（需处理或进行中）",
+    })).toBeInTheDocument();
+    expect(within(filters).getByRole("option", { name: "仅需要我处理" })).toBeInTheDocument();
+    expect(within(filters).getByRole("option", { name: "仅进行中" })).toBeInTheDocument();
     expect(within(filters).getByRole("option", { name: "已停止" })).toBeInTheDocument();
 
+    fireEvent.change(within(filters).getByLabelText("运行状态"), {
+      target: { value: "" },
+    });
     fireEvent.change(within(filters).getByLabelText("Agent"), {
       target: { value: "画像助手" },
     });
@@ -371,6 +428,8 @@ describe("AgentRunCenterPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "关闭任务详情" }));
     expect(screen.queryByRole("complementary", { name: "任务详情" })).not.toBeInTheDocument();
 
+    fireEvent.click(within(screen.getByRole("navigation", { name: "任务状态" }))
+      .getByRole("button", { name: "全部 2" }));
     fireEvent.click(within(taskList()).getByRole("button", {
       name: /简历 v3 画像建议/,
     }));
@@ -387,7 +446,7 @@ describe("AgentRunCenterPage", () => {
     let preview = screen.getByRole("complementary", { name: "任务详情" });
     expect(within(preview).getByRole("link", { name: "查看任务页面" })).toHaveAttribute(
       "href",
-      "/review?section=catalog&curationSessionId=session-running&returnTo=%2Fagents",
+      "/review?section=catalog&curationSessionId=session-running&returnTo=%2Fagents%3Fstatus%3Dfocused",
     );
     expect(within(preview).getByRole("link", { name: "查看运行详情" })).toHaveAttribute(
       "href",
@@ -399,6 +458,8 @@ describe("AgentRunCenterPage", () => {
         .queryByRole("link", { name: /运行详情/ }),
     ).not.toBeInTheDocument();
 
+    fireEvent.click(within(screen.getByRole("navigation", { name: "任务状态" }))
+      .getByRole("button", { name: "全部 2" }));
     fireEvent.click(within(taskList()).getByRole("button", {
       name: /简历 v3 画像建议/,
     }));
@@ -422,7 +483,7 @@ describe("AgentRunCenterPage", () => {
     await waitFor(() => {
       expect(within(preview).getByRole("link", { name: "打开业务页面" })).toHaveAttribute(
         "href",
-        "/review?returnTo=%2Fagents%3Fstatus%3Dneeds_me",
+        "/review?returnTo=%2Fagents%3Fstatus%3Dfocused",
       );
     });
     expect(within(preview).getByRole("link", { name: "查看失败详情" })).toHaveAttribute(
@@ -443,7 +504,7 @@ describe("AgentRunCenterPage", () => {
 
     const tabs = await screen.findByRole("navigation", { name: "任务状态" });
     await waitFor(() => {
-      expect(within(tabs).getByRole("button", { name: "需要我 1" })).toHaveAttribute(
+      expect(within(tabs).getByRole("button", { name: "关注中 1" })).toHaveAttribute(
         "aria-pressed",
         "true",
       );
@@ -519,6 +580,8 @@ describe("AgentRunCenterPage", () => {
     mockPage(page([runningExecution]));
 
     render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
+    fireEvent.click(within(await screen.findByRole("navigation", { name: "任务状态" }))
+      .getByRole("button", { name: "全部 1" }));
     const row = await within(await screen.findByRole("region", { name: "任务列表" }))
       .findByRole("button", { name: /MyBatis 拦截器资料整理/ });
     expect(FakeEventSource.instances[0].url).toBe(

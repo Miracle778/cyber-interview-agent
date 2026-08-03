@@ -21,6 +21,24 @@ describe("AnalysisProgress", () => {
     expect(onStop).toHaveBeenCalledOnce();
   });
 
+  it("shows question-window extraction progress separately from question analysis", () => {
+    const items = [
+      { id: "e-1", questionUnitId: null, workKey: "question_extraction:1:20", status: "completed", attemptCount: 1, lastErrorCode: null, updatedAt: "now" },
+      { id: "e-2", questionUnitId: null, workKey: "question_extraction:17:36", status: "running", attemptCount: 1, lastErrorCode: null, updatedAt: "now" },
+      { id: "e-3", questionUnitId: null, workKey: "question_extraction:33:50", status: "pending", attemptCount: 0, lastErrorCode: null, updatedAt: "now" },
+      { id: "r-1", questionUnitId: null, workKey: "question_reduce", status: "blocked", attemptCount: 0, lastErrorCode: null, updatedAt: "now" },
+    ];
+    render(<AnalysisProgress run={{ ...run, stage: "question_extraction", currentWorkKey: "question_extraction:17:36" }} items={items} busy={false} onStop={vi.fn()} onResume={vi.fn()} onRetry={vi.fn()} />);
+    expect(screen.getByText("正在分段识别面试问题（1 / 3）")).toBeVisible();
+  });
+
+  it("collapses a completed run into one saved-result summary", () => {
+    const view = render(<AnalysisProgress run={{ ...run, status: "completed", stage: "completed", completedItems: 5 }} busy={false} onStop={vi.fn()} onResume={vi.fn()} onRetry={vi.fn()} />);
+    expect(screen.getByText("复盘分析已完成")).toBeVisible();
+    expect(screen.getByText("5 个分析步骤已保存")).toBeVisible();
+    expect(view.container.querySelector('[role="progressbar"]')).not.toBeInTheDocument();
+  });
+
   it("offers resume after a stop and retry after a failure", () => {
     const onResume = vi.fn();
     const onRetry = vi.fn();

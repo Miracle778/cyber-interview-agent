@@ -216,7 +216,7 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == list(range(1, 48))
+        ] == list(range(1, 52))
     assert "agent_context_usage" in _tables(connection)
     assert "profile_deletion_plans" in _tables(connection)
     assert "deleted_at" in {
@@ -1075,7 +1075,75 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == list(range(1, 48))
+            ] == list(range(1, 52))
+    reopened.close()
+
+
+def test_review_issue_migration_resolves_legacy_non_actionable_candidates(
+    tmp_path: Path,
+) -> None:
+    connection = _create_runtime_at_version(tmp_path, 50)
+    connection.executemany(
+        "INSERT INTO agent_sessions "
+        "(id, workspace_id, graph_id, graph_version, title) VALUES (?, 'w1', ?, 1, ?)",
+        (
+            ("analysis-session", "interview.retrospective.analysis", "Analysis"),
+            ("chat-session", "interview.retrospective.chat", "Chat"),
+        ),
+    )
+    connection.execute(
+        "INSERT INTO job_targets "
+        "(id, workspace_id, role_name, seniority) "
+        "VALUES ('target', 'w1', '工程师', '3-5 年')"
+    )
+    connection.execute(
+        "INSERT INTO interview_retrospectives "
+        "(id, workspace_id, job_target_id, title, round_label, analysis_session_id, "
+        "chat_session_id, create_idempotency_key) VALUES "
+        "('retro', 'w1', 'target', '复盘', '一面', 'analysis-session', "
+        "'chat-session', 'create-retro')"
+    )
+    connection.execute(
+        "INSERT INTO interview_source_versions "
+        "(id, retrospective_id, ordinal, source_kind, body, content_sha256) VALUES "
+        "('source', 'retro', 1, 'transcript', '数字签名', ?)",
+        ("a" * 64,),
+    )
+    connection.execute(
+        "INSERT INTO interview_cleanup_versions "
+        "(id, retrospective_id, source_version_id, ordinal, input_digest, status, "
+        "stage, document_body, document_sha256) VALUES "
+        "('cleanup', 'retro', 'source', 1, ?, 'review_pending', "
+        "'waiting_for_review', '数字签名', ?)",
+        ("b" * 64, "c" * 64),
+    )
+    connection.executemany(
+        "INSERT INTO interview_transcript_review_issues "
+        "(id, cleanup_version_id, ordinal, document_start, document_end, excerpt, "
+        "suggestion, issue_kind, reason, confidence) VALUES "
+        "(?, 'cleanup', ?, 0, 4, '数字签名', ?, 'uncertain_term', ?, 0.6)",
+        (
+            (
+                "ambiguous",
+                1,
+                "代码签名",
+                "模型返回的不确定项无法在当前目标正文中唯一定位，请核对该窗口",
+            ),
+            ("same", 2, "数字签名", "模型不能百分之百确认",),
+            ("missing", 3, None, "模型不能百分之百确认",),
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    reopened = connect_runtime_database(tmp_path)
+
+    assert [
+        row[0]
+        for row in reopened.execute(
+            "SELECT decision FROM interview_transcript_review_issues ORDER BY ordinal"
+        )
+    ] == ["kept", "kept", "kept"]
     reopened.close()
 
 

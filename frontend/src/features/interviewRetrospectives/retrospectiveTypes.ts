@@ -7,6 +7,7 @@ export type RetrospectiveOutcome =
 
 export type RetrospectiveLifecycle = "active" | "archived" | "recycled";
 export type SourceKind = "transcript" | "recollection";
+export type RecordingCoverage = "full_dialogue" | "candidate_only" | "mixed_unknown";
 export type SpeakerRole = "candidate" | "interviewer" | "unknown";
 
 export interface InterviewRetrospective {
@@ -33,6 +34,7 @@ export interface SourceVersion {
   retrospectiveId: string;
   ordinal: number;
   sourceKind: SourceKind;
+  recordingCoverage: RecordingCoverage;
   fileName: string | null;
   contentSha256: string;
   bodyAvailable: boolean;
@@ -67,6 +69,35 @@ export interface CleanupSegment {
   version: number;
 }
 
+export type TranscriptCorrectionDecision =
+  | "auto_accepted"
+  | "pending"
+  | "accepted"
+  | "kept_original"
+  | "manual"
+  | "superseded";
+
+export interface TranscriptCorrection {
+  id: string;
+  segmentId: string;
+  sourceStart: number;
+  sourceEnd: number;
+  originalText: string | null;
+  suggestedText: string | null;
+  adoptedText: string | null;
+  changeType: "formatting" | "recognition" | "semantic";
+  riskLevel: "low" | "high";
+  reason: string | null;
+  confidence: number;
+  decision: TranscriptCorrectionDecision;
+}
+
+export interface CorrectionDecisionEdit {
+  id: string;
+  decision: "accepted" | "kept_original" | "manual";
+  manualText: string | null;
+}
+
 export interface CleanupVersion {
   id: string;
   retrospectiveId: string;
@@ -77,10 +108,40 @@ export interface CleanupVersion {
   stage: string;
   controlIntent: string | null;
   confirmedAt: string | null;
+  documentBody?: string | null;
+  documentSha256?: string | null;
+  completedItems: number;
+  totalItems: number;
+  activeItems: number;
+  failedItems: number;
+  currentWorkKey: string | null;
+  lastErrorCode: string | null;
+  activeSince?: string | null;
+  latestProgressAt?: string | null;
   version: number;
   createdAt: string;
   updatedAt: string;
   segments: CleanupSegment[];
+  corrections?: TranscriptCorrection[];
+  reviewIssues?: TranscriptReviewIssue[];
+}
+
+export interface TranscriptReviewIssue {
+  id: string;
+  ordinal: number;
+  documentStart: number;
+  documentEnd: number;
+  excerpt: string;
+  suggestion: string | null;
+  issueKind: "uncertain_term" | "speaker" | "semantic";
+  reason: string;
+  confidence: number;
+  decision: "pending" | "accepted" | "kept" | "manual";
+}
+
+export interface TranscriptReviewIssueDecisionEdit {
+  id: string;
+  decision: "accepted" | "kept" | "manual";
 }
 
 export interface CleanupReceipt {

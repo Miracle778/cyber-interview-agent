@@ -209,8 +209,20 @@ AGENT_OBSERVABILITY_REGISTRY = {
     registration.graph_id: registration for registration in _REGISTRATIONS
 }
 
+_LEGACY_GRAPH_ID_ALIASES = {
+    "interview.retrospective.analysis": "interview.retrospective",
+    "interview.retrospective.chat": "interview.retrospective",
+}
+
 if len(AGENT_OBSERVABILITY_REGISTRY) != len(_REGISTRATIONS):
     raise RuntimeError("Agent observability registry contains duplicate graph IDs")
+
+
+def resolve_observability_registration(
+    graph_id: str,
+) -> AgentObservabilityRegistration | None:
+    canonical = _LEGACY_GRAPH_ID_ALIASES.get(graph_id, graph_id)
+    return AGENT_OBSERVABILITY_REGISTRY.get(canonical)
 
 
 def assert_registry_complete(graph_ids: frozenset[str] | set[str]) -> None:

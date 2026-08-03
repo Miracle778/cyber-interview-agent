@@ -28,10 +28,11 @@ export function QuestionTimeline({ questions, analyses, items, selectedId, onSel
         const analysis = analysisByQuestion.get(question.id);
         const state = questionViewState(question, analysis, itemByQuestion.get(question.id));
         const StateIcon = state === "failed" ? AlertTriangle : state === "running" ? LoaderCircle : state === "completed" ? Check : CircleDashed;
+        const summaryLabel = analysis && state === "completed" ? verdictLabel(analysis.verdict) : STATE_LABELS[state];
+        const pendingInference = question.origin === "inferred" && question.decisionStatus === "pending";
         return <button type="button" key={question.id} data-selected={selectedId === question.id} data-state={state} onClick={() => onSelect(question.id)}>
           <span className="question-timeline__ordinal">{question.ordinal}</span>
-          <span className="question-timeline__copy"><strong>{question.questionText}</strong><small><span data-state={state}><StateIcon size={13} /> {STATE_LABELS[state]}</span>{analysis ? <span>{verdictLabel(analysis.verdict)}</span> : null}</small></span>
-          {question.origin === "inferred" ? <em><Sparkles size={12} /> 推断题</em> : null}
+          <span className="question-timeline__copy"><strong>{question.questionText}</strong><small><span data-state={state}>{pendingInference ? <Sparkles size={13} /> : <StateIcon size={13} />} {pendingInference ? `需确认 · ${summaryLabel}` : summaryLabel}</span></small></span>
         </button>;
       })}
       {!questions.length ? <div className="question-timeline__empty"><CircleDashed size={24} /><p>正在识别面试问题，识别完成后会逐题显示。</p></div> : null}

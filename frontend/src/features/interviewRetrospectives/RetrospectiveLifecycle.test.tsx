@@ -38,6 +38,7 @@ describe("retrospective lifecycle actions", () => {
     const onChanged = vi.fn();
     render(<RetrospectiveLifecycleActions retrospective={retrospective("active")} onChanged={onChanged} onError={vi.fn()} />);
 
+    fireEvent.click(screen.getByText("更多操作"));
     fireEvent.click(screen.getByRole("button", { name: "清除原文" }));
     expect(screen.getByText(/无法再查看转写、核对原文引用/)).toBeVisible();
     expect(screen.getByText(/已确认的问题、结论、准备资产和行动项会保留/)).toBeVisible();
@@ -55,6 +56,7 @@ describe("retrospective lifecycle actions", () => {
   it("archives without requiring destructive confirmation text", async () => {
     const onChanged = vi.fn();
     render(<RetrospectiveLifecycleActions retrospective={retrospective("active")} onChanged={onChanged} onError={vi.fn()} />);
+    fireEvent.click(screen.getByText("更多操作"));
     fireEvent.click(screen.getByRole("button", { name: "归档" }));
     await waitFor(() => expect(api.transitionRetrospective).toHaveBeenCalledWith("w1", expect.objectContaining({ id: "retro-1" }), "archive"));
     expect(screen.queryByLabelText("永久删除确认")).toBeNull();
@@ -63,6 +65,7 @@ describe("retrospective lifecycle actions", () => {
   it("shows private deletion impact and preserves external assets", async () => {
     const onChanged = vi.fn();
     render(<RetrospectiveLifecycleActions retrospective={retrospective("recycled")} onChanged={onChanged} onError={vi.fn()} />);
+    fireEvent.click(screen.getByText("更多操作"));
     fireEvent.click(screen.getByRole("button", { name: "永久删除" }));
 
     expect(await screen.findByText(/1 份原文、2 个整理版本、3 次分析和 5 个行动项/)).toBeVisible();

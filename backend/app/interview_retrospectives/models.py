@@ -9,6 +9,9 @@ InterviewOutcome: TypeAlias = Literal[
     "pending", "passed", "failed", "cancelled", "unrecorded"
 ]
 SourceKind: TypeAlias = Literal["transcript", "recollection"]
+RecordingCoverage: TypeAlias = Literal[
+    "full_dialogue", "candidate_only", "mixed_unknown"
+]
 SpeakerRole: TypeAlias = Literal["candidate", "interviewer", "unknown"]
 QuestionOrigin: TypeAlias = Literal["original", "inferred"]
 QuestionDecision: TypeAlias = Literal["pending", "confirmed", "rejected", "superseded"]
@@ -35,6 +38,18 @@ CorrectionType: TypeAlias = Literal[
     "question_segment_rebind",
     "speaker_correction",
     "analysis_reconsideration",
+]
+TranscriptCorrectionType: TypeAlias = Literal[
+    "formatting", "recognition", "semantic"
+]
+TranscriptCorrectionRisk: TypeAlias = Literal["low", "high"]
+TranscriptCorrectionDecision: TypeAlias = Literal[
+    "auto_accepted",
+    "pending",
+    "accepted",
+    "kept_original",
+    "manual",
+    "superseded",
 ]
 
 
@@ -65,6 +80,7 @@ class SourceVersionRecord:
     retrospective_id: str
     ordinal: int
     source_kind: SourceKind
+    recording_coverage: RecordingCoverage
     file_name: str | None
     body: str
     content_sha256: str
@@ -85,6 +101,25 @@ class CleanupVersionRecord:
     control_intent: str | None
     confirmed_at: str | None
     version: int
+    created_at: str
+    updated_at: str
+    document_body: str | None = None
+    document_sha256: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptReviewIssueRecord:
+    id: str
+    cleanup_version_id: str
+    ordinal: int
+    document_start: int
+    document_end: int
+    excerpt: str
+    suggestion: str | None
+    issue_kind: Literal["uncertain_term", "speaker", "semantic"]
+    reason: str
+    confidence: float
+    decision: Literal["pending", "accepted", "kept", "manual"]
     created_at: str
     updated_at: str
 
@@ -120,6 +155,26 @@ class SegmentRecord:
     uncertainty_reason: str | None
     ignored: bool
     version: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptCorrectionRecord:
+    id: str
+    cleanup_version_id: str
+    segment_id: str
+    source_start: int
+    source_end: int
+    original_text: str | None
+    original_sha256: str
+    suggested_text: str | None
+    adopted_text: str | None
+    change_type: TranscriptCorrectionType
+    risk_level: TranscriptCorrectionRisk
+    reason: str | None
+    confidence: float
+    decision: TranscriptCorrectionDecision
     created_at: str
     updated_at: str
 

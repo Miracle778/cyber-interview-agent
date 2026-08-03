@@ -107,7 +107,7 @@ def test_analysis_requires_confirmed_cleanup(tmp_path) -> None:
     connection.close()
 
 
-def test_analysis_run_is_idempotent_and_starts_with_extraction_work(tmp_path) -> None:
+def test_analysis_run_is_idempotent_and_plans_extraction_then_reduce(tmp_path) -> None:
     connection, service, repository, retrospective, cleanup = _analysis_fixture(
         tmp_path
     )
@@ -143,10 +143,13 @@ def test_analysis_run_is_idempotent_and_starts_with_extraction_work(tmp_path) ->
     assert replay.id == first.id
     assert same_digest.id == first.id
     assert first.stage == "question_extraction"
-    assert first.total_items == 1
-    assert [
-        item.work_key for item in repository.list_analysis_work_items(first.id)
-    ] == ["question_extraction"]
+    assert first.total_items == 2
+    items = repository.list_analysis_work_items(first.id)
+    assert [item.work_key for item in items] == [
+        "question_extraction:1:2",
+        "question_reduce",
+    ]
+    assert [item.status for item in items] == ["pending", "blocked"]
     connection.close()
 
 
@@ -201,6 +204,52 @@ def test_questions_persist_with_original_and_inferred_decision_defaults(
     assert [item.decision_status for item in questions] == ["confirmed", "pending"]
     assert questions[0].question_segment_ids == (segments[0].id,)
     assert questions[1].inference_basis == "回答提到了双写一致性"
+    connection.close()
+
+
+def test_timed_out_question_window_is_replaced_by_durable_children(tmp_path) -> None:
+    connection, service, repository, retrospective, cleanup = _analysis_fixture(
+        tmp_path
+    )
+    cleanup = service.confirm_cleanup(
+        retrospective.id,
+        cleanup.id,
+        expected_version=cleanup.version,
+        idempotency_key="confirm-split-question-window",
+    )
+    run = service.create_analysis_run(
+        retrospective.id,
+        cleanup.id,
+        input_digest="e" * 64,
+        context_snapshot={"targetId": retrospective.job_target_id},
+        idempotency_key="analysis-split-question-window",
+    )
+    parent = repository.list_analysis_work_items(run.id)[0]
+    claimed = repository.claim_analysis_work_item(parent.id)
+
+    repository.split_question_extraction_item(
+        claimed.id,
+        child_work_keys=("question_extraction:1:1", "question_extraction:2:2"),
+    )
+
+    items = repository.list_analysis_work_items(run.id)
+    by_key = {item.work_key: item for item in items}
+    assert by_key[parent.work_key].status == "skipped"
+    assert by_key["question_extraction:1:1"].status == "pending"
+    assert by_key["question_extraction:2:2"].status == "pending"
+    assert by_key["question_reduce"].status == "blocked"
+    assert repository.get_analysis_run(run.id).total_items == 4
+    assert not repository.unblock_question_reduce(run.id)
+
+    for key in ("question_extraction:1:1", "question_extraction:2:2"):
+        child = repository.claim_analysis_work_item(by_key[key].id)
+        repository.complete_analysis_work_item(child.id, output={"questions": []})
+
+    assert repository.unblock_question_reduce(run.id)
+    reducer = {
+        item.work_key: item for item in repository.list_analysis_work_items(run.id)
+    }["question_reduce"]
+    assert reducer.status == "pending"
     connection.close()
 
 

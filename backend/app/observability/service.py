@@ -26,7 +26,7 @@ from app.observability.export_service import (
     TraceExportRecord,
     TraceExportService,
 )
-from app.observability.registry import AGENT_OBSERVABILITY_REGISTRY
+from app.observability.registry import resolve_observability_registration
 from app.observability.repository import TraceIndexRepository
 from app.observability.summary import ExecutionSummaryAssembler
 from app.schemas.observability import (
@@ -162,9 +162,9 @@ class AgentObservabilityService:
         ]
         agent_counts: dict[str, dict[str, int]] = {}
         for row in agent_scope:
-            display_name = AGENT_OBSERVABILITY_REGISTRY[
-                row["graph_id"]
-            ].display_name
+            registration = resolve_observability_registration(row["graph_id"])
+            assert registration is not None
+            display_name = registration.display_name
             counts = agent_counts.setdefault(display_name, {})
             counts[row["status"]] = counts.get(row["status"], 0) + 1
         scoped = [
@@ -364,7 +364,7 @@ class AgentObservabilityService:
         if row is None:
             raise AgentExecutionNotFoundError("Agent Execution 不存在")
         result = dict(row)
-        registration = AGENT_OBSERVABILITY_REGISTRY.get(result["graph_id"])
+        registration = resolve_observability_registration(result["graph_id"])
         if registration is None or not registration.run_center_visible:
             raise AgentExecutionNotFoundError("Agent Execution 不存在")
         return result
@@ -380,12 +380,10 @@ class AgentObservabilityService:
         started_to: str | None,
         include_system_agents: bool,
     ) -> bool:
-        registration = AGENT_OBSERVABILITY_REGISTRY.get(row["graph_id"])
+        registration = resolve_observability_registration(row["graph_id"])
         if registration is None or not registration.run_center_visible:
             return False
-        if not include_system_agents and (
-            registration.system or row["visibility"] == "system"
-        ):
+        if not include_system_agents and registration.system:
             return False
         if not AgentObservabilityService._matches_status(
             row["status"], status
@@ -395,6 +393,7 @@ class AgentObservabilityService:
             normalized_agent = agent.casefold()
             if normalized_agent not in {
                 row["graph_id"].casefold(),
+                registration.graph_id.casefold(),
                 registration.display_name.casefold(),
             }:
                 return False
