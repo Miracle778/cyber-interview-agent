@@ -8,6 +8,14 @@
 - 采用 Git 版本化静态 Agent Control Plane：Definition 同时拥有身份、Builder、Schema、策略、运行中心和 Eval 契约；新任务 fail-closed，历史未知 Agent 只读兼容；内部子 Agent 进入 Operation 树而不是顶层任务列表。
 - 正式决定：`docs/superpowers/architecture-decisions/2026-08-04-agent-control-plane-and-registration-contract.md`。
 
+## 2026-08-04：Agent Control Plane Phase 2 单一 Definition 与 Builder
+
+- 原 `PRODUCTION_GRAPH_KINDS` 与 Observability Registry 只能做集合对拍，不能证明某个 ID 实际选择了哪个 Builder；岗位分析、项目深挖和面试复盘又通过独立 Agent bundle 工厂构建，因此“已登记”和“如何构建”仍是两套事实。
+- 新 `AgentDefinitionRegistry` 同时持有稳定 `agent_id`、`definition_version`、`builder_key`、生命周期、用户创建权限、运行中心元数据和 Eval Pack；GraphFactory 启动时要求 Definition 的 Builder Key 与实际 Builder Catalog 双向完全一致，缺失和孤儿 Builder 都 fail-fast。
+- `ProductionGraphFactory.__call__` 改为执行 `agent_id → Definition → builder_key → Builder`；岗位和复盘的公开 Agent bundle 工厂也经过同一路径。
+- 运行中心、可观测服务、质量评估和公共 Runtime 门禁直接消费 `AgentDefinitionRegistry`。`app.observability.registry` 只作为旧 import 的兼容门面，不再保存注册项。
+- 本阶段只统一当前 Definition 与 Builder；子组件 Tool/Scope 门禁和 Execution Definition Snapshot 仍属于 Phase 3、Phase 4。
+
 ## 2026-08-02：轻量创建契约需要前后端保持一致
 
 - 正式规格允许复盘流程只填写岗位名称创建轻量求职目标，但前端按钮和后端 Service 都沿用了“岗位 + 职级成对必填”的旧规则，导致用户已填写公司和岗位仍无法保存。

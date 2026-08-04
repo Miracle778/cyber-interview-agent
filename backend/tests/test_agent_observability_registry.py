@@ -3,12 +3,16 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from app.application.graph_factory import PRODUCTION_GRAPH_KINDS
+from app.agents.definition_registry import (
+    AGENT_DEFINITION_REGISTRY,
+    AgentDefinition,
+    AgentDefinitionRegistry,
+)
+from app.application.graph_factory import ProductionGraphFactory
 from app.observability.models import OperationSummary, TraceHealth
 from app.observability.registry import (
     AGENT_OBSERVABILITY_REGISTRY,
     AgentRegistrationError,
-    assert_registry_complete,
     require_registration,
 )
 from app.schemas.observability import (
@@ -17,17 +21,67 @@ from app.schemas.observability import (
 )
 
 
-def test_all_production_graphs_have_one_observability_registration() -> None:
-    assert_registry_complete(PRODUCTION_GRAPH_KINDS)
-    assert set(AGENT_OBSERVABILITY_REGISTRY) == set(PRODUCTION_GRAPH_KINDS)
+def test_agent_definition_is_the_single_observability_source() -> None:
+    assert set(AGENT_OBSERVABILITY_REGISTRY) == set(AGENT_DEFINITION_REGISTRY.agent_ids)
+    assert AGENT_OBSERVABILITY_REGISTRY[
+        "review.round"
+    ] is AGENT_DEFINITION_REGISTRY.require("review.round")
 
 
-def test_registry_rejects_missing_and_unknown_graphs() -> None:
-    with pytest.raises(RuntimeError, match="missing=review.round"):
-        assert_registry_complete(PRODUCTION_GRAPH_KINDS - {"review.round"})
+def test_factory_builder_catalog_matches_agent_definitions() -> None:
+    factory = ProductionGraphFactory(None)
 
-    with pytest.raises(RuntimeError, match="unknown=unregistered.graph"):
-        assert_registry_complete(PRODUCTION_GRAPH_KINDS | {"unregistered.graph"})
+    assert factory.builder_keys == AGENT_DEFINITION_REGISTRY.builder_keys
+
+
+def test_registry_rejects_missing_and_orphaned_builders() -> None:
+    registry = AgentDefinitionRegistry(
+        (
+            AgentDefinition(
+                agent_id="test.agent",
+                definition_version="1",
+                builder_key="test_builder",
+                display_name="Test",
+                route_template="/test",
+                capabilities=frozenset(),
+                eval_pack_id=None,
+                system_components=(),
+            ),
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="missing=test_builder"):
+        registry.validate_builder_catalog(set())
+
+    with pytest.raises(RuntimeError, match="unknown=orphan_builder"):
+        registry.validate_builder_catalog({"test_builder", "orphan_builder"})
+
+
+def test_registry_rejects_active_definition_without_builder() -> None:
+    with pytest.raises(RuntimeError, match="Active Agent definition has no builder"):
+        AgentDefinitionRegistry(
+            (
+                AgentDefinition(
+                    agent_id="test.agent",
+                    definition_version="1",
+                    builder_key=None,
+                    display_name="Test",
+                    route_template="/test",
+                    capabilities=frozenset(),
+                    eval_pack_id=None,
+                    system_components=(),
+                ),
+            )
+        )
+
+
+def test_graph_factory_rejects_unknown_agent_before_building() -> None:
+    factory = ProductionGraphFactory(None)
+
+    with pytest.raises(AgentRegistrationError) as error:
+        factory("unknown.agent")
+
+    assert error.value.code == "agent_not_registered"
 
 
 def test_system_graphs_do_not_expose_business_navigation() -> None:
@@ -71,9 +125,7 @@ def test_interview_retrospective_is_registered_as_business_agent() -> None:
 
 
 def test_registration_gate_rejects_unknown_and_system_only_agents() -> None:
-    registration = require_registration(
-        "review.round", for_user_creation=True
-    )
+    registration = require_registration("review.round", for_user_creation=True)
 
     assert registration.graph_id == "review.round"
 

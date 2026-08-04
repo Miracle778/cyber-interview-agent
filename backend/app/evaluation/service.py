@@ -34,7 +34,7 @@ from app.evaluation.views import (
     EvaluationView,
     build_task_evaluation_view,
 )
-from app.observability.registry import resolve_observability_registration
+from app.agents.definition_registry import resolve_agent_definition
 
 
 class EvaluationNotSupportedError(ValueError):
@@ -94,8 +94,8 @@ class AgentEvaluationService:
         self._judge_factory = judge_factory
         self._publish_event = publish_event
         self._now = now or (lambda: datetime.now(timezone.utc))
-        self._advanced_diagnostics_enabled = (
-            advanced_diagnostics_enabled or (lambda: False)
+        self._advanced_diagnostics_enabled = advanced_diagnostics_enabled or (
+            lambda: False
         )
         self._outcome_adapter_factory = (
             outcome_adapter_factory or self._default_outcome_adapter
@@ -184,7 +184,7 @@ class AgentEvaluationService:
         eval_pack_id: str | None = None,
     ) -> EvaluationRunRecord:
         execution = self.observability._run(execution_id)
-        registration = resolve_observability_registration(execution["graph_id"])
+        registration = resolve_agent_definition(execution["graph_id"])
         if registration is None or registration.eval_pack_id is None:
             raise EvaluationNotSupportedError("该 Agent 暂不支持质量评估")
         if execution["graph_id"] == "evaluation.judge":
@@ -272,7 +272,9 @@ class AgentEvaluationService:
         if record.status != "pending":
             return record
         record = self.repository.mark_running(record.id)
-        deterministic = EvaluationRuntime(snapshot=snapshot, pack=pack).run_deterministic()
+        deterministic = EvaluationRuntime(
+            snapshot=snapshot, pack=pack
+        ).run_deterministic()
         deterministic_json = json.dumps(
             asdict(deterministic),
             ensure_ascii=False,
@@ -506,9 +508,7 @@ class AgentEvaluationService:
             # Compatibility for injected Phase 1 tests.
             pack = next(
                 item
-                for item in (
-                    get_eval_pack("question-curation.v2"),
-                )
+                for item in (get_eval_pack("question-curation.v2"),)
                 if item.task_type == outcome.task_type
             )
         return build_task_evaluation_view(outcome, pack)
@@ -518,12 +518,8 @@ class AgentEvaluationService:
         view: EvaluationView,
         result: JudgeResultV2,
     ) -> None:
-        expected = {
-            item.dimension_id: item.applicability for item in view.dimensions
-        }
-        actual = {
-            item.dimension_id: item.applicability for item in result.dimensions
-        }
+        expected = {item.dimension_id: item.applicability for item in view.dimensions}
+        actual = {item.dimension_id: item.applicability for item in result.dimensions}
         if actual != expected or len(result.dimensions) != len(expected):
             raise ValueError("Judge 维度或适用性与 Evaluation View 不兼容")
 
@@ -554,7 +550,9 @@ class AgentEvaluationService:
                     "confidence": item.confidence,
                     "summary": item.summary,
                     "cited_event_hashes_json": json.dumps(item.cited_event_hashes),
-                    "cited_artifact_hashes_json": json.dumps(item.cited_artifact_hashes),
+                    "cited_artifact_hashes_json": json.dumps(
+                        item.cited_artifact_hashes
+                    ),
                     "risks_json": json.dumps(item.risks, ensure_ascii=False),
                 }
                 for item in result.dimensions
@@ -578,9 +576,7 @@ class AgentEvaluationService:
                     "severity": item.severity,
                     "confidence": item.confidence,
                     "summary": item.summary,
-                    "cited_event_hashes_json": json.dumps(
-                        item.cited_event_hashes
-                    ),
+                    "cited_event_hashes_json": json.dumps(item.cited_event_hashes),
                     "cited_artifact_hashes_json": json.dumps(
                         item.cited_artifact_hashes
                     ),
@@ -616,9 +612,7 @@ class AgentEvaluationService:
                     "severity": (
                         item.severity if item.status != "inconclusive" else None
                     ),
-                    "confidence": (
-                        1.0 if item.status != "inconclusive" else None
-                    ),
+                    "confidence": (1.0 if item.status != "inconclusive" else None),
                     "summary": item.summary,
                     "evidence_gaps_json": json.dumps(
                         item.evidence_gaps, ensure_ascii=False

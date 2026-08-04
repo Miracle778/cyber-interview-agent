@@ -1797,3 +1797,11 @@
 - RED 证据：未知历史 Session 启动接口曾返回 202 并写入 Execution；未知历史执行重试曾错误返回 409。
 - GREEN 证据：注册表、Agent API、运行中心服务定向回归 `35 passed`；兼容回归 `58 passed`，仅有既有 Starlette TestClient 弃用警告。
 - 后端全量首错停止运行到本轮无关的既有迁移断言前为 `538 passed`；`test_interview_retrospective_migration.py` 仍硬编码只允许 1–50 号迁移，而当前仓库已有 51、52 号迁移。继续全量运行还会命中既有 SQLite 后台写线程与关闭连接竞态导致的解释器段错误，因此本轮不把“全量通过”作为完成证据。
+
+## 2026-08-04：Agent Control Plane Phase 2 单一 Definition 与 Builder
+
+- 新增不可变 `AgentDefinitionRegistry`，合并运行中心元数据、生命周期、用户创建权限、Eval Pack、历史别名与延迟 Builder Key。
+- 删除 `PRODUCTION_GRAPH_KINDS`；ProductionGraphFactory 启动时校验 Builder Catalog 与 Definition 双向一致，所有顶层构建先解析 Definition。
+- 运行中心、Observability Service、Eval Service 和 AgentApplication 注册门禁改为直接消费统一 Definition；旧 Observability Registry 仅保留兼容导出。
+- 自动验证：合并运行 Definition/Builder、运行中心、质量评估、岗位、复盘及相关 Factory 定向回归 `139 passed`；受影响 Ruff 与差异检查通过。
+- 成熟度边界：Phase 2 已消除顶层 Agent 身份与 Builder 的第二事实源；组件归属、Tool/Scope、模型角色和 Execution 冻结快照仍待 Phase 3/4。

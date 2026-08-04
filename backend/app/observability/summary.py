@@ -4,9 +4,9 @@ from datetime import datetime
 from typing import Any
 
 from app.observability.models import ObservabilityCapability, TraceHealth
-from app.observability.registry import (
-    AgentObservabilityRegistration,
-    resolve_observability_registration,
+from app.agents.definition_registry import (
+    AgentDefinition,
+    resolve_agent_definition,
 )
 from app.observability.repository import TraceIndexRepository
 from app.schemas.observability import (
@@ -30,7 +30,7 @@ class ExecutionSummaryAssembler:
         self.trace_repository = trace_repository
 
     def assemble(self, run: dict[str, Any]) -> ExecutionSummaryResource:
-        registration = resolve_observability_registration(
+        registration = resolve_agent_definition(
             run["graph_id"], include_historical=True
         )
         assert registration is not None
@@ -39,9 +39,7 @@ class ExecutionSummaryAssembler:
         usage = self._usage(run["id"])
         context = self._context_usage(run["id"])
         trace_health = (
-            TraceHealth.MISSING
-            if trace is None
-            else TraceHealth(trace["trace_health"])
+            TraceHealth.MISSING if trace is None else TraceHealth(trace["trace_health"])
         )
         model_call_count = sum(
             1 for operation in operations if operation["kind"] == "model"
@@ -49,9 +47,7 @@ class ExecutionSummaryAssembler:
         system_operation_count = sum(
             1 for operation in operations if operation["kind"] != "execution"
         )
-        retry_count = sum(
-            int(operation["retry_count"]) for operation in operations
-        )
+        retry_count = sum(int(operation["retry_count"]) for operation in operations)
         latency_ms = self._latency_ms(trace, operations)
         return ExecutionSummaryResource(
             id=run["id"],
@@ -140,7 +136,7 @@ class ExecutionSummaryAssembler:
 
 
 def _runtime_capabilities(
-    registration: AgentObservabilityRegistration,
+    registration: AgentDefinition,
     *,
     status: str,
     trace_health: TraceHealth,
@@ -176,9 +172,7 @@ def _elapsed_ms(started_at: str | None, finished_at: str | None) -> int | None:
     if not started_at or not finished_at:
         return None
     try:
-        delta = datetime.fromisoformat(finished_at) - datetime.fromisoformat(
-            started_at
-        )
+        delta = datetime.fromisoformat(finished_at) - datetime.fromisoformat(started_at)
     except ValueError:
         return None
     return max(int(delta.total_seconds() * 1000), 0)

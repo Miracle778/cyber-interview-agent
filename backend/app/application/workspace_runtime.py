@@ -80,7 +80,7 @@ from app.interview_retrospectives.service import InterviewRetrospectiveService
 from app.observability.indexer import TraceLedgerIndexer
 from app.observability.repository import TraceIndexRepository
 from app.observability.service import AgentObservabilityService
-from app.observability.registry import require_registration
+from app.agents.definition_registry import require_agent_definition
 from app.evaluation.repository import AgentEvaluationRepository
 from app.evaluation.service import AgentEvaluationService
 from app.evaluation.regression import (
@@ -848,7 +848,7 @@ class AgentApplication:
         validate_review_model: Callable[[str, str, str], None] | None = None,
         advanced_diagnostics_enabled: Callable[[], bool] | None = None,
         quality_evaluation_settings: Callable[[], object] | None = None,
-        registration_guard: Callable[..., object] = require_registration,
+        registration_guard: Callable[..., object] = require_agent_definition,
     ) -> None:
         self._workspace_resolver = workspace_resolver
         self._workspace_ids = workspace_ids

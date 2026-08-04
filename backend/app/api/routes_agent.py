@@ -21,7 +21,7 @@ from app.schemas.agent import (
     StartExecutionCommand,
     UpdateSessionTitleCommand,
 )
-from app.observability.registry import AgentRegistrationError
+from app.agents.definition_registry import AgentRegistrationError
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
 
@@ -136,9 +136,7 @@ async def start_execution(
         ) from error
 
 
-@router.post(
-    "/executions/{execution_id}/cancel", response_model=ExecutionResource
-)
+@router.post("/executions/{execution_id}/cancel", response_model=ExecutionResource)
 async def cancel_execution(
     execution_id: str,
     application: AgentApplication = Depends(get_agent_application),

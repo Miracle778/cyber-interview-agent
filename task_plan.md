@@ -598,6 +598,6 @@ current question
 ## 2026-08-04：Agent Control Plane 分阶段收敛
 
 - [x] Phase 1：公共 Session / Execution / Retry 在写入前执行注册与生命周期门禁；system-only Agent 禁止用户创建；未知历史运行保留只读投影。
-- [ ] Phase 2：合并 Observability Registration、生产 Graph 集合和 Builder 映射，形成单一 `AgentDefinitionRegistry`。
+- [x] Phase 2：合并 Observability Registration、生产 Graph 集合和 Builder 映射，形成单一 `AgentDefinitionRegistry`；运行中心、质量评估与 Runtime 门禁改读统一 Definition，旧 Observability 名称仅保留兼容外壳。
 - [ ] Phase 3：AgentFactory 强制父 Agent、组件、模型角色、Tool 和 Scope 归属，并补齐 Trace Definition 身份。
 - [ ] Phase 4：Execution 持久化不可变 Agent Definition Snapshot，Eval 与高级详情读取冻结版本。

@@ -26,7 +26,7 @@ from app.observability.export_service import (
     TraceExportRecord,
     TraceExportService,
 )
-from app.observability.registry import resolve_observability_registration
+from app.agents.definition_registry import resolve_agent_definition
 from app.observability.repository import TraceIndexRepository
 from app.observability.summary import ExecutionSummaryAssembler
 from app.schemas.observability import (
@@ -39,9 +39,7 @@ from app.schemas.observability import (
 )
 
 EXECUTION_STATUS_GROUPS = {
-    "waiting": frozenset(
-        {"queued", "waiting_for_input", "waiting_for_approval"}
-    ),
+    "waiting": frozenset({"queued", "waiting_for_input", "waiting_for_approval"}),
     "attention": frozenset({"partial_success", "failed"}),
     "stopped": frozenset({"interrupted", "cancelled"}),
 }
@@ -74,8 +72,8 @@ class AgentObservabilityService:
         self.connection = connection
         self.trace_repository = trace_repository
         self.indexer = indexer
-        self.advanced_diagnostics_enabled = (
-            advanced_diagnostics_enabled or (lambda: False)
+        self.advanced_diagnostics_enabled = advanced_diagnostics_enabled or (
+            lambda: False
         )
         self.content_reader = TraceContentReader(
             workspace_id=workspace_id,
@@ -162,7 +160,7 @@ class AgentObservabilityService:
         ]
         agent_counts: dict[str, dict[str, int]] = {}
         for row in agent_scope:
-            registration = resolve_observability_registration(
+            registration = resolve_agent_definition(
                 row["graph_id"], include_historical=True
             )
             assert registration is not None
@@ -184,20 +182,14 @@ class AgentObservabilityService:
         ]
         status_counts: dict[str, int] = {}
         for row in scoped:
-            status_counts[row["status"]] = (
-                status_counts.get(row["status"], 0) + 1
-            )
+            status_counts[row["status"]] = status_counts.get(row["status"], 0) + 1
         filtered = [
-            row
-            for row in scoped
-            if self._matches_status(row["status"], status)
+            row for row in scoped if self._matches_status(row["status"], status)
         ]
         total = len(filtered)
         if cursor_value is not None:
             filtered = [
-                row
-                for row in filtered
-                if (row["created_at"], row["id"]) < cursor_value
+                row for row in filtered if (row["created_at"], row["id"]) < cursor_value
             ]
         selected = filtered[:limit]
         next_cursor = (
@@ -254,9 +246,7 @@ class AgentObservabilityService:
         limit: int,
     ) -> TraceContentPage:
         if not self.advanced_diagnostics_enabled():
-            raise AdvancedDiagnosticsDisabledError(
-                "advanced diagnostics are disabled"
-            )
+            raise AdvancedDiagnosticsDisabledError("advanced diagnostics are disabled")
         self._run(run_id)
         return self.content_reader.read(
             run_id=run_id,
@@ -274,13 +264,9 @@ class AgentObservabilityService:
         include_stored_bodies: bool,
     ) -> TraceExportRecord:
         if metadata_only and include_stored_bodies:
-            raise ValueError(
-                "metadata-only exports cannot include stored bodies"
-            )
+            raise ValueError("metadata-only exports cannot include stored bodies")
         if include_stored_bodies and not self.advanced_diagnostics_enabled():
-            raise AdvancedDiagnosticsDisabledError(
-                "advanced diagnostics are disabled"
-            )
+            raise AdvancedDiagnosticsDisabledError("advanced diagnostics are disabled")
         execution = self.get_execution(run_id)
         operations = self.list_operations(run_id)
         events = list(self.trace_repository.list_events(run_id))
@@ -291,8 +277,7 @@ class AgentObservabilityService:
             include_stored_bodies=include_stored_bodies,
             execution=execution.model_dump(by_alias=True, mode="json"),
             operations=[
-                item.model_dump(by_alias=True, mode="json")
-                for item in operations.items
+                item.model_dump(by_alias=True, mode="json") for item in operations.items
             ],
             events=events,
         )
@@ -366,7 +351,7 @@ class AgentObservabilityService:
         if row is None:
             raise AgentExecutionNotFoundError("Agent Execution 不存在")
         result = dict(row)
-        registration = resolve_observability_registration(
+        registration = resolve_agent_definition(
             result["graph_id"], include_historical=True
         )
         if registration is None or not registration.run_center_visible:
@@ -384,16 +369,14 @@ class AgentObservabilityService:
         started_to: str | None,
         include_system_agents: bool,
     ) -> bool:
-        registration = resolve_observability_registration(
+        registration = resolve_agent_definition(
             row["graph_id"], include_historical=True
         )
         if registration is None or not registration.run_center_visible:
             return False
         if not include_system_agents and registration.system:
             return False
-        if not AgentObservabilityService._matches_status(
-            row["status"], status
-        ):
+        if not AgentObservabilityService._matches_status(row["status"], status):
             return False
         if agent:
             normalized_agent = agent.casefold()
@@ -439,9 +422,7 @@ def _encode_cursor(created_at: str, run_id: str) -> str:
 def _decode_cursor(cursor: str) -> tuple[str, str]:
     try:
         padding = "=" * (-len(cursor) % 4)
-        payload = json.loads(
-            base64.urlsafe_b64decode(cursor + padding).decode("utf-8")
-        )
+        payload = json.loads(base64.urlsafe_b64decode(cursor + padding).decode("utf-8"))
         created_at = payload["createdAt"]
         run_id = payload["id"]
     except (
