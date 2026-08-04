@@ -35,6 +35,7 @@ from app.evaluation.views import (
     build_task_evaluation_view,
 )
 from app.agents.definition_registry import resolve_agent_definition
+from app.agents.definition_snapshot import AgentDefinitionSnapshot
 
 
 class EvaluationNotSupportedError(ValueError):
@@ -184,17 +185,45 @@ class AgentEvaluationService:
         eval_pack_id: str | None = None,
     ) -> EvaluationRunRecord:
         execution = self.observability._run(execution_id)
-        registration = resolve_agent_definition(execution["graph_id"])
-        if registration is None or registration.eval_pack_id is None:
-            raise EvaluationNotSupportedError("该 Agent 暂不支持质量评估")
         if execution["graph_id"] == "evaluation.judge":
             raise EvaluationNotSupportedError("Judge 运行不能递归评估")
-        selected_pack_id = eval_pack_id or registration.eval_pack_id
+
+        raw_snapshot = execution.get("agent_definition_snapshot_json")
+        definition_snapshot = AgentDefinitionSnapshot.from_json(
+            raw_snapshot
+            if isinstance(raw_snapshot, str)
+            else AgentDefinitionSnapshot.legacy_snapshot().to_json()
+        )
+        if definition_snapshot.legacy:
+            registration = resolve_agent_definition(execution["graph_id"])
+            if registration is None or registration.eval_pack_id is None:
+                raise EvaluationNotSupportedError("该 Agent 暂不支持质量评估")
+            selected_pack_id = eval_pack_id or registration.eval_pack_id
+            compatibility_agent_id = execution["graph_id"]
+        else:
+            if definition_snapshot.eval_pack_id is None:
+                raise EvaluationNotSupportedError("该 Agent 暂不支持质量评估")
+            if eval_pack_id is not None and eval_pack_id != definition_snapshot.eval_pack_id:
+                raise EvaluationNotSupportedError(
+                    "不能替换本次运行冻结的评估标准"
+                )
+            selected_pack_id = definition_snapshot.eval_pack_id
+            compatibility_agent_id = (
+                definition_snapshot.agent_id or execution["graph_id"]
+            )
         if selected_pack_id not in _COMPATIBLE_PACKS_BY_GRAPH.get(
-            execution["graph_id"], set()
+            compatibility_agent_id, set()
         ):
             raise EvaluationNotSupportedError("该评估标准不适用于此 Agent")
-        pack = get_eval_pack(selected_pack_id)
+        try:
+            pack = get_eval_pack(selected_pack_id)
+        except LookupError as error:
+            raise EvaluationNotSupportedError("本次运行冻结的评估标准已不可用") from error
+        if (
+            not definition_snapshot.legacy
+            and definition_snapshot.eval_pack_version != pack.version
+        ):
+            raise EvaluationNotSupportedError("本次运行冻结的评估标准版本已不可用")
         configured = self._settings()
         if trigger == "automatic":
             decision = decide_automatic_evaluation(
@@ -225,6 +254,7 @@ class AgentEvaluationService:
             return await self._evaluate_v2(
                 execution_id=execution_id,
                 pack=pack,
+                definition_snapshot=definition_snapshot,
                 provider_model_id=provider_model_id,
                 trigger=trigger,
                 idempotency_key=idempotency_key,
@@ -354,6 +384,7 @@ class AgentEvaluationService:
         *,
         execution_id: str,
         pack,
+        definition_snapshot: AgentDefinitionSnapshot,
         provider_model_id: str,
         trigger: str,
         idempotency_key: str | None,
@@ -364,6 +395,7 @@ class AgentEvaluationService:
         frozen_input_hash = hashlib.sha256(view_json.encode("utf-8")).hexdigest()
         snapshot_json = json.dumps(
             {
+                "agentDefinitionSnapshot": definition_snapshot.to_payload(),
                 "businessOutcome": outcome.model_dump(mode="json"),
                 "evaluationView": view.model_dump(mode="json"),
             },

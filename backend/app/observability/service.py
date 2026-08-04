@@ -30,6 +30,7 @@ from app.agents.definition_registry import resolve_agent_definition
 from app.observability.repository import TraceIndexRepository
 from app.observability.summary import ExecutionSummaryAssembler
 from app.schemas.observability import (
+    ExecutionDetailResource,
     ExecutionSummaryPageResource,
     ExecutionSummaryResource,
     ExecutionChangedEventResource,
@@ -205,9 +206,9 @@ class AgentObservabilityService:
             agent_counts=agent_counts,
         )
 
-    def get_execution(self, run_id: str) -> ExecutionSummaryResource:
+    def get_execution(self, run_id: str) -> ExecutionDetailResource:
         row = self._run(run_id)
-        return self.assembler.assemble(row)
+        return self.assembler.assemble_detail(row)
 
     def list_operations(self, run_id: str) -> OperationSummaryListResource:
         self._run(run_id)

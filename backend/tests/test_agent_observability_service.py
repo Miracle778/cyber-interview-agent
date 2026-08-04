@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 
 from app.infrastructure.runtime_database import connect_runtime_database
+from app.agents.definition_registry import require_agent_definition
+from app.agents.definition_snapshot import build_agent_definition_snapshot
 from app.observability.indexer import TraceLedgerIndexer
 from app.observability.repository import TraceIndexRepository
 from app.observability.service import (
@@ -193,6 +195,39 @@ def test_assembles_usage_context_latency_retry_and_runtime_capabilities(
     assert "manual_judge" in summary.capabilities
     assert "cancel" not in summary.capabilities
     assert "resume" not in summary.capabilities
+
+
+def test_execution_detail_exposes_frozen_definition_snapshot(tmp_path: Path) -> None:
+    service, connection = _service(tmp_path)
+    definition = require_agent_definition("review.single")
+    snapshot = build_agent_definition_snapshot(
+        definition=definition,
+        graph_version=7,
+        model_bindings={"answer_evaluation": "model-frozen"},
+    )
+    connection.execute(
+        "INSERT INTO agent_sessions "
+        "(id, workspace_id, graph_id, graph_version, title, visibility) "
+        "VALUES ('session-frozen', 'workspace-1', 'review.single', 7, "
+        "'Frozen run', 'user')"
+    )
+    connection.execute(
+        "INSERT INTO agent_runs "
+        "(id, session_id, status, agent_definition_snapshot_json) "
+        "VALUES ('run-frozen', 'session-frozen', 'completed', ?)",
+        (snapshot.to_json(),),
+    )
+    connection.commit()
+
+    detail = service.get_execution("run-frozen")
+
+    assert detail.definition_snapshot.agent_id == "review.single"
+    assert detail.definition_snapshot.agent_definition_version == "1"
+    assert detail.definition_snapshot.graph_version == 7
+    assert detail.definition_snapshot.eval_pack_id == "review-single.v2"
+    assert detail.definition_snapshot.eval_pack_version == 2
+    assert detail.definition_snapshot.legacy is False
+    connection.close()
 
 
 def test_cursor_filters_and_system_agent_visibility_are_stable(

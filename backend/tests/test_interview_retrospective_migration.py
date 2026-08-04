@@ -54,7 +54,7 @@ def test_runtime_migration_adds_versioned_retrospective_domain(
         connection.close()
 
     assert RETROSPECTIVE_TABLES <= tables
-    assert migrations == list(range(1, 51))
+    assert migrations == list(range(1, 54))
     assert "recording_coverage" in source_columns
 
 

@@ -49,6 +49,33 @@ class ExecutionSummaryResource(ObservabilityModel):
     error_code: str | None = None
 
 
+class AgentDefinitionSnapshotResource(ObservabilityModel):
+    snapshot_version: int = 1
+    legacy: bool
+    agent_id: str | None = None
+    agent_definition_version: str | None = None
+    graph_version: int | None = None
+    builder_key: str | None = None
+    prompt_schema_versions: dict[str, str] = Field(default_factory=dict)
+    input_schema_version: str | None = None
+    output_schema_version: str | None = None
+    child_components: list[str] = Field(default_factory=list)
+    model_roles: list[str] = Field(default_factory=list)
+    allowed_tools: list[str] = Field(default_factory=list)
+    allowed_scopes: list[str] = Field(default_factory=list)
+    toolset_digest: str | None = None
+    model_binding_digest: str | None = None
+    context_policy_id: str | None = None
+    retry_policy_id: str | None = None
+    trace_policy_id: str | None = None
+    eval_pack_id: str | None = None
+    eval_pack_version: int | None = None
+
+
+class ExecutionDetailResource(ExecutionSummaryResource):
+    definition_snapshot: AgentDefinitionSnapshotResource
+
+
 class OperationSummaryResource(ObservabilityModel):
     id: str
     run_id: str

@@ -1814,3 +1814,12 @@
 - Trace JSONL 的模型请求/响应补充 `agent_id`、`agent_definition_version` 和 `component_id`；新增静态 import 边界，产品代码直接导入底层 `ChatModelResolver` 会触发契约测试失败。
 - 新鲜自动验证：Agent、Graph 与 Workspace Registry 受影响回归 `328 passed`；Python compileall、受影响 Ruff 和 `git diff --check` 通过。
 - 成熟度边界：本阶段保证“当前 Definition 下谁可以调用什么”并留下组件身份；完整不可变 Execution Definition Snapshot、历史版本展示和 Eval 冻结读取仍待 Phase 4。
+
+## 2026-08-04：Agent Control Plane Phase 4 Execution Definition Snapshot
+
+- Runtime migration 053 为 `agent_runs` 增加非空 Definition Snapshot；旧数据回填显式 legacy sentinel，并以 SQLite trigger 阻止快照变更。
+- `AgentExecutionService.prepare()` 在创建运行时从统一 Definition 和当次模型绑定构建快照；Repository/Record、Observability detail API 和前端高级详情贯通冻结合同。
+- Eval v1/v2 快照携带 Agent Definition Snapshot；非 legacy 运行严格使用冻结 Eval Pack ID/version，Pack 覆盖不一致或历史版本已不可用时稳定拒绝。
+- RED/GREEN 覆盖持久化与不可变、legacy 不反推、执行前冻结、运行详情读取、历史 Pack 优先与错误覆盖拒绝；修正复盘迁移测试中已过期的迁移编号断言。
+- 新鲜验证：Phase 4 跨层定向回归 `109 passed`；Agent/Graph/Workspace Registry 扩展回归 `335 passed`；前端运行详情/事件/质量页 `30 passed`；Ruff、TypeScript、production build 与 `git diff --check` 通过。
+- 成熟度边界：当前 Prompt 还不是独立版本化资产，Definition 快照会如实记录空的 Prompt Schema 版本表；已有大 chunk 提示和 Starlette TestClient 弃用 warning 未由本阶段引入。

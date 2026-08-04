@@ -44,7 +44,10 @@ import {
   operationStatusLabel,
 } from "./observabilityLabels";
 import { executionBusinessDestination } from "./observabilityNavigation";
-import type { ExecutionSummary } from "./observabilityTypes";
+import type {
+  AgentDefinitionSnapshot,
+  ExecutionSummary,
+} from "./observabilityTypes";
 import "./observability.css";
 
 
@@ -393,6 +396,8 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
         <TraceMetric icon={<RotateCcw />} label="重试" value={String(execution.retryCount)} />
       </ul>
 
+      <DefinitionSnapshotDisclosure snapshot={execution.definitionSnapshot} />
+
       <nav className="execution-trace__mobile-nav" aria-label="详情视图">
         <button
           type="button"
@@ -538,4 +543,89 @@ function TraceMetric({
       <div><small>{label}</small><strong>{value}</strong></div>
     </li>
   );
+}
+
+function DefinitionSnapshotDisclosure({
+  snapshot,
+}: {
+  snapshot: AgentDefinitionSnapshot;
+}) {
+  return (
+    <details className="execution-trace__definition">
+      <summary>
+        <span>本次运行定义</span>
+        <small>{snapshot.legacy ? "历史兼容" : "已冻结"}</small>
+      </summary>
+      {snapshot.legacy ? (
+        <p>历史运行未保存定义快照，不使用当前配置反推。</p>
+      ) : (
+        <dl>
+          <div>
+            <dt>Agent</dt>
+            <dd>{snapshot.agentId} · Definition v{snapshot.agentDefinitionVersion}</dd>
+          </div>
+          <div>
+            <dt>Graph</dt>
+            <dd>Graph v{snapshot.graphVersion}</dd>
+          </div>
+          <div>
+            <dt>Builder</dt>
+            <dd>{snapshot.builderKey ?? "未声明"}</dd>
+          </div>
+          <div>
+            <dt>输入 / 输出 Schema</dt>
+            <dd>
+              v{snapshot.inputSchemaVersion ?? "?"}
+              {" / "}
+              v{snapshot.outputSchemaVersion ?? "?"}
+            </dd>
+          </div>
+          <div>
+            <dt>Prompt Schema</dt>
+            <dd>{formatPromptVersions(snapshot.promptSchemaVersions)}</dd>
+          </div>
+          <div>
+            <dt>评估标准</dt>
+            <dd>
+              {snapshot.evalPackId && snapshot.evalPackVersion
+                ? `${snapshot.evalPackId} · v${snapshot.evalPackVersion}`
+                : "未绑定"}
+            </dd>
+          </div>
+          <div>
+            <dt>Trace 策略</dt>
+            <dd>{snapshot.tracePolicyId ?? "未声明"}</dd>
+          </div>
+          <div>
+            <dt>上下文 / 重试</dt>
+            <dd>
+              {snapshot.contextPolicyId ?? "未声明"}
+              {" / "}
+              {snapshot.retryPolicyId ?? "未声明"}
+            </dd>
+          </div>
+          <div>
+            <dt>Toolset</dt>
+            <dd>
+              {snapshot.allowedTools.length} 个 Tool · {shortDigest(snapshot.toolsetDigest)}
+            </dd>
+          </div>
+          <div>
+            <dt>模型绑定</dt>
+            <dd>{shortDigest(snapshot.modelBindingDigest)}</dd>
+          </div>
+        </dl>
+      )}
+    </details>
+  );
+}
+
+function formatPromptVersions(versions: Record<string, string>) {
+  const entries = Object.entries(versions);
+  if (entries.length === 0) return "未版本化";
+  return entries.map(([name, version]) => `${name} ${version}`).join(" · ");
+}
+
+function shortDigest(value: string | null) {
+  return value ? value.slice(0, 10) : "未记录";
 }

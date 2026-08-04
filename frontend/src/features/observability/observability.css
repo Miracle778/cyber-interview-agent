@@ -912,6 +912,69 @@ button.agent-run-metric[aria-pressed="true"] {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.execution-trace__definition {
+  color: var(--text-muted);
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.execution-trace__definition summary {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 8px 12px;
+  color: var(--text);
+  font-size: .78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.execution-trace__definition summary small {
+  color: var(--text-soft);
+  font-size: .68rem;
+  font-weight: 600;
+}
+
+.execution-trace__definition > p {
+  margin: 0;
+  padding: 0 12px 12px;
+  font-size: .75rem;
+}
+
+.execution-trace__definition dl {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin: 0;
+  border-top: 1px solid var(--border);
+}
+
+.execution-trace__definition dl > div {
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.execution-trace__definition dl > div + div {
+  border-left: 1px solid var(--border);
+}
+
+.execution-trace__definition dt {
+  color: var(--text-soft);
+  font-size: .66rem;
+}
+
+.execution-trace__definition dd {
+  overflow: hidden;
+  margin: 3px 0 0;
+  color: var(--text);
+  font-size: .72rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .execution-trace__workspace {
   min-height: 0;
   flex: 1;
@@ -2041,6 +2104,14 @@ button.agent-run-metric[aria-pressed="true"] {
     background: var(--surface-subtle);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
+  }
+
+  .execution-trace__definition dl {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .execution-trace__definition dl > div + div {
+    border-left: 0;
   }
 
   .execution-trace-page {

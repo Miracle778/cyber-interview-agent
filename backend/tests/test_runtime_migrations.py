@@ -216,7 +216,7 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == list(range(1, 53))
+        ] == list(range(1, 54))
     assert "agent_context_usage" in _tables(connection)
     assert "profile_deletion_plans" in _tables(connection)
     assert "deleted_at" in {
@@ -1075,7 +1075,42 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-            ] == list(range(1, 53))
+            ] == list(range(1, 54))
+    reopened.close()
+
+
+def test_migration_053_adds_immutable_agent_definition_snapshot(
+    tmp_path: Path,
+) -> None:
+    connection = _create_runtime_at_version(tmp_path, 52)
+    connection.execute(
+        "INSERT INTO agent_sessions "
+        "(id, workspace_id, graph_id, graph_version, title) "
+        "VALUES ('legacy-session', 'w1', 'review.single', 1, 'Legacy')"
+    )
+    connection.execute(
+        "INSERT INTO agent_runs (id, session_id, status) "
+        "VALUES ('legacy-run', 'legacy-session', 'completed')"
+    )
+    connection.commit()
+    connection.close()
+
+    reopened = connect_runtime_database(tmp_path)
+    columns = {
+        row["name"]
+        for row in reopened.execute("PRAGMA table_info(agent_runs)")
+    }
+    stored = reopened.execute(
+        "SELECT agent_definition_snapshot_json FROM agent_runs WHERE id = 'legacy-run'"
+    ).fetchone()[0]
+
+    assert "agent_definition_snapshot_json" in columns
+    assert stored == '{"snapshot_version":1,"legacy":true}'
+    with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+        reopened.execute(
+            "UPDATE agent_runs SET agent_definition_snapshot_json = '{}' "
+            "WHERE id = 'legacy-run'"
+        )
     reopened.close()
 
 

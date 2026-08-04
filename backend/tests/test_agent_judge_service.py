@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import SimpleNamespace
 
 import pytest
@@ -34,6 +34,8 @@ from app.evaluation.snapshot import (
 )
 from app.infrastructure.runtime_database import connect_runtime_database
 from app.application.session_service import ProductRepository
+from app.agents.definition_registry import require_agent_definition
+from app.agents.definition_snapshot import build_agent_definition_snapshot
 
 
 class FakeObservability:
@@ -248,6 +250,54 @@ async def test_manual_judge_is_idempotent_and_does_not_change_business_status(
         assert first.status == "completed"
         assert observability.row["status"] == "completed"
         assert len(service.repository.list_dimension_results(first.id)) > 0
+    finally:
+        connection.close()
+
+
+@pytest.mark.asyncio
+async def test_evaluation_uses_frozen_pack_instead_of_current_registry(
+    tmp_path,
+) -> None:
+    connection, observability, service = _service(tmp_path)
+    current = build_agent_definition_snapshot(
+        definition=require_agent_definition("review.single"),
+        graph_version=1,
+        model_bindings={"answer_evaluation": "model-1"},
+    )
+    frozen = replace(
+        current,
+        agent_definition_version="historical-definition",
+        eval_pack_id="review.v1",
+        eval_pack_version=1,
+    )
+    observability.row["agent_definition_snapshot_json"] = frozen.to_json()
+    try:
+        result = await service.evaluate("execution-1")
+
+        assert result.status == "completed"
+        assert result.eval_pack_id == "review.v1"
+        assert result.eval_pack_version == 1
+    finally:
+        connection.close()
+
+
+@pytest.mark.asyncio
+async def test_evaluation_rejects_pack_override_that_differs_from_snapshot(
+    tmp_path,
+) -> None:
+    connection, observability, service = _service(tmp_path)
+    frozen = build_agent_definition_snapshot(
+        definition=require_agent_definition("review.single"),
+        graph_version=1,
+        model_bindings={"answer_evaluation": "model-1"},
+    )
+    observability.row["agent_definition_snapshot_json"] = frozen.to_json()
+    try:
+        with pytest.raises(
+            EvaluationNotSupportedError,
+            match="冻结的评估标准",
+        ):
+            await service.evaluate("execution-1", eval_pack_id="review.v1")
     finally:
         connection.close()
 

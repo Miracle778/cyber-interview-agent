@@ -10,9 +10,12 @@ from app.agents.definition_registry import (
 )
 from app.observability.repository import TraceIndexRepository
 from app.schemas.observability import (
+    AgentDefinitionSnapshotResource,
+    ExecutionDetailResource,
     ExecutionSummaryResource,
     OperationSummaryResource,
 )
+from app.agents.definition_snapshot import AgentDefinitionSnapshot
 
 
 class ExecutionSummaryAssembler:
@@ -76,6 +79,21 @@ class ExecutionSummaryAssembler:
             started_at=run["started_at"],
             finished_at=run["finished_at"],
             error_code=run["error_code"],
+        )
+
+    def assemble_detail(self, run: dict[str, Any]) -> ExecutionDetailResource:
+        summary = self.assemble(run)
+        raw_snapshot = run.get("agent_definition_snapshot_json")
+        snapshot = AgentDefinitionSnapshot.from_json(
+            raw_snapshot
+            if isinstance(raw_snapshot, str)
+            else AgentDefinitionSnapshot.legacy_snapshot().to_json()
+        )
+        return ExecutionDetailResource(
+            **summary.model_dump(),
+            definition_snapshot=AgentDefinitionSnapshotResource(
+                **snapshot.to_payload()
+            ),
         )
 
     def operations(self, run_id: str) -> tuple[OperationSummaryResource, ...]:

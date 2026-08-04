@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.evaluation.contracts import EvalPack
+from app.agents.definition_snapshot import AgentDefinitionSnapshot
 from app.observability.content_reader import (
     TraceContentNotFoundError,
     TraceContentUnavailableError,
@@ -73,6 +74,12 @@ class EvaluationSnapshotBuilder:
             _parse_object(row.get("model_bindings_json"))
         )
         configuration = _parse_object(row.get("configuration_json"))
+        raw_definition_snapshot = row.get("agent_definition_snapshot_json")
+        definition_snapshot = AgentDefinitionSnapshot.from_json(
+            raw_definition_snapshot
+            if isinstance(raw_definition_snapshot, str)
+            else AgentDefinitionSnapshot.legacy_snapshot().to_json()
+        )
         tool_versions = _string_mapping(
             configuration.get("tool_versions")
             if isinstance(configuration, dict)
@@ -87,10 +94,33 @@ class EvaluationSnapshotBuilder:
             for source, digest in sorted(_find_hashes(input_payload))
         )
         versions = {
-            "graph": str(row.get("graph_version") or "unknown"),
+            "graph": str(
+                definition_snapshot.graph_version
+                if not definition_snapshot.legacy
+                else row.get("graph_version") or "unknown"
+            ),
             "trace": "3",
             "snapshot": "1",
         }
+        if not definition_snapshot.legacy:
+            versions.update(
+                {
+                    "agentDefinition": str(
+                        definition_snapshot.agent_definition_version
+                    ),
+                    "inputSchema": str(definition_snapshot.input_schema_version),
+                    "outputSchema": str(definition_snapshot.output_schema_version),
+                    "contextPolicy": str(definition_snapshot.context_policy_id),
+                    "retryPolicy": str(definition_snapshot.retry_policy_id),
+                    "tracePolicy": str(definition_snapshot.trace_policy_id),
+                    "toolsetDigest": str(definition_snapshot.toolset_digest),
+                    "modelBindingDigest": str(
+                        definition_snapshot.model_binding_digest
+                    ),
+                }
+            )
+            for prompt_id, version in definition_snapshot.prompt_schema_versions:
+                versions[f"prompt:{prompt_id}"] = version
         if isinstance(configuration, dict):
             if configuration.get("prompt_version") is not None:
                 versions["prompt"] = str(configuration["prompt_version"])
@@ -104,7 +134,12 @@ class EvaluationSnapshotBuilder:
                 "sessionId": row["session_id"],
                 "workspaceId": row["workspace_id"],
                 "graphId": row["graph_id"],
-                "graphVersion": row["graph_version"],
+                "graphVersion": (
+                    definition_snapshot.graph_version
+                    if not definition_snapshot.legacy
+                    else row["graph_version"]
+                ),
+                "agentDefinitionSnapshot": definition_snapshot.to_payload(),
                 "title": row["title"],
                 "status": row["status"],
                 "input": input_payload,

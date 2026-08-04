@@ -26,6 +26,15 @@
 - 当前 Profile 三个顶层 Definition 仍共享一个会构造完整 Agent bundle 的 Builder，因此声明的是现有 Bundle 上限，而非每条 Graph 的理论最小组件集。进一步拆细 Builder 属于后续可逆优化，不阻塞本阶段的最小权限运行时校验。
 - Phase 3 没有持久化完整 Execution Definition Snapshot；历史运行的 Builder、Prompt、Toolset 与模型绑定冻结仍属于 Phase 4，不能从当前 Trace 字段推断为已经完成。
 
+## 2026-08-04：Agent Control Plane Phase 4 Execution Definition Snapshot
+
+- Registry 表示当前可创建合同，不能用来解释历史运行；Execution 现在在 Graph 和 Provider 启动前冻结独立 Snapshot，并由数据库触发器禁止原地修改。
+- Snapshot 保存稳定 Agent/Definition/Graph/Builder 身份、输入输出 Schema、Prompt Schema 版本表、子组件与模型角色、Tool/Scope 合同及摘要、实际模型绑定摘要、上下文/重试/Trace Policy 和 Eval Pack 版本。模型摘要只包含 Definition 声明的 role，工作区其他模型绑定不会污染历史指纹。
+- 迁移前运行统一回填显式 `legacy=true`，运行详情明确提示“未保存快照”，Eval 仅在 legacy 路径保留旧 Registry 兼容；系统绝不把当前 Definition 反推成旧运行事实。
+- 非 legacy 运行的质量评估只允许冻结的 Pack ID/version；当前代码不再保留的历史 Pack 版本会稳定返回“不支持”，不会悄悄换成新版规则。
+- 高级运行详情折叠展示冻结的 Agent、Graph、Builder、Schema、Prompt、Eval 与策略/摘要；普通任务列表仍只读轻量 Summary，不把控制面技术字段暴露成日常噪音。
+- 当前多数 Prompt 仍是代码内字符串，尚未成为独立版本化资产，因此 `prompt_schema_versions` 会显式冻结为空表；这表示“未版本化”，不是伪造版本。后续 Prompt 资产化时只需补 Definition 声明，不需要改 Snapshot 格式。
+
 ## 2026-08-02：轻量创建契约需要前后端保持一致
 
 - 正式规格允许复盘流程只填写岗位名称创建轻量求职目标，但前端按钮和后端 Service 都沿用了“岗位 + 职级成对必填”的旧规则，导致用户已填写公司和岗位仍无法保存。

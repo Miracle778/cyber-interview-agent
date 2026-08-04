@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import json
 import logging
 from collections.abc import Awaitable, Callable, Mapping
@@ -15,6 +14,11 @@ from langgraph.types import Command
 
 from app.agents.context import AgentContext
 from app.agents.agent_factory import ModelOverride
+from app.agents.definition_registry import resolve_agent_definition
+from app.agents.definition_snapshot import (
+    AgentDefinitionSnapshot,
+    build_agent_definition_snapshot,
+)
 from app.diagnostics.agent_trace import AgentTraceWriter, TraceIdentity
 from app.middleware.agent_trace_middleware import safe_error_payload
 from app.application.event_projector import AgentEventProjector
@@ -228,6 +232,16 @@ class AgentExecutionService:
         retry_of_execution_id: str | None = None,
     ) -> ExecutionRecord:
         bindings = dict(self._model_bindings())
+        definition = resolve_agent_definition(session.kind)
+        definition_snapshot = (
+            AgentDefinitionSnapshot.legacy_snapshot()
+            if definition is None
+            else build_agent_definition_snapshot(
+                definition=definition,
+                graph_version=session.graph_version,
+                model_bindings=bindings,
+            )
+        )
         execution = self._repository.create_execution(
             session.id,
             input=input,
@@ -236,6 +250,7 @@ class AgentExecutionService:
             execution_id=execution_id,
             input_message_id=input_message_id,
             retry_of_execution_id=retry_of_execution_id,
+            definition_snapshot=definition_snapshot,
         )
         if project_input_message:
             message = self._repository.append_message(

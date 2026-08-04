@@ -37,6 +37,28 @@ const execution = {
   startedAt: "2026-07-29T06:26:00Z",
   finishedAt: "2026-07-29T06:26:18.400Z",
   errorCode: null,
+  definitionSnapshot: {
+    snapshotVersion: 1,
+    legacy: false,
+    agentId: "question.curate",
+    agentDefinitionVersion: "3",
+    graphVersion: 2,
+    builderKey: "question_curate",
+    promptSchemaVersions: { discovery: "v2" },
+    inputSchemaVersion: "2",
+    outputSchemaVersion: "3",
+    childComponents: ["question_discovery"],
+    modelRoles: ["question_generation"],
+    allowedTools: [],
+    allowedScopes: [],
+    toolsetDigest: "toolset-digest",
+    modelBindingDigest: "model-binding-digest",
+    contextPolicyId: "agent-context.v1",
+    retryPolicyId: "application-retry.v1",
+    tracePolicyId: "trace-ledger.v3",
+    evalPackId: "question-curation.v2",
+    evalPackVersion: 2,
+  },
 };
 
 const previousExecution = {
@@ -184,6 +206,56 @@ afterEach(() => {
 });
 
 describe("ExecutionTracePage", () => {
+  it("shows the immutable Agent definition used by this execution", async () => {
+    mockTrace();
+
+    renderTrace();
+
+    const disclosure = await screen.findByText("本次运行定义");
+    fireEvent.click(disclosure);
+    expect(screen.getByText("question.curate · Definition v3")).toBeInTheDocument();
+    expect(screen.getByText("Graph v2")).toBeInTheDocument();
+    expect(screen.getByText("question-curation.v2 · v2")).toBeInTheDocument();
+    expect(screen.getByText("trace-ledger.v3")).toBeInTheDocument();
+    expect(screen.getByText("v2 / v3")).toBeInTheDocument();
+    expect(screen.getByText("discovery v2")).toBeInTheDocument();
+  });
+
+  it("marks legacy executions without inferring the current registry", async () => {
+    mockTrace({
+      ...execution,
+      definitionSnapshot: {
+        snapshotVersion: 1,
+        legacy: true,
+        agentId: null,
+        agentDefinitionVersion: null,
+        graphVersion: null,
+        builderKey: null,
+        promptSchemaVersions: {},
+        inputSchemaVersion: null,
+        outputSchemaVersion: null,
+        childComponents: [],
+        modelRoles: [],
+        allowedTools: [],
+        allowedScopes: [],
+        toolsetDigest: null,
+        modelBindingDigest: null,
+        contextPolicyId: null,
+        retryPolicyId: null,
+        tracePolicyId: null,
+        evalPackId: null,
+        evalPackVersion: null,
+      },
+    });
+
+    renderTrace();
+
+    fireEvent.click(await screen.findByText("本次运行定义"));
+    expect(screen.getByText(
+      "历史运行未保存定义快照，不使用当前配置反推。",
+    )).toBeInTheDocument();
+  });
+
   it("renders a hierarchical operation tree and only safe operation metadata", async () => {
     const fetchSpy = mockTrace();
 

@@ -28,6 +28,7 @@ from app.observability.service import (
 from app.schemas.observability import (
     CreateTraceExportCommand,
     ExecutionSummaryPageResource,
+    ExecutionDetailResource,
     ExecutionSummaryResource,
     OperationSummaryListResource,
     TraceEventContentResource,
@@ -181,7 +182,7 @@ async def list_observability_executions(
 
 @router.get(
     "/executions/{run_id}",
-    response_model=ExecutionSummaryResource,
+    response_model=ExecutionDetailResource,
 )
 async def get_observability_execution(
     run_id: str,

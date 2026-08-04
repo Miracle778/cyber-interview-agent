@@ -4,10 +4,12 @@ import asyncio
 import json
 import sqlite3
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
+
+from app.agents.definition_snapshot import AgentDefinitionSnapshot
 
 ExecutionStatus = Literal[
     "running",
@@ -93,6 +95,7 @@ class SessionRecord:
     last_message_preview: str | None = None
     latest_execution_status: str | None = None
     pending_action_count: int = 0
+    graph_version: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +120,9 @@ class ExecutionRecord:
     finished_at: str | None
     input_message_id: str | None = None
     retry_of_execution_id: str | None = None
+    definition_snapshot: AgentDefinitionSnapshot = field(
+        default_factory=AgentDefinitionSnapshot.legacy_snapshot
+    )
 
     @property
     def cancellation_requested(self) -> bool:
@@ -305,6 +311,7 @@ class ProductRepository:
         execution_id: str | None = None,
         input_message_id: str | None = None,
         retry_of_execution_id: str | None = None,
+        definition_snapshot: AgentDefinitionSnapshot | None = None,
     ) -> ExecutionRecord:
         execution_id = execution_id or str(uuid4())
         if input_message_id is not None:
@@ -323,8 +330,8 @@ class ProductRepository:
                 "INSERT INTO agent_runs "
                 "(id, session_id, status, input_json, model_bindings_json, "
                 "configuration_json, started_at, input_message_id, "
-                "retry_of_execution_id) "
-                "VALUES (?, ?, 'running', ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)",
+                "retry_of_execution_id, agent_definition_snapshot_json) "
+                "VALUES (?, ?, 'running', ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?)",
                 (
                     execution_id,
                     session_id,
@@ -333,6 +340,7 @@ class ProductRepository:
                     _json(configuration or {}),
                     input_message_id,
                     retry_of_execution_id,
+                    (definition_snapshot or AgentDefinitionSnapshot.legacy_snapshot()).to_json(),
                 ),
             )
         except sqlite3.IntegrityError as error:
@@ -908,6 +916,7 @@ def _session(row) -> SessionRecord:
             if "pending_action_count" in row_keys
             else 0
         ),
+        graph_version=int(row["graph_version"]),
     )
 
 
@@ -939,6 +948,11 @@ def _execution(row) -> ExecutionRecord:
         finished_at=row["finished_at"],
         input_message_id=row["input_message_id"],
         retry_of_execution_id=row["retry_of_execution_id"],
+        definition_snapshot=AgentDefinitionSnapshot.from_json(
+            row["agent_definition_snapshot_json"]
+            if "agent_definition_snapshot_json" in set(row.keys())
+            else AgentDefinitionSnapshot.legacy_snapshot().to_json()
+        ),
     )
 
 
