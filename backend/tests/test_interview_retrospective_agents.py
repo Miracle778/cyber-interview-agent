@@ -7,7 +7,7 @@ import pytest
 from app.agents import interview_retrospective_contracts as retrospective_contracts
 from app.agents.prompts import interview_retrospective_prompts as retrospective_prompts
 from langchain.agents.structured_output import StructuredOutputValidationError
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import ValidationError
 
 from app.agents.context import AgentContext
@@ -949,3 +949,55 @@ def test_analysis_prompts_use_bounded_structured_payloads() -> None:
     ] == ["education-1", "project-1"]
     assert "不得发送的完整岗位文档" not in analysis
     assert "完全无关的开源治理成果" not in analysis
+
+
+@pytest.mark.asyncio
+async def test_chat_sends_history_as_complete_role_messages(tmp_path: Path) -> None:
+    requests = []
+
+    class StubRunnable:
+        async def ainvoke(self, request, *_args, **_kwargs):
+            requests.append(request)
+            return {
+                "structured_response": {
+                    "resultType": "explanation",
+                    "explanation": "这道题缺少失败恢复说明。",
+                }
+            }
+
+    runnable = StubRunnable()
+    agents = InterviewRetrospectiveAgents(
+        cleanup=runnable,  # type: ignore[arg-type]
+        question_extraction=runnable,  # type: ignore[arg-type]
+        question_analysis=runnable,  # type: ignore[arg-type]
+        chat=runnable,  # type: ignore[arg-type]
+        chat_history_token_budget=8_000,
+    )
+
+    result = await agents.discuss(
+        message="这道题哪里答得不好？",
+        selected_question_id="question-1",
+        conversation=[
+            {"id": "user-1", "role": "user", "content": "先解释一下"},
+            {
+                "id": "assistant-1",
+                "role": "assistant",
+                "content": "先前的解释",
+            },
+        ],
+        context=_agent_context(tmp_path),
+        config={},
+    )
+
+    messages = requests[0]["messages"]
+    assert [type(item) for item in messages] == [
+        HumanMessage,
+        AIMessage,
+        HumanMessage,
+    ]
+    assert messages[0].content == "先解释一下"
+    assert messages[1].content == "先前的解释"
+    current = json.loads(str(messages[2].content))
+    assert current["selectedQuestionId"] == "question-1"
+    assert "recentConversation" not in current
+    assert result.explanation == "这道题缺少失败恢复说明。"

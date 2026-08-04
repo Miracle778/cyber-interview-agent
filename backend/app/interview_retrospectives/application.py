@@ -44,6 +44,9 @@ from app.interview_retrospectives.errors import (
 from app.interview_retrospectives.repository import (
     InterviewRetrospectiveRepository,
 )
+from app.interview_retrospectives.history_application import (
+    RetrospectiveHistoryApplication,
+)
 from app.interview_retrospectives.service import InterviewRetrospectiveService
 from app.knowledge.drafts import CreateDraftCommand, KnowledgeDraftService
 from app.profile.models import CreateClaimProposalSpec
@@ -94,6 +97,14 @@ class InterviewRetrospectiveApplication:
         self.review = review
         self.drafts = drafts
         self.analysis_model_id = analysis_model_id
+        self.history = RetrospectiveHistoryApplication(
+            workspace_id=workspace_id,
+            repository=repository,
+            sessions=sessions,
+            executions=executions,
+            products=products,
+            agents=agents,
+        )
 
     async def create_retrospective(
         self,
@@ -812,9 +823,10 @@ class InterviewRetrospectiveApplication:
                 progress_scope=("interview_retrospective_chat",),
             )
             history = [
-                {"role": item.role, "content": item.content}
+                {"id": item.id, "role": item.role, "content": item.content}
                 for item in self.products.list_messages(session.id)
                 if item.id != user_message.id
+                and item.resolution_status == "active"
             ]
             result = await self.agents.discuss(
                 message=message.strip(),

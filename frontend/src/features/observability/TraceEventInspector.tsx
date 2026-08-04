@@ -148,7 +148,7 @@ export function TraceEventInspector({
           </dl>
           <p className="trace-event-inspector__provider-boundary">
             {event.eventType === "model.request"
-              ? "展示系统实际发送给模型的内容；敏感凭据已在写入时过滤。"
+              ? "展示系统实际发送给模型的内容，包括消息、系统上下文与可用 Tool；敏感凭据已在写入时过滤。"
               : "仅展示 Provider 实际返回的数据，不推测模型思维过程。"}
           </p>
 

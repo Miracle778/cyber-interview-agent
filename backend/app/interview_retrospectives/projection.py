@@ -14,6 +14,9 @@ from app.interview_retrospectives.models import (
     QuestionAnalysisRecord,
     QuestionUnitRecord,
     RetrospectiveRecord,
+    RetrospectiveSearchReportRecord,
+    RetrospectiveSearchResultRecord,
+    RetrospectiveSearchSetRecord,
     SegmentRecord,
     SourceVersionRecord,
     TranscriptCorrectionRecord,
@@ -332,6 +335,80 @@ def action_item_resource(record: ActionItemRecord) -> dict[str, object]:
         "title": record.title,
         "detail": record.detail,
         "status": record.status,
+        "version": record.version,
+        "completedAt": record.completed_at,
+        "createdAt": record.created_at,
+        "updatedAt": record.updated_at,
+    }
+
+
+def retrospective_search_set_resource(
+    record: RetrospectiveSearchSetRecord,
+) -> dict[str, object]:
+    return {
+        "id": record.id,
+        "workspaceId": record.workspace_id,
+        "sessionId": record.session_id,
+        "executionId": record.execution_id,
+        "queryText": record.query_text,
+        "filters": record.filters,
+        "searchPlan": record.search_plan,
+        "status": record.status,
+        "totalQuestions": record.total_questions,
+        "totalRetrospectives": record.total_retrospectives,
+        "summaryMarkdown": record.summary_markdown,
+        "summaryCitationQuestionIds": list(record.summary_citations),
+        "summaryExecutionId": record.summary_execution_id,
+        "lastErrorCode": record.last_error_code,
+        "version": record.version,
+        "completedAt": record.completed_at,
+        "createdAt": record.created_at,
+        "updatedAt": record.updated_at,
+    }
+
+
+def retrospective_search_result_resource(
+    record: RetrospectiveSearchResultRecord,
+) -> dict[str, object]:
+    return {
+        "id": record.id,
+        "searchSetId": record.search_set_id,
+        "retrospectiveId": record.retrospective_id,
+        "questionUnitId": record.question_unit_id,
+        "questionAnalysisId": record.question_analysis_id,
+        "rank": record.rank,
+        "score": record.score,
+        "matchedTerms": list(record.matched_terms),
+        "sourceMetadata": record.source_metadata,
+        "questionSnapshot": record.question_snapshot,
+        "answerExcerpt": record.answer_excerpt,
+        "analysisSnapshot": record.analysis_snapshot,
+        "sourceAvailable": record.source_available,
+        "createdAt": record.created_at,
+    }
+
+
+def retrospective_search_report_resource(
+    record: RetrospectiveSearchReportRecord,
+) -> dict[str, object]:
+    return {
+        "id": record.id,
+        "workspaceId": record.workspace_id,
+        "searchSetId": record.search_set_id,
+        "reportKey": record.report_key,
+        "ordinal": record.ordinal,
+        "supersedesReportId": record.supersedes_report_id,
+        "executionId": record.execution_id,
+        "title": record.title,
+        "focus": record.focus,
+        "selectedResultIds": list(record.selected_result_ids),
+        "body": record.body,
+        "markdown": record.markdown,
+        "citationQuestionIds": list(record.citation_question_ids),
+        "includeAnswerExcerpts": record.include_answer_excerpts,
+        "includeActionPlan": record.include_action_plan,
+        "status": record.status,
+        "lastErrorCode": record.last_error_code,
         "version": record.version,
         "completedAt": record.completed_at,
         "createdAt": record.created_at,

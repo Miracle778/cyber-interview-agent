@@ -187,6 +187,52 @@ describe("TraceEventInspector", () => {
     ]);
   });
 
+  it("shows the tools available to a model request without implying they were called", async () => {
+    const content = JSON.stringify({
+      messages: [{ type: "human", content: "这道题哪里答得不好？" }],
+      tools: [{
+        name: "read_question_analysis",
+        description: "Read one question and its current analysis in this retrospective.",
+        args: {
+          question_id: { type: "string", description: "Current question ID" },
+        },
+      }, {
+        name: "read_source_excerpt",
+        description: "Read bounded source excerpts belonging to one current question.",
+        args: {},
+      }],
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({
+      eventId: "event-tools",
+      eventType: "model.request",
+      content,
+      contentEncoding: "utf-8-json",
+      offset: 0,
+      nextOffset: null,
+      complete: true,
+      sha256: "tools",
+      redactionsApplied: true,
+    }));
+
+    render(
+      <TraceEventInspector
+        workspaceId="workspace-1"
+        runId="run-1"
+        event={{ ...event, eventId: "event-tools", byteLength: content.length }}
+        advancedEnabled
+      />,
+    );
+
+    expect(await screen.findByText("本次可用 Tool（2）")).toBeInTheDocument();
+    expect(screen.getByText(/不代表已经调用/)).toBeInTheDocument();
+    expect(screen.getByText("读取当前题目及分析")).toBeInTheDocument();
+    expect(screen.getByText("read_question_analysis")).toBeInTheDocument();
+    expect(screen.getByText("读取当前题目的原文片段")).toBeInTheDocument();
+    expect(screen.getByText("read_source_excerpt")).toBeInTheDocument();
+    expect(screen.getAllByText("查看参数 Schema")[0]?.closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByText("无需参数")).toBeInTheDocument();
+  });
+
   it("shows generic model input as readable content without mislabelling it as a user answer", async () => {
     const escapedQuestions = JSON.stringify([{
       seed_key: "seed-1",

@@ -47,6 +47,10 @@ PROFILE_CHAT_BUDGET_PROFILE = MiddlewareBudgetProfile(
     tool_run_limit=6,
     tool_limit_exit_behavior="continue",
 )
+RETROSPECTIVE_CHAT_BUDGET_PROFILE = MiddlewareBudgetProfile(
+    tool_run_limit=6,
+    tool_limit_exit_behavior="continue",
+)
 
 
 def build_default_middleware(

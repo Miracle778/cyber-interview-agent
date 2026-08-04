@@ -15,6 +15,9 @@ from app.interview_retrospectives.projection import (
     question_analysis_resource,
     question_resource,
     retrospective_resource,
+    retrospective_search_report_resource,
+    retrospective_search_result_resource,
+    retrospective_search_set_resource,
     source_version_resource,
 )
 from app.schemas.interview_retrospectives import (
@@ -53,7 +56,15 @@ from app.schemas.interview_retrospectives import (
     CorrectionProposalResource,
     RetrospectiveConversationResource,
     StartAnalysisCommand,
+    CreateRetrospectiveSearchCommand,
+    CreateRetrospectiveSearchReportCommand,
+    RetrospectiveSearchReportResource,
+    RetrospectiveSearchResultResource,
+    RetrospectiveSearchSetResource,
+    RetrospectiveSearchSummaryCommand,
+    UpdateRetrospectiveSearchReportCommand,
 )
+from app.interview_retrospectives.history_search import RetrospectiveSearchFilters
 
 
 router = APIRouter(tags=["interview-retrospectives"])
@@ -91,6 +102,162 @@ def list_retrospectives(
         job_target_id=job_target_id,
     )
     return [_retrospective_resource(service, item) for item in records]
+
+
+@router.post(
+    "/api/interview-retrospective-searches",
+    response_model=RetrospectiveSearchSetResource,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_retrospective_search(
+    command: CreateRetrospectiveSearchCommand,
+    idempotency_key: IdempotencyKey,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    del idempotency_key
+    filters = command.filters
+    record = await _application(application, command.workspace_id).history.start_search(
+        query_text=command.query_text,
+        filters=RetrospectiveSearchFilters(
+            job_target_id=filters.job_target_id,
+            company=filters.company,
+            role=filters.role,
+            round_label=filters.round_label,
+            date_from=filters.date_from,
+            date_to=filters.date_to,
+            origins=tuple(filters.origins),
+        ),
+    )
+    return retrospective_search_set_resource(record)
+
+
+@router.get(
+    "/api/interview-retrospective-searches",
+    response_model=list[RetrospectiveSearchSetResource],
+)
+def list_retrospective_searches(
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    records = _application(application, workspace_id).history.list_searches(limit=limit)
+    return [retrospective_search_set_resource(record) for record in records]
+
+
+@router.get(
+    "/api/interview-retrospective-searches/{search_set_id}",
+    response_model=RetrospectiveSearchSetResource,
+)
+def get_retrospective_search(
+    search_set_id: str,
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    application: AgentApplication = Depends(get_agent_application),
+):
+    record = _application(application, workspace_id).history.get_search(search_set_id)
+    return retrospective_search_set_resource(record)
+
+
+@router.get(
+    "/api/interview-retrospective-searches/{search_set_id}/results",
+    response_model=list[RetrospectiveSearchResultResource],
+)
+def list_retrospective_search_results(
+    search_set_id: str,
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    records = _application(application, workspace_id).history.list_results(
+        search_set_id, offset=offset, limit=limit
+    )
+    return [retrospective_search_result_resource(item) for item in records]
+
+
+@router.post(
+    "/api/interview-retrospective-searches/{search_set_id}/summary",
+    response_model=RetrospectiveSearchSetResource,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def summarize_retrospective_search(
+    search_set_id: str,
+    command: RetrospectiveSearchSummaryCommand,
+    idempotency_key: IdempotencyKey,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    del idempotency_key
+    record = await _application(
+        application, command.workspace_id
+    ).history.summarize_search(search_set_id)
+    return retrospective_search_set_resource(record)
+
+
+@router.post(
+    "/api/interview-retrospective-searches/{search_set_id}/reports",
+    response_model=RetrospectiveSearchReportResource,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_retrospective_search_report(
+    search_set_id: str,
+    command: CreateRetrospectiveSearchReportCommand,
+    idempotency_key: IdempotencyKey,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    del idempotency_key
+    record = await _application(
+        application, command.workspace_id
+    ).history.create_report(
+        search_set_id,
+        title=command.title,
+        focus=command.focus,
+        selected_result_ids=tuple(command.selected_result_ids),
+        include_answer_excerpts=command.include_answer_excerpts,
+        include_action_plan=command.include_action_plan,
+    )
+    return retrospective_search_report_resource(record)
+
+
+@router.get(
+    "/api/interview-retrospective-search-reports",
+    response_model=list[RetrospectiveSearchReportResource],
+)
+def list_retrospective_search_reports(
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    application: AgentApplication = Depends(get_agent_application),
+):
+    records = _application(application, workspace_id).history.list_reports()
+    return [retrospective_search_report_resource(item) for item in records]
+
+
+@router.get(
+    "/api/interview-retrospective-search-reports/{report_id}",
+    response_model=RetrospectiveSearchReportResource,
+)
+def get_retrospective_search_report(
+    report_id: str,
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    application: AgentApplication = Depends(get_agent_application),
+):
+    record = _application(application, workspace_id).history.get_report(report_id)
+    return retrospective_search_report_resource(record)
+
+
+@router.put(
+    "/api/interview-retrospective-search-reports/{report_id}",
+    response_model=RetrospectiveSearchReportResource,
+)
+def update_retrospective_search_report(
+    report_id: str,
+    command: UpdateRetrospectiveSearchReportCommand,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    record = _application(application, command.workspace_id).history.update_report(
+        report_id,
+        expected_version=command.expected_version,
+        title=command.title,
+        markdown=command.markdown,
+    )
+    return retrospective_search_report_resource(record)
 
 
 @router.post(

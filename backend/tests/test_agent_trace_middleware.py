@@ -15,6 +15,9 @@ from app.diagnostics.agent_trace import (
     read_trace_rows,
 )
 from app.middleware.agent_trace_middleware import AgentTraceMiddleware
+from app.tools.interview_retrospective_tools import (
+    create_interview_retrospective_tools,
+)
 
 
 def _context(tmp_path: Path, *, warning=None) -> AgentContext:
@@ -225,3 +228,46 @@ async def test_missing_fchmod_writes_trace_without_warning(
         "tool.request",
         "tool.response",
     ]
+
+
+@pytest.mark.asyncio
+async def test_model_request_with_real_tools_is_always_traceable(tmp_path: Path):
+    warnings: list[str] = []
+    middleware = AgentTraceMiddleware(
+        AgentTraceWriter(),
+        agent_role="retrospective_chat",
+        agent_name="interview_retrospective_chat",
+        provider_model_id="provider-model-1",
+    )
+    tools = create_interview_retrospective_tools(
+        object(),
+        target_search=lambda *_args: [],
+        profile_search=lambda *_args: [],
+        review_search=lambda *_args: [],
+        knowledge_search=lambda *_args: [],
+    )
+    request = SimpleNamespace(
+        messages=[HumanMessage(content="自我介绍的本质是什么？")],
+        system_message=SystemMessage(content="复盘讨论助手"),
+        tools=tools,
+        response_format=None,
+        model_settings={},
+        runtime=SimpleNamespace(
+            context=_context(tmp_path, warning=warnings.append)
+        ),
+    )
+
+    async def succeed(_request):
+        return "读取资料后回答"
+
+    assert await middleware.awrap_model_call(request, succeed) == "读取资料后回答"
+
+    rows = read_trace_rows(tmp_path, "s1", "r1")
+    assert [row["event_type"] for row in rows] == [
+        "model.request",
+        "model.response",
+    ]
+    assert [tool["name"] for tool in rows[0]["payload"]["tools"]] == [
+        tool.name for tool in tools
+    ]
+    assert warnings == []

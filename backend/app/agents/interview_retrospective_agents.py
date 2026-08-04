@@ -13,8 +13,15 @@ from app.agents.agent_model_resolver import ModelInvocationPolicy
 from app.agents.agent_invocation import isolated_thread_config
 from app.agents.agent_protocols import AgentRunnable
 from app.agents.context import AgentContext
+from app.agents.retrospective_chat_context import (
+    assemble_retrospective_chat_context,
+)
 from app.agents.interview_retrospective_contracts import (
     CleanupWindowOutput,
+    HistoricalSearchBatchSummary,
+    HistoricalSearchPlanOutput,
+    HistoricalSearchReportOutput,
+    HistoricalSearchSummaryOutput,
     QuestionAnalysisOutput,
     QuestionExtractionModelOutput,
     QuestionExtractionOutput,
@@ -24,12 +31,19 @@ from app.agents.prompts.interview_retrospective_prompts import (
     RETROSPECTIVE_ANALYSIS_PROMPT,
     RETROSPECTIVE_CLEANUP_PROMPT,
     RETROSPECTIVE_CHAT_PROMPT,
+    RETROSPECTIVE_HISTORY_BATCH_SUMMARY_PROMPT,
+    RETROSPECTIVE_HISTORY_REPORT_PROMPT,
+    RETROSPECTIVE_HISTORY_SEARCH_PLAN_PROMPT,
+    RETROSPECTIVE_HISTORY_SUMMARY_PROMPT,
     RETROSPECTIVE_QUESTION_EXTRACTION_PROMPT,
     render_question_analysis_input,
     render_question_extraction_input,
     render_question_extraction_repair_input,
     render_cleanup_target_window,
-    render_chat_input,
+    render_history_batch_input,
+    render_history_report_input,
+    render_history_search_plan_input,
+    render_history_summary_input,
 )
 
 
@@ -47,6 +61,17 @@ _QUESTION_EXTRACTION_INVOCATION_POLICY = ModelInvocationPolicy(
 
 _QUESTION_ANALYSIS_INVOCATION_POLICY = ModelInvocationPolicy(
     max_output_tokens=4_096,
+    request_timeout_seconds=120,
+    max_retries=0,
+)
+
+_HISTORY_PLAN_INVOCATION_POLICY = ModelInvocationPolicy(
+    max_output_tokens=2_048,
+    request_timeout_seconds=60,
+    max_retries=0,
+)
+_HISTORY_SUMMARY_INVOCATION_POLICY = ModelInvocationPolicy(
+    max_output_tokens=6_144,
     request_timeout_seconds=120,
     max_retries=0,
 )
@@ -70,6 +95,11 @@ class InterviewRetrospectiveAgents:
     question_extraction: AgentRunnable
     question_analysis: AgentRunnable
     chat: AgentRunnable
+    history_search_planner: AgentRunnable | None = None
+    history_batch_summary: AgentRunnable | None = None
+    history_summary: AgentRunnable | None = None
+    history_report: AgentRunnable | None = None
+    chat_history_token_budget: int = 8_000
 
     @classmethod
     def create(
@@ -81,6 +111,7 @@ class InterviewRetrospectiveAgents:
         model_override: ModelOverride | None = None,
         checkpointer=None,
         chat_tools: tuple = (),
+        chat_history_token_budget: int = 8_000,
     ) -> "InterviewRetrospectiveAgents":
         def create_agent(
             execution_name,
@@ -135,6 +166,31 @@ class InterviewRetrospectiveAgents:
                 chat_tools,
                 "retrospective_chat",
             ),
+            history_search_planner=create_agent(
+                "interview_retrospective_history_search_plan",
+                RETROSPECTIVE_HISTORY_SEARCH_PLAN_PROMPT,
+                HistoricalSearchPlanOutput,
+                invocation_policy=_HISTORY_PLAN_INVOCATION_POLICY,
+            ),
+            history_batch_summary=create_agent(
+                "interview_retrospective_history_batch_summary",
+                RETROSPECTIVE_HISTORY_BATCH_SUMMARY_PROMPT,
+                HistoricalSearchBatchSummary,
+                invocation_policy=_HISTORY_SUMMARY_INVOCATION_POLICY,
+            ),
+            history_summary=create_agent(
+                "interview_retrospective_history_summary",
+                RETROSPECTIVE_HISTORY_SUMMARY_PROMPT,
+                HistoricalSearchSummaryOutput,
+                invocation_policy=_HISTORY_SUMMARY_INVOCATION_POLICY,
+            ),
+            history_report=create_agent(
+                "interview_retrospective_history_report",
+                RETROSPECTIVE_HISTORY_REPORT_PROMPT,
+                HistoricalSearchReportOutput,
+                invocation_policy=_HISTORY_SUMMARY_INVOCATION_POLICY,
+            ),
+            chat_history_token_budget=chat_history_token_budget,
         )
 
     async def cleanup_window(
@@ -318,28 +374,109 @@ class InterviewRetrospectiveAgents:
         *,
         message: str,
         selected_question_id: str | None,
-        conversation: list[dict[str, str]],
+        conversation: list[dict[str, Any]],
         context: AgentContext,
         config: dict[str, Any],
     ) -> RetrospectiveChatOutput:
+        assembled = assemble_retrospective_chat_context(
+            message=message,
+            selected_question_id=selected_question_id,
+            conversation=conversation,
+            history_token_budget=self.chat_history_token_budget,
+        )
         result = await self.chat.ainvoke(
-            {
-                "messages": [
-                    HumanMessage(
-                        content=render_chat_input(
-                            message=message,
-                            selected_question_id=selected_question_id,
-                            conversation=conversation,
-                        )
-                    )
-                ]
-            },
+            {"messages": list(assembled.messages)},
             isolated_thread_config(config, context, "retrospective_chat"),
             context=context,
         )
         if "structured_response" not in result:
             raise ValueError("模型未生成结构化复盘讨论结果")
         return RetrospectiveChatOutput.model_validate(result["structured_response"])
+
+    async def plan_history_search(
+        self,
+        *,
+        query_text: str,
+        context: AgentContext,
+        config: dict[str, Any],
+    ) -> HistoricalSearchPlanOutput:
+        if self.history_search_planner is None:
+            raise RuntimeError("历史检索查询理解 Agent 未配置")
+        result = await self.history_search_planner.ainvoke(
+            {"messages": [HumanMessage(content=render_history_search_plan_input(query_text=query_text))]},
+            isolated_thread_config(config, context, "history_search_plan"),
+            context=context,
+        )
+        if "structured_response" not in result:
+            raise ValueError("模型未生成历史检索计划")
+        return HistoricalSearchPlanOutput.model_validate(result["structured_response"])
+
+    async def summarize_history_batch(
+        self,
+        *,
+        query_text: str,
+        results: list[dict[str, object]],
+        batch_index: int,
+        context: AgentContext,
+        config: dict[str, Any],
+    ) -> HistoricalSearchBatchSummary:
+        if self.history_batch_summary is None:
+            raise RuntimeError("历史检索批次总结 Agent 未配置")
+        result = await self.history_batch_summary.ainvoke(
+            {"messages": [HumanMessage(content=render_history_batch_input(query_text=query_text, results=results))]},
+            isolated_thread_config(config, context, f"history_batch_summary:{batch_index}"),
+            context=context,
+        )
+        if "structured_response" not in result:
+            raise ValueError("模型未生成历史检索批次总结")
+        return HistoricalSearchBatchSummary.model_validate(result["structured_response"])
+
+    async def reduce_history_summary(
+        self,
+        *,
+        query_text: str,
+        batch_summaries: list[dict[str, object]],
+        context: AgentContext,
+        config: dict[str, Any],
+    ) -> HistoricalSearchSummaryOutput:
+        if self.history_summary is None:
+            raise RuntimeError("历史检索总结 Agent 未配置")
+        result = await self.history_summary.ainvoke(
+            {"messages": [HumanMessage(content=render_history_summary_input(query_text=query_text, batch_summaries=batch_summaries))]},
+            isolated_thread_config(config, context, "history_summary_reduce"),
+            context=context,
+        )
+        if "structured_response" not in result:
+            raise ValueError("模型未生成历史检索总结")
+        return HistoricalSearchSummaryOutput.model_validate(result["structured_response"])
+
+    async def generate_history_report(
+        self,
+        *,
+        title: str,
+        focus: str,
+        batch_summaries: list[dict[str, object]],
+        include_answer_excerpts: bool,
+        include_action_plan: bool,
+        context: AgentContext,
+        config: dict[str, Any],
+    ) -> HistoricalSearchReportOutput:
+        if self.history_report is None:
+            raise RuntimeError("历史复盘报告 Agent 未配置")
+        result = await self.history_report.ainvoke(
+            {"messages": [HumanMessage(content=render_history_report_input(
+                title=title,
+                focus=focus,
+                batch_summaries=batch_summaries,
+                include_answer_excerpts=include_answer_excerpts,
+                include_action_plan=include_action_plan,
+            ))]},
+            isolated_thread_config(config, context, "history_report_reduce"),
+            context=context,
+        )
+        if "structured_response" not in result:
+            raise ValueError("模型未生成历史复盘报告")
+        return HistoricalSearchReportOutput.model_validate(result["structured_response"])
 
 
 def _is_output_truncated(message: AIMessage) -> bool:

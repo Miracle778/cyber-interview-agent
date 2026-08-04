@@ -19,6 +19,7 @@ from app.graphs.interview_retrospective_cleanup import (
     create_source_windows,
 )
 from app.interview_retrospectives.projection import cleanup_version_resource
+from app.interview_retrospectives.history_search import RetrospectiveSearchFilters
 from app.main import app
 
 
@@ -293,6 +294,29 @@ async def test_create_retrospective_owns_visible_chat_and_system_analysis_sessio
         == "system"
     )
     assert {item.kind for item in sessions} >= {"interview.retrospective"}
+
+
+@pytest.mark.asyncio
+async def test_history_search_completes_with_deterministic_fallback_when_planner_is_unavailable(
+    retrospective_application: AgentApplication,
+) -> None:
+    context = retrospective_application._context("w1")
+    history = retrospective_application.interview_retrospectives("w1").history
+
+    started = await history.start_search(
+        query_text="找出之前所有关于数字签名项目的问题",
+        filters=RetrospectiveSearchFilters(),
+    )
+    execution = await context.executions.wait(str(started.execution_id))
+    completed = history.get_search(started.id)
+
+    assert completed.status == "completed", (
+        completed.last_error_code,
+        execution.error_code,
+        execution.error_message,
+    )
+    assert completed.total_questions == 0
+    assert context.repository.get_execution(str(started.execution_id)).status == "completed"
 
 
 @pytest.mark.asyncio

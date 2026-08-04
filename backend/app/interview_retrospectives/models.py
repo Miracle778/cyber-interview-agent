@@ -328,3 +328,68 @@ class CorrectionProposalRecord:
     version: int
     created_at: str
     updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class RetrospectiveSearchSetRecord:
+    id: str
+    workspace_id: str
+    session_id: str | None
+    execution_id: str | None
+    query_text: str
+    filters: dict[str, object]
+    search_plan: dict[str, object]
+    status: str
+    total_questions: int
+    total_retrospectives: int
+    summary_markdown: str
+    summary_citations: tuple[str, ...]
+    summary_execution_id: str | None
+    last_error_code: str | None
+    version: int
+    completed_at: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class RetrospectiveSearchResultRecord:
+    id: str
+    search_set_id: str
+    retrospective_id: str | None
+    question_unit_id: str | None
+    question_analysis_id: str | None
+    rank: int
+    score: float
+    matched_terms: tuple[str, ...]
+    source_metadata: dict[str, object]
+    question_snapshot: dict[str, object]
+    answer_excerpt: str
+    analysis_snapshot: dict[str, object]
+    source_available: bool
+    created_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class RetrospectiveSearchReportRecord:
+    id: str
+    workspace_id: str
+    search_set_id: str | None
+    report_key: str
+    ordinal: int
+    supersedes_report_id: str | None
+    execution_id: str | None
+    title: str
+    focus: str
+    selected_result_ids: tuple[str, ...]
+    body: dict[str, object]
+    markdown: str
+    citation_question_ids: tuple[str, ...]
+    include_answer_excerpts: bool
+    include_action_plan: bool
+    status: str
+    last_error_code: str | None
+    version: int
+    completed_at: str | None
+    created_at: str
+    updated_at: str

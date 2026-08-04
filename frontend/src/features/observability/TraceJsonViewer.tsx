@@ -22,6 +22,13 @@ interface ModelRequestPresentation {
   systemInstruction: string | null;
   modelId: string | null;
   modelSettings: unknown;
+  tools: ModelRequestToolPresentation[];
+}
+
+interface ModelRequestToolPresentation {
+  name: string;
+  description: string | null;
+  args: unknown;
 }
 
 interface ModelResponsePresentation {
@@ -46,6 +53,16 @@ const RESPONSE_FIELD_LABELS: Record<string, string> = {
   feedback: "反馈",
   fact_conflict: "事实冲突",
   project_mastery: "项目掌握情况",
+};
+
+const TOOL_PURPOSE_LABELS: Record<string, string> = {
+  read_retrospective_summary: "读取本次复盘摘要",
+  read_question_analysis: "读取当前题目及分析",
+  read_source_excerpt: "读取当前题目的原文片段",
+  search_target_requirements: "搜索求职目标与岗位要求",
+  search_confirmed_profile: "搜索已确认的个人画像",
+  search_review_questions: "搜索复习题目",
+  search_active_knowledge: "搜索已发布知识资料",
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -87,6 +104,21 @@ function splitReviewPrompt(content: string) {
   };
 }
 
+function modelRequestTools(value: unknown): ModelRequestToolPresentation[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const tool = asRecord(item);
+    if (!tool || typeof tool.name !== "string" || !tool.name.trim()) return [];
+    return [{
+      name: tool.name.trim(),
+      description: typeof tool.description === "string" && tool.description.trim()
+        ? tool.description.trim()
+        : null,
+      args: tool.args,
+    }];
+  });
+}
+
 function modelRequestPresentation(value: unknown): ModelRequestPresentation | null {
   const payload = asRecord(value);
   if (!payload || !Array.isArray(payload.messages)) return null;
@@ -110,6 +142,7 @@ function modelRequestPresentation(value: unknown): ModelRequestPresentation | nu
     modelSettings: hasVisibleValue(payload.model_settings)
       ? payload.model_settings
       : undefined,
+    tools: modelRequestTools(payload.tools),
   };
 }
 
@@ -397,6 +430,34 @@ export function TraceJsonViewer({
         <details className="trace-model-request__details" open>
           <summary>系统上下文</summary>
           <p>{requestPresentation.systemInstruction}</p>
+        </details>
+      ) : null}
+
+      {requestPresentation.tools.length > 0 ? (
+        <details className="trace-model-request__details" open>
+          <summary>本次可用 Tool（{requestPresentation.tools.length}）</summary>
+          <div className="trace-model-request__tool-list">
+            <p className="trace-model-request__tool-note">
+              这些是模型本次可以选择调用的能力，不代表已经调用；实际调用请查看执行过程中的 Tool 事件。
+            </p>
+            {requestPresentation.tools.map((tool) => (
+              <article className="trace-model-request__tool" key={tool.name}>
+                <div className="trace-model-request__tool-heading">
+                  <strong>{TOOL_PURPOSE_LABELS[tool.name] ?? tool.description ?? "可调用能力"}</strong>
+                  <code>{tool.name}</code>
+                </div>
+                {tool.description ? <p>{tool.description}</p> : null}
+                {hasVisibleValue(tool.args) ? (
+                  <details>
+                    <summary>查看参数 Schema</summary>
+                    <pre aria-label={`${tool.name} 参数 Schema`}>{readableJson(tool.args)}</pre>
+                  </details>
+                ) : (
+                  <span className="trace-model-request__tool-empty">无需参数</span>
+                )}
+              </article>
+            ))}
+          </div>
         </details>
       ) : null}
 

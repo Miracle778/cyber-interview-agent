@@ -35,6 +35,14 @@ const api = vi.hoisted(() => ({
   transitionRetrospective: vi.fn(),
   getRetrospectiveDeletionImpact: vi.fn(),
   permanentlyDeleteRetrospective: vi.fn(),
+  createRetrospectiveSearch: vi.fn(),
+  listRetrospectiveSearches: vi.fn(),
+  getRetrospectiveSearch: vi.fn(),
+  listRetrospectiveSearchResults: vi.fn(),
+  summarizeRetrospectiveSearch: vi.fn(),
+  createRetrospectiveSearchReport: vi.fn(),
+  listRetrospectiveSearchReports: vi.fn(),
+  updateRetrospectiveSearchReport: vi.fn(),
 }));
 
 vi.mock("./retrospectiveApi", () => api);
@@ -103,6 +111,8 @@ describe("InterviewRetrospectivePage", () => {
     api.getAnalysisReport.mockResolvedValue(null);
     api.listCandidates.mockResolvedValue([]);
     api.listActions.mockResolvedValue([]);
+    api.listRetrospectiveSearchReports.mockResolvedValue([]);
+    api.listRetrospectiveSearches.mockResolvedValue([]);
   });
 
   it("keeps lifecycle tabs visible and applies a target deep link", async () => {
@@ -130,7 +140,33 @@ describe("InterviewRetrospectivePage", () => {
     expect(screen.queryByText("选择一场复盘")).not.toBeInTheDocument();
     expect(document.querySelector(".retrospective-page__workspace--empty")).toBeInTheDocument();
     expect(document.querySelector(".retrospective-page__controls")).toBeInTheDocument();
-    expect(document.querySelector(".retrospective-page")?.children).toHaveLength(3);
+    expect(document.querySelector(".retrospective-page")?.children).toHaveLength(4);
+    expect(screen.getByRole("button", { name: "历史检索" })).toBeInTheDocument();
+  });
+
+  it("opens workspace history search without loading a retrospective", async () => {
+    renderPage("/retrospectives?mode=history");
+
+    expect(await screen.findByRole("region", { name: "历史复盘检索" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "跨多场面试，找到问题和证据" })).toBeVisible();
+    expect(screen.getByLabelText("搜索历史复盘")).toBeVisible();
+    expect(screen.getByText("搜索不会重新读取你的简历、画像或完整转写，只使用已经确认的面试问题和当时已保存的正式分析。")).toBeVisible();
+    expect(api.listRetrospectives).not.toHaveBeenCalled();
+  });
+
+  it("restores a history search from the URL search set id", async () => {
+    api.getRetrospectiveSearch.mockResolvedValue({
+      id: "search-2", workspaceId: "w1", queryText: "系统设计题", filters: {}, searchPlan: {},
+      sessionId: "session-2", executionId: "execution-2", status: "completed",
+      totalQuestions: 0, totalRetrospectives: 0, summaryMarkdown: "", summaryCitationQuestionIds: [],
+      summaryExecutionId: null, lastErrorCode: null, version: 1, completedAt: "now", createdAt: "now", updatedAt: "now",
+    });
+    api.listRetrospectiveSearchResults.mockResolvedValue([]);
+
+    renderPage("/retrospectives?mode=history&searchSetId=search-2");
+
+    expect(await screen.findByRole("region", { name: "当前历史检索" })).toHaveTextContent("系统设计题");
+    expect(api.getRetrospectiveSearch).toHaveBeenCalledWith("w1", "search-2", expect.anything());
   });
 
   it("enters a focused two-pane layout while reviewing the clean transcript", async () => {

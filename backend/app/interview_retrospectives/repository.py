@@ -23,6 +23,9 @@ from app.interview_retrospectives.models import (
     QuestionAnalysisRecord,
     QuestionUnitRecord,
     RetrospectiveRecord,
+    RetrospectiveSearchReportRecord,
+    RetrospectiveSearchResultRecord,
+    RetrospectiveSearchSetRecord,
     SegmentRecord,
     SourceVersionRecord,
     TranscriptCorrectionRecord,
@@ -87,6 +90,449 @@ class InterviewRetrospectiveRepository:
         )
         self.connection.commit()
         return self.get_retrospective(retrospective_id)
+
+    def create_search_set(
+        self,
+        *,
+        workspace_id: str,
+        query_text: str,
+        filters: dict[str, object],
+        search_plan: dict[str, object],
+        session_id: str | None = None,
+        execution_id: str | None = None,
+        status: str = "pending",
+    ) -> RetrospectiveSearchSetRecord:
+        search_set_id = str(uuid4())
+        self.connection.execute(
+            "INSERT INTO interview_retrospective_search_sets("
+            "id, workspace_id, session_id, execution_id, query_text, filters_json, "
+            "search_plan_json, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                search_set_id,
+                workspace_id,
+                session_id,
+                execution_id,
+                query_text.strip(),
+                json.dumps(filters, ensure_ascii=False, sort_keys=True),
+                json.dumps(search_plan, ensure_ascii=False, sort_keys=True),
+                status,
+            ),
+        )
+        self.connection.commit()
+        return self.get_search_set(search_set_id)
+
+    def get_search_set(
+        self, search_set_id: str, *, workspace_id: str | None = None
+    ) -> RetrospectiveSearchSetRecord:
+        query = "SELECT * FROM interview_retrospective_search_sets WHERE id = ?"
+        parameters: tuple[object, ...] = (search_set_id,)
+        if workspace_id is not None:
+            query += " AND workspace_id = ?"
+            parameters += (workspace_id,)
+        row = self.connection.execute(query, parameters).fetchone()
+        if row is None:
+            raise RetrospectiveNotFound(search_set_id)
+        return _search_set(row)
+
+    def list_search_sets(
+        self, *, workspace_id: str, limit: int = 20
+    ) -> tuple[RetrospectiveSearchSetRecord, ...]:
+        if not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        rows = self.connection.execute(
+            "SELECT * FROM interview_retrospective_search_sets "
+            "WHERE workspace_id = ? "
+            "ORDER BY updated_at DESC, created_at DESC, rowid DESC LIMIT ?",
+            (workspace_id, limit),
+        ).fetchall()
+        return tuple(_search_set(row) for row in rows)
+
+    def update_search_set_plan(
+        self, search_set_id: str, *, search_plan: dict[str, object]
+    ) -> RetrospectiveSearchSetRecord:
+        cursor = self.connection.execute(
+            "UPDATE interview_retrospective_search_sets SET search_plan_json = ?, "
+            "status = 'searching', last_error_code = NULL, "
+            "version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (
+                json.dumps(search_plan, ensure_ascii=False, sort_keys=True),
+                search_set_id,
+            ),
+        )
+        self.connection.commit()
+        if cursor.rowcount != 1:
+            raise RetrospectiveNotFound(search_set_id)
+        return self.get_search_set(search_set_id)
+
+    def fail_search_set(
+        self, search_set_id: str, *, error_code: str
+    ) -> RetrospectiveSearchSetRecord:
+        cursor = self.connection.execute(
+            "UPDATE interview_retrospective_search_sets SET status = 'failed', "
+            "last_error_code = ?, version = version + 1, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (error_code, search_set_id),
+        )
+        self.connection.commit()
+        if cursor.rowcount != 1:
+            raise RetrospectiveNotFound(search_set_id)
+        return self.get_search_set(search_set_id)
+
+    def attach_search_summary_execution(
+        self, search_set_id: str, *, execution_id: str
+    ) -> RetrospectiveSearchSetRecord:
+        cursor = self.connection.execute(
+            "UPDATE interview_retrospective_search_sets SET "
+            "summary_execution_id = ?, version = version + 1, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (execution_id, search_set_id),
+        )
+        self.connection.commit()
+        if cursor.rowcount != 1:
+            raise RetrospectiveNotFound(search_set_id)
+        return self.get_search_set(search_set_id)
+
+    def complete_search_summary(
+        self,
+        search_set_id: str,
+        *,
+        markdown: str,
+        citation_question_ids: Iterable[str],
+    ) -> RetrospectiveSearchSetRecord:
+        cursor = self.connection.execute(
+            "UPDATE interview_retrospective_search_sets SET "
+            "summary_markdown = ?, summary_citations_json = ?, "
+            "last_error_code = NULL, version = version + 1, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (
+                markdown,
+                json.dumps(list(citation_question_ids), ensure_ascii=False),
+                search_set_id,
+            ),
+        )
+        self.connection.commit()
+        if cursor.rowcount != 1:
+            raise RetrospectiveNotFound(search_set_id)
+        return self.get_search_set(search_set_id)
+
+    def fail_search_summary(
+        self, search_set_id: str, *, error_code: str
+    ) -> RetrospectiveSearchSetRecord:
+        cursor = self.connection.execute(
+            "UPDATE interview_retrospective_search_sets SET last_error_code = ?, "
+            "version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (error_code, search_set_id),
+        )
+        self.connection.commit()
+        if cursor.rowcount != 1:
+            raise RetrospectiveNotFound(search_set_id)
+        return self.get_search_set(search_set_id)
+
+    def replace_search_results(
+        self,
+        search_set_id: str,
+        *,
+        results: Iterable[dict[str, object]],
+    ) -> tuple[RetrospectiveSearchResultRecord, ...]:
+        search_set = self.get_search_set(search_set_id)
+        prepared = list(results)
+        retrospective_ids: set[str] = set()
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            self.connection.execute(
+                "DELETE FROM interview_retrospective_search_results "
+                "WHERE search_set_id = ?",
+                (search_set_id,),
+            )
+            for rank, item in enumerate(prepared, start=1):
+                retrospective_id = str(item["retrospective_id"])
+                question_unit_id = str(item["question_unit_id"])
+                owner = self.connection.execute(
+                    "SELECT q.id FROM interview_question_units q "
+                    "JOIN interview_retrospectives r ON r.id = q.retrospective_id "
+                    "WHERE q.id = ? AND q.retrospective_id = ? "
+                    "AND r.workspace_id = ?",
+                    (question_unit_id, retrospective_id, search_set.workspace_id),
+                ).fetchone()
+                if owner is None:
+                    raise RetrospectiveNotFound(question_unit_id)
+                retrospective_ids.add(retrospective_id)
+                self.connection.execute(
+                    "INSERT INTO interview_retrospective_search_results("
+                    "id, search_set_id, retrospective_id, question_unit_id, "
+                    "question_analysis_id, rank, score, matched_terms_json, "
+                    "source_metadata_json, question_snapshot_json, answer_excerpt, "
+                    "analysis_snapshot_json, source_available) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        str(uuid4()),
+                        search_set_id,
+                        retrospective_id,
+                        question_unit_id,
+                        item.get("question_analysis_id"),
+                        rank,
+                        float(item.get("score", 0)),
+                        json.dumps(
+                            list(item.get("matched_terms", ())),
+                            ensure_ascii=False,
+                        ),
+                        json.dumps(
+                            dict(item.get("source_metadata", {})),
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                        json.dumps(
+                            dict(item.get("question_snapshot", {})),
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                        str(item.get("answer_excerpt", "")),
+                        json.dumps(
+                            dict(item.get("analysis_snapshot", {})),
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                        1 if item.get("source_available", True) else 0,
+                    ),
+                )
+            self.connection.execute(
+                "UPDATE interview_retrospective_search_sets SET "
+                "status = 'completed', total_questions = ?, "
+                "total_retrospectives = ?, version = version + 1, "
+                "completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ?",
+                (len(prepared), len(retrospective_ids), search_set_id),
+            )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        return self.list_search_results(search_set_id)
+
+    def list_search_results(
+        self,
+        search_set_id: str,
+        *,
+        offset: int = 0,
+        limit: int | None = None,
+    ) -> tuple[RetrospectiveSearchResultRecord, ...]:
+        query = (
+            "SELECT * FROM interview_retrospective_search_results "
+            "WHERE search_set_id = ? ORDER BY rank, id"
+        )
+        parameters: tuple[object, ...] = (search_set_id,)
+        if limit is not None:
+            query += " LIMIT ? OFFSET ?"
+            parameters += (limit, offset)
+        rows = self.connection.execute(query, parameters).fetchall()
+        return tuple(_search_result(row) for row in rows)
+
+    def list_history_search_candidates(
+        self, *, workspace_id: str
+    ) -> tuple[dict[str, object], ...]:
+        """Return the complete eligible workspace corpus for deterministic ranking.
+
+        Eligibility belongs to the repository boundary so callers cannot
+        accidentally search recycled retrospectives, unconfirmed inferred
+        questions, or draft/superseded analyses.
+        """
+        rows = self.connection.execute(
+            "SELECT q.id AS question_unit_id, q.retrospective_id, "
+            "q.ordinal AS question_ordinal, q.question_kind, q.origin, "
+            "q.question_text, q.confidence AS question_confidence, "
+            "q.decision_status, r.title AS retrospective_title, "
+            "r.round_label, r.interview_date, r.outcome, "
+            "r.lifecycle_status, r.job_target_id, jt.company_name, "
+            "jt.role_name, jt.seniority, qa.id AS question_analysis_id, "
+            "qa.verdict, qa.strengths_json, qa.improvements_json, "
+            "qa.omissions_json, qa.evidence_level, qa.confidence, "
+            "qa.improvement_outline_json, qa.suggested_answer, "
+            "qa.source_excerpt, qa.source_available "
+            "FROM interview_question_units q "
+            "JOIN interview_retrospectives r ON r.id = q.retrospective_id "
+            "JOIN job_targets jt ON jt.id = r.job_target_id "
+            "JOIN interview_question_analyses qa "
+            "ON qa.question_unit_id = q.id "
+            "AND qa.analysis_run_id = r.active_analysis_run_id "
+            "WHERE r.workspace_id = ? "
+            "AND r.lifecycle_status IN ('active', 'archived') "
+            "AND qa.result_status = 'formal' "
+            "AND ((q.origin = 'original' "
+            "AND q.decision_status NOT IN ('rejected', 'superseded')) "
+            "OR (q.origin = 'inferred' AND q.decision_status = 'confirmed')) "
+            "ORDER BY COALESCE(r.interview_date, r.created_at) DESC, "
+            "r.id, q.ordinal, q.id",
+            (workspace_id,),
+        ).fetchall()
+        return tuple(
+            {
+                "question_unit_id": row["question_unit_id"],
+                "retrospective_id": row["retrospective_id"],
+                "question_analysis_id": row["question_analysis_id"],
+                "question_ordinal": row["question_ordinal"],
+                "question_kind": row["question_kind"],
+                "origin": row["origin"],
+                "question_text": row["question_text"],
+                "question_confidence": row["question_confidence"],
+                "retrospective_title": row["retrospective_title"],
+                "round_label": row["round_label"],
+                "interview_date": row["interview_date"],
+                "outcome": row["outcome"],
+                "lifecycle_status": row["lifecycle_status"],
+                "job_target_id": row["job_target_id"],
+                "company_name": row["company_name"],
+                "role_name": row["role_name"],
+                "seniority": row["seniority"],
+                "verdict": row["verdict"],
+                "strengths": json.loads(row["strengths_json"]),
+                "improvements": json.loads(row["improvements_json"]),
+                "omissions": json.loads(row["omissions_json"]),
+                "evidence_level": row["evidence_level"],
+                "analysis_confidence": row["confidence"],
+                "improvement_outline": json.loads(
+                    row["improvement_outline_json"]
+                ),
+                "suggested_answer": row["suggested_answer"],
+                "source_excerpt": row["source_excerpt"],
+                "source_available": bool(row["source_available"]),
+            }
+            for row in rows
+        )
+
+    def create_search_report(
+        self,
+        *,
+        workspace_id: str,
+        search_set_id: str,
+        title: str,
+        focus: str,
+        selected_result_ids: Iterable[str],
+        include_answer_excerpts: bool,
+        include_action_plan: bool,
+        execution_id: str | None = None,
+        report_key: str | None = None,
+        supersedes_report_id: str | None = None,
+    ) -> RetrospectiveSearchReportRecord:
+        self.get_search_set(search_set_id, workspace_id=workspace_id)
+        report_key = report_key or str(uuid4())
+        ordinal_row = self.connection.execute(
+            "SELECT COALESCE(MAX(ordinal), 0) + 1 AS ordinal "
+            "FROM interview_retrospective_search_reports "
+            "WHERE workspace_id = ? AND report_key = ?",
+            (workspace_id, report_key),
+        ).fetchone()
+        report_id = str(uuid4())
+        self.connection.execute(
+            "INSERT INTO interview_retrospective_search_reports("
+            "id, workspace_id, search_set_id, report_key, ordinal, "
+            "supersedes_report_id, execution_id, title, focus, "
+            "selected_result_ids_json, include_answer_excerpts, "
+            "include_action_plan) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                report_id,
+                workspace_id,
+                search_set_id,
+                report_key,
+                int(ordinal_row["ordinal"]),
+                supersedes_report_id,
+                execution_id,
+                title.strip(),
+                focus,
+                json.dumps(list(selected_result_ids)),
+                1 if include_answer_excerpts else 0,
+                1 if include_action_plan else 0,
+            ),
+        )
+        self.connection.commit()
+        return self.get_search_report(report_id, workspace_id=workspace_id)
+
+    def get_search_report(
+        self, report_id: str, *, workspace_id: str | None = None
+    ) -> RetrospectiveSearchReportRecord:
+        query = "SELECT * FROM interview_retrospective_search_reports WHERE id = ?"
+        parameters: tuple[object, ...] = (report_id,)
+        if workspace_id is not None:
+            query += " AND workspace_id = ?"
+            parameters += (workspace_id,)
+        row = self.connection.execute(query, parameters).fetchone()
+        if row is None:
+            raise RetrospectiveNotFound(report_id)
+        return _search_report(row)
+
+    def list_search_reports(
+        self, *, workspace_id: str
+    ) -> tuple[RetrospectiveSearchReportRecord, ...]:
+        rows = self.connection.execute(
+            "SELECT * FROM interview_retrospective_search_reports "
+            "WHERE workspace_id = ? ORDER BY updated_at DESC, id",
+            (workspace_id,),
+        ).fetchall()
+        return tuple(_search_report(row) for row in rows)
+
+    def complete_search_report(
+        self,
+        report_id: str,
+        *,
+        title: str,
+        body: dict[str, object],
+        markdown: str,
+        citation_question_ids: Iterable[str],
+    ) -> RetrospectiveSearchReportRecord:
+        cursor = self.connection.execute(
+            "UPDATE interview_retrospective_search_reports SET title = ?, "
+            "body_json = ?, markdown = ?, citation_question_ids_json = ?, "
+            "status = 'completed', last_error_code = NULL, "
+            "completed_at = CURRENT_TIMESTAMP, version = version + 1, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (
+                title.strip(),
+                json.dumps(body, ensure_ascii=False, sort_keys=True),
+                markdown,
+                json.dumps(list(citation_question_ids), ensure_ascii=False),
+                report_id,
+            ),
+        )
+        self.connection.commit()
+        if cursor.rowcount != 1:
+            raise RetrospectiveNotFound(report_id)
+        return self.get_search_report(report_id)
+
+    def fail_search_report(
+        self, report_id: str, *, error_code: str
+    ) -> RetrospectiveSearchReportRecord:
+        cursor = self.connection.execute(
+            "UPDATE interview_retrospective_search_reports SET status = 'failed', "
+            "last_error_code = ?, version = version + 1, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (error_code, report_id),
+        )
+        self.connection.commit()
+        if cursor.rowcount != 1:
+            raise RetrospectiveNotFound(report_id)
+        return self.get_search_report(report_id)
+
+    def update_search_report(
+        self,
+        report_id: str,
+        *,
+        workspace_id: str,
+        expected_version: int,
+        title: str,
+        markdown: str,
+    ) -> RetrospectiveSearchReportRecord:
+        current = self.get_search_report(report_id, workspace_id=workspace_id)
+        if current.status != "completed":
+            raise RetrospectiveVersionConflict("报告尚未生成完成")
+        cursor = self.connection.execute(
+            "UPDATE interview_retrospective_search_reports SET title = ?, "
+            "markdown = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND workspace_id = ? AND version = ?",
+            (title.strip(), markdown, report_id, workspace_id, expected_version),
+        )
+        self.connection.commit()
+        if cursor.rowcount != 1:
+            raise RetrospectiveVersionConflict(report_id)
+        return self.get_search_report(report_id, workspace_id=workspace_id)
 
     def get_retrospective(self, retrospective_id: str) -> RetrospectiveRecord:
         row = self.connection.execute(
@@ -2215,6 +2661,12 @@ class InterviewRetrospectiveRepository:
                 "ON c.id = a.cleanup_version_id WHERE c.source_version_id = ?)",
                 (source_version_id,),
             )
+            self.connection.execute(
+                "UPDATE interview_retrospective_search_results SET "
+                "answer_excerpt = '', source_available = 0 "
+                "WHERE retrospective_id = ?",
+                (retrospective_id,),
+            )
             self.connection.commit()
         except Exception:
             self.connection.rollback()
@@ -2662,6 +3114,74 @@ def _gap(row: sqlite3.Row) -> GapRecord:
         summary=row["summary"],
         evidence=tuple(json.loads(row["evidence_json"])),
         status=row["status"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _search_set(row: sqlite3.Row) -> RetrospectiveSearchSetRecord:
+    return RetrospectiveSearchSetRecord(
+        id=row["id"],
+        workspace_id=row["workspace_id"],
+        session_id=row["session_id"],
+        execution_id=row["execution_id"],
+        query_text=row["query_text"],
+        filters=json.loads(row["filters_json"]),
+        search_plan=json.loads(row["search_plan_json"]),
+        status=row["status"],
+        total_questions=row["total_questions"],
+        total_retrospectives=row["total_retrospectives"],
+        summary_markdown=row["summary_markdown"],
+        summary_citations=tuple(json.loads(row["summary_citations_json"])),
+        summary_execution_id=row["summary_execution_id"],
+        last_error_code=row["last_error_code"],
+        version=row["version"],
+        completed_at=row["completed_at"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _search_result(row: sqlite3.Row) -> RetrospectiveSearchResultRecord:
+    return RetrospectiveSearchResultRecord(
+        id=row["id"],
+        search_set_id=row["search_set_id"],
+        retrospective_id=row["retrospective_id"],
+        question_unit_id=row["question_unit_id"],
+        question_analysis_id=row["question_analysis_id"],
+        rank=row["rank"],
+        score=row["score"],
+        matched_terms=tuple(json.loads(row["matched_terms_json"])),
+        source_metadata=json.loads(row["source_metadata_json"]),
+        question_snapshot=json.loads(row["question_snapshot_json"]),
+        answer_excerpt=row["answer_excerpt"],
+        analysis_snapshot=json.loads(row["analysis_snapshot_json"]),
+        source_available=bool(row["source_available"]),
+        created_at=row["created_at"],
+    )
+
+
+def _search_report(row: sqlite3.Row) -> RetrospectiveSearchReportRecord:
+    return RetrospectiveSearchReportRecord(
+        id=row["id"],
+        workspace_id=row["workspace_id"],
+        search_set_id=row["search_set_id"],
+        report_key=row["report_key"],
+        ordinal=row["ordinal"],
+        supersedes_report_id=row["supersedes_report_id"],
+        execution_id=row["execution_id"],
+        title=row["title"],
+        focus=row["focus"],
+        selected_result_ids=tuple(json.loads(row["selected_result_ids_json"])),
+        body=json.loads(row["body_json"]),
+        markdown=row["markdown"],
+        citation_question_ids=tuple(json.loads(row["citation_question_ids_json"])),
+        include_answer_excerpts=bool(row["include_answer_excerpts"]),
+        include_action_plan=bool(row["include_action_plan"]),
+        status=row["status"],
+        last_error_code=row["last_error_code"],
+        version=row["version"],
+        completed_at=row["completed_at"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

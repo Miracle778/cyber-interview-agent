@@ -771,8 +771,12 @@ class ProductEventStream:
         safe = _scrub(payload)
         for attempt in range(3):
             try:
-                event = self._repository.append_event(
-                    session_id, execution_id, event_type, safe
+                event = await asyncio.to_thread(
+                    self._repository.append_event,
+                    session_id,
+                    execution_id,
+                    event_type,
+                    safe,
                 )
                 break
             except sqlite3.OperationalError as error:

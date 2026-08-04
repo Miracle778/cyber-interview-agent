@@ -212,6 +212,7 @@ AGENT_OBSERVABILITY_REGISTRY = {
 _LEGACY_GRAPH_ID_ALIASES = {
     "interview.retrospective.analysis": "interview.retrospective",
     "interview.retrospective.chat": "interview.retrospective",
+    "interview.retrospective.history": "interview.retrospective",
 }
 
 if len(AGENT_OBSERVABILITY_REGISTRY) != len(_REGISTRATIONS):

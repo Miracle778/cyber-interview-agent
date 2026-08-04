@@ -84,6 +84,6 @@ export function RetrospectiveWorkspace({ retrospective, report, corrections = []
         {view === "assets" ? <RetrospectiveCandidates retrospectiveId={retrospective.id} candidates={candidates} questions={report.questions} busy={candidateBusy} onDecision={onCandidateDecision} onBatchDecision={onBatchCandidateDecision} /> : null}
         {view === "actions" ? <RetrospectiveActions actions={actions} busy={actionBusy || publicationBusy} draft={publicationDraft} onDecision={onActionDecision} onCreateDraft={onCreateDraft} /> : null}
       </div>}
-    {conversationOpen ? <RetrospectiveConversation workspaceId={retrospective.workspaceId} retrospectiveId={retrospective.id} selectedQuestionId={question?.id ?? null} onClose={() => setConversationOpen(false)} onCorrectionConfirmed={onCorrectionConfirmed} /> : null}
+    {conversationOpen ? <RetrospectiveConversation workspaceId={retrospective.workspaceId} retrospectiveId={retrospective.id} selectedQuestionId={question?.id ?? null} selectedQuestionText={question?.questionText ?? null} onClose={() => setConversationOpen(false)} onCorrectionConfirmed={onCorrectionConfirmed} /> : null}
   </div>;
 }

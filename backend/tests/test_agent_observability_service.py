@@ -263,6 +263,24 @@ def test_cursor_filters_and_system_agent_visibility_are_stable(
         service.get_execution("run-publication")
 
 
+def test_retrospective_history_execution_is_visible_in_run_center(tmp_path: Path) -> None:
+    service, connection = _service(tmp_path)
+    _insert_run(
+        connection,
+        run_id="run-retrospective-history",
+        graph_id="interview.retrospective.history",
+        status="completed",
+        created_at="2026-08-04T12:00:00+00:00",
+        visibility="system",
+        title="历史复盘检索：数字签名",
+    )
+
+    page = service.list_executions(limit=50)
+
+    assert [item.id for item in page.items] == ["run-retrospective-history"]
+    assert page.items[0].title == "历史复盘检索：数字签名"
+
+
 def test_business_agent_stays_visible_when_its_session_is_internal(
     tmp_path: Path,
 ) -> None:

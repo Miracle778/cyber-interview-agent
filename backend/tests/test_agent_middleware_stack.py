@@ -23,6 +23,7 @@ from app.diagnostics.agent_trace import AgentTraceWriter, read_trace_rows
 from app.infrastructure.runtime_database import connect_runtime_database
 from app.middleware.middleware_stack import (
     PROFILE_CHAT_BUDGET_PROFILE,
+    RETROSPECTIVE_CHAT_BUDGET_PROFILE,
     build_default_middleware,
 )
 from app.middleware.no_progress_middleware import NoProgressError, NoProgressMiddleware
@@ -197,6 +198,36 @@ def test_profile_chat_tool_limit_blocks_excess_calls_without_failing_execution()
         item for item in update["messages"] if isinstance(item, ToolMessage)
     ]
     assert [item.tool_call_id for item in blocked] == ["call-6", "call-7"]
+
+
+def test_retrospective_chat_has_its_own_bounded_tool_budget():
+    assert RETROSPECTIVE_CHAT_BUDGET_PROFILE.model_run_limit == 12
+    assert RETROSPECTIVE_CHAT_BUDGET_PROFILE.tool_run_limit == 6
+    assert RETROSPECTIVE_CHAT_BUDGET_PROFILE.tool_limit_exit_behavior == "continue"
+
+
+def test_summary_cutoff_keeps_ai_tool_request_with_its_tool_result():
+    messages = [
+        HumanMessage(content="读取当前题目"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "read_question_analysis",
+                    "args": {"question_id": "question-1"},
+                    "id": "call-1",
+                }
+            ],
+        ),
+        ToolMessage(content="题目分析", tool_call_id="call-1"),
+        AIMessage(content="这道题缺少失败恢复说明。"),
+    ]
+
+    cutoff = SummarizationMiddleware._find_safe_cutoff_point(messages, 2)
+
+    assert cutoff == 1
+    assert isinstance(messages[cutoff], AIMessage)
+    assert messages[cutoff].tool_calls[0]["id"] == "call-1"
 
 
 @pytest.mark.asyncio

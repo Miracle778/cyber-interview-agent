@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 
 from langchain.agents.middleware.types import ModelResponse
 from langchain_core.messages import BaseMessage
+from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
 from app.infrastructure.file_descriptors import binary_open_flags
@@ -144,8 +145,26 @@ def safe_trace_value(value: object) -> JSONValue:
             "result": safe_trace_value(value.result),
             "structured_response": safe_trace_value(value.structured_response),
         }
+    if isinstance(value, BaseTool):
+        try:
+            args = value.args
+        except Exception:
+            args = {"type": "ToolArgs", "unserializable": True}
+        return {
+            "name": safe_trace_value(value.name),
+            "description": safe_trace_value(value.description),
+            "args": safe_trace_value(args),
+            "return_direct": safe_trace_value(value.return_direct),
+        }
     if isinstance(value, BaseModel):
-        return safe_trace_value(value.model_dump(mode="json"))
+        try:
+            dumped = value.model_dump(mode="json")
+        except Exception:
+            try:
+                dumped = value.model_dump(mode="python")
+            except Exception:
+                return {"type": type(value).__name__, "unserializable": True}
+        return safe_trace_value(dumped)
     if isinstance(value, (list, tuple)):
         return [safe_trace_value(item) for item in value]
     if isinstance(value, dict):

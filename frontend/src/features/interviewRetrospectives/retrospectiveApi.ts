@@ -24,6 +24,10 @@ import type {
   RetrospectiveConversation,
   RetrospectiveCorrectionProposal,
   RetrospectiveDeletionImpact,
+  RetrospectiveSearchFilters,
+  RetrospectiveSearchReport,
+  RetrospectiveSearchResult,
+  RetrospectiveSearchSet,
 } from "./retrospectiveTypes";
 
 const commandKey = (prefix: string) =>
@@ -50,6 +54,90 @@ export function listRetrospectives(
   return apiGet<InterviewRetrospective[]>(
     `/api/interview-retrospectives?${query.toString()}`,
     { signal },
+  );
+}
+
+export function createRetrospectiveSearch(
+  workspaceId: string,
+  queryText: string,
+  filters: RetrospectiveSearchFilters,
+) {
+  return apiRequest<RetrospectiveSearchSet>(
+    "/api/interview-retrospective-searches",
+    command("POST", { workspaceId, queryText, filters }, "retrospective-history-search"),
+  );
+}
+
+export function listRetrospectiveSearches(workspaceId: string, signal?: AbortSignal) {
+  const query = new URLSearchParams({ workspaceId, limit: "100" });
+  return apiGet<RetrospectiveSearchSet[]>(
+    `/api/interview-retrospective-searches?${query.toString()}`,
+    { signal },
+  );
+}
+
+export function getRetrospectiveSearch(
+  workspaceId: string,
+  searchSetId: string,
+  signal?: AbortSignal,
+) {
+  return apiGet<RetrospectiveSearchSet>(
+    `/api/interview-retrospective-searches/${searchSetId}?workspaceId=${encodeURIComponent(workspaceId)}`,
+    { signal },
+  );
+}
+
+export function listRetrospectiveSearchResults(
+  workspaceId: string,
+  searchSetId: string,
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams({ workspaceId, offset: "0", limit: "100" });
+  return apiGet<RetrospectiveSearchResult[]>(
+    `/api/interview-retrospective-searches/${searchSetId}/results?${query.toString()}`,
+    { signal },
+  );
+}
+
+export function summarizeRetrospectiveSearch(workspaceId: string, searchSetId: string) {
+  return apiRequest<RetrospectiveSearchSet>(
+    `/api/interview-retrospective-searches/${searchSetId}/summary`,
+    command("POST", { workspaceId }, "retrospective-history-summary"),
+  );
+}
+
+export function createRetrospectiveSearchReport(
+  workspaceId: string,
+  searchSetId: string,
+  input: {
+    title: string;
+    focus: "question_summary" | "performance_review" | "preparation";
+    selectedResultIds?: string[];
+    includeAnswerExcerpts?: boolean;
+    includeActionPlan?: boolean;
+  },
+) {
+  return apiRequest<RetrospectiveSearchReport>(
+    `/api/interview-retrospective-searches/${searchSetId}/reports`,
+    command("POST", { workspaceId, ...input }, "retrospective-history-report"),
+  );
+}
+
+export function listRetrospectiveSearchReports(workspaceId: string, signal?: AbortSignal) {
+  return apiGet<RetrospectiveSearchReport[]>(
+    `/api/interview-retrospective-search-reports?workspaceId=${encodeURIComponent(workspaceId)}`,
+    { signal },
+  );
+}
+
+export function updateRetrospectiveSearchReport(
+  workspaceId: string,
+  reportId: string,
+  input: { expectedVersion: number; title: string; markdown: string },
+) {
+  return apiRequest<RetrospectiveSearchReport>(
+    `/api/interview-retrospective-search-reports/${reportId}`,
+    { method: "PUT", body: JSON.stringify({ workspaceId, ...input }) },
   );
 }
 

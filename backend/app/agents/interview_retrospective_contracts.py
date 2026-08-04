@@ -367,3 +367,39 @@ class RetrospectiveChatOutput(RetrospectiveAgentModel):
         if self.result_type != "speaker_correction" and not self.question_id:
             raise ValueError("问题纠正必须指定 questionId")
         return self
+
+
+class HistoricalSearchPlanOutput(RetrospectiveAgentModel):
+    """Semantic query expansion only; scope and access remain program-owned."""
+
+    search_terms: list[str] = Field(min_length=1, max_length=12)
+    project_aliases: list[str] = Field(default_factory=list, max_length=8)
+    intent_summary: str = Field(default="", max_length=500)
+
+    @model_validator(mode="after")
+    def validate_terms(self) -> "HistoricalSearchPlanOutput":
+        values = [*self.search_terms, *self.project_aliases]
+        if any(not value.strip() or len(value) > 80 for value in values):
+            raise ValueError("历史检索词必须是简短的非空文本")
+        return self
+
+
+class HistoricalSearchBatchSummary(RetrospectiveAgentModel):
+    summary: str = Field(default="", max_length=8_000)
+    themes: list[str] = Field(default_factory=list, max_length=12)
+    citation_question_ids: list[str] = Field(default_factory=list, max_length=100)
+
+
+class HistoricalSearchSummaryOutput(RetrospectiveAgentModel):
+    answer_markdown: str = Field(default="", max_length=24_000)
+    key_patterns: list[str] = Field(default_factory=list, max_length=16)
+    citation_question_ids: list[str] = Field(default_factory=list, max_length=300)
+
+
+class HistoricalSearchReportOutput(RetrospectiveAgentModel):
+    title: str = Field(min_length=1, max_length=240)
+    executive_summary: str = Field(default="", max_length=8_000)
+    sections: list[dict[str, object]] = Field(default_factory=list, max_length=24)
+    action_plan: list[str] = Field(default_factory=list, max_length=24)
+    markdown: str = Field(min_length=1, max_length=60_000)
+    citation_question_ids: list[str] = Field(default_factory=list, max_length=500)

@@ -1,5 +1,9 @@
+import asyncio
 import sqlite3
+import threading
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -111,6 +115,41 @@ async def test_product_event_retries_a_transient_sqlite_lock(
     assert event.type == "execution.started"
     assert attempts == 2
     connection.close()
+
+
+@pytest.mark.asyncio
+async def test_product_event_write_never_blocks_the_async_event_loop() -> None:
+    write_started = threading.Event()
+    release_write = threading.Event()
+    append_finished_at: list[float] = []
+    heartbeat_at: list[float] = []
+
+    class BlockingRepository:
+        def append_event(self, *_args, **_kwargs):
+            write_started.set()
+            release_write.wait(timeout=1)
+            append_finished_at.append(time.monotonic())
+            return SimpleNamespace(type="execution.started")
+
+    events = ProductEventStream(BlockingRepository(), workspace_root=Path("."))
+
+    async def heartbeat() -> None:
+        await asyncio.sleep(0.01)
+        heartbeat_at.append(time.monotonic())
+
+    heartbeat_task = asyncio.create_task(heartbeat())
+    release_timer = threading.Timer(0.2, release_write.set)
+    release_timer.start()
+    publish_task = asyncio.create_task(
+        events.publish("s1", "r1", "execution.started", {"executionId": "r1"})
+    )
+    await asyncio.to_thread(write_started.wait, 1)
+    event = await publish_task
+    await heartbeat_task
+    release_timer.join()
+
+    assert event.type == "execution.started"
+    assert heartbeat_at[0] < append_finished_at[0]
 
 
 @pytest.mark.asyncio

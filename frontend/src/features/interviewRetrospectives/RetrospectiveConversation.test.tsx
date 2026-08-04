@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RetrospectiveConversation } from "./RetrospectiveConversation";
 import * as api from "./retrospectiveApi";
+import * as agentApi from "../agent/agentApi";
 
 vi.mock("./retrospectiveApi", () => ({
   getRetrospectiveConversation: vi.fn(),
@@ -10,6 +11,8 @@ vi.mock("./retrospectiveApi", () => ({
   stopRetrospectiveMessage: vi.fn(),
   decideRetrospectiveCorrection: vi.fn(),
 }));
+
+vi.mock("../agent/agentApi", () => ({ getAgentSession: vi.fn() }));
 
 const proposal = {
   id: "proposal-1",
@@ -33,9 +36,42 @@ const proposal = {
 
 function renderConversation(onCorrectionConfirmed = vi.fn()) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  render(<QueryClientProvider client={client}><RetrospectiveConversation workspaceId="w1" retrospectiveId="retro-1" selectedQuestionId="question-1" onClose={vi.fn()} onCorrectionConfirmed={onCorrectionConfirmed} /></QueryClientProvider>);
+  render(<QueryClientProvider client={client}><RetrospectiveConversation workspaceId="w1" retrospectiveId="retro-1" selectedQuestionId="question-1" selectedQuestionText="请做一下自我介绍" onClose={vi.fn()} onCorrectionConfirmed={onCorrectionConfirmed} /></QueryClientProvider>);
   return onCorrectionConfirmed;
 }
+
+beforeEach(() => {
+  vi.mocked(agentApi.getAgentSession).mockResolvedValue({
+    id: "session-1",
+    workspaceId: "w1",
+    kind: "interview_retrospective_chat",
+    title: "复盘讨论：字节云",
+    status: "active",
+    createdAt: "2026-08-03T09:00:00Z",
+    updatedAt: "2026-08-03T10:00:00Z",
+    latestExecutionId: "execution-1",
+    latestExecutionStatus: "completed",
+    usage: { inputTokens: 800, outputTokens: 400, totalTokens: 1200, callCount: 1, estimatedCount: 0 },
+    contextUsage: { currentTokens: 1800, thresholdTokens: 32000, estimated: false },
+    contextCompacted: false,
+    latestWarning: null,
+    messages: [],
+    executions: [],
+    latestExecution: {
+      id: "execution-1",
+      sessionId: "session-1",
+      status: "completed",
+      configuration: { providerModelId: "model-1", reasoningEffort: "none" },
+      resumeCount: 0,
+      errorCode: null,
+      errorMessage: null,
+      createdAt: "2026-08-03T09:59:50Z",
+      startedAt: "2026-08-03T09:59:50Z",
+      finishedAt: "2026-08-03T10:00:00Z",
+    },
+    currentAction: null,
+  });
+});
 
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
@@ -68,5 +104,56 @@ describe("RetrospectiveConversation", () => {
     fireEvent.keyDown(textbox, { key: "Enter", code: "Enter" });
 
     await waitFor(() => expect(api.sendRetrospectiveMessage).toHaveBeenCalledWith("w1", "retro-1", "为什么这里是高风险？", "question-1"));
+  });
+
+  it("uses the retrospective assistant identity and exposes the standard conversation context", async () => {
+    vi.mocked(api.getRetrospectiveConversation).mockResolvedValue({
+      sessionId: "session-1",
+      messages: [{ id: "message-1", executionId: "execution-1", role: "assistant", content: "先建立全局认知框架。", messageKind: "text", payload: {}, createdAt: "2026-08-03T10:00:00Z" }],
+      proposals: [],
+      latestExecution: { id: "execution-1", status: "completed", errorCode: null, createdAt: "2026-08-03T09:59:50Z", finishedAt: "2026-08-03T10:00:00Z" },
+    });
+    renderConversation();
+
+    expect(await screen.findByText("复盘助手")).toBeVisible();
+    expect(screen.queryByText("画像助手")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("运行状态：可继续对话")).toBeVisible();
+    expect(screen.getByText("本次讨论已完成")).toBeVisible();
+
+    const contextAside = screen.getByRole("complementary", { name: "本次依据" });
+    expect(within(contextAside).getByRole("heading", { name: "运行状态" })).toBeVisible();
+    expect(within(contextAside).getByText("请做一下自我介绍")).toBeVisible();
+    expect(within(contextAside).getByText(/纠正建议需要你确认后才会修改复盘/)).toBeVisible();
+    expect(within(contextAside).getByText("10 秒")).toBeVisible();
+    fireEvent.click(within(contextAside).getByText("技术详情"));
+    expect(within(contextAside).getByText("1.2k")).toBeVisible();
+  });
+
+  it.each([
+    ["running", "正在处理"],
+    ["waiting_for_input", "等待你继续"],
+    ["waiting_for_approval", "等待你确认"],
+    ["failed", "需要重试"],
+    ["interrupted", "处理已中断"],
+    ["cancelled", "已停止"],
+  ])("shows a user-facing %s execution status in the title bar", async (status, label) => {
+    vi.mocked(api.getRetrospectiveConversation).mockResolvedValue({
+      sessionId: "session-1",
+      messages: [],
+      proposals: [],
+      latestExecution: { id: "execution-1", status, errorCode: null, createdAt: "2026-08-03T10:00:00Z", finishedAt: null },
+    });
+    renderConversation();
+
+    expect(await screen.findByLabelText(`运行状态：${label}`)).toBeVisible();
+  });
+
+  it("fills rather than sends a starter question", async () => {
+    vi.mocked(api.getRetrospectiveConversation).mockResolvedValue({ sessionId: "session-1", messages: [], proposals: [], latestExecution: null });
+    renderConversation();
+
+    fireEvent.click(await screen.findByRole("button", { name: "解释这道题的分析依据" }));
+    expect(screen.getByRole("textbox", { name: "发送给复盘助手" })).toHaveValue("解释这道题的分析依据");
+    expect(api.sendRetrospectiveMessage).not.toHaveBeenCalled();
   });
 });

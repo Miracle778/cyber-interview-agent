@@ -78,17 +78,112 @@ RETROSPECTIVE_CHAT_PROMPT = PromptSpec(
 )
 
 
+RETROSPECTIVE_HISTORY_SEARCH_PLAN_PROMPT = PromptSpec(
+    id="interview_retrospective.history_search_plan",
+    version="2026-08-04",
+    system=(
+        "你是 Workspace 历史面试复盘的查询理解节点。只把用户自然语言转成简短搜索词、"
+        "项目别名和意图摘要。不得生成 Workspace ID、复盘 ID、SQL、权限条件或写入动作；"
+        "不得回答用户问题。范围、过滤、完整召回和排序由程序控制。技术缩写与中文名称可"
+        "同时保留，例如数字签名、PKI、HSM。"
+    ),
+)
+
+
+RETROSPECTIVE_HISTORY_BATCH_SUMMARY_PROMPT = PromptSpec(
+    id="interview_retrospective.history_batch_summary",
+    version="2026-08-04",
+    system=(
+        "你是历史复盘结果的分批证据总结节点。只能使用输入 results，所有主题与结论必须"
+        "引用其中的 questionId；不得补充简历、画像、岗位原文、完整转写或常识事实。"
+        "如果证据不足应明确说明，不得把 inferred 问题写成面试官原话。"
+    ),
+)
+
+
+RETROSPECTIVE_HISTORY_SUMMARY_PROMPT = PromptSpec(
+    id="interview_retrospective.history_summary",
+    version="2026-08-04",
+    system=(
+        "你是历史复盘检索的最终总结节点。只能归纳输入中的 batchSummaries，保留并合并"
+        "questionId 引用，不得添加批次外事实。回答用户当前问题，突出跨场次重复主题、"
+        "差异和准备建议；没有证据时直接说明。"
+    ),
+)
+
+
+RETROSPECTIVE_HISTORY_REPORT_PROMPT = PromptSpec(
+    id="interview_retrospective.history_report",
+    version="2026-08-04",
+    system=(
+        "你是历史复盘总结报告生成节点。只能使用冻结 Search Set 的批次摘要和元数据生成"
+        "可编辑报告。每个事实性结论必须引用输入中的 questionId；不得引入未检索到的"
+        "简历、画像、岗位资料或外部知识。报告应区分原题与已确认推断题，并给出有证据"
+        "支撑的行动计划。"
+    ),
+)
+
+
+def render_history_search_plan_input(*, query_text: str) -> str:
+    return json.dumps({"query": query_text}, ensure_ascii=False, indent=2)
+
+
+def render_history_batch_input(
+    *, query_text: str, results: list[dict[str, object]]
+) -> str:
+    return json.dumps(
+        {"query": query_text, "results": results},
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def render_history_summary_input(
+    *, query_text: str, batch_summaries: list[dict[str, object]]
+) -> str:
+    return json.dumps(
+        {"query": query_text, "batchSummaries": batch_summaries},
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def render_history_report_input(
+    *,
+    title: str,
+    focus: str,
+    batch_summaries: list[dict[str, object]],
+    include_answer_excerpts: bool,
+    include_action_plan: bool,
+) -> str:
+    return json.dumps(
+        {
+            "title": title,
+            "focus": focus,
+            "batchSummaries": batch_summaries,
+            "includeAnswerExcerpts": include_answer_excerpts,
+            "includeActionPlan": include_action_plan,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
 def render_chat_input(
     *,
     message: str,
     selected_question_id: str | None,
-    conversation: list[dict[str, str]],
+    included_complete_turns: int = 0,
+    omitted_complete_turns: int = 0,
 ) -> str:
     return json.dumps(
         {
             "message": message,
             "selectedQuestionId": selected_question_id,
-            "recentConversation": conversation[-12:],
+            "conversationContext": {
+                "includedCompleteTurns": included_complete_turns,
+                "omittedCompleteTurns": omitted_complete_turns,
+            },
         },
         ensure_ascii=False,
         indent=2,

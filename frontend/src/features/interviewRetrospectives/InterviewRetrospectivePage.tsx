@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient, type QueryFunctionContext } from "@tanstack/react-query";
-import { Archive, ArrowLeft, MessageSquareText, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { Archive, ArrowLeft, History, MessageSquareText, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { Button } from "../../shared/ui/Button";
 import { SelectControl } from "../../shared/ui/SelectControl";
@@ -13,6 +13,7 @@ import { RetrospectiveWorkspace } from "./RetrospectiveWorkspace";
 import { RetrospectiveCreateFlow, type RetrospectiveCreateValues } from "./RetrospectiveCreateFlow";
 import { RetrospectiveList } from "./RetrospectiveList";
 import { RetrospectiveLifecycleActions } from "./RetrospectiveLifecycleActions";
+import { RetrospectiveHistorySearch } from "./RetrospectiveHistorySearch";
 import {
   addSourceVersion,
   batchDecideCandidates,
@@ -89,6 +90,7 @@ export function InterviewRetrospectivePage({ workspace }: { workspace: Workspace
   const cleanupId = searchParams.get("cleanupId");
   const requestedQuestionId = searchParams.get("questionId");
   const recordListRequested = searchParams.get("view") === "list";
+  const pageMode = searchParams.get("mode") === "history" ? "history" : "records";
 
   const targetsQuery = useQuery({
     queryKey: ["job-targets", workspaceId],
@@ -99,7 +101,7 @@ export function InterviewRetrospectivePage({ workspace }: { workspace: Workspace
     queries: TABS.map((tab) => ({
       queryKey: ["retrospectives", workspaceId, tab.value, targetId],
       queryFn: ({ signal }: QueryFunctionContext) => listRetrospectives(workspaceId, { lifecycle: tab.value, jobTargetId: targetId || undefined }, signal),
-      enabled: Boolean(workspaceId),
+      enabled: Boolean(workspaceId && pageMode === "records"),
     })),
   });
   const lifecycleIndex = Math.max(0, TABS.findIndex((tab) => tab.value === lifecycle));
@@ -108,31 +110,31 @@ export function InterviewRetrospectivePage({ workspace }: { workspace: Workspace
   const currentCleanupQuery = useQuery({
     queryKey: ["cleanup-current", workspaceId, selected?.id],
     queryFn: ({ signal }) => getCurrentCleanup(workspaceId, selected!.id, signal),
-    enabled: Boolean(workspaceId && selected && !cleanupId && !selected.activeCleanupVersionId),
+    enabled: Boolean(pageMode === "records" && workspaceId && selected && !cleanupId && !selected.activeCleanupVersionId),
   });
   const effectiveCleanupId = cleanupId ?? selected?.activeCleanupVersionId ?? currentCleanupQuery.data?.id ?? null;
   const cleanupQuery = useQuery({
     queryKey: ["cleanup", workspaceId, selected?.id, effectiveCleanupId],
     queryFn: ({ signal }) => getCleanup(workspaceId, selected!.id, effectiveCleanupId!, signal),
-    enabled: Boolean(workspaceId && selected && effectiveCleanupId),
+    enabled: Boolean(pageMode === "records" && workspaceId && selected && effectiveCleanupId),
     refetchInterval: (query) => ["queued", "running", "stopping"].includes(query.state.data?.status ?? "") ? 1_000 : false,
   });
   const reportQuery = useQuery({
     queryKey: ["retrospective-report", workspaceId, selected?.id],
     queryFn: ({ signal }) => getAnalysisReport(workspaceId, selected!.id, signal),
-    enabled: Boolean(workspaceId && selected?.activeAnalysisRunId),
+    enabled: Boolean(pageMode === "records" && workspaceId && selected?.activeAnalysisRunId),
     refetchInterval: (query) => ["queued", "running", "stopping"].includes(query.state.data?.analysisRun.status ?? "") ? 1_000 : false,
   });
   const candidatesQuery = useQuery({
     queryKey: ["retrospective-candidates", workspaceId, selected?.id],
     queryFn: ({ signal }) => listCandidates(workspaceId, selected!.id, signal),
-    enabled: Boolean(workspaceId && selected?.activeAnalysisRunId),
+    enabled: Boolean(pageMode === "records" && workspaceId && selected?.activeAnalysisRunId),
     refetchInterval: () => ["queued", "running", "stopping"].includes(reportQuery.data?.analysisRun.status ?? "") ? 1_000 : false,
   });
   const actionsQuery = useQuery({
     queryKey: ["retrospective-actions", workspaceId, selected?.id],
     queryFn: ({ signal }) => listActions(workspaceId, selected!.id, signal),
-    enabled: Boolean(workspaceId && selected?.activeAnalysisRunId),
+    enabled: Boolean(pageMode === "records" && workspaceId && selected?.activeAnalysisRunId),
     refetchInterval: () => ["queued", "running", "stopping"].includes(reportQuery.data?.analysisRun.status ?? "") ? 1_000 : false,
   });
   const selectedQuestionId = useMemo(
@@ -331,6 +333,8 @@ export function InterviewRetrospectivePage({ workspace }: { workspace: Workspace
     && cleanupQuery.data.documentBody !== undefined,
   );
   const focusWorkspace = Boolean(
+    pageMode === "records"
+    &&
     !recordListRequested
     && selected
     && (selectedId || cleanupId || requestedQuestionId || focusReview),
@@ -348,7 +352,7 @@ export function InterviewRetrospectivePage({ workspace }: { workspace: Workspace
   }
 
   return (
-    <section className={`retrospective-page${focusWorkspace ? " retrospective-page--focused" : ""}`}>
+    <section className={`retrospective-page${focusWorkspace ? " retrospective-page--focused" : pageMode === "history" ? " retrospective-page--history" : " retrospective-page--records"}`}>
       <header className="retrospective-page__header">
         {focusWorkspace && selected ? <>
           <div className="retrospective-page__focus-context">
@@ -358,10 +362,14 @@ export function InterviewRetrospectivePage({ workspace }: { workspace: Workspace
           <RetrospectiveLifecycleActions retrospective={selected} onError={setError} onChanged={handleSelectedChanged} />
         </> : <>
           <div className="retrospective-page__heading"><p>复盘工作台</p><h1 id="retrospective-page-title">面试复盘</h1><span className="retrospective-page__description">把录音转写或事后回忆整理成可核对、可继续的复盘记录。</span></div>
-          <Button onClick={() => setCreateOpen(true)}><Plus size={18} /> 新建复盘</Button>
+          {pageMode === "records" ? <Button onClick={() => setCreateOpen(true)}><Plus size={18} /> 新建复盘</Button> : null}
         </>}
       </header>
-      {!focusWorkspace ? <div className="retrospective-page__controls">
+      {!focusWorkspace ? <nav className="retrospective-page__mode-tabs" aria-label="面试复盘功能">
+        <button type="button" aria-current={pageMode === "records" ? "page" : undefined} onClick={() => patchSearch({ mode: null })}><MessageSquareText size={17} />复盘记录</button>
+        <button type="button" aria-current={pageMode === "history" ? "page" : undefined} onClick={() => patchSearch({ mode: "history", retrospectiveId: null, cleanupId: null, questionId: null })}><History size={17} />历史检索</button>
+      </nav> : null}
+      {!focusWorkspace && pageMode === "records" ? <div className="retrospective-page__controls">
         <div className="retrospective-page__toolbar">
           <div role="tablist" aria-label="复盘生命周期">
             {TABS.map((tab) => <button type="button" role="tab" aria-selected={lifecycle === tab.value} key={tab.value} onClick={() => patchSearch({ lifecycle: tab.value, retrospectiveId: null, cleanupId: null })}><tab.icon size={16} /> {tab.label} <span className="retrospective-page__tab-count">{counts[tab.value] ?? "…"}</span></button>)}
@@ -375,7 +383,7 @@ export function InterviewRetrospectivePage({ workspace }: { workspace: Workspace
         {listQueries.some((query) => query.isError) || targetsQuery.isError ? <div className="retrospective-page__error" role="alert"><span>复盘记录读取失败，请确认本地服务后重试。</span><button type="button" onClick={() => { listQueries.forEach((query) => { void query.refetch(); }); void targetsQuery.refetch(); }}>重新读取</button></div> : null}
       </div> : error ? <div className="retrospective-page__error" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>关闭</button></div> : null}
 
-      {emptyState ? <TaskWorkspace className="retrospective-page__workspace retrospective-page__workspace--empty" labelledBy="retrospective-empty-title">
+      {pageMode === "history" ? <RetrospectiveHistorySearch workspaceId={workspaceId} targets={targetsQuery.data ?? []} selectedSearchSetId={searchParams.get("searchSetId")} onSearchSetIdChange={(value) => patchSearch({ searchSetId: value })} /> : emptyState ? <TaskWorkspace className="retrospective-page__workspace retrospective-page__workspace--empty" labelledBy="retrospective-empty-title">
         <TaskWorkspacePane className="retrospective-page__empty-workspace" scroll={false}>
           <span className="retrospective-page__empty-icon"><EmptyIcon size={30} /></span>
           <h2 id="retrospective-empty-title">{targetId ? "当前求职目标下没有复盘" : emptyCopy.title}</h2>

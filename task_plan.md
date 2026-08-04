@@ -576,3 +576,12 @@ current question
 - [x] 单题超时、限流或网络错误只影响当前题，其他题继续处理，已完成结果原地保存；
 - [x] 页面“重试失败步骤”恢复原 AnalysisRun，只执行未完成题目与后续汇总；
 - [x] 后端复盘相关 `56 passed`、前端页面 `9 passed`、受影响 Ruff 与差异检查通过。
+
+## 2026-08-03：复盘讨论 Harness 上下文边界（实现完成）
+
+- [x] 将产品对话历史与单次 Tool Call Agent State 分层，写入正式 ADR；
+- [x] 按 Token 预算选择最新完整问答轮次，不再嵌套固定 12 条 JSON；
+- [x] 为复盘讨论配置独立模型/Tool 调用预算和上下文历史预算；
+- [x] 验证压缩不拆分 `AIMessage(tool_calls) + ToolMessage`；
+- [x] 验证运行中取消只保留用户消息，不持久化半截助手回复；
+- [x] 完成后端定向回归 `52 passed` 与受影响 Ruff 检查。

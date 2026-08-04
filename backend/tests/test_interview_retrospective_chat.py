@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -110,6 +111,36 @@ async def test_explanation_creates_messages_without_new_analysis_version(
     assert result["messages"][-1].content == "因为回答没有说明失败恢复边界。"
     assert result["proposals"] == ()
     assert service.repository.current_analysis_run(retrospective.id) is None
+
+
+@pytest.mark.asyncio
+async def test_stopping_chat_keeps_user_message_without_partial_assistant_reply(
+    discussion_application: AgentApplication,
+) -> None:
+    retrospective = await _create_retrospective(discussion_application)
+    service = discussion_application.interview_retrospectives("w1")
+    entered = asyncio.Event()
+
+    class BlockingDiscussionAgents(FakeDiscussionAgents):
+        async def discuss(self, **_values):
+            entered.set()
+            await asyncio.Event().wait()
+            raise AssertionError("cancelled discussion must not finish")
+
+    service.agents = BlockingDiscussionAgents()  # type: ignore[assignment]
+    execution = await service.send_chat_message(
+        retrospective.id,
+        message="读取分析后再回答",
+        selected_question_id=None,
+    )
+    await asyncio.wait_for(entered.wait(), timeout=1)
+
+    cancelled = await service.stop_chat(retrospective.id, execution.id)
+    result = service.conversation(retrospective.id)
+
+    assert cancelled.status == "cancelled"
+    assert [item.role for item in result["messages"]] == ["user"]
+    assert result["messages"][0].content == "读取分析后再回答"
 
 
 @pytest.mark.asyncio

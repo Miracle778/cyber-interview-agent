@@ -49,6 +49,108 @@ class RetrospectiveResource(AgentModel):
     updated_at: str
 
 
+class RetrospectiveSearchFiltersInput(AgentModel):
+    job_target_id: str | None = None
+    company: str | None = Field(default=None, max_length=240)
+    role: str | None = Field(default=None, max_length=240)
+    round_label: str | None = Field(default=None, max_length=120)
+    date_from: str | None = None
+    date_to: str | None = None
+    origins: list[Literal["original", "inferred"]] = Field(
+        default_factory=list, max_length=2
+    )
+
+
+class CreateRetrospectiveSearchCommand(AgentModel):
+    workspace_id: str
+    query_text: str = Field(min_length=1, max_length=2_000)
+    filters: RetrospectiveSearchFiltersInput = Field(
+        default_factory=RetrospectiveSearchFiltersInput
+    )
+
+
+class RetrospectiveSearchSetResource(AgentModel):
+    id: str
+    workspace_id: str
+    session_id: str | None
+    execution_id: str | None
+    query_text: str
+    filters: dict[str, object]
+    search_plan: dict[str, object]
+    status: Literal["pending", "searching", "completed", "failed"]
+    total_questions: int
+    total_retrospectives: int
+    summary_markdown: str
+    summary_citation_question_ids: list[str]
+    summary_execution_id: str | None
+    last_error_code: str | None
+    version: int
+    completed_at: str | None
+    created_at: str
+    updated_at: str
+
+
+class RetrospectiveSearchResultResource(AgentModel):
+    id: str
+    search_set_id: str
+    retrospective_id: str | None
+    question_unit_id: str | None
+    question_analysis_id: str | None
+    rank: int
+    score: float
+    matched_terms: list[str]
+    source_metadata: dict[str, object]
+    question_snapshot: dict[str, object]
+    answer_excerpt: str
+    analysis_snapshot: dict[str, object]
+    source_available: bool
+    created_at: str
+
+
+class RetrospectiveSearchSummaryCommand(AgentModel):
+    workspace_id: str
+
+
+class CreateRetrospectiveSearchReportCommand(AgentModel):
+    workspace_id: str
+    title: str = Field(min_length=1, max_length=240)
+    focus: Literal["question_summary", "performance_review", "preparation"]
+    selected_result_ids: list[str] = Field(default_factory=list, max_length=2_000)
+    include_answer_excerpts: bool = True
+    include_action_plan: bool = True
+
+
+class RetrospectiveSearchReportResource(AgentModel):
+    id: str
+    workspace_id: str
+    search_set_id: str | None
+    report_key: str
+    ordinal: int
+    supersedes_report_id: str | None
+    execution_id: str | None
+    title: str
+    focus: str
+    selected_result_ids: list[str]
+    body: dict[str, object]
+    markdown: str
+    citation_question_ids: list[str]
+    include_answer_excerpts: bool
+    include_action_plan: bool
+    status: Literal["queued", "running", "completed", "failed"]
+    last_error_code: str | None
+    version: int
+    completed_at: str | None
+    created_at: str
+    updated_at: str
+
+
+class UpdateRetrospectiveSearchReportCommand(AgentModel):
+    workspace_id: str
+    expected_version: int = Field(ge=1)
+    title: str = Field(min_length=1, max_length=240)
+    markdown: str = Field(min_length=1, max_length=500_000)
+
+
 class AddSourceVersionCommand(AgentModel):
     workspace_id: str
     source_kind: Literal["transcript", "recollection"]

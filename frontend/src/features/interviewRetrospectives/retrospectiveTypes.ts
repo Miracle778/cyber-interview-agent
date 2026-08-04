@@ -383,3 +383,75 @@ export interface RetrospectiveConversation {
     finishedAt: string | null;
   };
 }
+
+export interface RetrospectiveSearchFilters {
+  jobTargetId?: string | null;
+  company?: string | null;
+  role?: string | null;
+  roundLabel?: string | null;
+  dateFrom?: string | null;
+  dateTo?: string | null;
+  origins?: Array<"original" | "inferred">;
+}
+
+export interface RetrospectiveSearchSet {
+  id: string;
+  workspaceId: string;
+  sessionId: string | null;
+  executionId: string | null;
+  queryText: string;
+  filters: Record<string, unknown>;
+  searchPlan: Record<string, unknown>;
+  status: "pending" | "searching" | "completed" | "failed";
+  totalQuestions: number;
+  totalRetrospectives: number;
+  summaryMarkdown: string;
+  summaryCitationQuestionIds: string[];
+  summaryExecutionId: string | null;
+  lastErrorCode: string | null;
+  version: number;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RetrospectiveSearchResult {
+  id: string;
+  searchSetId: string;
+  retrospectiveId: string | null;
+  questionUnitId: string | null;
+  questionAnalysisId: string | null;
+  rank: number;
+  score: number;
+  matchedTerms: string[];
+  sourceMetadata: Record<string, unknown>;
+  questionSnapshot: Record<string, unknown>;
+  answerExcerpt: string;
+  analysisSnapshot: Record<string, unknown>;
+  sourceAvailable: boolean;
+  createdAt: string;
+}
+
+export interface RetrospectiveSearchReport {
+  id: string;
+  workspaceId: string;
+  searchSetId: string | null;
+  reportKey: string;
+  ordinal: number;
+  supersedesReportId: string | null;
+  executionId: string | null;
+  title: string;
+  focus: "question_summary" | "performance_review" | "preparation";
+  selectedResultIds: string[];
+  body: Record<string, unknown>;
+  markdown: string;
+  citationQuestionIds: string[];
+  includeAnswerExcerpts: boolean;
+  includeActionPlan: boolean;
+  status: "queued" | "running" | "completed" | "failed";
+  lastErrorCode: string | null;
+  version: number;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}

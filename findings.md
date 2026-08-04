@@ -1103,3 +1103,19 @@
 - 修复采用三层边界：请求层按题检索证据并设置硬上限；调用层关闭 SDK 隐式重试；工作项层按题隔离、应用级最多两次尝试，预算耗尽后继续处理其他题。
 - 最终汇总依赖全部逐题结果，因此某题耗尽预算时运行仍标记失败，但失败发生在其他题推进之后；恢复同一 AnalysisRun 时，已完成的问题提取和逐题结果不会重算。
 - 该模式可承受未来 `QuestionExtractionContext` 增长：冻结全量上下文只作为证据仓，模型调用读取经过检索和预算裁剪的视图，输入不会随资料总量线性增长。
+
+## 2026-08-03：复盘讨论 SQLite 锁与模型请求 Trace 缺失
+
+- 真实失败不是模型未调用：首轮 `model.response` 已返回 Tool 计划，随后并发只读 Tool 在审计和产品事件写入之间触发 `database is locked`，因此没有进入第二轮模型请求。
+- `ProductEventStream.publish` 在异步事件循环直接执行同步 SQLite 写入；当它等待异步 Tool 审计持有的写锁时，会阻塞持锁协程继续提交，WAL 和 `busy_timeout` 无法修复这种调度互锁。
+- `model.request` 缺失是另一条独立故障：真实 LangChain Tool 被当作普通 Pydantic Model JSON 序列化，其参数 Schema 含 Python Model 类，Trace fail-open 后业务继续执行但请求事件静默丢失。
+- 修复把产品事件同步写入移到工作线程，保留有界锁重试；Trace 对 Tool 只记录公开合同，并为 Pydantic 序列化增加不可抛出的降级路径。
+- 该问题属于所有共享 SQLite 的 Agent 运行时边界，已记录独立 Tradeoff ADR：`docs/superpowers/architecture-decisions/2026-08-03-async-sqlite-agent-runtime-write-boundary.md`。
+
+## 2026-08-03：复盘讨论上下文与 Tool Call 恢复边界
+
+- 旧实现把最近 12 条产品消息嵌入当前 `HumanMessage.recentConversation`，固定条数既不能约束 Token，也让消息级压缩无法识别完整问答轮次。
+- 复盘讨论的 7 个 Tool 均为本地、有界、只读查询；当前没有必要为它们引入持久化 Checkpointer 和 ToolInvocation 状态机。取消中途调用后由用户重试安全重放，成本和一致性风险更低。
+- 产品消息是跨运行的长期事实；`AIMessage.tool_calls` 与对应 `ToolMessage` 是单次运行态。两者不应写入同一产品消息表，否则恢复时容易重复工具调用或污染用户可见对话。
+- 新上下文装配器按 Token 预算从新到旧选择完整 `user + assistant` 轮次，忽略未完成的历史 user 消息，并把各角色恢复为独立 LangChain Message；当前请求只保留消息、选中题目和裁剪统计。
+- LangChain Summarization 的安全 cutoff 会在切点落入 `ToolMessage` 时回退到对应 `AIMessage(tool_calls)`，因此不会制造孤立 Tool 结果；取消检查位于模型调用后、助手消息落库前，保证不保存半截回复。

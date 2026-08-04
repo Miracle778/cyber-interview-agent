@@ -27,6 +27,7 @@ from app.graphs.profile_ingest import create_profile_ingest_graph
 from app.graphs.profile_manage import create_profile_manage_graph
 from app.middleware.middleware_stack import (
     PROFILE_CHAT_BUDGET_PROFILE,
+    RETROSPECTIVE_CHAT_BUDGET_PROFILE,
     REVIEW_ROUND_BUDGET,
     build_default_middleware,
 )
@@ -281,7 +282,7 @@ class ProductionGraphFactory:
             ),
             observability=observability,
             interrupt_on={},
-            budget_profile=PROFILE_CHAT_BUDGET_PROFILE,
+            budget_profile=RETROSPECTIVE_CHAT_BUDGET_PROFILE,
             context_limit_tokens=context_limit_tokens,
         )
         return InterviewRetrospectiveAgents.create(
@@ -290,6 +291,10 @@ class ProductionGraphFactory:
             middleware=middleware,
             model_override=interaction_override,
             chat_tools=chat_tools,
+            chat_history_token_budget=max(
+                1_000,
+                min(8_000, int(context_limit_tokens * 0.20)),
+            ),
         )
 
     def create_review_round_agents(
