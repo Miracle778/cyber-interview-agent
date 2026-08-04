@@ -132,7 +132,12 @@ class RetrospectiveHistoryApplication:
             raise RetrospectiveModelNotConfigured("请先配置面试复盘分析模型")
         if search_set.status != "completed":
             raise ValueError("历史检索尚未完成")
-        session = self.products.get_session(str(search_set.session_id))
+        session = await self.sessions.create(
+            workspace_id=self.workspace_id,
+            kind="interview.retrospective.history",
+            title=f"历史复盘总结：{search_set.query_text[:80]}",
+            visibility="system",
+        )
         execution = await self.executions.prepare(
             session,
             input={"searchSetId": search_set.id, "action": "summary"},

@@ -21,8 +21,8 @@ import { WorkspaceManager } from "./WorkspaceManager";
 import { AgentDiagnosticsSettings } from "./AgentDiagnosticsSettings";
 import { AgentQualityEvaluationSettings } from "./AgentQualityEvaluationSettings";
 import { AgentTraceRetentionSettings } from "./AgentTraceRetentionSettings";
+import { MODEL_ROLE_COUNT } from "./providerTypes";
 
-const REQUIRED_MODEL_ROLE_COUNT = 8;
 
 interface SettingsPageProps {
   workspace: WorkspaceConfig | null;
@@ -111,9 +111,9 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
       {
         id: "bindings",
         title: "任务模型",
-        status: bindingsQuery.isError ? "读取失败" : `${bindingCount}/${REQUIRED_MODEL_ROLE_COUNT} 已绑定`,
-        description: bindingsQuery.isError ? "进入模型服务查看分配状态" : bindingCount === REQUIRED_MODEL_ROLE_COUNT ? "所有任务均已分配模型" : "补齐任务模型后即可使用相关助手功能",
-        tone: bindingsQuery.isError ? "danger" : bindingCount === REQUIRED_MODEL_ROLE_COUNT ? "success" : "warning",
+        status: bindingsQuery.isError ? "读取失败" : `${bindingCount}/${MODEL_ROLE_COUNT} 已绑定`,
+        description: bindingsQuery.isError ? "进入模型服务查看分配状态" : bindingCount === MODEL_ROLE_COUNT ? "所有任务均已分配模型" : "补齐任务模型后即可使用相关助手功能",
+        tone: bindingsQuery.isError ? "danger" : bindingCount === MODEL_ROLE_COUNT ? "success" : "warning",
         section: "models",
       },
       {
@@ -131,7 +131,7 @@ export function SettingsPage({ workspace, onWorkspaceReady }: SettingsPageProps)
     ? "workspace"
     : (providersQuery.data?.length ?? 0) === 0
       ? "models"
-      : Object.values(bindingsQuery.data?.bindings ?? {}).filter(Boolean).length < REQUIRED_MODEL_ROLE_COUNT
+      : Object.values(bindingsQuery.data?.bindings ?? {}).filter(Boolean).length < MODEL_ROLE_COUNT
         ? "models"
         : "diagnostics";
 

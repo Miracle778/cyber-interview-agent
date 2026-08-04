@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from app.agents.agent_factory import AgentSpec, ModelOverride, RegisteredAgentFactory
 from app.agents.agent_model_resolver import ModelInvocationPolicy
-from app.agents.agent_invocation import isolated_thread_config
+from app.agents.agent_invocation import final_ai_text, isolated_thread_config
 from app.agents.agent_protocols import AgentRunnable
 from app.agents.context import AgentContext
 from app.agents.retrospective_chat_context import (
@@ -391,6 +391,12 @@ class InterviewRetrospectiveAgents:
             context=context,
         )
         if "structured_response" not in result:
+            explanation = final_ai_text(result)
+            if explanation:
+                return RetrospectiveChatOutput(
+                    resultType="explanation",
+                    explanation=explanation,
+                )
             raise ValueError("模型未生成结构化复盘讨论结果")
         return RetrospectiveChatOutput.model_validate(result["structured_response"])
 

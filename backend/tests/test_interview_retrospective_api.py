@@ -318,6 +318,14 @@ async def test_history_search_completes_with_deterministic_fallback_when_planner
     assert completed.total_questions == 0
     assert context.repository.get_execution(str(started.execution_id)).status == "completed"
 
+    summarizing = await history.summarize_search(started.id)
+    summary_execution = context.repository.get_execution(
+        str(summarizing.summary_execution_id)
+    )
+    summary_session = context.repository.get_session(summary_execution.session_id)
+    assert summary_session.title.startswith("历史复盘总结：")
+    assert summary_session.id != started.session_id
+
 
 @pytest.mark.asyncio
 async def test_cleanup_start_returns_execution_before_background_finishes_and_persists_review(

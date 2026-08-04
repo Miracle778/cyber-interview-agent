@@ -825,6 +825,7 @@ class WorkspaceRuntime:
 
     async def close(self) -> None:
         await self.executions.close()
+        await self.events.close()
         self.connection.close()
 
 

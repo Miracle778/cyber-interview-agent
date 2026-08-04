@@ -90,6 +90,7 @@ describe("ModelBindings", () => {
     expect(screen.getByLabelText("项目深挖")).toHaveValue("m1");
     expect(screen.getByLabelText("面试复盘分析")).toHaveValue("m1");
     expect(screen.getByLabelText("面试复盘对话")).toHaveValue("m1");
+    expect(screen.getByText("10/10 已配置")).toBeVisible();
 
     fireEvent.change(screen.getByLabelText("通用对话"), {
       target: { value: "m2" },

@@ -166,6 +166,7 @@ def _graph(agents, product, repository, service, cards=None):
         ("把刚才的内容整理成画像更新建议", "propose"),
         ("帮我改一下", "clarify"),
         ("我的项目经历有证据吗", "chat"),
+        ("用三点概括我的后端优势", "chat"),
     ],
 )
 def test_intent_classification_is_deterministic(message: str, intent: str) -> None:

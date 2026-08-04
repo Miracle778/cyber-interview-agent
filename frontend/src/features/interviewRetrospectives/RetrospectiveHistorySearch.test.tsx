@@ -61,6 +61,26 @@ describe("RetrospectiveHistorySearch", () => {
     expect(screen.getByText("结果集已冻结", { exact: false })).toBeVisible();
   });
 
+  it("keeps summary progress visible after the start request returns", async () => {
+    api.summarizeRetrospectiveSearch.mockResolvedValue({
+      id: "search-1", workspaceId: "w1", queryText: "数字签名", filters: {}, searchPlan: {},
+      sessionId: "session-1", executionId: "execution-1", status: "completed",
+      totalQuestions: 1, totalRetrospectives: 1, summaryMarkdown: "",
+      summaryCitationQuestionIds: [], summaryExecutionId: "execution-summary", lastErrorCode: null,
+      version: 3, completedAt: "now", createdAt: "now", updatedAt: "now",
+    });
+    renderSearch();
+    fireEvent.change(screen.getByLabelText("搜索历史复盘"), { target: { value: "数字签名" } });
+    fireEvent.click(screen.getByRole("button", { name: "开始检索" }));
+    await screen.findByText("数字签名系统如何设计？");
+
+    fireEvent.click(screen.getByRole("button", { name: "总结这些问题" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Agent 正在总结当前冻结结果",
+    );
+  });
+
   it("restores the latest persisted search after the history tab remounts", async () => {
     api.listRetrospectiveSearches.mockResolvedValue([{
       id: "search-1", workspaceId: "w1", queryText: "数字签名", filters: {}, searchPlan: {},

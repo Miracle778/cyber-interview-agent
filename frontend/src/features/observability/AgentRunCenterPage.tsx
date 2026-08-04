@@ -143,16 +143,31 @@ function defaultPreviewOpen() {
   return globalThis.matchMedia?.("(min-width: 1024px)").matches ?? true;
 }
 
-export function AgentRunCenterPage({
-  workspace,
-}: AgentRunCenterPageProps) {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const [filters, setFilters] = useState<ExecutionFilters>(() => ({
+function filterSearchParams(filters: ExecutionFilters) {
+  const next = new URLSearchParams();
+  if (filters.search.trim()) next.set("search", filters.search.trim());
+  if (filters.status) next.set("status", filters.status);
+  if (filters.agentName) next.set("agentName", filters.agentName);
+  if (filters.includeSystemAgents) next.set("includeSystemAgents", "true");
+  return next;
+}
+
+function filtersFromSearchParams(searchParams: URLSearchParams): ExecutionFilters {
+  return {
     search: searchParams.get("search") ?? "",
     status: searchParams.get("status") ?? "",
     agentName: searchParams.get("agentName") ?? "",
     includeSystemAgents: searchParams.get("includeSystemAgents") === "true",
-  }));
+  };
+}
+
+export function AgentRunCenterPage({
+  workspace,
+}: AgentRunCenterPageProps) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [filters, setFilters] = useState<ExecutionFilters>(() =>
+    filtersFromSearchParams(searchParams)
+  );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(defaultPreviewOpen);
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
@@ -194,16 +209,12 @@ export function AgentRunCenterPage({
     setSelectedId(null);
     setPreviewOpen(defaultPreviewOpen());
     setLiveById({});
-    setFilters(EMPTY_FILTERS);
+    setFilters(filtersFromSearchParams(searchParams));
     setPage(1);
-  }, [workspace?.id]);
+  }, [searchParams, workspace?.id]);
 
   useEffect(() => {
-    const next = new URLSearchParams();
-    if (filters.search.trim()) next.set("search", filters.search.trim());
-    if (filters.status) next.set("status", filters.status);
-    if (filters.agentName) next.set("agentName", filters.agentName);
-    if (filters.includeSystemAgents) next.set("includeSystemAgents", "true");
+    const next = filterSearchParams(filters);
     if (next.toString() !== searchParams.toString()) {
       setSearchParams(next, { replace: true });
     }
@@ -294,8 +305,10 @@ export function AgentRunCenterPage({
   const currentSessionExecution = selected
     ? currentExecutionBySession.get(selected.sessionId) ?? selected
     : null;
-  const returnTo =
-    `/agents${searchParams.size ? `?${searchParams.toString()}` : ""}`;
+  const returnSearchParams = filterSearchParams(filters);
+  const returnTo = `/agents${
+    returnSearchParams.size ? `?${returnSearchParams.toString()}` : ""
+  }`;
   const agentNames = useMemo(
     () => [...new Set(allExecutions.map((item) => item.displayName))].sort(),
     [allExecutions],

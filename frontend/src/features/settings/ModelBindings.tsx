@@ -8,7 +8,7 @@ import {
   listProviders,
   replaceWorkspaceModelBindings,
 } from "./settingsApi";
-import type { ModelRole, ProviderResource } from "./providerTypes";
+import { MODEL_ROLE_COUNT, type ModelRole, type ProviderResource } from "./providerTypes";
 
 const ROLE_LABELS: Record<ModelRole, string> = {
   question_generation: "题目生成",
@@ -161,7 +161,7 @@ export function ModelBindings({ workspaceId, refreshKey = 0, onBindingsChanged, 
 
   async function handleSave() {
     if (!complete) {
-      setError(toActionableError(new Error("请为八种用途选择可用模型"), "保存模型绑定失败"));
+      setError(toActionableError(new Error(`请为全部 ${MODEL_ROLE_COUNT} 种任务用途选择可用模型`), "保存模型绑定失败"));
       return;
     }
     setSaving(true);
@@ -239,7 +239,7 @@ export function ModelBindings({ workspaceId, refreshKey = 0, onBindingsChanged, 
       <div className="model-bindings__savebar" data-dirty={dirty}>
         <div className="model-bindings__save-status">
           {saved ? <CheckCircle2 size={16} aria-hidden="true" /> : null}
-          <strong>{configuredCount}/8 已配置</strong>
+          <strong>{configuredCount}/{MODEL_ROLE_COUNT} 已配置</strong>
           <span>{dirty ? "有未保存修改" : saved ? "配置已保存" : "当前配置已生效"}</span>
         </div>
         <div className="btn-row">

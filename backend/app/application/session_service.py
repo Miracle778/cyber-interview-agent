@@ -766,6 +766,7 @@ class ProductEventStream:
         del workspace_root
         self._keepalive = keepalive_seconds
         self._conditions: dict[str, asyncio.Condition] = {}
+        self._write_tasks: set[asyncio.Task[EventRecord]] = set()
 
     async def publish(
         self,
@@ -779,13 +780,18 @@ class ProductEventStream:
         safe = _scrub(payload)
         for attempt in range(3):
             try:
-                event = await asyncio.to_thread(
-                    self._repository.append_event,
-                    session_id,
-                    execution_id,
-                    event_type,
-                    safe,
+                write_task = asyncio.create_task(
+                    asyncio.to_thread(
+                        self._repository.append_event,
+                        session_id,
+                        execution_id,
+                        event_type,
+                        safe,
+                    )
                 )
+                self._write_tasks.add(write_task)
+                write_task.add_done_callback(self._write_tasks.discard)
+                event = await asyncio.shield(write_task)
                 break
             except sqlite3.OperationalError as error:
                 if not _is_transient_sqlite_lock(error) or attempt == 2:
@@ -795,6 +801,12 @@ class ProductEventStream:
         async with condition:
             condition.notify_all()
         return event
+
+    async def close(self) -> None:
+        """Wait for worker-thread writes before the runtime closes SQLite."""
+
+        while self._write_tasks:
+            await asyncio.gather(*tuple(self._write_tasks), return_exceptions=True)
 
     async def subscribe(
         self, session_id: str, *, after_id: int | None

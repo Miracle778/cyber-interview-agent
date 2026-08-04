@@ -456,6 +456,38 @@ async def test_cleanup_window_returns_only_the_owned_corrected_target(
 
 
 @pytest.mark.asyncio
+async def test_discuss_accepts_plain_text_as_an_explanation_fallback(
+    tmp_path: Path,
+) -> None:
+    class StubRunnable:
+        async def ainvoke(self, *_args, **_kwargs):
+            return {
+                "messages": [
+                    AIMessage(content="这道题的问题是缺少可量化的结果。")
+                ]
+            }
+
+    runnable = StubRunnable()
+    agents = InterviewRetrospectiveAgents(
+        cleanup=runnable,  # type: ignore[arg-type]
+        question_extraction=runnable,  # type: ignore[arg-type]
+        question_analysis=runnable,  # type: ignore[arg-type]
+        chat=runnable,  # type: ignore[arg-type]
+    )
+
+    result = await agents.discuss(
+        message="这道题哪里答得不好？",
+        selected_question_id="question-1",
+        conversation=[],
+        context=_agent_context(tmp_path),
+        config={},
+    )
+
+    assert result.result_type == "explanation"
+    assert result.explanation == "这道题的问题是缺少可量化的结果。"
+
+
+@pytest.mark.asyncio
 async def test_cleanup_window_rejects_a_missing_corrected_target(
     tmp_path: Path,
 ) -> None:

@@ -241,6 +241,36 @@ describe("AgentRunCenterPage", () => {
     expect(preview).toHaveTextContent("12.8k");
   });
 
+  it("preserves the URL status filter when the workspace finishes loading", async () => {
+    mockPage();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const view = render(
+      <MemoryRouter initialEntries={["/agents?status=completed"]}>
+        <QueryClientProvider client={client}>
+          <AgentRunCenterPage workspace={null} />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    view.rerender(
+      <MemoryRouter initialEntries={["/agents?status=completed"]}>
+        <QueryClientProvider client={client}>
+          <AgentRunCenterPage workspace={workspace} />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    const tabs = await screen.findByRole("navigation", { name: "任务状态" });
+    await waitFor(() => {
+      expect(within(tabs).getByRole("button", { name: "已完成 1" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+    });
+  });
+
   it("keeps the action center as a compact filter without duplicating task rows", async () => {
     mockPage(page([
       runningExecution,

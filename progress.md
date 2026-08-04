@@ -1823,3 +1823,10 @@
 - RED/GREEN 覆盖持久化与不可变、legacy 不反推、执行前冻结、运行详情读取、历史 Pack 优先与错误覆盖拒绝；修正复盘迁移测试中已过期的迁移编号断言。
 - 新鲜验证：Phase 4 跨层定向回归 `109 passed`；Agent/Graph/Workspace Registry 扩展回归 `335 passed`；前端运行详情/事件/质量页 `30 passed`；Ruff、TypeScript、production build 与 `git diff --check` 通过。
 - 成熟度边界：当前 Prompt 还不是独立版本化资产，Definition 快照会如实记录空的 Prompt Schema 版本表；已有大 chunk 提示和 Starlette TestClient 弃用 warning 未由本阶段引入。
+
+## 2026-08-04：展示前项目级冒烟缺陷修复
+
+- 修复复盘讨论普通正文被误判为结构化输出失败、SQLite 后台事件写入与 Runtime 关闭竞态、画像优势询问误路由、历史检索总结缺少独立运行身份与进行中反馈。
+- 修复运行中心业务页返回筛选丢失及工作区延迟加载覆盖 URL 筛选；设置页模型角色统计改为统一 10 项角色常量。
+- 新鲜证据：后端全量 `1222 passed`，前端全量 `421 passed`，production build、受影响 Ruff 与 `git diff --check` 通过；5175 实页确认 `10/10 已配置` 和 `?status=focused` 正确恢复“关注中”。
+- 真实 Provider 正文降级本轮由确定性回归覆盖，未新增外部模型调用；本地完整复验记录见 `docs/verification/interview-retrospective.md`。
