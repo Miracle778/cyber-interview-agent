@@ -1805,3 +1805,12 @@
 - 运行中心、Observability Service、Eval Service 和 AgentApplication 注册门禁改为直接消费统一 Definition；旧 Observability Registry 仅保留兼容导出。
 - 自动验证：合并运行 Definition/Builder、运行中心、质量评估、岗位、复盘及相关 Factory 定向回归 `139 passed`；受影响 Ruff 与差异检查通过。
 - 成熟度边界：Phase 2 已消除顶层 Agent 身份与 Builder 的第二事实源；组件归属、Tool/Scope、模型角色和 Execution 冻结快照仍待 Phase 3/4。
+
+## 2026-08-04：Agent Control Plane Phase 3 子组件、Tool 与模型调用门禁
+
+- `AgentDefinition` 增加 `child_components / model_roles / allowed_tools / allowed_scopes` 可执行合同；质量 Judge 也作为隐藏 system Agent 注册，不再绕过控制面创建模型组件。
+- 新增 Definition-bound `RegisteredAgentFactory`：创建组件、解析模型、读取上下文策略和生成 Tool Policy 前校验父 Agent、组件、model role、Tool 与 Scope；未绑定的旧 Factory 调用稳定失败。
+- 题目整理、复习、画像、岗位、项目深挖、面试复盘和质量评估的生产 Agent bundle 已全部迁移到绑定 Factory；上下文压缩模型同样携带父 Definition 身份。
+- Trace JSONL 的模型请求/响应补充 `agent_id`、`agent_definition_version` 和 `component_id`；新增静态 import 边界，产品代码直接导入底层 `ChatModelResolver` 会触发契约测试失败。
+- 新鲜自动验证：Agent、Graph 与 Workspace Registry 受影响回归 `328 passed`；Python compileall、受影响 Ruff 和 `git diff --check` 通过。
+- 成熟度边界：本阶段保证“当前 Definition 下谁可以调用什么”并留下组件身份；完整不可变 Execution Definition Snapshot、历史版本展示和 Eval 冻结读取仍待 Phase 4。

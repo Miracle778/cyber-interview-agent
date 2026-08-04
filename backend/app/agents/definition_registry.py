@@ -36,7 +36,10 @@ class AgentDefinition:
     route_template: str
     capabilities: frozenset[ObservabilityCapability]
     eval_pack_id: str | None
-    system_components: tuple[str, ...]
+    child_components: tuple[str, ...]
+    model_roles: frozenset[str] = frozenset()
+    allowed_tools: frozenset[str] = frozenset()
+    allowed_scopes: frozenset[str] = frozenset()
     system: bool = False
     run_center_visible: bool = True
     lifecycle: AgentLifecycle = "active"
@@ -48,6 +51,12 @@ class AgentDefinition:
         """Compatibility name used by persisted Session and Execution rows."""
 
         return self.agent_id
+
+    @property
+    def system_components(self) -> tuple[str, ...]:
+        """Compatibility projection used by existing Run Center clients."""
+
+        return self.child_components
 
 
 class AgentDefinitionRegistry:
@@ -123,7 +132,7 @@ class AgentDefinitionRegistry:
             route_template="",
             capabilities=frozenset(),
             eval_pack_id=None,
-            system_components=(),
+            child_components=(),
             lifecycle="disabled",
             user_creatable=False,
         )
@@ -189,7 +198,10 @@ def _definition(
     route_template: str,
     *capabilities: ObservabilityCapability,
     eval_pack_id: str | None = None,
-    system_components: tuple[str, ...] = (),
+    child_components: tuple[str, ...] = (),
+    model_roles: tuple[str, ...] = (),
+    allowed_tools: tuple[str, ...] = (),
+    allowed_scopes: tuple[str, ...] = (),
     system: bool = False,
     run_center_visible: bool = True,
     lifecycle: AgentLifecycle = "active",
@@ -204,7 +216,10 @@ def _definition(
         route_template=route_template,
         capabilities=frozenset(capabilities),
         eval_pack_id=eval_pack_id,
-        system_components=system_components,
+        child_components=child_components,
+        model_roles=frozenset(model_roles),
+        allowed_tools=frozenset(allowed_tools),
+        allowed_scopes=frozenset(allowed_scopes),
         system=system,
         run_center_visible=run_center_visible,
         lifecycle=lifecycle,
@@ -226,7 +241,16 @@ _DEFINITIONS = (
         "manual_judge",
         "export_trace",
         eval_pack_id="question-curation.v2",
-        system_components=("question_generation", "report_summarization"),
+        child_components=(
+            "question_discovery",
+            "question_enrichment",
+            "question_revision",
+            "curation_command_classifier",
+            "curation_context_summarizer",
+            "curation_command_responder",
+            "context_summarization",
+        ),
+        model_roles=("question_generation", "report_summarization"),
     ),
     _definition(
         "question.revise",
@@ -240,7 +264,13 @@ _DEFINITIONS = (
         "manual_judge",
         "export_trace",
         eval_pack_id="question-revision.v2",
-        system_components=("question_generation", "report_summarization"),
+        child_components=(
+            "question_discovery",
+            "question_enrichment",
+            "question_revision",
+            "context_summarization",
+        ),
+        model_roles=("question_generation", "report_summarization"),
     ),
     _definition(
         "review.round",
@@ -254,7 +284,15 @@ _DEFINITIONS = (
         "manual_judge",
         "export_trace",
         eval_pack_id="review-round.v2",
-        system_components=("answer_evaluation", "agent_chat", "report_summarization"),
+        child_components=(
+            "review_round_evaluator",
+            "review_round_reporter",
+            "review_discussion",
+            "project_answer_evaluator",
+            "review_turn_classifier",
+            "context_summarization",
+        ),
+        model_roles=("answer_evaluation", "agent_chat", "report_summarization"),
     ),
     _definition(
         "review.discussion",
@@ -268,7 +306,15 @@ _DEFINITIONS = (
         "manual_judge",
         "export_trace",
         eval_pack_id="review-discussion.v2",
-        system_components=("agent_chat", "report_summarization"),
+        child_components=(
+            "review_round_evaluator",
+            "review_round_reporter",
+            "review_discussion",
+            "project_answer_evaluator",
+            "review_turn_classifier",
+            "context_summarization",
+        ),
+        model_roles=("answer_evaluation", "agent_chat", "report_summarization"),
     ),
     _definition(
         "review.single",
@@ -281,7 +327,12 @@ _DEFINITIONS = (
         "manual_judge",
         "export_trace",
         eval_pack_id="review-single.v2",
-        system_components=("answer_evaluation", "report_summarization"),
+        child_components=(
+            "single_review_evaluator",
+            "single_review_reporter",
+            "context_summarization",
+        ),
+        model_roles=("answer_evaluation", "report_summarization"),
     ),
     _definition(
         "profile.manage",
@@ -295,7 +346,32 @@ _DEFINITIONS = (
         "manual_judge",
         "export_trace",
         eval_pack_id="profile-assistant.v2",
-        system_components=("agent_chat", "profile_assessment"),
+        child_components=(
+            "profile_extraction",
+            "profile_assessment",
+            "profile_chat",
+            "profile_action_planner",
+            "profile_conversation_proposal",
+            "context_summarization",
+        ),
+        model_roles=(
+            "profile_extraction",
+            "profile_assessment",
+            "agent_chat",
+            "report_summarization",
+        ),
+        allowed_tools=(
+            "list_personal_materials",
+            "search_personal_materials",
+            "read_personal_evidence",
+            "read_personal_evidence_batch",
+            "get_profile_claims",
+            "get_profile_claim_evidence",
+            "compare_material_versions",
+            "search_active_knowledge",
+            "get_profile_publication_status",
+        ),
+        allowed_scopes=("profile.materials", "knowledge.active"),
     ),
     _definition(
         "job.analysis",
@@ -309,7 +385,13 @@ _DEFINITIONS = (
         "manual_judge",
         "export_trace",
         eval_pack_id="job-requirement-analysis.v2",
-        system_components=("job_analysis",),
+        child_components=(
+            "job_analysis",
+            "project_deep_dive",
+            "project_question_generation",
+            "context_summarization",
+        ),
+        model_roles=("job_analysis", "project_deep_dive", "report_summarization"),
     ),
     _definition(
         "project.deep_dive",
@@ -323,7 +405,13 @@ _DEFINITIONS = (
         "manual_judge",
         "export_trace",
         eval_pack_id="project-deep-dive-coaching.v2",
-        system_components=("project_deep_dive",),
+        child_components=(
+            "job_analysis",
+            "project_deep_dive",
+            "project_question_generation",
+            "context_summarization",
+        ),
+        model_roles=("job_analysis", "project_deep_dive", "report_summarization"),
     ),
     _definition(
         "interview.retrospective",
@@ -336,7 +424,32 @@ _DEFINITIONS = (
         "resume",
         "manual_judge",
         "export_trace",
-        system_components=("retrospective_analysis",),
+        child_components=(
+            "interview_retrospective_cleanup",
+            "interview_retrospective_question_extraction",
+            "interview_retrospective_question_analysis",
+            "interview_retrospective_chat",
+            "interview_retrospective_history_search_plan",
+            "interview_retrospective_history_batch_summary",
+            "interview_retrospective_history_summary",
+            "interview_retrospective_history_report",
+            "context_summarization",
+        ),
+        model_roles=(
+            "retrospective_analysis",
+            "retrospective_chat",
+            "report_summarization",
+        ),
+        allowed_tools=(
+            "read_retrospective_summary",
+            "read_question_analysis",
+            "read_source_excerpt",
+            "search_target_requirements",
+            "search_confirmed_profile",
+            "search_review_questions",
+            "search_active_knowledge",
+        ),
+        allowed_scopes=("interview_retrospective.read",),
         aliases=(
             "interview.retrospective.analysis",
             "interview.retrospective.chat",
@@ -350,7 +463,32 @@ _DEFINITIONS = (
         "",
         "export_trace",
         eval_pack_id="profile-ingest.v2",
-        system_components=("profile_extraction",),
+        child_components=(
+            "profile_extraction",
+            "profile_assessment",
+            "profile_chat",
+            "profile_action_planner",
+            "profile_conversation_proposal",
+            "context_summarization",
+        ),
+        model_roles=(
+            "profile_extraction",
+            "profile_assessment",
+            "agent_chat",
+            "report_summarization",
+        ),
+        allowed_tools=(
+            "list_personal_materials",
+            "search_personal_materials",
+            "read_personal_evidence",
+            "read_personal_evidence_batch",
+            "get_profile_claims",
+            "get_profile_claim_evidence",
+            "compare_material_versions",
+            "search_active_knowledge",
+            "get_profile_publication_status",
+        ),
+        allowed_scopes=("profile.materials", "knowledge.active"),
         system=True,
     ),
     _definition(
@@ -360,8 +498,48 @@ _DEFINITIONS = (
         "",
         "export_trace",
         eval_pack_id="profile-assessment.v2",
-        system_components=("profile_assessment",),
+        child_components=(
+            "profile_extraction",
+            "profile_assessment",
+            "profile_chat",
+            "profile_action_planner",
+            "profile_conversation_proposal",
+            "context_summarization",
+        ),
+        model_roles=(
+            "profile_extraction",
+            "profile_assessment",
+            "agent_chat",
+            "report_summarization",
+        ),
+        allowed_tools=(
+            "list_personal_materials",
+            "search_personal_materials",
+            "read_personal_evidence",
+            "read_personal_evidence_batch",
+            "get_profile_claims",
+            "get_profile_claim_evidence",
+            "compare_material_versions",
+            "search_active_knowledge",
+            "get_profile_publication_status",
+        ),
+        allowed_scopes=("profile.materials", "knowledge.active"),
         system=True,
+    ),
+    _definition(
+        "quality.evaluate",
+        "quality_evaluation_agents",
+        "运行质量评估",
+        "",
+        "export_trace",
+        child_components=(
+            "quality_evaluation_judge",
+            "quality_evaluation_judge_v2",
+            "quality_evaluation_pairwise_judge_v2",
+        ),
+        model_roles=("answer_evaluation",),
+        system=True,
+        run_center_visible=False,
     ),
     _definition(
         "knowledge.publish",

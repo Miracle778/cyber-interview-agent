@@ -7,7 +7,7 @@ from typing import Any
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage
 
-from app.agents.agent_factory import AgentFactory, AgentSpec, ModelOverride
+from app.agents.agent_factory import AgentSpec, ModelOverride, RegisteredAgentFactory
 from app.agents.agent_invocation import isolated_thread_config
 from app.agents.agent_protocols import AgentRunnable
 from app.agents.context import AgentContext
@@ -37,7 +37,7 @@ class JobTargetAgents:
     @classmethod
     def create(
         cls,
-        factory: AgentFactory,
+        factory: RegisteredAgentFactory,
         *,
         model_bindings: Mapping[str, str],
         middleware: tuple[AgentMiddleware, ...] = (),
@@ -53,6 +53,7 @@ class JobTargetAgents:
                     middleware=middleware,
                     response_format=JobRequirementExtraction,
                 ),
+                component_id="job_analysis",
                 model_bindings=model_bindings,
                 model_override=model_override,
                 checkpointer=checkpointer,
@@ -65,6 +66,7 @@ class JobTargetAgents:
                     middleware=middleware,
                     response_format=DeepDiveTurnResult,
                 ),
+                component_id="project_deep_dive",
                 model_bindings=model_bindings,
                 model_override=model_override,
                 checkpointer=checkpointer,
@@ -77,6 +79,7 @@ class JobTargetAgents:
                     middleware=middleware,
                     response_format=ProjectQuestionBatchOutput,
                 ),
+                component_id="project_question_generation",
                 model_bindings=model_bindings,
                 model_override=model_override,
                 checkpointer=checkpointer,

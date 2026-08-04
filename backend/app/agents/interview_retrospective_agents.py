@@ -8,7 +8,7 @@ from langchain.agents.structured_output import StructuredOutputValidationError
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, HumanMessage
 
-from app.agents.agent_factory import AgentFactory, AgentSpec, ModelOverride
+from app.agents.agent_factory import AgentSpec, ModelOverride, RegisteredAgentFactory
 from app.agents.agent_model_resolver import ModelInvocationPolicy
 from app.agents.agent_invocation import isolated_thread_config
 from app.agents.agent_protocols import AgentRunnable
@@ -104,7 +104,7 @@ class InterviewRetrospectiveAgents:
     @classmethod
     def create(
         cls,
-        factory: AgentFactory,
+        factory: RegisteredAgentFactory,
         *,
         model_bindings: Mapping[str, str],
         middleware: tuple[AgentMiddleware, ...] = (),
@@ -133,6 +133,7 @@ class InterviewRetrospectiveAgents:
                     structured_output_handle_errors=structured_output_handle_errors,
                     invocation_policy=invocation_policy,
                 ),
+                component_id=execution_name,
                 model_bindings=model_bindings,
                 model_override=model_override,
                 checkpointer=checkpointer,

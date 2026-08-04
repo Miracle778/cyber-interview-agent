@@ -77,6 +77,9 @@ class TraceIdentity:
     agent_role: str
     agent_name: str
     invocation_id: str
+    agent_id: str | None = None
+    agent_definition_version: str | None = None
+    component_id: str | None = None
     operation_id: str | None = None
     parent_operation_id: str | None = None
     operation_kind: TraceOperationKind | None = None
@@ -305,6 +308,9 @@ class AgentTraceWriter:
                     "run_id": identity.run_id,
                     "agent_role": identity.agent_role,
                     "agent_name": identity.agent_name,
+                    "agent_id": identity.agent_id,
+                    "agent_definition_version": identity.agent_definition_version,
+                    "component_id": identity.component_id,
                     "invocation_id": identity.invocation_id,
                     "operation_id": operation_id,
                     "parent_operation_id": parent_operation_id,

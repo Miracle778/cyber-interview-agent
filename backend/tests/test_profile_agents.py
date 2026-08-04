@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
@@ -25,6 +26,7 @@ from app.profile.repository import ProfileRepository
 from app.profile.service import ProfileService
 from app.profile.storage import MaterialStorage
 from app.tools.profile_tools import PROFILE_TOOL_NAMES
+from app.middleware.tool_policy_middleware import ToolPolicyMiddleware
 
 
 class StubRunnable:
@@ -158,11 +160,26 @@ def test_production_graph_factory_explicitly_wires_profile_graphs(tmp_path: Path
     connection = connect_runtime_database(root)
 
     class GraphAgentFactory(RecordingFactory):
+        definition = SimpleNamespace(
+            agent_id="profile.manage",
+            definition_version="1",
+        )
+
+        def bind(self, _agent_id):
+            return self
+
         def resolve_context_limit(self, _role, **_kwargs):
             return 128000
 
         def resolve_model(self, _role, **_kwargs):
             return GenericFakeChatModel(messages=iter([AIMessage(content="summary")]))
+
+        def create_tool_policy(self, *, audit, required_scopes, publish_event=None):
+            return ToolPolicyMiddleware(
+                audit=audit,
+                required_scopes=required_scopes,
+                publish_event=publish_event,
+            )
 
     profile_repository = ProfileRepository(connection)
     profile_storage = MaterialStorage(root)

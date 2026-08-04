@@ -16,6 +16,16 @@
 - 运行中心、可观测服务、质量评估和公共 Runtime 门禁直接消费 `AgentDefinitionRegistry`。`app.observability.registry` 只作为旧 import 的兼容门面，不再保存注册项。
 - 本阶段只统一当前 Definition 与 Builder；子组件 Tool/Scope 门禁和 Execution Definition Snapshot 仍属于 Phase 3、Phase 4。
 
+## 2026-08-04：Agent Control Plane Phase 3 子组件与模型调用门禁
+
+- 仅把 `child_components` 写进 Registry 仍然只是说明性元数据；真正的执行门禁必须让 Factory 先绑定顶层 Definition，再允许解析模型、创建组件或生成 Tool Policy。
+- `AgentFactory.bind(agent_id)` 现在返回 Definition-bound Factory。组件创建前依次校验 `component_id`、model role 和实际 Tool；Tool Policy 创建前校验 Tool 与 Scope，任何越界都在 Resolver/Provider 调用前 fail-closed。
+- 所有生产 Agent bundle 和上下文摘要模型都经过绑定后的 Factory。未绑定的 `AgentFactory.create/resolve_model/resolve_context_limit` 保留为显式失败入口，避免旧调用方式静默绕过控制面。
+- 静态 AST 契约测试扫描 `backend/app` 对 `ChatModelResolver` 的直接导入；当前只允许控制面 Factory 和应用组合根。它不能替代运行时校验，但能在 CI 中阻止常见新增绕过。
+- Trace 的每条模型请求/响应现在携带顶层 `agent_id`、`agent_definition_version` 和 `component_id`；上下文压缩也使用父 Agent 的 Definition 身份和固定 `context_summarization` 组件，不再成为匿名模型调用。
+- 当前 Profile 三个顶层 Definition 仍共享一个会构造完整 Agent bundle 的 Builder，因此声明的是现有 Bundle 上限，而非每条 Graph 的理论最小组件集。进一步拆细 Builder 属于后续可逆优化，不阻塞本阶段的最小权限运行时校验。
+- Phase 3 没有持久化完整 Execution Definition Snapshot；历史运行的 Builder、Prompt、Toolset 与模型绑定冻结仍属于 Phase 4，不能从当前 Trace 字段推断为已经完成。
+
 ## 2026-08-02：轻量创建契约需要前后端保持一致
 
 - 正式规格允许复盘流程只填写岗位名称创建轻量求职目标，但前端按钮和后端 Service 都沿用了“岗位 + 职级成对必填”的旧规则，导致用户已填写公司和岗位仍无法保存。

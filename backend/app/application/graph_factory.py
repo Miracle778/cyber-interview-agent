@@ -32,11 +32,14 @@ from app.middleware.middleware_stack import (
     REVIEW_ROUND_BUDGET,
     build_default_middleware,
 )
-from app.middleware.tool_policy_middleware import ToolPolicyMiddleware
 from app.tools.profile_tools import (
     PROFILE_TOOL_SCOPES,
     ProfileToolBudgetMiddleware,
     create_profile_tools,
+)
+from app.tools.interview_retrospective_tools import (
+    RETROSPECTIVE_TOOL_NAMES,
+    RETROSPECTIVE_TOOL_SCOPE,
 )
 
 
@@ -45,6 +48,15 @@ class DiagnosticState(TypedDict, total=False):
     summary: str
     response: str
     decision: dict[str, Any]
+
+
+def _middleware_identity(registered) -> dict[str, str]:
+    definition = registered.definition
+    return {
+        "agent_id": definition.agent_id,
+        "agent_definition_version": definition.definition_version,
+        "component_id": "context_summarization",
+    }
 
 
 class ProductionGraphFactory:
@@ -72,6 +84,7 @@ class ProductionGraphFactory:
             "diagnostic_echo_graph": self._build_diagnostic_echo_graph,
             "diagnostic_approval_graph": self._build_diagnostic_approval_graph,
             "diagnostic_security_graph": self._build_diagnostic_security_graph,
+            "quality_evaluation_agents": self._build_quality_evaluation_agents,
         }
 
     @property
@@ -84,7 +97,20 @@ class ProductionGraphFactory:
         model_bindings,
         provider_model_id: str,
     ) -> StructuredJudgeAgent:
-        runnable = self._agents.create(
+        return self(
+            "quality.evaluate",
+            model_bindings=model_bindings,
+            provider_model_id=provider_model_id,
+        )
+
+    def _create_evaluation_judge(
+        self,
+        *,
+        model_bindings,
+        provider_model_id: str,
+    ) -> StructuredJudgeAgent:
+        registered = self._agents.bind("quality.evaluate")
+        runnable = registered.create(
             AgentSpec(
                 role="answer_evaluation",
                 execution_name="quality_evaluation_judge",
@@ -102,10 +128,11 @@ class ProductionGraphFactory:
                 response_format=JudgeResult,
                 structured_output_handle_errors=False,
             ),
+            component_id="quality_evaluation_judge",
             model_bindings=model_bindings,
             model_override=ModelOverride(provider_model_id),
         )
-        v2_runnable = self._agents.create(
+        v2_runnable = registered.create(
             AgentSpec(
                 role="answer_evaluation",
                 execution_name="quality_evaluation_judge_v2",
@@ -124,10 +151,11 @@ class ProductionGraphFactory:
                 response_format=JudgeResultV2,
                 structured_output_handle_errors=False,
             ),
+            component_id="quality_evaluation_judge_v2",
             model_bindings=model_bindings,
             model_override=ModelOverride(provider_model_id),
         )
-        pairwise_runnable = self._agents.create(
+        pairwise_runnable = registered.create(
             AgentSpec(
                 role="answer_evaluation",
                 execution_name="quality_evaluation_pairwise_judge_v2",
@@ -144,6 +172,7 @@ class ProductionGraphFactory:
                 response_format=PairwiseJudgeResult,
                 structured_output_handle_errors=False,
             ),
+            component_id="quality_evaluation_pairwise_judge_v2",
             model_bindings=model_bindings,
             model_override=ModelOverride(provider_model_id),
         )
@@ -159,30 +188,35 @@ class ProductionGraphFactory:
         publish_event=None,
         interaction_override: ModelOverride | None = None,
     ):
+        registered = self._agents.bind("question.curate")
         context_limit_tokens = min(
-            self._agents.resolve_context_limit(
+            registered.resolve_context_limit(
                 "question_generation",
                 model_bindings=model_bindings,
                 model_override=interaction_override,
             ),
-            self._agents.resolve_context_limit(
+            registered.resolve_context_limit(
                 "report_summarization", model_bindings=model_bindings
             ),
         )
-        summary_model = self._agents.resolve_model(
-            "report_summarization", model_bindings=model_bindings
+        summary_model = registered.resolve_model(
+            "report_summarization",
+            component_id="context_summarization",
+            model_bindings=model_bindings,
         )
-        classifier_model = self._agents.resolve_model(
+        classifier_model = registered.resolve_model(
             "question_generation",
+            component_id="curation_command_classifier",
             model_bindings=model_bindings,
             model_override=interaction_override,
         )
         middleware = build_default_middleware(
+            **_middleware_identity(registered),
             summary_model=summary_model,
             summary_provider_model_id=model_bindings["report_summarization"],
             trace_writer=self.trace_writer,
             projection=projection,
-            policy=ToolPolicyMiddleware(
+            policy=registered.create_tool_policy(
                 audit=audit,
                 required_scopes={},
                 publish_event=publish_event,
@@ -193,7 +227,7 @@ class ProductionGraphFactory:
             context_limit_tokens=context_limit_tokens,
         )
         return CurationCommandAgents.create(
-            self._agents,
+            registered,
             model_bindings=model_bindings,
             interaction_override=interaction_override,
             middleware=middleware,
@@ -224,6 +258,7 @@ class ProductionGraphFactory:
     def _create_job_target_agents(
         self,
         *,
+        agent_id: str,
         model_bindings,
         projection,
         audit,
@@ -231,8 +266,9 @@ class ProductionGraphFactory:
         publish_event=None,
         interaction_override: ModelOverride | None = None,
     ) -> JobTargetAgents:
+        registered = self._agents.bind(agent_id)
         context_limit_tokens = min(
-            self._agents.resolve_context_limit(
+            registered.resolve_context_limit(
                 role,
                 model_bindings=model_bindings,
                 model_override=interaction_override,
@@ -240,13 +276,16 @@ class ProductionGraphFactory:
             for role in ("job_analysis", "project_deep_dive")
         )
         middleware = build_default_middleware(
-            summary_model=self._agents.resolve_model(
-                "report_summarization", model_bindings=model_bindings
+            **_middleware_identity(registered),
+            summary_model=registered.resolve_model(
+                "report_summarization",
+                component_id="context_summarization",
+                model_bindings=model_bindings,
             ),
             summary_provider_model_id=model_bindings["report_summarization"],
             trace_writer=self.trace_writer,
             projection=projection,
-            policy=ToolPolicyMiddleware(
+            policy=registered.create_tool_policy(
                 audit=audit,
                 required_scopes={},
                 publish_event=publish_event,
@@ -257,7 +296,7 @@ class ProductionGraphFactory:
             context_limit_tokens=context_limit_tokens,
         )
         return JobTargetAgents.create(
-            self._agents,
+            registered,
             model_bindings=model_bindings,
             middleware=middleware,
             model_override=interaction_override,
@@ -288,6 +327,7 @@ class ProductionGraphFactory:
     def _create_interview_retrospective_agents(
         self,
         *,
+        agent_id: str,
         model_bindings,
         projection,
         audit,
@@ -296,8 +336,9 @@ class ProductionGraphFactory:
         interaction_override: ModelOverride | None = None,
         chat_tools: tuple = (),
     ) -> InterviewRetrospectiveAgents:
+        registered = self._agents.bind(agent_id)
         context_limit_tokens = min(
-            self._agents.resolve_context_limit(
+            registered.resolve_context_limit(
                 role,
                 model_bindings=model_bindings,
                 model_override=(
@@ -311,15 +352,21 @@ class ProductionGraphFactory:
             )
         )
         middleware = build_default_middleware(
-            summary_model=self._agents.resolve_model(
-                "report_summarization", model_bindings=model_bindings
+            **_middleware_identity(registered),
+            summary_model=registered.resolve_model(
+                "report_summarization",
+                component_id="context_summarization",
+                model_bindings=model_bindings,
             ),
             summary_provider_model_id=model_bindings["report_summarization"],
             trace_writer=self.trace_writer,
             projection=projection,
-            policy=ToolPolicyMiddleware(
+            policy=registered.create_tool_policy(
                 audit=audit,
-                required_scopes={},
+                required_scopes={
+                    name: RETROSPECTIVE_TOOL_SCOPE
+                    for name in RETROSPECTIVE_TOOL_NAMES
+                },
                 publish_event=publish_event,
             ),
             observability=observability,
@@ -328,7 +375,7 @@ class ProductionGraphFactory:
             context_limit_tokens=context_limit_tokens,
         )
         return InterviewRetrospectiveAgents.create(
-            self._agents,
+            registered,
             model_bindings=model_bindings,
             middleware=middleware,
             model_override=interaction_override,
@@ -349,9 +396,10 @@ class ProductionGraphFactory:
         publish_event=None,
         interaction_override: ModelOverride | None = None,
     ) -> ReviewRoundAgents:
+        registered = self._agents.bind("review.round")
         roles = ("answer_evaluation", "report_summarization", "agent_chat")
         context_limit_tokens = min(
-            self._agents.resolve_context_limit(
+            registered.resolve_context_limit(
                 role,
                 model_bindings=model_bindings,
                 model_override=(
@@ -361,13 +409,16 @@ class ProductionGraphFactory:
             for role in roles
         )
         middleware = build_default_middleware(
-            summary_model=self._agents.resolve_model(
-                "report_summarization", model_bindings=model_bindings
+            **_middleware_identity(registered),
+            summary_model=registered.resolve_model(
+                "report_summarization",
+                component_id="context_summarization",
+                model_bindings=model_bindings,
             ),
             summary_provider_model_id=model_bindings["report_summarization"],
             trace_writer=self.trace_writer,
             projection=projection,
-            policy=ToolPolicyMiddleware(
+            policy=registered.create_tool_policy(
                 audit=audit,
                 required_scopes={},
                 publish_event=publish_event,
@@ -378,7 +429,7 @@ class ProductionGraphFactory:
             context_limit_tokens=context_limit_tokens,
         )
         return ReviewRoundAgents.create(
-            self._agents,
+            registered,
             model_bindings=model_bindings,
             middleware=middleware,
             answer_model_override=interaction_override,
@@ -392,9 +443,10 @@ class ProductionGraphFactory:
         return self._builder_catalog()[builder_key](definition.agent_id, dependencies)
 
     def _build_profile_graph(self, kind: str, dependencies: dict[str, Any]):
+        registered = self._agents.bind(kind)
         bindings = dependencies["model_bindings"]
         context_limit_tokens = min(
-            self._agents.resolve_context_limit(role, model_bindings=bindings)
+            registered.resolve_context_limit(role, model_bindings=bindings)
             for role in (
                 "profile_extraction",
                 "profile_assessment",
@@ -402,13 +454,16 @@ class ProductionGraphFactory:
             )
         )
         middleware = build_default_middleware(
-            summary_model=self._agents.resolve_model(
-                "report_summarization", model_bindings=bindings
+            **_middleware_identity(registered),
+            summary_model=registered.resolve_model(
+                "report_summarization",
+                component_id="context_summarization",
+                model_bindings=bindings,
             ),
             summary_provider_model_id=bindings["report_summarization"],
             trace_writer=self.trace_writer,
             projection=dependencies["projection"],
-            policy=ToolPolicyMiddleware(
+            policy=registered.create_tool_policy(
                 audit=dependencies["audit"],
                 required_scopes=PROFILE_TOOL_SCOPES,
                 publish_event=dependencies.get("publish_event"),
@@ -424,7 +479,7 @@ class ProductionGraphFactory:
         if profile_repository is None or profile_storage is None:
             raise RuntimeError("profile graph dependencies are not configured")
         agents = ProfileAgents.create(
-            self._agents,
+            registered,
             model_bindings=bindings,
             middleware=middleware,
             chat_tools=create_profile_tools(
@@ -466,6 +521,7 @@ class ProductionGraphFactory:
         )
 
     def _build_question_or_review_graph(self, kind: str, dependencies: dict[str, Any]):
+        registered = self._agents.bind(kind)
         bindings = dependencies["model_bindings"]
         roles = (
             ("question_generation", "report_summarization")
@@ -473,18 +529,21 @@ class ProductionGraphFactory:
             else ("answer_evaluation", "report_summarization", "agent_chat")
         )
         context_limit_tokens = min(
-            self._agents.resolve_context_limit(role, model_bindings=bindings)
+            registered.resolve_context_limit(role, model_bindings=bindings)
             for role in roles
         )
-        summary_model = self._agents.resolve_model(
-            "report_summarization", model_bindings=bindings
+        summary_model = registered.resolve_model(
+            "report_summarization",
+            component_id="context_summarization",
+            model_bindings=bindings,
         )
         middleware = build_default_middleware(
+            **_middleware_identity(registered),
             summary_model=summary_model,
             summary_provider_model_id=bindings["report_summarization"],
             trace_writer=self.trace_writer,
             projection=dependencies["projection"],
-            policy=ToolPolicyMiddleware(
+            policy=registered.create_tool_policy(
                 audit=dependencies["audit"],
                 required_scopes={},
                 publish_event=dependencies.get("publish_event"),
@@ -496,7 +555,7 @@ class ProductionGraphFactory:
         )
         if kind in {"question.curate", "question.revise"}:
             agents = QuestionCurationAgents.create(
-                self._agents,
+                registered,
                 model_bindings=bindings,
                 middleware=middleware,
                 tools=dependencies.get("question_tools", ()),
@@ -508,7 +567,7 @@ class ProductionGraphFactory:
                 checkpointer=dependencies["checkpointer"],
             )
         agents = ReviewRoundAgents.create(
-            self._agents,
+            registered,
             model_bindings=bindings,
             middleware=middleware,
             discussion_tools=dependencies.get("discussion_tools", ()),
@@ -528,21 +587,25 @@ class ProductionGraphFactory:
             checkpointer=dependencies["checkpointer"],
         )
 
-    def _build_single_review_graph(self, _kind: str, dependencies: dict[str, Any]):
+    def _build_single_review_graph(self, kind: str, dependencies: dict[str, Any]):
+        registered = self._agents.bind(kind)
         bindings = dependencies["model_bindings"]
         context_limit_tokens = min(
-            self._agents.resolve_context_limit(role, model_bindings=bindings)
+            registered.resolve_context_limit(role, model_bindings=bindings)
             for role in ("answer_evaluation", "report_summarization")
         )
-        summary_model = self._agents.resolve_model(
-            "report_summarization", model_bindings=bindings
+        summary_model = registered.resolve_model(
+            "report_summarization",
+            component_id="context_summarization",
+            model_bindings=bindings,
         )
         middleware = build_default_middleware(
+            **_middleware_identity(registered),
             summary_model=summary_model,
             summary_provider_model_id=bindings["report_summarization"],
             trace_writer=self.trace_writer,
             projection=dependencies["projection"],
-            policy=ToolPolicyMiddleware(
+            policy=registered.create_tool_policy(
                 audit=dependencies["audit"],
                 required_scopes={},
                 publish_event=dependencies.get("publish_event"),
@@ -552,7 +615,7 @@ class ProductionGraphFactory:
             context_limit_tokens=context_limit_tokens,
         )
         review_agents = SingleReviewAgents.create(
-            self._agents,
+            registered,
             model_bindings=bindings,
             middleware=middleware,
             checkpointer=dependencies["checkpointer"],
@@ -570,8 +633,9 @@ class ProductionGraphFactory:
             checkpointer=dependencies["checkpointer"],
         )
 
-    def _build_job_target_agents(self, _kind: str, dependencies: dict[str, Any]):
+    def _build_job_target_agents(self, kind: str, dependencies: dict[str, Any]):
         return self._create_job_target_agents(
+            agent_id=kind,
             model_bindings=dependencies["model_bindings"],
             projection=dependencies["projection"],
             audit=dependencies["audit"],
@@ -581,9 +645,10 @@ class ProductionGraphFactory:
         )
 
     def _build_interview_retrospective_agents(
-        self, _kind: str, dependencies: dict[str, Any]
+        self, kind: str, dependencies: dict[str, Any]
     ):
         return self._create_interview_retrospective_agents(
+            agent_id=kind,
             model_bindings=dependencies["model_bindings"],
             projection=dependencies["projection"],
             audit=dependencies["audit"],
@@ -591,6 +656,14 @@ class ProductionGraphFactory:
             publish_event=dependencies.get("publish_event"),
             interaction_override=dependencies.get("interaction_override"),
             chat_tools=dependencies.get("chat_tools", ()),
+        )
+
+    def _build_quality_evaluation_agents(
+        self, _kind: str, dependencies: dict[str, Any]
+    ) -> StructuredJudgeAgent:
+        return self._create_evaluation_judge(
+            model_bindings=dependencies["model_bindings"],
+            provider_model_id=dependencies["provider_model_id"],
         )
 
     @staticmethod

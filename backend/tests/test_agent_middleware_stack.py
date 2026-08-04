@@ -290,6 +290,9 @@ async def test_context_compaction_has_its_own_agent_trace_identity(tmp_path: Pat
         threshold_tokens=1,
         trace_writer=AgentTraceWriter(),
         provider_model_id="provider-model-1",
+        agent_id="review.round",
+        agent_definition_version="1",
+        component_id="context_summarization",
     )
 
     await middleware.abefore_model(
@@ -306,6 +309,10 @@ async def test_context_compaction_has_its_own_agent_trace_identity(tmp_path: Pat
         "model.request", "model.response"
     ]
     assert {row["agent_name"] for row in rows} == {"context_summary"}
+    assert {
+        (row["agent_id"], row["agent_definition_version"], row["component_id"])
+        for row in rows
+    } == {("review.round", "1", "context_summarization")}
 
 
 @pytest.mark.asyncio

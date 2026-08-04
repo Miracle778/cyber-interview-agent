@@ -45,7 +45,7 @@ def test_registry_rejects_missing_and_orphaned_builders() -> None:
                 route_template="/test",
                 capabilities=frozenset(),
                 eval_pack_id=None,
-                system_components=(),
+                child_components=(),
             ),
         )
     )
@@ -69,7 +69,7 @@ def test_registry_rejects_active_definition_without_builder() -> None:
                     route_template="/test",
                     capabilities=frozenset(),
                     eval_pack_id=None,
-                    system_components=(),
+                    child_components=(),
                 ),
             )
         )
@@ -121,7 +121,11 @@ def test_interview_retrospective_is_registered_as_business_agent() -> None:
     assert {"open_business", "cancel", "retry", "resume", "export_trace"} <= set(
         registration.capabilities
     )
-    assert registration.system_components == ("retrospective_analysis",)
+    assert {
+        "interview_retrospective_cleanup",
+        "interview_retrospective_chat",
+        "context_summarization",
+    } <= set(registration.system_components)
 
 
 def test_registration_gate_rejects_unknown_and_system_only_agents() -> None:

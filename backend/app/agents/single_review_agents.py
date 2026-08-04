@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain.agents.middleware import AgentMiddleware
 
 from app.agents.context import AgentContext
-from app.agents.agent_factory import AgentFactory, AgentSpec
+from app.agents.agent_factory import AgentSpec, RegisteredAgentFactory
 from app.agents.agent_invocation import final_ai_text, isolated_thread_config
 from app.agents.agent_protocols import AgentRunnable
 from app.agents.prompts.single_review_prompts import (
@@ -33,7 +33,7 @@ class SingleReviewAgents:
     @classmethod
     def create(
         cls,
-        factory: AgentFactory,
+        factory: RegisteredAgentFactory,
         *,
         model_bindings: Mapping[str, str],
         middleware: tuple[AgentMiddleware, ...] = (),
@@ -48,6 +48,7 @@ class SingleReviewAgents:
                     response_format=AnswerEvaluation,
                     middleware=middleware,
                 ),
+                component_id="single_review_evaluator",
                 model_bindings=model_bindings,
                 checkpointer=checkpointer,
             ),
@@ -58,6 +59,7 @@ class SingleReviewAgents:
                     prompt=SINGLE_REVIEW_REPORT_PROMPT,
                     middleware=middleware,
                 ),
+                component_id="single_review_reporter",
                 model_bindings=model_bindings,
                 checkpointer=checkpointer,
             ),

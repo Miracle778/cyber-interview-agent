@@ -48,11 +48,17 @@ class AgentTraceMiddleware(AgentMiddleware):
         agent_role: str,
         agent_name: str,
         provider_model_id: str,
+        agent_id: str | None = None,
+        agent_definition_version: str | None = None,
+        component_id: str | None = None,
     ) -> None:
         self._writer = writer
         self._agent_role = agent_role
         self._agent_name = agent_name
         self._provider_model_id = provider_model_id
+        self._agent_id = agent_id
+        self._agent_definition_version = agent_definition_version
+        self._component_id = component_id
         self._warned_runs: set[tuple[str, str, str]] = set()
 
     async def awrap_model_call(self, request, handler):
@@ -165,6 +171,9 @@ class AgentTraceMiddleware(AgentMiddleware):
             agent_role=self._agent_role,
             agent_name=agent_name,
             invocation_id=invocation_id,
+            agent_id=self._agent_id,
+            agent_definition_version=self._agent_definition_version,
+            component_id=self._component_id,
             operation_id=stable_trace_operation_id(
                 context.run_id,
                 invocation_id,

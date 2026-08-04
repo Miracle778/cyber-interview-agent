@@ -8,7 +8,7 @@ from typing import Any
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage
 
-from app.agents.agent_factory import AgentFactory, AgentSpec
+from app.agents.agent_factory import AgentSpec, RegisteredAgentFactory
 from app.agents.agent_invocation import isolated_thread_config
 from app.agents.agent_model_resolver import ModelInvocationPolicy
 from app.agents.agent_protocols import AgentRunnable
@@ -73,7 +73,7 @@ class QuestionCurationAgents:
     @classmethod
     def create(
         cls,
-        factory: AgentFactory,
+        factory: RegisteredAgentFactory,
         *,
         model_bindings: Mapping[str, str],
         middleware: tuple[AgentMiddleware, ...] = (),
@@ -95,6 +95,7 @@ class QuestionCurationAgents:
                     structured_output_handle_errors=False,
                     invocation_policy=_DISCOVERY_POLICY,
                 ),
+                component_id="question_discovery",
                 **common,
             ),
             enrichment=factory.create(
@@ -108,6 +109,7 @@ class QuestionCurationAgents:
                     structured_output_handle_errors=False,
                     invocation_policy=_ENRICHMENT_POLICY,
                 ),
+                component_id="question_enrichment",
                 **common,
             ),
             revision=factory.create(
@@ -121,6 +123,7 @@ class QuestionCurationAgents:
                     structured_output_handle_errors=False,
                     invocation_policy=_REVISION_POLICY,
                 ),
+                component_id="question_revision",
                 **common,
             ),
         )

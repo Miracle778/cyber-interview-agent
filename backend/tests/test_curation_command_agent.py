@@ -35,10 +35,12 @@ class RecordingFactory:
         self,
         spec,
         *,
+        component_id,
         model_bindings,
         model_override=None,
         checkpointer=None,
     ):
+        assert component_id == spec.execution_name
         self.calls.append(
             (spec, model_bindings, model_override, checkpointer)
         )
