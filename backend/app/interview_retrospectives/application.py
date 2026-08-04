@@ -589,6 +589,25 @@ class InterviewRetrospectiveApplication:
             if saved_hash != request_hash:
                 raise RetrospectiveIdempotencyConflict("同一幂等键不能处理不同候选项")
             return self.repository.get_asset_candidate(str(result["candidateId"]))
+        if action == "reopen":
+            if candidate.status != "rejected":
+                raise ValueError("只有已忽略且尚未写入资料库的候选可以恢复")
+            decided = self.repository.transition_asset_candidate(
+                candidate_id,
+                status="pending",
+                target_resource_type=None,
+                target_resource_id=None,
+                last_error_code=None,
+                expected_version=expected_version,
+            )
+            self.repository.save_receipt(
+                retrospective_id,
+                scope=scope,
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+                result={"candidateId": decided.id},
+            )
+            return decided
         allowed = {
             "review_question": {
                 "link_existing",
@@ -1054,7 +1073,7 @@ class InterviewRetrospectiveApplication:
         expected_version: int,
         idempotency_key: str,
     ):
-        if decision not in {"completed", "dismissed"}:
+        if decision not in {"pending", "completed", "dismissed"}:
             raise ValueError("不支持的行动项状态")
         self.service.get(retrospective_id)
         request_hash = _digest(

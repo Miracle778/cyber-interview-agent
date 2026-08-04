@@ -40,10 +40,10 @@ describe("RetrospectiveWorkspace", () => {
   it("keeps review, assets, and action views visible while switching", () => {
     render(<MemoryRouter><RetrospectiveWorkspace {...workspaceProps} retrospective={retrospective} report={report} selectedQuestionId="q-1" busy={false} onSelectQuestion={vi.fn()} onStop={vi.fn()} onResume={vi.fn()} onRetry={vi.fn()} onDecision={vi.fn()} /></MemoryRouter>);
     expect(screen.getByRole("tab", { name: /逐题复盘 1/ })).toBeVisible();
-    expect(screen.getByRole("tab", { name: /准备资产 0/ })).toBeVisible();
-    expect(screen.getByRole("tab", { name: /行动与发布 0/ })).toBeVisible();
-    fireEvent.click(screen.getByRole("tab", { name: /准备资产 0/ }));
-    expect(screen.getByRole("heading", { name: "沉淀本次复盘" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: /保存成果 0/ })).toBeVisible();
+    expect(screen.getByRole("tab", { name: /下一步 0/ })).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: /保存成果 0/ }));
+    expect(screen.getByRole("heading", { name: "选择要保存的内容" })).toBeVisible();
     expect(screen.getByRole("tab", { name: /逐题复盘 1/ })).toBeVisible();
   });
 

@@ -44,14 +44,18 @@ const run: EvaluationRun = {
 };
 
 describe("EvaluationQualityRail", () => {
-  it("separates policy from observed quality results", () => {
+  it("leads with the user outcome and keeps methodology secondary", () => {
     render(<EvaluationQualityRail run={run} feedback={[]} />);
 
-    expect(screen.getByRole("heading", { name: "检查结论" })).toBeInTheDocument();
-    expect(screen.getByText("评估证据完整性检查")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "可以使用" })).toBeInTheDocument();
+    expect(screen.getByText("本次结论")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "优先处理" })).toBeInTheDocument();
+    expect(screen.getByText("查看检查方式")).toBeInTheDocument();
+    expect(screen.getByText("证据完整性检查")).toBeInTheDocument();
     expect(screen.getByText("AI 质量检查")).toBeInTheDocument();
     expect(screen.getByText("你的判断")).toBeInTheDocument();
     expect(screen.getByText("1 项稳定")).toBeInTheDocument();
+    expect(screen.getByText("查看检查设置")).toBeInTheDocument();
     expect(screen.getByText("复习评价质量")).toBeInTheDocument();
     expect(screen.getByText("已配置")).toBeInTheDocument();
     expect(screen.queryByText("judge-model")).not.toBeInTheDocument();

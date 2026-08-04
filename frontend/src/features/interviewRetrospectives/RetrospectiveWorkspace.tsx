@@ -41,7 +41,7 @@ export function RetrospectiveWorkspace({ retrospective, report, corrections = []
   onDecision: (decision: "confirmed" | "rejected") => void;
   onCandidateDecision: (candidate: RetrospectiveCandidate, decision: RetrospectiveCandidateDecision, targetResourceId?: string) => void;
   onBatchCandidateDecision: (candidates: RetrospectiveCandidate[]) => void;
-  onActionDecision: (action: RetrospectiveActionItem, decision: "completed" | "dismissed") => void;
+  onActionDecision: (action: RetrospectiveActionItem, decision: "pending" | "completed" | "dismissed") => void;
   onCreateDraft: (sections: PublicationSection[]) => void;
   onCorrectionConfirmed?: () => void;
 }) {
@@ -70,8 +70,8 @@ export function RetrospectiveWorkspace({ retrospective, report, corrections = []
     </details> : null}
     <div className="retrospective-workbench__navigation"><nav className="retrospective-workbench__views" role="tablist" aria-label="复盘工作区">
         <button type="button" role="tab" aria-selected={view === "analysis"} onClick={() => setView("analysis")}>逐题复盘 <span>{report.questions.length}</span></button>
-        <button type="button" role="tab" aria-selected={view === "assets"} onClick={() => setView("assets")}>准备资产 <span>{candidates.filter((candidate) => ["pending", "failed"].includes(candidate.status)).length}</span></button>
-        <button type="button" role="tab" aria-selected={view === "actions"} onClick={() => setView("actions")}>行动与发布 <span>{actions.filter((action) => action.status === "pending").length}</span></button>
+        <button type="button" role="tab" aria-selected={view === "assets"} onClick={() => setView("assets")}>保存成果 <span>{candidates.filter((candidate) => ["pending", "failed"].includes(candidate.status)).length}</span></button>
+        <button type="button" role="tab" aria-selected={view === "actions"} onClick={() => setView("actions")}>下一步 <span>{actions.filter((action) => action.status === "pending").length}</span></button>
       </nav>{focusMode ? <Button size="sm" variant="secondary" onClick={() => setConversationOpen(true)}><MessageCircle size={15} />讨论与纠正</Button> : null}</div>
     {view === "analysis" ? <TaskWorkspace className="retrospective-workbench__workspace" labelledBy="retrospective-question-list-title">
         <TaskWorkspacePane className="retrospective-workbench__timeline" aria-label="面试问题列表">

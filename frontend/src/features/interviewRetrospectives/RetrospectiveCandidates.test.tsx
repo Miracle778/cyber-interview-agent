@@ -37,8 +37,16 @@ describe("RetrospectiveCandidates", () => {
     fireEvent.click(screen.getByRole("button", { name: /关联已有题：如何治理缓存一致性/ }));
     expect(onDecision).toHaveBeenCalledWith(candidates[0], "link_existing", "review-1");
     fireEvent.click(screen.getByRole("checkbox", { name: /选择候选：缓存一致性怎么治理/ }));
-    fireEvent.click(screen.getByRole("button", { name: /批量暂不沉淀 1 项/ }));
+    fireEvent.click(screen.getByRole("button", { name: /批量不加入资料库 1 项/ }));
     expect(onBatchDecision).toHaveBeenCalledWith([candidates[0]]);
+  });
+
+  it("lets an ignored candidate return to the pending list", () => {
+    const onDecision = vi.fn();
+    const rejected = [{ ...candidates[0], status: "rejected" as const, version: 2 }];
+    render(<MemoryRouter><RetrospectiveCandidates retrospectiveId="retro-1" candidates={rejected} questions={questions} busy={false} onDecision={onDecision} onBatchDecision={vi.fn()} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "恢复为待处理" }));
+    expect(onDecision).toHaveBeenCalledWith(rejected[0], "reopen");
   });
 
   it("shows immediate practice only for an existing confirmed review question", () => {

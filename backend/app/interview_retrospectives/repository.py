@@ -2317,7 +2317,8 @@ class InterviewRetrospectiveRepository:
             "UPDATE interview_asset_candidates SET status = ?, "
             "target_resource_type = ?, target_resource_id = ?, last_error_code = ?, "
             "version = version + 1, updated_at = CURRENT_TIMESTAMP "
-            "WHERE id = ? AND version = ? AND status IN ('pending','blocked','failed')",
+            "WHERE id = ? AND version = ? "
+            "AND status IN ('pending','blocked','failed','rejected')",
             (
                 status,
                 target_resource_type,
@@ -2396,8 +2397,8 @@ class InterviewRetrospectiveRepository:
             "UPDATE interview_action_items SET status = ?, "
             "completed_at = CASE WHEN ? = 'completed' THEN CURRENT_TIMESTAMP ELSE NULL END, "
             "version = version + 1, updated_at = CURRENT_TIMESTAMP "
-            "WHERE id = ? AND version = ? AND status = 'pending'",
-            (decision, decision, action_id, expected_version),
+            "WHERE id = ? AND version = ? AND status = ?",
+            (decision, decision, action_id, expected_version, current.status),
         )
         if cursor.rowcount != 1:
             self.connection.rollback()

@@ -266,7 +266,8 @@ export type RetrospectiveCandidateDecision =
   | "propose_new"
   | "reject"
   | "include"
-  | "exclude";
+  | "exclude"
+  | "reopen";
 
 export interface CandidateMatch {
   resourceId: string;

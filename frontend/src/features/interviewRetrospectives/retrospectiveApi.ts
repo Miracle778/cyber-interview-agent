@@ -512,7 +512,7 @@ export function decideAction(
   workspaceId: string,
   retrospectiveId: string,
   actionId: string,
-  decision: "completed" | "dismissed",
+  decision: "pending" | "completed" | "dismissed",
   expectedVersion: number,
 ) {
   return apiRequest<RetrospectiveActionItem>(

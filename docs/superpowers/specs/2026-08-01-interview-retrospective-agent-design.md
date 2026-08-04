@@ -339,10 +339,11 @@ SourceVersion (immutable raw text)
 ### 9.3 去重和幂等
 
 - 模型只给出匹配建议，不自动合并；
-- 同一候选只能决定一次；
+- 写入题库、画像、项目经验或 Knowledge 的跨领域确认不可在本页面撤回；
+- 尚未执行跨领域写入的“拒绝 / 不加入资料库”是可撤销的筛选状态，用户可以恢复为待处理；
 - 部分失败保留失败项和稳定错误码；
 - 重试不能重复创建正式资源；
-- 已拒绝或忽略的相同候选保留 fingerprint，避免反复建议。
+- 候选处于拒绝状态时保留 fingerprint，避免反复建议；恢复为待处理后继续复用同一候选记录，不创建重复候选。
 
 ## 10. 复盘内行动项
 
@@ -357,6 +358,8 @@ SourceVersion (immutable raw text)
 
 求职目标可以聚合未完成数量。首版不支持截止时间、提醒、优先级排程或跨模块任务分配。
 
+`completed` 和 `dismissed` 都是复盘内的可逆整理状态：取消完成或恢复忽略均回到 `pending`。只有产生外部领域写入的动作才需要单独的 Receipt 与不可逆边界。
+
 ## 11. 持续对话与局部重算
 
 每场复盘拥有一个持久可见会话。用户可以追问分析依据、要求解释、重组表达或指出事实错误。
@@ -369,9 +372,9 @@ SourceVersion (immutable raw text)
 - 用户可以主动重新分析整场；
 - Agent 只有有界只读 Tool，不能直接改画像、题库、项目讲解或 Knowledge。
 
-## 12. 发布复盘总结
+## 12. 生成复盘文档
 
-分析完成后始终保存结构化复盘领域记录。发布到 Knowledge 是可选动作。
+分析完成后始终保存结构化复盘领域记录。用户界面把该动作称为“生成复盘文档”，避免把“发布”误解成对外公开；保存为 Knowledge 草稿是可选动作。
 
 新增 `interview_retrospective` 文档类型。用户逐项选择：
 
@@ -390,7 +393,7 @@ SourceVersion (immutable raw text)
 - Agent 对话全文；
 - Prompt、模型原始响应或运行事件。
 
-发布通过现有 Knowledge Draft、HITL 和 Publication Receipt，重复操作不能覆盖用户外部编辑。
+文档生成通过现有 Knowledge Draft、HITL 和 Publication Receipt，重复操作不能覆盖用户外部编辑。
 
 ## 13. 生命周期、结果与删除
 

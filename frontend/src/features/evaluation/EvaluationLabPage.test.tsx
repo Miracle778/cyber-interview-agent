@@ -190,12 +190,14 @@ describe("EvaluationLabPage", () => {
       screen.getByRole("heading", { name: "这次运行表现怎么样" }),
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "评估工具" }));
+    fireEvent.click(screen.getByRole("button", { name: "高级评估" }));
     expect(screen.getByRole("tab", { name: "质量报告" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "质量趋势" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("之前结果")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "对比历史结果" }));
     expect(screen.getByLabelText("之前结果")).toBeInTheDocument();
-    expect(screen.getByLabelText("当前结果")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "检查结论" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("当前结果")).not.toBeInTheDocument();
+    expect(screen.getByText("本次结论")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "评估案例" })).toBeInTheDocument();
     expect(
       screen.queryByRole("heading", { name: "长期质量趋势" }),
@@ -205,6 +207,7 @@ describe("EvaluationLabPage", () => {
       screen.getByRole("heading", { name: "长期质量趋势" }),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "质量报告" }));
+    fireEvent.click(screen.getByRole("button", { name: "查看技术指标" }));
     fireEvent.click(screen.getByRole("button", { name: /关键点覆盖/ }));
     expect(screen.getByText(/event-hash/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "开始质量检查" }));
@@ -221,14 +224,14 @@ describe("EvaluationLabPage", () => {
     renderPage();
 
     await screen.findByRole("heading", { name: "质量概览" });
-    fireEvent.click(screen.getByRole("button", { name: "评估工具" }));
+    fireEvent.click(screen.getByRole("button", { name: "高级评估" }));
     expect(
       screen.queryByText("高级诊断：AI 检查原始输入与输出"),
     ).not.toBeInTheDocument();
     expect(screen.queryByText(/cost/i)).not.toBeInTheDocument();
   });
 
-  it("keeps the current report usable when previous results are incompatible", async () => {
+  it("only offers history that uses the same evaluation contract", async () => {
     const baseline = {
       ...run,
       id: "eval-2",
@@ -252,18 +255,10 @@ describe("EvaluationLabPage", () => {
 
     renderPage();
     await screen.findByRole("heading", { name: "质量概览" });
-    fireEvent.click(screen.getByRole("button", { name: "评估工具" }));
-    fireEvent.change(screen.getByLabelText("之前结果"), {
-      target: { value: "eval-2" },
-    });
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "当前报告仍可查看",
-    );
-    expect(
-      screen.getByRole("heading", { name: "检查结果对比" }),
-    ).toBeInTheDocument();
-    expect(screen.getAllByText("86").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "高级评估" }));
+    fireEvent.click(screen.getByRole("button", { name: "对比历史结果" }));
+    expect(screen.getByText("暂时没有使用相同标准和版本的历史结果。")).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /画像助手/ })).not.toBeInTheDocument();
   });
 
   it("shows v2 applicability labels without inventing a total score", async () => {
@@ -303,7 +298,8 @@ describe("EvaluationLabPage", () => {
     renderPage();
 
     await screen.findByRole("heading", { name: "质量概览" });
-    fireEvent.click(screen.getByRole("button", { name: "评估工具" }));
+    fireEvent.click(screen.getByRole("button", { name: "高级评估" }));
+    fireEvent.click(screen.getByRole("button", { name: "查看技术指标" }));
 
     expect(screen.getByText("业务结果质检")).toBeInTheDocument();
     expect(screen.getByText("不适用")).toBeInTheDocument();

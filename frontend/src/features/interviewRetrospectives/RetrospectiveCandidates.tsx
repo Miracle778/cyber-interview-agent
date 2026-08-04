@@ -79,9 +79,9 @@ export function RetrospectiveCandidates({
     <section className="retrospective-candidates" aria-labelledby="retrospective-candidates-title">
       <header className="retrospective-candidates__header">
         <div>
-          <p>确认后再进入准备资料</p>
-          <h3 id="retrospective-candidates-title">沉淀本次复盘</h3>
-          <span>系统只整理候选，不会自动改写题库、画像或项目资料。</span>
+          <p>确认后再保存到其他功能</p>
+          <h3 id="retrospective-candidates-title">选择要保存的内容</h3>
+          <span>系统只给出建议；加入资料库前仍由你确认。</span>
         </div>
         <strong>{candidates.filter((item) => item.status === "pending").length} 项待确认</strong>
       </header>
@@ -116,6 +116,11 @@ export function RetrospectiveCandidates({
                 </header>
                 {candidate.lastErrorCode ? <p className="retrospective-candidate__error" role="alert">上次处理未完成：{candidate.lastErrorCode}</p> : null}
                 {actionable ? <CandidateActions candidate={candidate} busy={busy} onDecision={onDecision} /> : null}
+                {candidate.status === "rejected" ? (
+                  <div className="retrospective-candidate__actions">
+                    <Button size="sm" variant="secondary" disabled={busy} onClick={() => onDecision(candidate, "reopen")}>恢复为待处理</Button>
+                  </div>
+                ) : null}
                 {candidate.status === "confirmed" && candidate.targetResourceType === "review_question" && candidate.targetResourceId ? (
                   <Link className="retrospective-candidate__practice" to={`/review?questionId=${encodeURIComponent(candidate.targetResourceId)}&source=retrospective&id=${encodeURIComponent(retrospectiveId)}`}>
                     立即练习 <ArrowRight size={16} />
@@ -128,8 +133,8 @@ export function RetrospectiveCandidates({
       </div>
       {selected.length ? (
         <footer className="retrospective-candidates__batch" aria-live="polite">
-          <span>已选 {selected.length} 项，只处理当前明确选择。</span>
-          <Button size="sm" variant="secondary" disabled={busy} onClick={() => onBatchDecision(selected)}>批量暂不沉淀 {selected.length} 项</Button>
+          <span>已选 {selected.length} 项；忽略后仍可单独恢复。</span>
+          <Button size="sm" variant="secondary" disabled={busy} onClick={() => onBatchDecision(selected)}>批量不加入资料库 {selected.length} 项</Button>
         </footer>
       ) : null}
     </section>
@@ -161,7 +166,7 @@ function CandidateActions({ candidate, busy, onDecision }: {
     return <div className="retrospective-candidate__actions">
       {candidate.matches.slice(0, 2).map((match) => <Button key={match.resourceId} size="sm" variant="secondary" disabled={busy} aria-label={`关联已有题：${match.title ?? match.resourceId}`} onClick={() => onDecision(candidate, "link_existing", match.resourceId)}>关联已有题 · {Math.round(match.score * 100)}%</Button>)}
       <Button size="sm" disabled={busy} onClick={() => onDecision(candidate, "create_new")}>新建复习题</Button>
-      <Button size="sm" variant="ghost" disabled={busy} onClick={() => onDecision(candidate, "reject")}>暂不沉淀</Button>
+      <Button size="sm" variant="ghost" disabled={busy} onClick={() => onDecision(candidate, "reject")}>不加入资料库</Button>
     </div>;
   }
   if (candidate.candidateKind === "summary") {
@@ -170,6 +175,6 @@ function CandidateActions({ candidate, busy, onDecision }: {
   return <div className="retrospective-candidate__actions">
     {candidate.matches.slice(0, 2).map((match) => <Button key={match.resourceId} size="sm" variant="secondary" disabled={busy} onClick={() => onDecision(candidate, "propose_update", match.resourceId)}>生成更新建议</Button>)}
     <Button size="sm" disabled={busy} onClick={() => onDecision(candidate, "propose_new")}>生成新建议</Button>
-    <Button size="sm" variant="ghost" disabled={busy} onClick={() => onDecision(candidate, "reject")}>暂不沉淀</Button>
+    <Button size="sm" variant="ghost" disabled={busy} onClick={() => onDecision(candidate, "reject")}>不加入资料库</Button>
   </div>;
 }

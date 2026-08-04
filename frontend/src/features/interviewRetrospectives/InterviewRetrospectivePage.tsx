@@ -302,7 +302,7 @@ export function InterviewRetrospectivePage({ workspace }: { workspace: Workspace
     },
   });
   const actionDecisionMutation = useMutation({
-    mutationFn: ({ action, decision }: { action: RetrospectiveActionItem; decision: "completed" | "dismissed" }) => decideAction(workspaceId, selected!.id, action.id, decision, action.version),
+    mutationFn: ({ action, decision }: { action: RetrospectiveActionItem; decision: "pending" | "completed" | "dismissed" }) => decideAction(workspaceId, selected!.id, action.id, decision, action.version),
     onSuccess: async () => {
       setError(null);
       await actionsQuery.refetch();
@@ -315,7 +315,7 @@ export function InterviewRetrospectivePage({ workspace }: { workspace: Workspace
   const publicationMutation = useMutation({
     mutationFn: (sections: PublicationSection[]) => createPublicationDraft(workspaceId, selected!.id, sections),
     onSuccess: () => setError(null),
-    onError: (reason) => setError(reason instanceof Error ? reason.message : "Knowledge 草稿生成失败"),
+    onError: (reason) => setError(reason instanceof Error ? reason.message : "复盘文档生成失败"),
   });
 
   if (!workspace) return <section className="retrospective-page retrospective-page--without-workspace"><header className="retrospective-page__header"><div className="retrospective-page__heading"><p>复盘工作台</p><h1>面试复盘</h1><span className="retrospective-page__description">把录音转写或事后回忆整理成可核对、可继续的复盘记录。</span></div></header><div className="retrospective-page__missing"><MessageSquareText size={32} /><h2>先选择工作区</h2><p>面试文字、整理结果和复盘记录会保存在所选工作区。</p></div></section>;

@@ -211,6 +211,11 @@ Exit condition: one real question-curation case and one conversational Agent cas
 - Consider CI or release gates only for validated deterministic invariants.
 - Never use a single cross-Agent leaderboard score.
 
+- [x] 运行来源固定到 `executionId`，无报告时不再回退到其他历史结果；
+- [x] 质量页默认先给“可以使用 / 建议核对 / 需要处理”和优先事项，检查方法与设置折叠；
+- [x] 历史对比改为显式开启，并只列出 Pack、版本、合同与运行类型兼容的结果；
+- [x] 技术指标改为按需查看，避免与用户结论争夺首屏层级。
+
 ## Verification strategy
 
 For each phase:

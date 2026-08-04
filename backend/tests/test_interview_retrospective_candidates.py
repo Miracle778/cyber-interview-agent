@@ -183,6 +183,50 @@ def test_action_decision_is_versioned_and_idempotent(tmp_path):
 
     assert completed.status == replay.status == "completed"
     assert completed.version == replay.version
+
+    restored = app.decide_action(
+        retrospective.id,
+        action.id,
+        decision="pending",
+        expected_version=completed.version,
+        idempotency_key="restore-action",
+    )
+    assert restored.status == "pending"
+    assert restored.completed_at is None
+    connection.close()
+
+
+@pytest.mark.asyncio
+async def test_rejected_candidate_can_be_reopened_before_downstream_write(tmp_path):
+    connection, app, retrospective, run, _questions = candidate_fixture(tmp_path)
+    candidate = next(
+        item
+        for item in app.generate_candidates(retrospective.id, run.id)
+        if item.candidate_kind == "review_question"
+    )
+    rejected = await app.decide_candidate(
+        retrospective.id,
+        candidate.id,
+        action="reject",
+        target_resource_id=None,
+        action_payload={},
+        expected_version=candidate.version,
+        idempotency_key="reject-candidate",
+    )
+
+    reopened = await app.decide_candidate(
+        retrospective.id,
+        candidate.id,
+        action="reopen",
+        target_resource_id=None,
+        action_payload={},
+        expected_version=rejected.version,
+        idempotency_key="reopen-candidate",
+    )
+
+    assert reopened.status == "pending"
+    assert reopened.target_resource_id is None
+    assert reopened.last_error_code is None
     connection.close()
 
 

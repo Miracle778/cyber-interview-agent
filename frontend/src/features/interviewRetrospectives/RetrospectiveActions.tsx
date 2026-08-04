@@ -21,7 +21,7 @@ export function RetrospectiveActions({ actions, busy, draft, onDecision, onCreat
   actions: RetrospectiveActionItem[];
   busy: boolean;
   draft: RetrospectivePublicationDraft | null;
-  onDecision: (action: RetrospectiveActionItem, decision: "completed" | "dismissed") => void;
+  onDecision: (action: RetrospectiveActionItem, decision: "pending" | "completed" | "dismissed") => void;
   onCreateDraft: (sections: PublicationSection[]) => void;
 }) {
   const [sections, setSections] = useState<PublicationSection[]>([
@@ -38,26 +38,30 @@ export function RetrospectiveActions({ actions, busy, draft, onDecision, onCreat
 
   return <section className="retrospective-actions" aria-labelledby="retrospective-actions-title">
     <div className="retrospective-actions__checklist">
-      <header><div><p>把结论变成下一步</p><h3 id="retrospective-actions-title">行动清单</h3></div><strong>已完成 {completed} / {actions.length}</strong></header>
+      <header><div><p>把结论变成下一步</p><h3 id="retrospective-actions-title">待办事项</h3></div><strong>已完成 {completed} / {actions.length}</strong></header>
       <div className="retrospective-actions__rows">
         {actions.length ? actions.map((action) => <div key={action.id} className="retrospective-action-row" data-status={action.status}>
           <label>
-            <input type="checkbox" aria-label={`完成：${action.title}`} checked={action.status === "completed"} disabled={busy || action.status === "dismissed"} onChange={() => onDecision(action, action.status === "completed" ? "dismissed" : "completed")} />
+            <input type="checkbox" aria-label={`完成：${action.title}`} checked={action.status === "completed"} disabled={busy || action.status === "dismissed"} onChange={() => onDecision(action, action.status === "completed" ? "pending" : "completed")} />
             <span><strong>{action.title}</strong><small>{action.detail}</small></span>
           </label>
-          {action.status === "pending" ? <button type="button" disabled={busy} onClick={() => onDecision(action, "dismissed")}>暂不处理</button> : <span>{action.status === "completed" ? "已完成" : "已忽略"}</span>}
+          {action.status === "pending" ? (
+            <button type="button" disabled={busy} onClick={() => onDecision(action, "dismissed")}>忽略</button>
+          ) : (
+            <span>{action.status === "completed" ? "已完成" : "已忽略"}<button type="button" disabled={busy} onClick={() => onDecision(action, "pending")}>恢复</button></span>
+          )}
         </div>) : <div className="retrospective-actions__empty"><CheckCircle2 size={22} /><span>本场复盘暂时没有行动项</span></div>}
       </div>
     </div>
     <div className="retrospective-publication">
-      <header><div><p>可选发布范围</p><h3>保存为 Knowledge 草稿</h3></div><FileCheck2 size={22} /></header>
-      <div className="retrospective-publication__safety"><ShieldCheck size={18} /><span>发布内容不会包含原始转写、待确认推断题、聊天消息、Prompt 或模型原始响应。</span></div>
+      <header><div><p>可选保存范围</p><h3>生成复盘文档</h3></div><FileCheck2 size={22} /></header>
+      <div className="retrospective-publication__safety"><ShieldCheck size={18} /><span>文档草稿不会包含原始转写、待确认推断题、聊天消息、Prompt 或模型原始响应。</span></div>
       <fieldset>
         <legend>选择要写入草稿的内容</legend>
         {SECTIONS.map((section) => <label key={section.id}><input type="checkbox" checked={sections.includes(section.id)} onChange={() => toggleSection(section.id)} /><span><strong>{section.label}</strong><small>{section.detail}</small></span></label>)}
       </fieldset>
-      {draft ? <div className="retrospective-publication__success" role="status"><CheckCircle2 size={18} /><div><strong>Knowledge 草稿已生成</strong><span>{draft.title}</span><Link to="/knowledge">前往 Knowledge 查看</Link></div></div> : null}
-      <Button disabled={!sections.length || busy} loading={busy} onClick={() => onCreateDraft(sections)}>生成 Knowledge 草稿</Button>
+      {draft ? <div className="retrospective-publication__success" role="status"><CheckCircle2 size={18} /><div><strong>复盘文档草稿已生成</strong><span>{draft.title}</span><Link to="/knowledge">前往知识库查看</Link></div></div> : null}
+      <Button disabled={!sections.length || busy} loading={busy} onClick={() => onCreateDraft(sections)}>生成复盘文档草稿</Button>
     </div>
   </section>;
 }

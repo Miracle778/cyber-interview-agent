@@ -815,6 +815,10 @@ Batch submission sends explicit candidate IDs and actions. Successful rows leave
 
 Action items are compact checklist rows, not cards per item. Publication shows selectable sections, preview, Knowledge confirmation, and success link; no transcript option exists.
 
+- [x] **Step 4a: Correct post-acceptance decision semantics and product language**
+
+Completed and dismissed local actions can return to pending; excluded candidates can return to pending before any cross-domain write. Rename the user-facing groups to “保存成果 / 下一步” and the optional Knowledge path to “生成复盘文档”, while preserving the existing Draft/HITL/Receipt architecture.
+
 - [x] **Step 5: Run focused tests and commit**
 
 ```bash

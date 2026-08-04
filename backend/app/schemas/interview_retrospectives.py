@@ -459,6 +459,7 @@ CandidateDecision = Literal[
     "reject",
     "include",
     "exclude",
+    "reopen",
 ]
 
 
@@ -509,7 +510,7 @@ class ActionItemResource(AgentModel):
 
 class ActionDecisionCommand(AgentModel):
     workspace_id: str
-    decision: Literal["completed", "dismissed"]
+    decision: Literal["pending", "completed", "dismissed"]
     expected_version: int = Field(ge=1)
 
 

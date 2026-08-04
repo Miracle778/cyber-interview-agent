@@ -63,6 +63,8 @@ export function EvaluationLabPage({
   const surface = searchParams.get("view") === "tools" ? "tools" : "overview";
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [baselineId, setBaselineId] = useState<string>("");
+  const [compareEnabled, setCompareEnabled] = useState(false);
+  const [showTechnicalMetrics, setShowTechnicalMetrics] = useState(false);
   const [toolView, setToolView] = useState<"report" | "trends">("report");
   const queryClient = useQueryClient();
   const runsQuery = useQuery({
@@ -99,6 +101,13 @@ export function EvaluationLabPage({
   const judge = useMutation({
     mutationFn: () => createEvaluationRun(workspace!.id, executionId),
     onSuccess: (run) => {
+      queryClient.setQueryData(
+        ["agent-evaluations", workspace?.id],
+        (current: EvaluationRun[] | undefined) => [
+          run,
+          ...(current ?? []).filter((item) => item.id !== run.id),
+        ],
+      );
       void queryClient.invalidateQueries({
         queryKey: ["agent-evaluations", workspace?.id],
       });
@@ -164,13 +173,35 @@ export function EvaluationLabPage({
       ),
   });
   const runs = runsQuery.data ?? [];
+  const sourceExecution = useMemo(
+    () => (executionsQuery.data?.items ?? []).find((item) => item.id === executionId) ?? null,
+    [executionId, executionsQuery.data?.items],
+  );
+  const sourceRun = useMemo(
+    () => executionId ? runs.find((item) => item.executionId === executionId) ?? null : null,
+    [executionId, runs],
+  );
   useEffect(() => {
+    if (executionId) {
+      setSelectedId(sourceRun?.id ?? null);
+      return;
+    }
     if (selectedId && runs.some((item) => item.id === selectedId)) return;
     setSelectedId(runs[0]?.id ?? null);
-  }, [runs, selectedId]);
+  }, [executionId, runs, selectedId, sourceRun?.id]);
   const selected = useMemo(
-    () => runs.find((item) => item.id === selectedId) ?? null,
-    [runs, selectedId],
+    () => executionId ? sourceRun : runs.find((item) => item.id === selectedId) ?? null,
+    [executionId, runs, selectedId, sourceRun],
+  );
+  const comparableRuns = useMemo(
+    () => selected ? runs.filter((item) => (
+      item.id !== selected.id
+      && item.evalPackId === selected.evalPackId
+      && item.evalPackVersion === selected.evalPackVersion
+      && item.evaluationContractVersion === selected.evaluationContractVersion
+      && item.runKind === selected.runKind
+    )) : [],
+    [runs, selected],
   );
   useEffect(() => {
     if (
@@ -199,6 +230,9 @@ export function EvaluationLabPage({
     if (nextExecutionId) next.set("executionId", nextExecutionId);
     setSearchParams(next);
     setToolView("report");
+    setCompareEnabled(false);
+    setBaselineId("");
+    setShowTechnicalMetrics(false);
   }
 
   function openOverview() {
@@ -220,7 +254,7 @@ export function EvaluationLabPage({
           onClick={() => surface === "overview" ? openTools() : openOverview()}
         >
           {surface === "overview" ? <Wrench /> : <BarChart3 />}
-          {surface === "overview" ? "评估工具" : "返回质量概览"}
+          {surface === "overview" ? "高级评估" : "返回质量概览"}
         </button>
         <nav aria-label="Agent 运行中心工作区">
           <Link to="/agents">运行中心</Link>
@@ -284,44 +318,14 @@ export function EvaluationLabPage({
             />
           ) : selected ? (
             <>
-              <section className="evaluation-toolbar" aria-label="结果对比设置">
-                <div className="evaluation-toolbar__selectors">
-                  <label>
-                    <span>之前结果</span>
-                    <SelectControl
-                      aria-label="之前结果"
-                      value={baselineId}
-                      onChange={(event) => setBaselineId(event.target.value)}
-                    >
-                      <option value="">选择可对比的结果</option>
-                      {runs
-                        .filter((item) => item.id !== selectedId)
-                        .map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {runChoiceLabel(item)}
-                          </option>
-                        ))}
-                    </SelectControl>
-                  </label>
-                  <Scale aria-hidden="true" />
-                  <label>
-                    <span>当前结果</span>
-                    <SelectControl
-                      aria-label="当前结果"
-                      value={selectedId ?? ""}
-                      onChange={(event) => setSelectedId(event.target.value)}
-                    >
-                      {runs.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {runChoiceLabel(item)}
-                        </option>
-                      ))}
-                    </SelectControl>
-                  </label>
+              <section className="evaluation-source-context" aria-label="本次质量检查来源">
+                <div>
+                  <span>{executionId ? "来源运行" : "当前质量报告"}</span>
+                  <strong>{sourceExecution?.title ?? sourceExecution?.displayName ?? runChoiceLabel(selected)}</strong>
+                  {executionId ? <small>报告只显示这次运行的检查结果，不会自动切换到其他历史报告。</small> : null}
                 </div>
                 {executionId ? (
                   <div className="evaluation-toolbar__judge">
-                    <small>来源运行已选定</small>
                     <button
                       type="button"
                       disabled={judge.isPending}
@@ -334,10 +338,40 @@ export function EvaluationLabPage({
                     </button>
                   </div>
                 ) : null}
-                {judge.isError
-                  ? <small role="alert">{judge.error.message}</small>
-                  : null}
               </section>
+              {judge.isError ? <p className="evaluation-compare-error" role="alert">这次运行的质量检查没有完成：{judge.error.message}</p> : null}
+
+              <section className="evaluation-toolbar" aria-label="质量报告设置">
+                {!executionId ? (
+                  <label>
+                    <span>当前结果</span>
+                    <SelectControl aria-label="当前结果" value={selectedId ?? ""} onChange={(event) => setSelectedId(event.target.value)}>
+                      {runs.map((item) => <option key={item.id} value={item.id}>{runChoiceLabel(item)}</option>)}
+                    </SelectControl>
+                  </label>
+                ) : <span className="evaluation-toolbar__hint">先看本次结论，需要排查时再展开技术指标。</span>}
+                <div className="evaluation-toolbar__actions">
+                  <button type="button" className="evaluation-toolbar__secondary" onClick={() => { setCompareEnabled((value) => !value); setBaselineId(""); }}>
+                    <Scale />{compareEnabled ? "关闭结果对比" : "对比历史结果"}
+                  </button>
+                  <button type="button" className="evaluation-toolbar__secondary" onClick={() => setShowTechnicalMetrics((value) => !value)}>
+                    <Wrench />{showTechnicalMetrics ? "收起技术指标" : "查看技术指标"}
+                  </button>
+                </div>
+              </section>
+
+              {compareEnabled ? (
+                <section className="evaluation-compare-picker" aria-label="选择可对比的历史结果">
+                  <label>
+                    <span>对比对象</span>
+                    <SelectControl aria-label="之前结果" value={baselineId} onChange={(event) => setBaselineId(event.target.value)}>
+                      <option value="">选择同一检查标准的历史结果</option>
+                      {comparableRuns.map((item) => <option key={item.id} value={item.id}>{runChoiceLabel(item)}</option>)}
+                    </SelectControl>
+                  </label>
+                  {!comparableRuns.length ? <small>暂时没有使用相同标准和版本的历史结果。</small> : null}
+                </section>
+              ) : null}
 
               {baselineId && compareQuery.isError ? (
                 <p className="evaluation-compare-error" role="alert">
@@ -355,11 +389,13 @@ export function EvaluationLabPage({
                     run={selected}
                     caseCount={casesQuery.data?.length ?? 0}
                   />
-                  <EvaluationMetricMatrix
-                    baseline={comparedBaseline}
-                    candidate={comparedCandidate ?? selected}
-                    dimensionIds={compareQuery.data?.dimensionIds}
-                  />
+                  {showTechnicalMetrics || baselineId ? (
+                    <EvaluationMetricMatrix
+                      baseline={comparedBaseline}
+                      candidate={comparedCandidate ?? selected}
+                      dimensionIds={compareQuery.data?.dimensionIds}
+                    />
+                  ) : null}
                   <section
                     className="evaluation-sources"
                     aria-labelledby="evaluation-sources-title"
@@ -432,8 +468,9 @@ export function EvaluationLabPage({
           ) : (
             <section className="evaluation-tool-empty">
               <FlaskConical aria-hidden="true" />
-              <h2>还没有质量检查结果</h2>
-              <p>可以从一次 Agent 运行开始检查，业务运行结果不会因此改变。</p>
+              <h2>{sourceExecution ? `${sourceExecution.title} 还没有质量报告` : "还没有质量检查结果"}</h2>
+              <p>{executionId ? "开始检查后，这里只展示当前来源运行的结果；不会用其他历史报告代替。" : "可以从一次 Agent 运行开始检查，业务运行结果不会因此改变。"}</p>
+              {judge.isError ? <p className="evaluation-tool-empty__error" role="alert">检查没有完成：{judge.error.message}</p> : null}
               {executionId ? (
                 <button
                   type="button"
