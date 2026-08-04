@@ -1787,3 +1787,13 @@
 - 质量右栏以“可以使用 / 建议核对 / 需要处理”和优先事项为主，检查方式与设置折叠。
 - 新鲜验证：后端候选与行动状态 `7 passed`；前端候选、行动、工作区和质量页 `15 passed`；TypeScript 检查通过。
 - 5175 真实开发数据验收：复盘页显示“保存成果 / 下一步”、完成事项有“恢复”、文档入口为“生成复盘文档”；指定无报告 Execution 只显示该运行的空状态，已有报告默认隐藏历史对比与技术指标，右栏先给“建议核对”和处理优先级。
+
+## 2026-08-04：Agent Control Plane Phase 1 注册门禁
+
+- 现有 Observability Registry 增加 `lifecycle`、`user_creatable` 和统一 `require_registration()`，成为迁移期创建门禁；Phase 2 再收敛 Builder 和完整 Definition。
+- 公共 Session 创建、Execution 启动和失败执行重试在数据库写入前校验 Agent；未知、历史别名、disabled、deprecated 或 system-only Agent 返回稳定 422 错误码。
+- 领域内部创建 system Session 继续通过受信服务入口，不复用公共用户创建权限。
+- 已从 Registry 删除的历史 Graph 使用“历史 Agent”只读投影进入运行中心，不提供业务入口或控制能力，也不能启动或重试。
+- RED 证据：未知历史 Session 启动接口曾返回 202 并写入 Execution；未知历史执行重试曾错误返回 409。
+- GREEN 证据：注册表、Agent API、运行中心服务定向回归 `35 passed`；兼容回归 `58 passed`，仅有既有 Starlette TestClient 弃用警告。
+- 后端全量首错停止运行到本轮无关的既有迁移断言前为 `538 passed`；`test_interview_retrospective_migration.py` 仍硬编码只允许 1–50 号迁移，而当前仓库已有 51、52 号迁移。继续全量运行还会命中既有 SQLite 后台写线程与关闭连接竞态导致的解释器段错误，因此本轮不把“全量通过”作为完成证据。

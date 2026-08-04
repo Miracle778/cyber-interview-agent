@@ -1,8 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from app.observability.models import ObservabilityCapability
+
+
+AgentLifecycle = Literal["active", "deprecated", "disabled"]
+
+
+class AgentRegistrationError(ValueError):
+    """Stable public failure raised before an unregistered Agent can persist state."""
+
+    def __init__(self, code: str, message: str, *, graph_id: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.graph_id = graph_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,6 +28,8 @@ class AgentObservabilityRegistration:
     system_components: tuple[str, ...]
     system: bool = False
     run_center_visible: bool = True
+    lifecycle: AgentLifecycle = "active"
+    user_creatable: bool = True
 
 
 def _registration(
@@ -26,6 +41,8 @@ def _registration(
     system_components: tuple[str, ...] = (),
     system: bool = False,
     run_center_visible: bool = True,
+    lifecycle: AgentLifecycle = "active",
+    user_creatable: bool | None = None,
 ) -> AgentObservabilityRegistration:
     return AgentObservabilityRegistration(
         graph_id=graph_id,
@@ -36,6 +53,8 @@ def _registration(
         system_components=system_components,
         system=system,
         run_center_visible=run_center_visible,
+        lifecycle=lifecycle,
+        user_creatable=(not system if user_creatable is None else user_creatable),
     )
 
 
@@ -221,9 +240,64 @@ if len(AGENT_OBSERVABILITY_REGISTRY) != len(_REGISTRATIONS):
 
 def resolve_observability_registration(
     graph_id: str,
+    *,
+    include_historical: bool = False,
 ) -> AgentObservabilityRegistration | None:
     canonical = _LEGACY_GRAPH_ID_ALIASES.get(graph_id, graph_id)
-    return AGENT_OBSERVABILITY_REGISTRY.get(canonical)
+    registration = AGENT_OBSERVABILITY_REGISTRY.get(canonical)
+    if registration is not None or not include_historical:
+        return registration
+    return AgentObservabilityRegistration(
+        graph_id=graph_id,
+        display_name="历史 Agent",
+        route_template="",
+        capabilities=frozenset(),
+        eval_pack_id=None,
+        system_components=(),
+        system=False,
+        run_center_visible=True,
+        lifecycle="disabled",
+        user_creatable=False,
+    )
+
+
+def require_registration(
+    graph_id: str,
+    *,
+    for_user_creation: bool = False,
+) -> AgentObservabilityRegistration:
+    if graph_id in _LEGACY_GRAPH_ID_ALIASES and for_user_creation:
+        raise AgentRegistrationError(
+            "agent_alias_not_creatable",
+            f"历史 Agent 标识不能用于创建新任务：{graph_id}",
+            graph_id=graph_id,
+        )
+    registration = resolve_observability_registration(graph_id)
+    if registration is None:
+        raise AgentRegistrationError(
+            "agent_not_registered",
+            f"Agent 未注册：{graph_id}",
+            graph_id=graph_id,
+        )
+    if registration.lifecycle == "disabled":
+        raise AgentRegistrationError(
+            "agent_disabled",
+            f"Agent 已停用：{graph_id}",
+            graph_id=graph_id,
+        )
+    if registration.lifecycle == "deprecated" and for_user_creation:
+        raise AgentRegistrationError(
+            "agent_deprecated",
+            f"Agent 已弃用，不能创建新任务：{graph_id}",
+            graph_id=graph_id,
+        )
+    if for_user_creation and not registration.user_creatable:
+        raise AgentRegistrationError(
+            "agent_not_user_creatable",
+            f"该 Agent 只能由系统内部创建：{graph_id}",
+            graph_id=graph_id,
+        )
+    return registration
 
 
 def assert_registry_complete(graph_ids: frozenset[str] | set[str]) -> None:

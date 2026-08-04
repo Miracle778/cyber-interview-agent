@@ -17,6 +17,7 @@ def hitl_client(tmp_path: Path):
         model_bindings=lambda _workspace_id: {},
         workspace_ids=lambda: ("w1",),
         graph_factory=ProductionGraphFactory(None),
+        registration_guard=lambda _kind, **_options: None,
     )
     app.dependency_overrides[get_agent_application] = lambda: application
     try:

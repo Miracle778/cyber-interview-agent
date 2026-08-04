@@ -80,6 +80,7 @@ from app.interview_retrospectives.service import InterviewRetrospectiveService
 from app.observability.indexer import TraceLedgerIndexer
 from app.observability.repository import TraceIndexRepository
 from app.observability.service import AgentObservabilityService
+from app.observability.registry import require_registration
 from app.evaluation.repository import AgentEvaluationRepository
 from app.evaluation.service import AgentEvaluationService
 from app.evaluation.regression import (
@@ -847,6 +848,7 @@ class AgentApplication:
         validate_review_model: Callable[[str, str, str], None] | None = None,
         advanced_diagnostics_enabled: Callable[[], bool] | None = None,
         quality_evaluation_settings: Callable[[], object] | None = None,
+        registration_guard: Callable[..., object] = require_registration,
     ) -> None:
         self._workspace_resolver = workspace_resolver
         self._workspace_ids = workspace_ids
@@ -861,13 +863,13 @@ class AgentApplication:
             lambda: False
         )
         self._quality_evaluation_settings = quality_evaluation_settings
+        self._registration_guard = registration_guard
         self._workspaces: dict[str, WorkspaceRuntime] = {}
 
     async def create_session(
         self, *, workspace_id: str, kind: str, title: str | None = None
     ) -> SessionRecord:
-        if kind in {"profile.ingest", "profile.assess"}:
-            raise ValueError("该画像系统会话不能由用户创建")
+        self._registration_guard(kind, for_user_creation=True)
         return await self._context(workspace_id).sessions.create(
             workspace_id=workspace_id, kind=kind, title=title
         )
@@ -952,6 +954,7 @@ class AgentApplication:
         configuration: dict[str, Any] | None = None,
     ) -> ExecutionRecord:
         context, session = self._locate_session(session_id)
+        self._registration_guard(session.kind, for_user_creation=False)
         if configuration and configuration.get("providerModelId"):
             self._validate_review_model(
                 session.workspace_id,
@@ -973,6 +976,7 @@ class AgentApplication:
         if previous.status not in {"failed", "interrupted", "cancelled"}:
             raise ValueError("只有失败或已停止的执行可以重试")
         session = context.repository.get_session(previous.session_id)
+        self._registration_guard(session.kind, for_user_creation=False)
         message = self._execution_input_message(context.repository, previous)
         retry_input = previous.input
         input_message_id = message.id

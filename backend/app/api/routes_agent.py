@@ -21,6 +21,7 @@ from app.schemas.agent import (
     StartExecutionCommand,
     UpdateSessionTitleCommand,
 )
+from app.observability.registry import AgentRegistrationError
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
 
@@ -40,6 +41,11 @@ async def create_session(
             kind=command.kind,
             title=command.title,
         )
+    except AgentRegistrationError as error:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": error.code, "message": str(error)},
+        ) from error
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
@@ -119,9 +125,15 @@ async def start_execution(
         if command.configuration is None
         else command.configuration.model_dump(by_alias=True)
     )
-    return await application.start_execution(
-        session_id, input=command.input, configuration=configuration
-    )
+    try:
+        return await application.start_execution(
+            session_id, input=command.input, configuration=configuration
+        )
+    except AgentRegistrationError as error:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": error.code, "message": str(error)},
+        ) from error
 
 
 @router.post(
@@ -151,6 +163,11 @@ async def retry_execution(
         return await application.retry_execution(
             execution_id, replacement_message=command.message
         )
+    except AgentRegistrationError as error:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": error.code, "message": str(error)},
+        ) from error
     except ProductRecordNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except (SessionBusyError, ValueError) as error:

@@ -1135,3 +1135,10 @@
 - “发布”在这里实际是生成一个可继续审核的 Knowledge Draft，不是对外公开；用户界面应说“生成复盘文档”，架构层继续保留 Draft/HITL/Receipt。
 - 单次运行质量页最严重的问题不是维度多，而是来源不可信：指定 Execution 没有报告时旧页面会显示另一条历史报告。质量页必须先锁定来源，再谈对比；对比结果必须合同兼容且由用户显式开启。
 - Token、Runtime 和检查配置是诊断信息，不应与“能否使用、先处理什么”同级常驻。
+
+## 2026-08-04：注册门禁必须区分新建 fail-closed 与历史读取 fail-open
+
+- 只在 `ProductionGraphFactory` 遇到未知 kind 时失败已经太晚：Session 和 Execution 已经落库，运行中心会留下无法解释的脏任务。
+- 新建边界必须先校验注册、生命周期和 `user_creatable`，并在任何数据库写入或 Provider 调用之前返回稳定错误。
+- 历史数据不能复用同一 fail-closed 规则，否则已删除 Agent 的运行会从运行中心消失；历史投影必须无 Builder、无控制能力、无业务跳转，只允许查看。
+- 测试或诊断 Harness 使用的临时 Graph 应通过构造时注入的测试门禁显式声明，不能迫使生产 Registry 收录只为测试存在的 Agent。

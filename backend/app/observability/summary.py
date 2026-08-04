@@ -30,9 +30,10 @@ class ExecutionSummaryAssembler:
         self.trace_repository = trace_repository
 
     def assemble(self, run: dict[str, Any]) -> ExecutionSummaryResource:
-        registration = resolve_observability_registration(run["graph_id"])
-        if registration is None:
-            raise LookupError(f"unregistered Agent graph: {run['graph_id']}")
+        registration = resolve_observability_registration(
+            run["graph_id"], include_historical=True
+        )
+        assert registration is not None
         trace = self.trace_repository.get_execution(run["id"])
         operations = self.trace_repository.list_operations(run["id"])
         usage = self._usage(run["id"])

@@ -7,7 +7,9 @@ from app.application.graph_factory import PRODUCTION_GRAPH_KINDS
 from app.observability.models import OperationSummary, TraceHealth
 from app.observability.registry import (
     AGENT_OBSERVABILITY_REGISTRY,
+    AgentRegistrationError,
     assert_registry_complete,
+    require_registration,
 )
 from app.schemas.observability import (
     ExecutionSummaryResource,
@@ -66,6 +68,22 @@ def test_interview_retrospective_is_registered_as_business_agent() -> None:
         registration.capabilities
     )
     assert registration.system_components == ("retrospective_analysis",)
+
+
+def test_registration_gate_rejects_unknown_and_system_only_agents() -> None:
+    registration = require_registration(
+        "review.round", for_user_creation=True
+    )
+
+    assert registration.graph_id == "review.round"
+
+    with pytest.raises(AgentRegistrationError) as unknown:
+        require_registration("unknown.agent", for_user_creation=True)
+    assert unknown.value.code == "agent_not_registered"
+
+    with pytest.raises(AgentRegistrationError) as system_only:
+        require_registration("knowledge.publish", for_user_creation=True)
+    assert system_only.value.code == "agent_not_user_creatable"
 
 
 def test_execution_summary_resource_uses_camel_case_contract() -> None:

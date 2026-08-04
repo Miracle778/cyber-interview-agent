@@ -594,3 +594,10 @@ current question
 - [x] 从运行中心进入质量页时固定来源 Execution，不再显示无关历史报告；
 - [x] 质量结论先展示是否可用和优先事项，检查方式、设置、技术指标渐进披露；
 - [x] 历史对比改为显式开启，并限制为同 Pack、版本、合同与运行类型。
+
+## 2026-08-04：Agent Control Plane 分阶段收敛
+
+- [x] Phase 1：公共 Session / Execution / Retry 在写入前执行注册与生命周期门禁；system-only Agent 禁止用户创建；未知历史运行保留只读投影。
+- [ ] Phase 2：合并 Observability Registration、生产 Graph 集合和 Builder 映射，形成单一 `AgentDefinitionRegistry`。
+- [ ] Phase 3：AgentFactory 强制父 Agent、组件、模型角色、Tool 和 Scope 归属，并补齐 Trace Definition 身份。
+- [ ] Phase 4：Execution 持久化不可变 Agent Definition Snapshot，Eval 与高级详情读取冻结版本。

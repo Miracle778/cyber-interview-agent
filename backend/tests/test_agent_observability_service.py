@@ -330,6 +330,30 @@ def test_legacy_retrospective_graph_alias_remains_observable(
     connection.close()
 
 
+def test_unregistered_historical_agent_remains_read_only_observable(
+    tmp_path: Path,
+) -> None:
+    service, connection = _service(tmp_path)
+    _insert_run(
+        connection,
+        run_id="run-removed-agent",
+        graph_id="removed.agent.v1",
+        status="completed",
+        created_at="2025-01-01T00:00:00+00:00",
+        title="旧版本任务",
+    )
+
+    page = service.list_executions(limit=50)
+
+    assert [item.id for item in page.items] == ["run-removed-agent"]
+    item = page.items[0]
+    assert item.display_name == "历史 Agent"
+    assert item.capabilities == []
+    assert item.route == ""
+    assert service.get_execution("run-removed-agent").id == "run-removed-agent"
+    connection.close()
+
+
 def test_status_filters_group_internal_runtime_states(
     tmp_path: Path,
 ) -> None:

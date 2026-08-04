@@ -162,7 +162,9 @@ class AgentObservabilityService:
         ]
         agent_counts: dict[str, dict[str, int]] = {}
         for row in agent_scope:
-            registration = resolve_observability_registration(row["graph_id"])
+            registration = resolve_observability_registration(
+                row["graph_id"], include_historical=True
+            )
             assert registration is not None
             display_name = registration.display_name
             counts = agent_counts.setdefault(display_name, {})
@@ -364,7 +366,9 @@ class AgentObservabilityService:
         if row is None:
             raise AgentExecutionNotFoundError("Agent Execution 不存在")
         result = dict(row)
-        registration = resolve_observability_registration(result["graph_id"])
+        registration = resolve_observability_registration(
+            result["graph_id"], include_historical=True
+        )
         if registration is None or not registration.run_center_visible:
             raise AgentExecutionNotFoundError("Agent Execution 不存在")
         return result
@@ -380,7 +384,9 @@ class AgentObservabilityService:
         started_to: str | None,
         include_system_agents: bool,
     ) -> bool:
-        registration = resolve_observability_registration(row["graph_id"])
+        registration = resolve_observability_registration(
+            row["graph_id"], include_historical=True
+        )
         if registration is None or not registration.run_center_visible:
             return False
         if not include_system_agents and registration.system:
