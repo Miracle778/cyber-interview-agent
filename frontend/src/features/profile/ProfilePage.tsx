@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, ArrowLeft, CheckCircle2, FileUp, FolderLock, Upload, UserRound, X } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import { createOperationId } from "../../shared/operationId";
 import { Button } from "../../shared/ui/Button";
 import { cancelAgentExecution } from "../agent/agentApi";
 import type { WorkspaceConfig } from "../settings/settingsApi";
@@ -27,7 +28,7 @@ const ACTIVE_STATUSES = new Set(["uploaded", "parsing", "parsed", "extracting"])
 type ProfileTab = "profile" | "pending" | "support" | "sources" | "agent";
 
 function idempotencyKey(prefix: string) {
-  return `${prefix}-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
+  return createOperationId(prefix);
 }
 
 function validateFile(file: File) {

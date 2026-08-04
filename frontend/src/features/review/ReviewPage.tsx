@@ -5,6 +5,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
 import { toActionableError } from "../../shared/api/errorAdvice";
+import { createOperationId } from "../../shared/operationId";
 import { ActionCenter } from "../agent/ActionCenter";
 import { listActions } from "../agent/hitlApi";
 import type { PendingAction } from "../agent/hitlTypes";
@@ -28,7 +29,7 @@ import { reviewScopeTitle } from "./reviewScope";
 interface ReviewPageProps { workspace: WorkspaceConfig | null; draftQuestion?: ReviewQuestion | null; }
 
 function commandId(prefix: string) {
-  return `${prefix}-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
+  return createOperationId(prefix);
 }
 
 function currentEvaluationStage(events: AgentEvent[], attemptId: string | null): ReviewEvaluationStage {

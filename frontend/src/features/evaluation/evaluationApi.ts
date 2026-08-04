@@ -1,5 +1,6 @@
 import { z, ZodError } from "zod";
 import { apiGet, apiPost } from "../../shared/api/client";
+import { createOperationId } from "../../shared/operationId";
 import {
   comparisonSchema,
   evaluationRunListSchema,
@@ -50,9 +51,7 @@ export async function createEvaluationRun(
   workspaceId: string,
   executionId: string,
 ): Promise<EvaluationRun> {
-  const idempotencyKey =
-    globalThis.crypto?.randomUUID?.() ??
-    `manual-judge-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const idempotencyKey = createOperationId("manual-judge");
   const payload = await apiPost<{ executionId: string }, unknown>(
     `/api/agent-evaluations/runs?workspaceId=${encodeURIComponent(workspaceId)}`,
     { executionId },

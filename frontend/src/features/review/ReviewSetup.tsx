@@ -28,7 +28,11 @@ export function ReviewSetup({ workspace, questions, scope, onCreate, onCatalog, 
     if (scope.type === "job_target") return question.sourceJobTargetId === scope.id;
     return question.projectClaimId === scope.id;
   }), [questions, scope]);
-  const topics = useMemo(() => [...new Set(scopedQuestions.flatMap((item) => item.topics))].sort(), [scopedQuestions]);
+  const topics = useMemo(
+    () => [...new Set(scopedQuestions.flatMap((item) => item.topics))]
+      .sort((left, right) => left.localeCompare(right, "zh-CN")),
+    [scopedQuestions],
+  );
   const [selectedTopics, setSelectedTopics] = useState<string[]>([]);
   const [topicQuery, setTopicQuery] = useState("");
   const [topicsExpanded, setTopicsExpanded] = useState(false);

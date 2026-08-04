@@ -1,5 +1,6 @@
 import { ZodError } from "zod";
 import { apiGet, apiPost } from "../../shared/api/client";
+import { createOperationId } from "../../shared/operationId";
 import {
   executionSummaryPageSchema,
   executionDetailSchema,
@@ -113,9 +114,7 @@ export async function createTraceExport(
   executionId: string,
   includeStoredBodies: boolean,
 ): Promise<TraceExport> {
-  const idempotencyKey =
-    globalThis.crypto?.randomUUID?.() ??
-    `trace-export-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const idempotencyKey = createOperationId("trace-export");
   const payload = await apiPost<
     { metadataOnly: boolean; includeStoredBodies: boolean },
     unknown

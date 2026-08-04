@@ -278,8 +278,10 @@ async def test_cancel_and_replay_cursor_are_product_level(api, application):
         workspace_id="w1", kind="diagnostic.slow", title="Slow"
     )
     running = await application.start_execution(slow.id, input={"text": "wait"})
+    background_task = application._context("w1").executions._tasks[running.id]
     cancelled = await application.cancel_execution(running.id)
     assert cancelled.status == "cancelled"
+    assert background_task.cancelled() is True
 
     cancel_events = application.replay_events(slow.id, after_id=None)
     assert [event.type for event in cancel_events][-2:] == [

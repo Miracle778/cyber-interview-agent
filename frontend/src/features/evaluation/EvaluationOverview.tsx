@@ -107,7 +107,8 @@ export function EvaluationOverview({
     [qualityFilter, scopedItems],
   );
   const agentNames = useMemo(
-    () => [...new Set(allItems.map((item) => item.execution.displayName))].sort(),
+    () => [...new Set(allItems.map((item) => item.execution.displayName))]
+      .sort((left, right) => left.localeCompare(right, "zh-CN")),
     [allItems],
   );
   const counts = useMemo(
