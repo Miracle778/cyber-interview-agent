@@ -73,6 +73,7 @@
 
 - `docs/superpowers/specs/2026-07-29-agent-observability-and-quality-workbench-design.md`
 - `docs/superpowers/architecture-decisions/2026-07-29-agent-trace-ledger-and-evaluation-boundaries.md`
+- `docs/superpowers/architecture-decisions/2026-08-04-agent-control-plane-and-registration-contract.md`
 
 实施计划：
 
@@ -82,7 +83,7 @@
 - `docs/superpowers/plans/2026-07-29-agent-observability-slice-3-quality-evaluation.md`
 - `docs/superpowers/plans/2026-07-29-agent-observability-slice-4-retention-and-projection.md`
 
-下一步：保留现有 v1 能力与历史数据，按 v2 迁移计划分阶段演进。
+下一步：保留现有 v1 能力与历史数据，按 v2 迁移计划分阶段演进；Agent Control Plane 按“接口门禁 → 单一 Definition/Builder → 子组件/Tool 门禁 → Execution Definition Snapshot”四阶段收敛，未注册 Agent 在新任务创建时 fail-closed，历史未知 Agent 保持只读可见。
 
 ## 当前增量：删除简历后的画像依据重算
 

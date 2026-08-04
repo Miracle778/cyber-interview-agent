@@ -1,5 +1,13 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-08-04：Agent Control Plane 与强制注册契约完成决策记录
+
+- 提交 `d40d5324` 保存“保存成果 / 下一步”与 Evaluation v2 体验调整，作为注册架构修改前的可回退基线。
+- 新增 Accepted ADR，明确 Registry 是代码级 Agent Control Plane，不是网络服务发现；采用静态、Git 版本化 Definition，拒绝前端名单、仅枚举和数据库动态注册作为当前方案。
+- 决定 Session 创建前强制注册校验，Registry 合并 Builder 单一事实源，AgentFactory 校验父子组件与 Tool/Scope，Execution 冻结 Definition Snapshot。
+- 决定业务 Agent 作为运行中心顶层任务，内部子 Agent 只进入执行树；新任务 fail-closed，历史未知 Agent 只读兼容。
+- 当前仅完成架构记录，尚未实施四阶段代码迁移；后续从 Phase 1 接口门禁开始，不能把 ADR 目标表述成已落地能力。
+
 ## 2026-08-02：复盘内快速新建求职目标门禁修复
 
 - 复盘新建流程的轻量目标现在只要求岗位名称；公司与经验/职级明确标为可选，填写公司和岗位后即可保存。

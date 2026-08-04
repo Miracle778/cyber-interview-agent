@@ -1,5 +1,13 @@
 # Agent Runtime 框架收敛关键发现
 
+## 2026-08-04：现有 Observability Registry 尚未形成完整 Agent Control Plane
+
+- 当前 Registry 已能统一顶层 Graph 的展示名、业务入口、控制能力、Eval Pack、系统组件和运行中心可见性，并通过生产 Graph 集合契约测试防止常规漏项。
+- `CreateSessionCommand.kind` 仍是任意字符串，Session 创建前没有统一注册校验；`ProductionGraphFactory`、生产 Graph 集合和 Registry 仍是平行事实源。
+- `AgentFactory.create()` 尚未校验父 Agent、子组件、model role、Tool 和 Scope 归属；影响业务结果的底层模型直调也没有统一代码门禁。
+- 采用 Git 版本化静态 Agent Control Plane：Definition 同时拥有身份、Builder、Schema、策略、运行中心和 Eval 契约；新任务 fail-closed，历史未知 Agent 只读兼容；内部子 Agent 进入 Operation 树而不是顶层任务列表。
+- 正式决定：`docs/superpowers/architecture-decisions/2026-08-04-agent-control-plane-and-registration-contract.md`。
+
 ## 2026-08-02：轻量创建契约需要前后端保持一致
 
 - 正式规格允许复盘流程只填写岗位名称创建轻量求职目标，但前端按钮和后端 Service 都沿用了“岗位 + 职级成对必填”的旧规则，导致用户已填写公司和岗位仍无法保存。
