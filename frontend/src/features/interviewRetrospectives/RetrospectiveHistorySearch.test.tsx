@@ -79,6 +79,9 @@ describe("RetrospectiveHistorySearch", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Agent 正在总结当前冻结结果",
     );
+    const insights = screen.getByLabelText("检索总结与报告");
+    expect(insights).toContainElement(screen.getByRole("status"));
+    expect(insights.nextElementSibling).toHaveClass("history-search__workspace");
   });
 
   it("restores the latest persisted search after the history tab remounts", async () => {
@@ -126,7 +129,7 @@ describe("RetrospectiveHistorySearch", () => {
     fireEvent.click(screen.getByRole("button", { name: /检索记录/ }));
 
     const drawer = screen.getByRole("dialog", { name: "检索记录" });
-    expect(drawer).toHaveTextContent("今天 09:00");
+    expect(drawer).toHaveTextContent("8/4 09:00");
     expect(drawer).toHaveTextContent("帮我找出之前所有关于数字签名项目的问题");
     fireEvent.change(screen.getByLabelText("筛选检索记录"), { target: { value: "数字签名" } });
     expect(drawer).not.toHaveTextContent("反复出现的系统设计题");

@@ -7,6 +7,8 @@ import {
   UserCheck,
 } from "lucide-react";
 import {
+  dimensionOutcome,
+  dimensionUserSummary,
   evaluationPackLabel,
   summarizeEvaluation,
 } from "./evaluationPresentation";
@@ -27,13 +29,13 @@ export function EvaluationQualityRail({
   feedback: EvaluationFeedback[];
 }) {
   const summary = summarizeEvaluation(run, feedback);
-  const priorities = run.dimensions.filter((item) => (
-    item.rating === "needs_review"
-    || item.rating === "severe"
-    || item.status === "failed"
-    || item.severity === "high"
-    || item.severity === "critical"
-  )).slice(0, 4);
+  const priorities = run.dimensions
+    .map((item) => ({ item, outcome: dimensionOutcome(item) }))
+    .filter(({ outcome }) => outcome.tone === "warning" || outcome.tone === "danger")
+    .sort((left, right) => (
+      Number(right.outcome.tone === "danger") - Number(left.outcome.tone === "danger")
+    ))
+    .slice(0, 3);
   const overall = summary.failed > 0
     ? { label: "需要处理", detail: "存在明确风险，建议先处理后再使用。", tone: "danger" }
     : summary.attention > 0
@@ -72,7 +74,12 @@ export function EvaluationQualityRail({
         <h3>优先处理</h3>
         {priorities.length ? (
           <ol>
-            {priorities.map((item) => <li key={item.dimensionId}><CircleAlert /><span>{item.summary || item.dimensionId}</span></li>)}
+            {priorities.map(({ item, outcome }) => (
+              <li key={item.dimensionId} data-tone={outcome.tone}>
+                <CircleAlert />
+                <span>{dimensionUserSummary(item)}</span>
+              </li>
+            ))}
           </ol>
         ) : <p>没有需要优先处理的问题。</p>}
       </section>

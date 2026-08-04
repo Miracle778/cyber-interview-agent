@@ -54,6 +54,8 @@ class SqliteOutcomeAdapter:
             "project_question_generation",
         }:
             return self._project(execution)
+        if self.task_type == "interview_retrospective":
+            return self._interview_retrospective(execution)
         raise LookupError(f"unsupported outcome task: {self.task_type}")
 
     def _execution(self, execution_id: str) -> sqlite3.Row:
@@ -644,6 +646,358 @@ class SqliteOutcomeAdapter:
                 "currentStage": dive["current_stage"],
                 "waitingForInput": bool(dive["waiting_for_input"]),
             },
+        )
+
+    def _interview_retrospective(
+        self, execution: sqlite3.Row
+    ) -> BusinessOutcomeProjection:
+        cleanup = self.connection.execute(
+            "SELECT * FROM interview_cleanup_versions "
+            "WHERE execution_id = ? ORDER BY updated_at DESC, rowid DESC LIMIT 1",
+            (execution["id"],),
+        ).fetchone()
+        if cleanup is not None:
+            return self._interview_cleanup(execution, cleanup)
+
+        analysis = self.connection.execute(
+            "SELECT * FROM interview_analysis_runs "
+            "WHERE execution_id = ? ORDER BY updated_at DESC, rowid DESC LIMIT 1",
+            (execution["id"],),
+        ).fetchone()
+        if analysis is not None:
+            return self._interview_analysis(execution, analysis)
+
+        search_set = self.connection.execute(
+            "SELECT * FROM interview_retrospective_search_sets "
+            "WHERE workspace_id = ? AND (execution_id = ? OR summary_execution_id = ?) "
+            "ORDER BY updated_at DESC, rowid DESC LIMIT 1",
+            (self.workspace_id, execution["id"], execution["id"]),
+        ).fetchone()
+        if search_set is not None:
+            return self._interview_history(execution, search_set)
+
+        retrospective = self.connection.execute(
+            "SELECT * FROM interview_retrospectives "
+            "WHERE workspace_id = ? AND chat_session_id = ? "
+            "ORDER BY updated_at DESC, rowid DESC LIMIT 1",
+            (self.workspace_id, execution["session_id"]),
+        ).fetchone()
+        if retrospective is not None:
+            return self._interview_chat(execution, retrospective)
+
+        return self._freeze(
+            execution,
+            terminal_state=str(execution["status"]),
+            domain_refs={"sessionId": str(execution["session_id"])},
+            source_refs=(),
+            items=(),
+            units=(),
+            counters={"items": _counters([])},
+            gaps=("retrospective_domain_result_not_found",),
+            requested_scope={"mode": "unknown"},
+        )
+
+    def _interview_cleanup(
+        self, execution: sqlite3.Row, cleanup: sqlite3.Row
+    ) -> BusinessOutcomeProjection:
+        segments = self.connection.execute(
+            "SELECT * FROM interview_segments WHERE cleanup_version_id = ? "
+            "ORDER BY ordinal, rowid",
+            (cleanup["id"],),
+        ).fetchall()
+        items = []
+        statuses = []
+        for row in segments:
+            ignored = bool(row["ignored"])
+            uncertain = bool(row["uncertainty_reason"])
+            status = (
+                "ignored"
+                if ignored
+                else "pending"
+                if uncertain
+                else "confirmed"
+            )
+            statuses.append(status)
+            source_ref = (
+                f"source:{cleanup['source_version_id']}:"
+                f"{int(row['source_start'])}-{int(row['source_end'])}"
+            )
+            items.append(
+                OutcomeItem(
+                    item_id=str(row["id"]),
+                    item_type="transcript_segment",
+                    status=status,
+                    content={
+                        "mode": "cleanup",
+                        "text": row["body"],
+                        "speaker_role": row["speaker_role"],
+                        "confidence": row["confidence"],
+                        "source_start": row["source_start"],
+                        "source_end": row["source_end"],
+                        "uncertainty_reason": row["uncertainty_reason"],
+                        "ignored": ignored,
+                    },
+                    provenance=(
+                        OutcomeProvenance(
+                            field_path="content.text",
+                            support_type="normalized",
+                            source_refs=(source_ref,),
+                        ),
+                    ),
+                    user_decision=_decision(status, cleanup["confirmed_at"]),
+                )
+            )
+        work = self.connection.execute(
+            "SELECT * FROM interview_cleanup_work_items "
+            "WHERE cleanup_version_id = ? ORDER BY created_at, rowid",
+            (cleanup["id"],),
+        ).fetchall()
+        units = tuple(
+            OutcomeUnit(
+                unit_id=str(row["id"]),
+                unit_type=f"cleanup:{row['work_key']}",
+                status=str(row["status"]),
+                error_code=row["last_error_code"],
+            )
+            for row in work
+        )
+        return self._freeze(
+            execution,
+            terminal_state=str(cleanup["status"]),
+            domain_refs={
+                "retrospectiveId": str(cleanup["retrospective_id"]),
+                "cleanupVersionId": str(cleanup["id"]),
+                "sourceVersionId": str(cleanup["source_version_id"]),
+            },
+            source_refs=(f"source:{cleanup['source_version_id']}",),
+            items=tuple(items),
+            units=units,
+            counters={
+                "segments": _decision_counters(statuses),
+                "workItems": _counters([str(row["status"]) for row in work]),
+            },
+            gaps=() if items else ("cleanup_segments_not_recorded",),
+            requested_scope={"mode": "cleanup", "segmentCount": len(items)},
+        )
+
+    def _interview_analysis(
+        self, execution: sqlite3.Row, analysis: sqlite3.Row
+    ) -> BusinessOutcomeProjection:
+        rows = self.connection.execute(
+            "SELECT q.*, qa.id AS analysis_id, qa.verdict AS analysis_verdict, "
+            "qa.strengths_json AS analysis_strengths_json, "
+            "qa.improvements_json AS analysis_improvements_json, "
+            "qa.omissions_json AS analysis_omissions_json, "
+            "qa.evidence_level AS analysis_evidence_level, "
+            "qa.confidence AS analysis_confidence, "
+            "qa.improvement_outline_json AS analysis_outline_json, "
+            "qa.suggested_answer AS analysis_suggested_answer, "
+            "qa.source_excerpt AS analysis_source_excerpt, "
+            "qa.result_status AS analysis_result_status "
+            "FROM interview_question_units q "
+            "LEFT JOIN interview_question_analyses qa "
+            "ON qa.question_unit_id = q.id AND qa.analysis_run_id = ? "
+            "WHERE q.retrospective_id = ? AND q.cleanup_version_id = ? "
+            "ORDER BY q.ordinal, q.rowid",
+            (
+                analysis["id"],
+                analysis["retrospective_id"],
+                analysis["cleanup_version_id"],
+            ),
+        ).fetchall()
+        items = []
+        source_refs: set[str] = set()
+        for row in rows:
+            evidence = row["analysis_source_excerpt"]
+            refs = tuple(
+                f"segment:{segment_id}"
+                for segment_id in (
+                    *_array(row["question_segment_ids_json"]),
+                    *_array(row["answer_segment_ids_json"]),
+                )
+            )
+            source_refs.update(refs)
+            items.append(
+                OutcomeItem(
+                    item_id=str(row["id"]),
+                    item_type="retrospective_question",
+                    status=str(row["decision_status"]),
+                    content={
+                        "mode": "analysis",
+                        "question_text": row["question_text"],
+                        "question_kind": row["question_kind"],
+                        "inferred": row["origin"] == "inferred",
+                        "confidence": row["confidence"],
+                        "inference_basis": row["inference_basis"],
+                        "evidence": evidence,
+                        "analysis": {
+                            "verdict": row["analysis_verdict"],
+                            "strengths": _array(row["analysis_strengths_json"]),
+                            "improvements": _array(row["analysis_improvements_json"]),
+                            "omissions": _array(row["analysis_omissions_json"]),
+                            "evidence_level": row["analysis_evidence_level"],
+                            "confidence": row["analysis_confidence"],
+                            "result_status": row["analysis_result_status"],
+                        },
+                        "recommendations": {
+                            "outline": _array(row["analysis_outline_json"]),
+                            "suggested_answer": row["analysis_suggested_answer"],
+                        },
+                        "status": row["decision_status"],
+                    },
+                    provenance=(
+                        OutcomeProvenance(
+                            field_path="content.question_text",
+                            support_type=(
+                                "inferred" if row["origin"] == "inferred" else "direct"
+                            ),
+                            source_refs=refs,
+                            note=row["inference_basis"],
+                        ),
+                        OutcomeProvenance(
+                            field_path="content.evidence",
+                            support_type="direct",
+                            source_refs=refs,
+                        ),
+                    ),
+                    user_decision=_decision(
+                        str(row["decision_status"]), row["updated_at"]
+                    ),
+                )
+            )
+        work = self.connection.execute(
+            "SELECT * FROM interview_analysis_work_items "
+            "WHERE analysis_run_id = ? ORDER BY created_at, rowid",
+            (analysis["id"],),
+        ).fetchall()
+        units = tuple(
+            OutcomeUnit(
+                unit_id=str(row["id"]),
+                unit_type=f"analysis:{row['work_key']}",
+                status=str(row["status"]),
+                error_code=row["last_error_code"],
+            )
+            for row in work
+        )
+        return self._freeze(
+            execution,
+            terminal_state=str(analysis["status"]),
+            domain_refs={
+                "retrospectiveId": str(analysis["retrospective_id"]),
+                "analysisRunId": str(analysis["id"]),
+                "cleanupVersionId": str(analysis["cleanup_version_id"]),
+            },
+            source_refs=tuple(sorted(source_refs)),
+            items=tuple(items),
+            units=units,
+            counters={
+                "questions": _decision_counters(
+                    [str(row["decision_status"]) for row in rows]
+                ),
+                "workItems": _counters([str(row["status"]) for row in work]),
+            },
+            gaps=() if items else ("retrospective_questions_not_recorded",),
+            requested_scope={"mode": "analysis", "questionCount": len(items)},
+        )
+
+    def _interview_chat(
+        self, execution: sqlite3.Row, retrospective: sqlite3.Row
+    ) -> BusinessOutcomeProjection:
+        messages = self.connection.execute(
+            "SELECT * FROM agent_messages WHERE run_id = ? "
+            "AND role IN ('user', 'assistant') ORDER BY created_at, id",
+            (execution["id"],),
+        ).fetchall()
+        items = tuple(
+            OutcomeItem(
+                item_id=str(row["id"]),
+                item_type="discussion_message",
+                status=str(row["resolution_status"]),
+                content={
+                    "mode": "discussion",
+                    "text": row["content"],
+                    "role": row["role"],
+                    "message_kind": row["message_kind"],
+                    "status": row["resolution_status"],
+                },
+                provenance=(
+                    OutcomeProvenance(
+                        field_path="content.text",
+                        support_type=(
+                            "user_asserted" if row["role"] == "user" else "inferred"
+                        ),
+                        source_refs=(f"message:{row['id']}",),
+                    ),
+                ),
+                user_decision=OutcomeUserDecision(status="pending"),
+            )
+            for row in messages
+        )
+        return self._freeze(
+            execution,
+            terminal_state=str(execution["status"]),
+            domain_refs={
+                "retrospectiveId": str(retrospective["id"]),
+                "sessionId": str(execution["session_id"]),
+            },
+            source_refs=tuple(f"message:{item.item_id}" for item in items),
+            items=items,
+            units=(),
+            counters={"messages": _counters(["completed"] * len(items))},
+            gaps=() if items else ("discussion_messages_not_recorded",),
+            requested_scope={"mode": "discussion", "messageCount": len(items)},
+        )
+
+    def _interview_history(
+        self, execution: sqlite3.Row, search_set: sqlite3.Row
+    ) -> BusinessOutcomeProjection:
+        results = self.connection.execute(
+            "SELECT * FROM interview_retrospective_search_results "
+            "WHERE search_set_id = ? ORDER BY rank, id",
+            (search_set["id"],),
+        ).fetchall()
+        items = tuple(
+            OutcomeItem(
+                item_id=str(row["id"]),
+                item_type="history_match",
+                status="completed",
+                content={
+                    "mode": "history",
+                    "query": search_set["query_text"],
+                    "question": _object(row["question_snapshot_json"]),
+                    "answer_excerpt": row["answer_excerpt"],
+                    "analysis": _object(row["analysis_snapshot_json"]),
+                    "score": row["score"],
+                    "source_available": bool(row["source_available"]),
+                    "report": search_set["summary_markdown"],
+                },
+                provenance=(
+                    OutcomeProvenance(
+                        field_path="content.question",
+                        support_type="direct",
+                        source_refs=(
+                            f"retrospective:{row['retrospective_id']}",
+                            f"search-result:{row['id']}",
+                        ),
+                    ),
+                ),
+                user_decision=OutcomeUserDecision(status="pending"),
+            )
+            for row in results
+        )
+        return self._freeze(
+            execution,
+            terminal_state=str(search_set["status"]),
+            domain_refs={"searchSetId": str(search_set["id"])},
+            source_refs=tuple(
+                ref for item in items for provenance in item.provenance
+                for ref in provenance.source_refs
+            ),
+            items=items,
+            units=(),
+            counters={"matches": _counters(["completed"] * len(items))},
+            gaps=() if items else ("history_search_results_not_recorded",),
+            requested_scope={"mode": "history", "query": search_set["query_text"]},
         )
 
     def _empty(

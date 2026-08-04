@@ -52,6 +52,9 @@ class ExecutionSummaryAssembler:
         )
         retry_count = sum(int(operation["retry_count"]) for operation in operations)
         latency_ms = self._latency_ms(trace, operations)
+        snapshot = _definition_snapshot(run)
+        evaluation_supported = snapshot.eval_pack_id is not None
+        evaluation_available = evaluation_supported and run["status"] == "completed"
         return ExecutionSummaryResource(
             id=run["id"],
             session_id=run["session_id"],
@@ -66,6 +69,12 @@ class ExecutionSummaryAssembler:
                 registration,
                 status=run["status"],
                 trace_health=trace_health,
+            ),
+            evaluation_supported=evaluation_supported,
+            evaluation_available=evaluation_available,
+            evaluation_unavailable_reason=_evaluation_unavailable_reason(
+                snapshot=snapshot,
+                status=run["status"],
             ),
             route=registration.route_template,
             system_operation_count=system_operation_count,
@@ -83,12 +92,7 @@ class ExecutionSummaryAssembler:
 
     def assemble_detail(self, run: dict[str, Any]) -> ExecutionDetailResource:
         summary = self.assemble(run)
-        raw_snapshot = run.get("agent_definition_snapshot_json")
-        snapshot = AgentDefinitionSnapshot.from_json(
-            raw_snapshot
-            if isinstance(raw_snapshot, str)
-            else AgentDefinitionSnapshot.legacy_snapshot().to_json()
-        )
+        snapshot = _definition_snapshot(run)
         return ExecutionDetailResource(
             **summary.model_dump(),
             definition_snapshot=AgentDefinitionSnapshotResource(
@@ -184,6 +188,29 @@ def _runtime_capabilities(
         "export_trace",
     )
     return [capability for capability in order if capability in available]
+
+
+def _definition_snapshot(run: dict[str, Any]) -> AgentDefinitionSnapshot:
+    raw_snapshot = run.get("agent_definition_snapshot_json")
+    return AgentDefinitionSnapshot.from_json(
+        raw_snapshot
+        if isinstance(raw_snapshot, str)
+        else AgentDefinitionSnapshot.legacy_snapshot().to_json()
+    )
+
+
+def _evaluation_unavailable_reason(
+    *,
+    snapshot: AgentDefinitionSnapshot,
+    status: str,
+) -> str | None:
+    if snapshot.eval_pack_id is None:
+        if snapshot.legacy:
+            return "该历史运行创建时尚未启用质量检查"
+        return "该 Agent 未注册质量检查标准"
+    if status != "completed":
+        return "运行完成后才能开始质量检查"
+    return None
 
 
 def _elapsed_ms(started_at: str | None, finished_at: str | None) -> int | None:

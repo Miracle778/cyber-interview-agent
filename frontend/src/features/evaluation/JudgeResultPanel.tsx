@@ -1,5 +1,5 @@
 import { AlertTriangle, ShieldCheck } from "lucide-react";
-import { SelectControl } from "../../shared/ui/SelectControl";
+import { useState } from "react";
 import type { EvaluationFeedback, EvaluationRun } from "./evaluationTypes";
 
 
@@ -82,27 +82,43 @@ function FeedbackForm({
   pending: boolean;
   onSubmit: JudgeResultPanelProps["onFeedback"];
 }) {
+  const [verdict, setVerdict] = useState<"accurate" | "incorrect" | "uncertain">("accurate");
   return (
     <form
       className="judge-feedback"
       onSubmit={(event) => {
         event.preventDefault();
         const data = new FormData(event.currentTarget);
-        onSubmit(
-          String(data.get("verdict")) as "accurate" | "incorrect" | "uncertain",
-          String(data.get("reason") ?? ""),
-        );
+        onSubmit(verdict, String(data.get("reason") ?? ""));
         event.currentTarget.reset();
       }}
     >
-      <strong>你的判断</strong>
-      <SelectControl name="verdict" aria-label="反馈结论" defaultValue="accurate">
-        <option value="accurate">检查结论准确</option>
-        <option value="incorrect">检查结论不准确</option>
-        <option value="uncertain">暂不确定</option>
-      </SelectControl>
+      <div className="judge-feedback__heading">
+        <strong>这次检查说得对吗？</strong>
+        <small>你的确认会被保存，并可沉淀为后续回归案例。</small>
+      </div>
+      <div className="judge-feedback__choices" role="radiogroup" aria-label="反馈结论">
+        {([
+          ["accurate", "确认无问题", "检查结论与实际结果一致"],
+          ["incorrect", "确认有问题", "检查遗漏或判断错误"],
+          ["uncertain", "暂不判断", "目前证据不足，稍后再确认"],
+        ] as const).map(([value, label, description]) => (
+          <button
+            key={value}
+            type="button"
+            role="radio"
+            aria-checked={verdict === value}
+            onClick={() => setVerdict(value)}
+          >
+            <strong>{label}</strong>
+            <small>{description}</small>
+          </button>
+        ))}
+      </div>
       <input name="reason" aria-label="反馈说明" placeholder="补充证据或说明（可选）" />
-      <button type="submit" disabled={pending}>{pending ? "正在保存…" : "确认判断"}</button>
+      <button className="judge-feedback__submit" type="submit" disabled={pending}>
+        {pending ? "正在保存…" : "保存我的判断"}
+      </button>
     </form>
   );
 }

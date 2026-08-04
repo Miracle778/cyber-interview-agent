@@ -601,3 +601,35 @@ current question
 - [x] Phase 2：合并 Observability Registration、生产 Graph 集合和 Builder 映射，形成单一 `AgentDefinitionRegistry`；运行中心、质量评估与 Runtime 门禁改读统一 Definition，旧 Observability 名称仅保留兼容外壳。
 - [x] Phase 3：AgentFactory 强制父 Agent、组件、模型角色、Tool 和 Scope 归属，并补齐 Trace Definition 身份；产品模型调用统一经过 Definition-bound Factory，静态门禁阻止新增底层 Resolver 直调。
 - [x] Phase 4：Execution 持久化不可变 Agent Definition Snapshot；新运行在 Graph/Provider 启动前冻结 Definition、Schema、Toolset、模型绑定、策略与 Eval Pack，历史运行使用显式 legacy 快照；Eval 与高级详情只读取冻结版本。
+
+## 2026-08-04：Agent 质量中心与复盘质量标准（实现完成）
+
+- [x] 把页面按质量检查、回归实验、质量趋势三个用户任务重构；
+- [x] 从冻结 Agent Definition 判断是否支持检查，并区分当前是否可以开始；
+- [x] 为 `interview.retrospective` 注册 `interview-retrospective.v2` 及确定性业务规则；
+- [x] 报告使用结论、优先问题和直接人工判断，技术信息渐进披露；
+- [x] 后端 44 项、前端 16 项、production build、差异检查及 5175 真实页面验收通过。
+
+## 2026-08-05：质量检查明细去技术化（实现完成）
+
+- [x] 将面向用户的内容检查与 Runtime 系统保护规则分层展示；
+- [x] 单次检查移除没有意义的“之前 / 变化”空列，历史对比开启后再展示；
+- [x] 检查项统一使用中文业务名称，Receipt、Event、hash、locator 等诊断字段默认收进“查看技术证据”；
+- [x] 右侧优先事项与质量概览改用可理解的用户说明；
+- [x] 前端定向 14 项、production build、差异检查及 5175 真实页面验收通过。
+
+## 2026-08-05：历史检索总结与结果区布局修复（实现完成）
+
+- [x] 将总结、错误和报告统一放入显式洞察区域，不再占用父级 Grid 的隐式行；
+- [x] 洞察区与检索结果区使用 40% / 60% 的有界布局，长总结独立滚动；
+- [x] 移动端恢复自然文档流；
+- [x] 完成定向测试、production build、差异检查及 5175 真实页面几何验收。
+
+## 2026-08-05：App SQLite 线程连接隔离与质量术语简化（实现完成）
+
+- [x] 复现生命周期单例 SQLite 物理连接被多个 AnyIO 工作线程同时使用时，事务状态和 `sqlite3.Row` 读取互相干扰的问题；
+- [x] 保留应用级单例入口，改为线程连接管理器，每个线程独立持有物理连接；
+- [x] 统一启用外键、5 秒 busy timeout，并在初始化连接启用 WAL；
+- [x] 新增跨线程事务隔离回归，覆盖同一管理器下不同线程不能共享事务状态；
+- [x] 将“迟到结果保护”改为“任务结束后结果保护”，用户说明统一改为旧结果不会覆盖最终结果；
+- [x] 完成后端 53 项、质量页 14 项、Ruff、compileall、production build 与差异检查。

@@ -219,7 +219,11 @@ def build_task_evaluation_view(
         for item in selected
     )
     dimensions = tuple(
-        _generic_applicability(dimension.id, outcome)
+        (
+            _interview_retrospective_applicability(dimension.id, outcome)
+            if pack.task_type == "interview_retrospective"
+            else _generic_applicability(dimension.id, outcome)
+        )
         for dimension in pack.dimensions
     )
     gaps = list(outcome.evidence_gaps)
@@ -306,6 +310,68 @@ def _generic_applicability(
             "缺少可反查的文档 offset 或版本正文",
         )
     return _dimension(dimension_id, "applicable", "存在可评价的业务结果")
+
+
+def _interview_retrospective_applicability(
+    dimension_id: str,
+    outcome: BusinessOutcomeProjection,
+) -> EvaluationDimensionInput:
+    mode = str(outcome.input.requested_scope.get("mode") or "unknown")
+    applicable_by_mode = {
+        "cleanup": {
+            "transcript_fidelity",
+            "speaker_question_recovery",
+            "lifecycle_idempotency",
+        },
+        "analysis": {
+            "question_extraction_completeness",
+            "analysis_grounding",
+            "recommendation_actionability",
+            "lifecycle_idempotency",
+        },
+        "discussion": {"discussion_context", "lifecycle_idempotency"},
+        "history": {"history_source_coverage", "lifecycle_idempotency"},
+    }
+    dimensions = applicable_by_mode.get(mode, {"lifecycle_idempotency"})
+    if dimension_id == "uncertainty_confirmation":
+        has_uncertainty = any(
+            item.content.get("uncertainty_reason")
+            or (
+                item.content.get("inferred") is True
+                and item.user_decision.status == "pending"
+            )
+            for item in outcome.items
+        )
+        return _dimension(
+            dimension_id,
+            "applicable" if has_uncertainty else "not_applicable",
+            "存在需要人工确认的不确定项"
+            if has_uncertainty
+            else "本次没有待确认的不确定项",
+        )
+    if dimension_id not in dimensions:
+        return _dimension(
+            dimension_id,
+            "not_applicable",
+            f"{mode} 模式不产生该维度所需的业务结果",
+        )
+    if dimension_id == "lifecycle_idempotency":
+        return _dimension(
+            dimension_id,
+            "applicable",
+            "本次运行保存了可核对的执行状态和业务终态",
+        )
+    if not outcome.items:
+        return _dimension(
+            dimension_id,
+            "insufficient_evidence",
+            f"{mode} 模式没有保存可评价的业务结果项",
+        )
+    return _dimension(
+        dimension_id,
+        "applicable",
+        f"本次 {mode} 结果包含该维度需要的业务证据",
+    )
 
 
 def _limit_value(value: object, max_text_chars: int) -> object:

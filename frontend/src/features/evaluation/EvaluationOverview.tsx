@@ -19,6 +19,7 @@ import { SelectControl } from "../../shared/ui/SelectControl";
 import type { ExecutionSummary } from "../observability/observabilityTypes";
 import {
   dimensionOutcome,
+  dimensionUserSummary,
   summarizeEvaluation,
 } from "./evaluationPresentation";
 import type {
@@ -32,6 +33,9 @@ type QualityState = "stable" | "attention" | "unchecked";
 interface QualityOverviewItem {
   execution: ExecutionSummary;
   evaluation: EvaluationRun | null;
+  supportsEvaluation: boolean;
+  canStartEvaluation: boolean;
+  evaluationUnavailableReason: string | null;
   state: QualityState;
   conclusion: string;
   issue: string;
@@ -328,7 +332,9 @@ export function EvaluationOverview({
                         data-selected={item.execution.id === selectedExecutionId}
                         onClick={() => item.evaluation
                           ? selectItem(item)
-                          : onOpenTools(item.execution.id)}
+                          : item.canStartEvaluation
+                            ? onOpenTools(item.execution.id)
+                            : selectItem(item)}
                       >
                         <span data-tone={meta.tone}><Icon aria-hidden="true" /></span>
                         <div>
@@ -400,13 +406,17 @@ export function EvaluationOverview({
                         <button type="button" onClick={() => selectItem(item)}>
                           查看详情
                         </button>
-                      ) : (
+                      ) : item.canStartEvaluation ? (
                         <button
                           type="button"
                           onClick={() => onOpenTools(item.execution.id)}
                         >
                           开始检查
                         </button>
+                      ) : (
+                        <span className="quality-result-status" data-tone="neutral">
+                          仅可查看运行
+                        </span>
                       )}
                     </td>
                   </tr>
@@ -514,14 +524,14 @@ export function EvaluationOverview({
               >
                 查看检查依据
               </button>
-            ) : (
+            ) : selected.canStartEvaluation ? (
               <button
                 type="button"
                 onClick={() => onOpenTools(selected.execution.id)}
               >
                 开始质量检查
               </button>
-            )}
+            ) : null}
           </footer>
           </aside>
         </>
@@ -551,21 +561,49 @@ export function buildQualityOverviewItems(
     )
     .map((execution) => {
       const evaluation = latestByExecution.get(execution.id) ?? null;
+      const supportsEvaluation = execution.evaluationSupported
+        ?? execution.capabilities.includes("manual_judge");
+      const canStartEvaluation = execution.evaluationAvailable
+        ?? execution.capabilities.includes("manual_judge");
+      const evaluationUnavailableReason = execution.evaluationUnavailableReason ?? null;
       if (!evaluation || ["pending", "queued", "running"].includes(evaluation.status)) {
         return {
           execution,
           evaluation,
+          supportsEvaluation,
+          canStartEvaluation,
+          evaluationUnavailableReason,
           state: "unchecked",
-          conclusion: evaluation ? "检查进行中" : "尚未检查",
-          issue: evaluation ? "质量检查仍在进行" : "尚未进行质量检查",
-          impact: "当前还没有足够信息判断这次运行的质量。",
-          advice: "可以开始质量检查，或稍后等待检查完成。",
+          conclusion: evaluation
+            ? "检查进行中"
+            : canStartEvaluation
+              ? "尚未检查"
+              : supportsEvaluation
+                ? "等待运行完成"
+                : "暂不支持检查",
+          issue: evaluation
+            ? "质量检查仍在进行"
+            : canStartEvaluation
+              ? "尚未进行质量检查"
+              : evaluationUnavailableReason
+                ?? "该运行没有声明人工质量检查能力",
+          impact: supportsEvaluation
+            ? "当前还没有足够信息判断这次运行的质量。"
+            : "该运行仍可在运行中心查看，但不能在这里生成质量结论。",
+          advice: canStartEvaluation
+            ? "可以开始质量检查。"
+            : supportsEvaluation
+              ? "等待运行完成后再开始质量检查。"
+            : "如需支持，应由 Agent 注册定义绑定 Eval Pack 并声明 manual_judge 能力。",
         };
       }
       if (evaluation.status === "failed") {
         return {
           execution,
           evaluation,
+          supportsEvaluation,
+          canStartEvaluation,
+          evaluationUnavailableReason,
           state: "attention",
           conclusion: "检查未完成",
           issue: evaluation.errorCode
@@ -589,14 +627,17 @@ export function buildQualityOverviewItems(
       return {
         execution,
         evaluation,
+        supportsEvaluation,
+        canStartEvaluation,
+        evaluationUnavailableReason,
         state,
         conclusion: state === "stable" ? "表现稳定" : "需要关注",
         issue: state === "stable"
           ? "未发现明显质量问题"
-          : primary?.dimension.risks[0]
-            ?? primary?.dimension.summary
-            ?? "部分质量维度需要进一步核对",
-        impact: conciseQualityText(primary?.dimension.summary)
+          : primary
+            ? dimensionUserSummary(primary.dimension)
+            : "部分质量维度需要进一步核对",
+        impact: conciseQualityText(primary ? dimensionUserSummary(primary.dimension) : undefined)
           || (state === "stable"
             ? "现有检查依据支持继续使用本次结果。"
             : "可能影响结果的准确性、完整性或可用性。"),

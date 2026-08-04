@@ -52,7 +52,12 @@
 .history-search__status strong { font-size: 1rem; }
 .history-search__status span { color: var(--text-muted); font-size: .74rem; }
 .history-search__status > div:last-child { display: flex; gap: 8px; }
-.history-search__summary, .history-search__report { max-height: 440px; overflow: auto; padding: 12px var(--space-5); background: var(--surface); border-bottom: 1px solid var(--border); }
+.history-search__body { display: grid; min-width: 0; min-height: 0; grid-template-rows: 0 minmax(0, 1fr); overflow: hidden; }
+.history-search__body:has(.history-search__insights:not(:empty)) { grid-template-rows: minmax(0, min(320px, 40%)) minmax(0, 1fr); }
+.history-search__insights { min-width: 0; min-height: 0; overflow: auto; background: var(--surface); }
+.history-search__insights:empty { display: none; }
+.history-search__body > .history-search__workspace { grid-row: 2; }
+.history-search__summary, .history-search__report { padding: 12px var(--space-5); background: var(--surface); border-bottom: 1px solid var(--border); }
 .history-search__summary header, .history-search__report header { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; color: var(--primary); }
 .history-search__summary header span, .history-search__report header span { margin-left: auto; color: var(--text-muted); font-size: .72rem; }
 .history-search__report header input { min-width: 220px; padding: 6px 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); font: inherit; }
@@ -706,6 +711,8 @@
   .history-search__current .btn { align-self: flex-start; }
   .history-search__status { align-items: stretch; flex-direction: column; }
   .history-search__status > div:last-child { display: grid; grid-template-columns: 1fr 1fr; }
+  .history-search__body { display: block; overflow: visible; }
+  .history-search__insights { max-height: none; overflow: visible; }
   .history-search__workspace { display: block; }
   .history-search__groups { max-height: 520px; border-right: 0; border-bottom: 1px solid var(--border); }
   .history-search__detail { min-height: 420px; }

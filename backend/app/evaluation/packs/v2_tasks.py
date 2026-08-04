@@ -249,6 +249,86 @@ PROJECT_QUESTION_GENERATION_V2_PACK = _pack(
 )
 
 
+INTERVIEW_RETROSPECTIVE_V2_PACK = _pack(
+    pack_id="interview-retrospective.v2",
+    family="interview-retrospective",
+    task_type="interview_retrospective",
+    title="面试复盘业务结果质量",
+    dimensions=(
+        (
+            "transcript_fidelity",
+            "转写忠实与修订边界",
+            "纠错保持事实、数字、职责和术语边界，并能追溯原文。",
+        ),
+        (
+            "uncertainty_confirmation",
+            "不确定项与人工确认",
+            "低置信度术语、说话人和推断问题进入确认流程。",
+        ),
+        (
+            "speaker_question_recovery",
+            "说话人与问题恢复",
+            "说话人判断合理，补全问题保守且明确标记为推断。",
+        ),
+        (
+            "question_extraction_completeness",
+            "问题提取完整性",
+            "已确认文本中的问题被提取并保留可定位证据。",
+        ),
+        (
+            "analysis_grounding",
+            "分析依据与忠实度",
+            "逐题结论基于回答和证据，不虚构技术细节或抬高职责。",
+        ),
+        (
+            "recommendation_actionability",
+            "改进建议可行动性",
+            "建议具体、与问题相关并能指导下一次回答。",
+        ),
+        (
+            "discussion_context",
+            "讨论直接性与上下文",
+            "讨论直接回答追问并正确使用选中题目和工具结果。",
+        ),
+        (
+            "history_source_coverage",
+            "历史检索来源覆盖",
+            "检索命中、总结和报告都保留完整来源引用。",
+        ),
+        (
+            "lifecycle_idempotency",
+            "生命周期与幂等",
+            "停止、重试、恢复、任务结束后返回的旧结果和重复写入符合状态机。",
+        ),
+    ),
+    content_fields=(
+        "mode",
+        "text",
+        "speaker_role",
+        "inferred",
+        "confidence",
+        "question_text",
+        "question_kind",
+        "evidence",
+        "analysis",
+        "recommendations",
+        "message_kind",
+        "query",
+        "matches",
+        "report",
+        "status",
+    ),
+    categories=(
+        "transcript",
+        "questions",
+        "analyses",
+        "discussion",
+        "historySearch",
+        "userDecisions",
+    ),
+)
+
+
 V2_TASK_PACKS = (
     QUESTION_REVISION_V2_PACK,
     REVIEW_ROUND_V2_PACK,
@@ -261,4 +341,5 @@ V2_TASK_PACKS = (
     JOB_REQUIREMENT_ANALYSIS_V2_PACK,
     PROJECT_DEEP_DIVE_COACHING_V2_PACK,
     PROJECT_QUESTION_GENERATION_V2_PACK,
+    INTERVIEW_RETROSPECTIVE_V2_PACK,
 )

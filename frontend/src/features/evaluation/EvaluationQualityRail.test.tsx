@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 import { EvaluationQualityRail } from "./EvaluationQualityRail";
 import type { EvaluationRun } from "./evaluationTypes";
 
@@ -43,6 +43,8 @@ const run: EvaluationRun = {
   judgeSummary: null,
 };
 
+afterEach(cleanup);
+
 describe("EvaluationQualityRail", () => {
   it("leads with the user outcome and keeps methodology secondary", () => {
     render(<EvaluationQualityRail run={run} feedback={[]} />);
@@ -59,5 +61,39 @@ describe("EvaluationQualityRail", () => {
     expect(screen.getByText("复习评价质量")).toBeInTheDocument();
     expect(screen.getByText("已配置")).toBeInTheDocument();
     expect(screen.queryByText("judge-model")).not.toBeInTheDocument();
+  });
+
+  it("shows evidence gaps among the three highest-priority issues", () => {
+    render(<EvaluationQualityRail run={{
+      ...run,
+      dimensions: [{
+        ...run.dimensions[0],
+        dimensionId: "history_source_coverage",
+        applicability: "insufficient_evidence",
+        score: null,
+        summary: "缺少部分历史场次来源",
+      }],
+    }} feedback={[]} />);
+
+    expect(screen.getByRole("heading", { name: "建议核对" })).toBeInTheDocument();
+    expect(screen.getByText("缺少部分历史场次来源")).toBeInTheDocument();
+    expect(screen.queryByText("没有需要优先处理的问题。")).not.toBeInTheDocument();
+  });
+
+  it("turns runtime rule warnings into plain Chinese guidance", () => {
+    render(<EvaluationQualityRail run={{
+      ...run,
+      dimensions: [{
+        ...run.dimensions[0],
+        dimensionId: "runtime.source_version_integrity",
+        source: "deterministic",
+        applicability: "insufficient_evidence",
+        score: null,
+        summary: "Receipt/Event/hash/locator validation is incomplete.",
+      }],
+    }} feedback={[]} />);
+
+    expect(screen.getByText("已有来源记录，但还不能完整确认对应版本和原文位置。")).toBeInTheDocument();
+    expect(screen.queryByText(/Receipt|Event|hash|locator/)).not.toBeInTheDocument();
   });
 });

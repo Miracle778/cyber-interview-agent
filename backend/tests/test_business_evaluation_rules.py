@@ -274,3 +274,124 @@ def test_task_rules_detect_known_business_invariant_violations(tmp_path) -> None
             assert result.blocking is False
     finally:
         connection.close()
+
+
+def test_retrospective_rules_keep_confirmation_evidence_and_mode_boundaries(
+    tmp_path,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+    cases = (
+        (
+            "analysis",
+            "retrospective_question",
+            {
+                "mode": "analysis",
+                "question_text": "你负责什么？",
+                "inferred": True,
+                "evidence": "我后面负责签名服务",
+            },
+            "pending",
+            ("segment:1",),
+            "retrospective.inferred_question_confirmation",
+        ),
+        (
+            "analysis",
+            "retrospective_question",
+            {
+                "mode": "analysis",
+                "question_text": "系统怎么拆分？",
+                "inferred": False,
+                "evidence": "",
+            },
+            "accepted",
+            ("segment:2",),
+            "retrospective.analysis_grounding",
+        ),
+        (
+            "discussion",
+            "retrospective_question",
+            {"mode": "discussion", "text": "不应成为正式分析"},
+            "pending",
+            ("message:1",),
+            "retrospective.discussion_result_isolation",
+        ),
+        (
+            "history",
+            "history_match",
+            {"mode": "history", "query": "数字签名"},
+            "pending",
+            ("retrospective:retro-1",),
+            "retrospective.history_source_coverage",
+        ),
+    )
+    try:
+        for index, (
+            mode,
+            item_type,
+            content,
+            decision,
+            source_refs,
+            expected_rule,
+        ) in enumerate(cases):
+            session_id = f"retrospective-session-{index}"
+            execution_id = f"retrospective-execution-{index}"
+            connection.execute(
+                "INSERT INTO agent_sessions "
+                "(id, workspace_id, graph_id, graph_version, title) "
+                "VALUES (?, 'workspace-1', 'interview.retrospective', 1, '复盘')",
+                (session_id,),
+            )
+            connection.execute(
+                "INSERT INTO agent_runs (id, session_id, status, input_json) "
+                "VALUES (?, ?, 'completed', '{}')",
+                (execution_id, session_id),
+            )
+            outcome = freeze_business_outcome(
+                BusinessOutcomePayload(
+                    task_type="interview_retrospective",
+                    identity=OutcomeIdentity(
+                        workspace_id="workspace-1",
+                        session_id=session_id,
+                        execution_id=execution_id,
+                        graph_id="interview.retrospective",
+                        domain_refs={"retrospectiveId": "retro-1"},
+                    ),
+                    input=OutcomeInput(
+                        source_refs=source_refs,
+                        input_hash="a" * 64,
+                        requested_scope={"mode": mode},
+                    ),
+                    execution_status="completed",
+                    terminal_state="completed",
+                    items=(
+                        OutcomeItem(
+                            item_id=f"retrospective-item-{index}",
+                            item_type=item_type,
+                            status="pending",
+                            content=content,
+                            provenance=(
+                                OutcomeProvenance(
+                                    field_path="content.value",
+                                    support_type="direct",
+                                    source_refs=source_refs,
+                                ),
+                            ),
+                            user_decision=OutcomeUserDecision(status=decision),
+                        ),
+                    ),
+                    units=(),
+                    unit_counters={
+                        "items": OutcomeCounters(
+                            total=1, completed=0, failed=0, skipped=0, pending=1
+                        )
+                    },
+                )
+            )
+            result = evaluate_business_rules(
+                outcome, connection=connection, workspace_id="workspace-1"
+            )
+            by_id = {item.rule_id: item for item in result.rules}
+            assert by_id[expected_rule].status == "failed"
+            assert result.blocking is False
+    finally:
+        connection.close()

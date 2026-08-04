@@ -65,6 +65,7 @@ _COMPATIBLE_PACKS_BY_GRAPH = {
         "project-deep-dive-coaching.v2",
         "project-question-generation.v2",
     },
+    "interview.retrospective": {"interview-retrospective.v2"},
 }
 
 

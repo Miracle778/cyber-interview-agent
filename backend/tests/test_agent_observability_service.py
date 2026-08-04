@@ -227,6 +227,40 @@ def test_execution_detail_exposes_frozen_definition_snapshot(tmp_path: Path) -> 
     assert detail.definition_snapshot.eval_pack_id == "review-single.v2"
     assert detail.definition_snapshot.eval_pack_version == 2
     assert detail.definition_snapshot.legacy is False
+    assert detail.evaluation_supported is True
+    assert detail.evaluation_available is True
+    assert detail.evaluation_unavailable_reason is None
+    connection.close()
+
+
+def test_quality_support_is_distinct_from_current_manual_judge_action(tmp_path: Path) -> None:
+    service, connection = _service(tmp_path)
+    definition = require_agent_definition("review.single")
+    snapshot = build_agent_definition_snapshot(
+        definition=definition,
+        graph_version=1,
+        model_bindings={"answer_evaluation": "model-frozen"},
+    )
+    connection.execute(
+        "INSERT INTO agent_sessions "
+        "(id, workspace_id, graph_id, graph_version, title, visibility) "
+        "VALUES ('session-running', 'workspace-1', 'review.single', 1, "
+        "'Running review', 'user')"
+    )
+    connection.execute(
+        "INSERT INTO agent_runs "
+        "(id, session_id, status, agent_definition_snapshot_json) "
+        "VALUES ('run-running', 'session-running', 'running', ?)",
+        (snapshot.to_json(),),
+    )
+    connection.commit()
+
+    summary = service.get_execution("run-running")
+
+    assert "manual_judge" not in summary.capabilities
+    assert summary.evaluation_supported is True
+    assert summary.evaluation_available is False
+    assert summary.evaluation_unavailable_reason == "运行完成后才能开始质量检查"
     connection.close()
 
 

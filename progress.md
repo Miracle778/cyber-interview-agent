@@ -1824,9 +1824,38 @@
 - 新鲜验证：Phase 4 跨层定向回归 `109 passed`；Agent/Graph/Workspace Registry 扩展回归 `335 passed`；前端运行详情/事件/质量页 `30 passed`；Ruff、TypeScript、production build 与 `git diff --check` 通过。
 - 成熟度边界：当前 Prompt 还不是独立版本化资产，Definition 快照会如实记录空的 Prompt Schema 版本表；已有大 chunk 提示和 Starlette TestClient 弃用 warning 未由本阶段引入。
 
+## 2026-08-04：Agent 质量中心与复盘质量标准
+
+- 页面重构为质量检查、回归实验、质量趋势三个独立任务，并为单次检查增加选择运行、查看结果、人工确认三步路径。
+- Agent Definition 注册合同要求人工质量检查必须绑定 Eval Pack；运行投影分别暴露静态支持能力与当前可执行性，历史原因可解释。
+- 新增 `interview-retrospective.v2`、复盘业务结果适配器、维度适用性和四条确定性规则；报告人工判断改为三个直接选项。
+- 修复右侧汇总与优先问题使用不同判定条件造成的矛盾，证据不足也会进入最多三条的优先列表。
+- 新鲜证据：后端 `44 passed`，前端 `16 passed`，production build 与 `git diff --check` 通过；5175 实页完成概览、报告、回归实验和趋势验收，未触发新评估或 Provider。
+
 ## 2026-08-04：展示前项目级冒烟缺陷修复
 
 - 修复复盘讨论普通正文被误判为结构化输出失败、SQLite 后台事件写入与 Runtime 关闭竞态、画像优势询问误路由、历史检索总结缺少独立运行身份与进行中反馈。
 - 修复运行中心业务页返回筛选丢失及工作区延迟加载覆盖 URL 筛选；设置页模型角色统计改为统一 10 项角色常量。
 - 新鲜证据：后端全量 `1222 passed`，前端全量 `421 passed`，production build、受影响 Ruff 与 `git diff --check` 通过；5175 实页确认 `10/10 已配置` 和 `?status=focused` 正确恢复“关注中”。
 - 真实 Provider 正文降级本轮由确定性回归覆盖，未新增外部模型调用；本地完整复验记录见 `docs/verification/interview-retrospective.md`。
+
+## 2026-08-05：质量检查报告完成渐进披露改造
+
+- 默认报告只展示中文内容检查、结果和用户可理解的说明；8 项系统可靠性检查收进独立折叠组，技术证据在单项内部二次折叠。
+- 单次运行报告由四列表格收敛为两列；历史对比仍保留基线和变化信息。
+- 质量概览与报告右栏不再直接暴露 Receipt、Event、hash、locator 等内部术语。
+- 新鲜证据：前端定向 `14 passed`、production build 和 `git diff --check` 通过；5175 实页确认默认显示 8 项内容检查、系统可靠性检查折叠且页面无原始英文维度名，未触发新评估或 Provider 调用。
+
+## 2026-08-05：修复历史检索总结覆盖结果区
+
+- 为历史检索新增统一 body 与 insights 容器，总结、错误、进度和已生成报告在同一有界区域内独立滚动。
+- 结果工作区拥有独立显式 Grid 行，不再被动态总结推入隐式行；桌面端最多按 40% / 60% 分配，移动端保持自然流。
+- 定向测试、production build 和 `git diff --check` 通过；5175 实页在 720px 高窗口中测得交叠 `0px`，结果区保持 `171px` 可用高度。
+
+## 2026-08-05：App SQLite 线程连接隔离与质量术语简化
+
+- 将 `connect_app_database()` 返回值改为连接兼容的 `ThreadLocalAppConnection`：应用仍只维护一个管理器，各工作线程各自延迟创建 SQLite 物理连接。
+- 初始化连接负责迁移与 WAL，所有线程连接统一启用 `foreign_keys` 和 `busy_timeout=5000`；应用关闭时集中关闭已创建连接。
+- 新增跨线程事务隔离测试，修复前稳定失败为另一线程观察到共享事务状态，修复后通过。
+- 质量页将 `runtime.late_result_protection` 展示为“任务结束后结果保护”，并用“旧结果是否会覆盖最终结果”解释通过、证据不足和风险状态。
+- 验证：后端相关 `53 passed`；质量页相关 `14 passed`；Ruff、compileall、前端 production build、`git diff --check` 均通过。构建仅保留既有大 chunk 警告。

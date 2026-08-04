@@ -55,7 +55,7 @@ def evaluate_common_business_rules(
         _source_version_integrity(outcome),
         _unprovable_rule(
             "runtime.late_result_protection",
-            "迟到结果保护需要状态转换历史或 Receipt；最终快照不能单独证明。",
+            "任务结束后结果保护需要状态转换历史或写入回执；最终快照不能单独证明。",
         ),
         _unprovable_rule(
             "runtime.tool_write_boundary",
@@ -303,6 +303,13 @@ def _task_rules(outcome: BusinessOutcomeProjection) -> tuple[BusinessRuleResult,
         return (_project_gap_lifecycle(outcome),)
     if outcome.task_type == "project_question_generation":
         return (_project_question_catalog_links(outcome),)
+    if outcome.task_type == "interview_retrospective":
+        return (
+            _retrospective_inferred_question_confirmation(outcome),
+            _retrospective_analysis_grounding(outcome),
+            _retrospective_discussion_result_isolation(outcome),
+            _retrospective_history_source_coverage(outcome),
+        )
     return ()
 
 
@@ -538,6 +545,121 @@ def _project_question_catalog_links(outcome: BusinessOutcomeProjection) -> Busin
         "project.question_catalog_link",
         "已确认项目题均可追溯到题库候选。",
         tuple(f"project-question:{item.item_id}" for item in outcome.items)
+        or (f"outcome:{outcome.outcome_hash}",),
+    )
+
+
+def _retrospective_inferred_question_confirmation(
+    outcome: BusinessOutcomeProjection,
+) -> BusinessRuleResult:
+    invalid = [
+        item.item_id
+        for item in outcome.items
+        if item.item_type == "retrospective_question"
+        and item.content.get("inferred") is True
+        and item.user_decision.status == "pending"
+    ]
+    if invalid:
+        return _failed(
+            "retrospective.inferred_question_confirmation",
+            "推断题尚未经过用户确认：" + "、".join(invalid),
+            tuple(f"retrospective-question:{item}" for item in invalid),
+        )
+    return _passed(
+        "retrospective.inferred_question_confirmation",
+        "推断题均已确认，或本次没有推断题。",
+        tuple(f"retrospective-question:{item.item_id}" for item in outcome.items)
+        or (f"outcome:{outcome.outcome_hash}",),
+    )
+
+
+def _retrospective_analysis_grounding(
+    outcome: BusinessOutcomeProjection,
+) -> BusinessRuleResult:
+    if outcome.input.requested_scope.get("mode") != "analysis":
+        return _passed(
+            "retrospective.analysis_grounding",
+            "本次不是逐题分析运行，不适用分析依据检查。",
+            (f"outcome:{outcome.outcome_hash}",),
+        )
+    invalid = [
+        item.item_id
+        for item in outcome.items
+        if item.item_type == "retrospective_question"
+        and not str(item.content.get("evidence") or "").strip()
+    ]
+    if invalid:
+        return _failed(
+            "retrospective.analysis_grounding",
+            "逐题分析缺少可核对的回答证据：" + "、".join(invalid),
+            tuple(f"retrospective-question:{item}" for item in invalid),
+        )
+    return _passed(
+        "retrospective.analysis_grounding",
+        "逐题分析均保留了可核对的回答证据。",
+        tuple(f"retrospective-question:{item.item_id}" for item in outcome.items)
+        or (f"outcome:{outcome.outcome_hash}",),
+    )
+
+
+def _retrospective_discussion_result_isolation(
+    outcome: BusinessOutcomeProjection,
+) -> BusinessRuleResult:
+    if outcome.input.requested_scope.get("mode") != "discussion":
+        return _passed(
+            "retrospective.discussion_result_isolation",
+            "本次不是复盘讨论运行，不适用讨论结果隔离检查。",
+            (f"outcome:{outcome.outcome_hash}",),
+        )
+    invalid = [
+        item.item_id
+        for item in outcome.items
+        if item.item_type != "discussion_message"
+    ]
+    if invalid:
+        return _failed(
+            "retrospective.discussion_result_isolation",
+            "讨论运行写入了正式复盘结果项：" + "、".join(invalid),
+            tuple(f"outcome-item:{item}" for item in invalid),
+        )
+    return _passed(
+        "retrospective.discussion_result_isolation",
+        "讨论运行只投影消息，没有改写正式逐题分析。",
+        tuple(f"message:{item.item_id}" for item in outcome.items)
+        or (f"outcome:{outcome.outcome_hash}",),
+    )
+
+
+def _retrospective_history_source_coverage(
+    outcome: BusinessOutcomeProjection,
+) -> BusinessRuleResult:
+    if outcome.input.requested_scope.get("mode") != "history":
+        return _passed(
+            "retrospective.history_source_coverage",
+            "本次不是历史检索运行，不适用检索来源检查。",
+            (f"outcome:{outcome.outcome_hash}",),
+        )
+    invalid = []
+    for item in outcome.items:
+        refs = {
+            ref
+            for provenance in item.provenance
+            for ref in provenance.source_refs
+        }
+        if not any(ref.startswith("retrospective:") for ref in refs) or not any(
+            ref.startswith("search-result:") for ref in refs
+        ):
+            invalid.append(item.item_id)
+    if invalid:
+        return _failed(
+            "retrospective.history_source_coverage",
+            "历史检索命中缺少场次或命中结果引用：" + "、".join(invalid),
+            tuple(f"history-match:{item}" for item in invalid),
+        )
+    return _passed(
+        "retrospective.history_source_coverage",
+        "历史检索命中均保留了场次和结果引用。",
+        tuple(f"history-match:{item.item_id}" for item in outcome.items)
         or (f"outcome:{outcome.outcome_hash}",),
     )
 

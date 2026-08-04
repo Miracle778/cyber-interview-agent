@@ -75,6 +75,42 @@ def test_registry_rejects_active_definition_without_builder() -> None:
         )
 
 
+def test_registry_rejects_quality_capability_without_eval_pack() -> None:
+    with pytest.raises(RuntimeError, match="manual_judge requires eval_pack_id"):
+        AgentDefinitionRegistry(
+            (
+                AgentDefinition(
+                    agent_id="test.agent",
+                    definition_version="1",
+                    builder_key="test_builder",
+                    display_name="Test",
+                    route_template="/test",
+                    capabilities=frozenset({"manual_judge"}),
+                    eval_pack_id=None,
+                    child_components=(),
+                ),
+            )
+        )
+
+
+def test_registry_rejects_eval_pack_without_quality_capability() -> None:
+    with pytest.raises(RuntimeError, match="eval_pack_id requires manual_judge"):
+        AgentDefinitionRegistry(
+            (
+                AgentDefinition(
+                    agent_id="test.agent",
+                    definition_version="1",
+                    builder_key="test_builder",
+                    display_name="Test",
+                    route_template="/test",
+                    capabilities=frozenset(),
+                    eval_pack_id="test-agent.v2",
+                    child_components=(),
+                ),
+            )
+        )
+
+
 def test_graph_factory_rejects_unknown_agent_before_building() -> None:
     factory = ProductionGraphFactory(None)
 
@@ -118,9 +154,17 @@ def test_interview_retrospective_is_registered_as_business_agent() -> None:
     assert registration.display_name == "面试复盘"
     assert registration.route_template == "/retrospectives"
     assert registration.system is False
-    assert {"open_business", "cancel", "retry", "resume", "export_trace"} <= set(
+    assert {
+        "open_business",
+        "cancel",
+        "retry",
+        "resume",
+        "manual_judge",
+        "export_trace",
+    } <= set(
         registration.capabilities
     )
+    assert registration.eval_pack_id == "interview-retrospective.v2"
     assert {
         "interview_retrospective_cleanup",
         "interview_retrospective_chat",

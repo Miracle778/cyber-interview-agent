@@ -11,7 +11,7 @@ from app.observability.registry import AGENT_OBSERVABILITY_REGISTRY
 
 
 def test_eval_pack_ids_versions_and_dimension_ids_are_stable() -> None:
-    assert len(AGENT_EVAL_PACKS) == 17
+    assert len(AGENT_EVAL_PACKS) == 18
     assert len(AGENT_EVAL_PACKS) == len(set(AGENT_EVAL_PACKS))
     dimension_pairs: set[tuple[str, str]] = set()
     for pack_id, pack in AGENT_EVAL_PACKS.items():
@@ -43,6 +43,21 @@ def test_eval_pack_ids_versions_and_dimension_ids_are_stable() -> None:
     dimension = next(iter(AGENT_EVAL_PACKS.values())).dimensions[0]
     with pytest.raises(FrozenInstanceError):
         dimension.id = "changed"  # type: ignore[misc]
+
+
+def test_interview_retrospective_pack_covers_the_shared_business_agent() -> None:
+    pack = AGENT_EVAL_PACKS["interview-retrospective.v2"]
+
+    assert pack.task_type == "interview_retrospective"
+    assert pack.evaluation_contract_version == 2
+    assert {
+        "transcript_fidelity",
+        "question_extraction_completeness",
+        "analysis_grounding",
+        "discussion_context",
+        "history_source_coverage",
+        "lifecycle_idempotency",
+    } <= {dimension.id for dimension in pack.dimensions}
 
 
 def test_every_observability_eval_pack_reference_resolves() -> None:

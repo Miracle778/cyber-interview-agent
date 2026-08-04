@@ -35,6 +35,9 @@ class ExecutionSummaryResource(ObservabilityModel):
     status: str
     trace_health: TraceHealth
     capabilities: list[ObservabilityCapability]
+    evaluation_supported: bool = False
+    evaluation_available: bool = False
+    evaluation_unavailable_reason: str | None = None
     route: str
     system_operation_count: int = Field(ge=0)
     model_call_count: int = Field(ge=0)

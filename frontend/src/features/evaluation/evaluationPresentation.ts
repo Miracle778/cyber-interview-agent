@@ -35,6 +35,7 @@ const PACK_LABELS: Record<string, string> = {
   "review-round.v2": "复习轮次业务结果质量",
   "review-single.v2": "单题评价业务结果质量",
   "review-discussion.v2": "深入讨论业务结果质量",
+  "interview-retrospective.v2": "面试复盘业务结果质量",
   "profile-ingest.v2": "画像提取业务结果质量",
   "profile-assessment.v2": "画像评估业务结果质量",
   "profile-assistant.v2": "画像助手业务结果质量",
@@ -134,6 +135,15 @@ const DIMENSION_LABELS: Record<string, string> = {
   gap_actionability: "差距可执行",
   gap_lifecycle: "差距生命周期",
   project_fact_grounding: "项目事实依据",
+  transcript_fidelity: "转写忠实度",
+  uncertainty_confirmation: "不确定项确认",
+  speaker_question_recovery: "说话人与问题还原",
+  question_extraction_completeness: "题目提取完整性",
+  analysis_grounding: "分析证据支撑",
+  recommendation_actionability: "改进建议可执行性",
+  discussion_context: "复盘讨论上下文",
+  history_source_coverage: "历史检索来源覆盖",
+  lifecycle_idempotency: "运行生命周期一致性",
   interview_value: "面试价值",
   answer_non_disclosure: "答案不泄露",
   dimension_fit: "维度适配",
@@ -152,6 +162,65 @@ const DIMENSION_LABELS: Record<string, string> = {
   "job.inference_boundary": "岗位推断边界",
   "project.gap_lifecycle": "项目差距生命周期",
   "project.question_catalog_link": "项目题入库关联",
+  "retrospective.inferred_question_confirmation": "推断题人工确认",
+  "retrospective.analysis_grounding": "复盘结论证据支撑",
+  "retrospective.discussion_result_isolation": "讨论结果隔离",
+  "retrospective.history_source_coverage": "历史检索来源覆盖",
+  "runtime.workspace_ownership": "运行归属正确",
+  "runtime.idempotent_terminal_writes": "结果不会重复写入",
+  "runtime.count_conservation": "处理数量一致",
+  "runtime.source_provenance": "结果来源可追溯",
+  "runtime.source_version_integrity": "来源版本可核对",
+  "runtime.late_result_protection": "任务结束后结果保护",
+  "runtime.tool_write_boundary": "工具写入边界",
+  "runtime.receipt_event_consistency": "业务结果与处理记录一致",
+};
+
+const RUNTIME_SUMMARIES: Record<string, {
+  success: string;
+  warning: string;
+  danger: string;
+}> = {
+  "runtime.workspace_ownership": {
+    success: "本次结果属于当前工作区和对应任务。",
+    warning: "暂时无法完整确认本次结果与当前任务的归属关系。",
+    danger: "本次结果与当前工作区或任务不一致。",
+  },
+  "runtime.idempotent_terminal_writes": {
+    success: "本次没有发现重复保存的结果。",
+    warning: "暂时无法确认重复执行是否会产生重复结果。",
+    danger: "发现重复保存的结果，需要处理。",
+  },
+  "runtime.count_conservation": {
+    success: "处理前后的数量一致，没有发现遗漏或重复。",
+    warning: "暂时无法完整核对处理前后的数量。",
+    danger: "处理前后的数量不一致，可能存在遗漏或重复。",
+  },
+  "runtime.source_provenance": {
+    success: "结果保留了可追溯的来源。",
+    warning: "部分结果暂时无法追溯到明确来源。",
+    danger: "发现结果缺少必要的来源记录。",
+  },
+  "runtime.source_version_integrity": {
+    success: "结果来源、版本和原文位置可以完整核对。",
+    warning: "已有来源记录，但还不能完整确认对应版本和原文位置。",
+    danger: "结果引用的来源或版本不一致。",
+  },
+  "runtime.late_result_protection": {
+    success: "任务结束后返回的旧结果不会覆盖最终结果。",
+    warning: "缺少任务状态记录，暂时无法核对结束后返回的旧结果是否已被拦住。",
+    danger: "发现任务结束后返回的旧结果可能覆盖最终结果。",
+  },
+  "runtime.tool_write_boundary": {
+    success: "工具调用与结果写入都在允许范围内。",
+    warning: "暂时缺少完整记录，无法确认工具是否越界写入。",
+    danger: "发现工具调用或结果写入超出允许范围。",
+  },
+  "runtime.receipt_event_consistency": {
+    success: "业务结果与系统处理记录保持一致。",
+    warning: "暂时缺少业务结果与系统处理记录的对应依据。",
+    danger: "业务结果与系统处理记录不一致。",
+  },
 };
 
 const STATUS_META: Record<string, EvaluationStatusMeta> = {
@@ -183,7 +252,20 @@ export function evaluationPackLabel(id: string): string {
 }
 
 export function dimensionLabel(id: string): string {
-  return DIMENSION_LABELS[id] ?? readableIdentifier(id);
+  return DIMENSION_LABELS[id] ?? "其他检查项";
+}
+
+export function isRuntimeDimension(id: string): boolean {
+  return id.startsWith("runtime.");
+}
+
+export function dimensionUserSummary(dimension: EvaluationDimension): string {
+  const runtime = RUNTIME_SUMMARIES[dimension.dimensionId];
+  if (!runtime) {
+    return dimension.summary || dimension.risks[0] || dimensionLabel(dimension.dimensionId);
+  }
+  const tone = dimensionOutcome(dimension).tone;
+  return tone === "danger" ? runtime.danger : tone === "warning" ? runtime.warning : runtime.success;
 }
 
 export function evaluationStatusMeta(status: string): EvaluationStatusMeta {

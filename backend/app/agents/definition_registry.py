@@ -85,6 +85,21 @@ class AgentDefinitionRegistry:
                 raise RuntimeError(
                     f"Active Agent definition has no builder: {definition.agent_id}"
                 )
+            supports_manual_judge = "manual_judge" in definition.capabilities
+            if supports_manual_judge and definition.eval_pack_id is None:
+                raise RuntimeError(
+                    "Agent manual_judge requires eval_pack_id: "
+                    f"{definition.agent_id}"
+                )
+            if (
+                definition.eval_pack_id is not None
+                and not supports_manual_judge
+                and not definition.system
+            ):
+                raise RuntimeError(
+                    "Agent eval_pack_id requires manual_judge: "
+                    f"{definition.agent_id}"
+                )
             by_id[definition.agent_id] = definition
             for alias in definition.aliases:
                 if alias in by_id or alias in aliases:
@@ -442,6 +457,7 @@ _DEFINITIONS = (
         "resume",
         "manual_judge",
         "export_trace",
+        eval_pack_id="interview-retrospective.v2",
         child_components=(
             "interview_retrospective_cleanup",
             "interview_retrospective_question_extraction",
