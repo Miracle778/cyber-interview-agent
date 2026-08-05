@@ -9,10 +9,13 @@ import {
   feedbackSchema,
   regressionCaseListSchema,
   regressionCaseSchema,
+  regressionRunListSchema,
+  regressionRunSchema,
   type EvaluationComparison,
   type EvaluationFeedback,
   type EvaluationRun,
   type RegressionCase,
+  type RegressionRun,
   type EvaluationTrendPoint,
 } from "./evaluationTypes";
 
@@ -119,6 +122,36 @@ export async function listRegressionCases(
     { signal },
   );
   return parse(() => regressionCaseListSchema.parse(payload).items);
+}
+
+export async function runRegressionCase(
+  workspaceId: string,
+  caseId: string,
+  baselineImplementationId: string,
+  candidateImplementationId: string,
+): Promise<RegressionRun> {
+  const idempotencyKey = createOperationId("agent-regression");
+  const payload = await apiPost<{
+    caseId: string;
+    baselineImplementationId: string;
+    candidateImplementationId: string;
+  }, unknown>(
+    `/api/agent-evaluations/regression-runs?workspaceId=${encodeURIComponent(workspaceId)}`,
+    { caseId, baselineImplementationId, candidateImplementationId },
+    { headers: { "Idempotency-Key": idempotencyKey } },
+  );
+  return parse(() => regressionRunSchema.parse(payload));
+}
+
+export async function listRegressionRuns(
+  workspaceId: string,
+  signal?: AbortSignal,
+): Promise<RegressionRun[]> {
+  const payload = await apiGet<unknown>(
+    `/api/agent-evaluations/regression-runs?workspaceId=${encodeURIComponent(workspaceId)}`,
+    { signal },
+  );
+  return parse(() => regressionRunListSchema.parse(payload).items);
 }
 
 export async function compareEvaluationRuns(

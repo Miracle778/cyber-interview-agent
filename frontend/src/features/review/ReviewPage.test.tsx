@@ -6,7 +6,7 @@ import { MemoryRouter } from "react-router-dom";
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import type { PendingAction } from "../agent/hitlTypes";
 import type { KnowledgeSource } from "../knowledge/knowledgeTypes";
-import { ReviewPage } from "./ReviewPage";
+import { ReviewPage, shouldShowStreamExecutionError } from "./ReviewPage";
 import type { ActiveQuestion, ReviewRound } from "./reviewTypes";
 
 class FakeEventSource {
@@ -73,6 +73,14 @@ describe("R2 ReviewPage", () => {
   beforeEach(() => vi.stubGlobal("EventSource", FakeEventSource));
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+  it("does not surface a stale stream failure after durable state has recovered", () => {
+    const staleFailure = { code: "agent_execution_failed", message: "Agent 运行失败" };
+
+    expect(shouldShowStreamExecutionError("waiting_for_input", staleFailure, false)).toBe(false);
+    expect(shouldShowStreamExecutionError("running", staleFailure, false)).toBe(true);
+    expect(shouldShowStreamExecutionError("running", staleFailure, true)).toBe(false);
+  });
+
   it("separates question curation and review as primary entries", async () => {
     mockApi([]);
     render(<ReviewPage workspace={workspace} />, { wrapper });
@@ -120,10 +128,58 @@ describe("R2 ReviewPage", () => {
     expect(await screen.findByRole("region", { name: "当前复习轮次" })).toHaveTextContent(
       "Read View 如何判断可见性？",
     );
-    expect(screen.getByRole("link", { name: "返回任务运行" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "返回运行中心" })).toHaveAttribute(
       "href",
       "/agents?status=needs_me",
     );
+
+    fireEvent.click(screen.getByRole("button", { name: "返回历史" }));
+    expect(await screen.findByRole("heading", { name: "复习历史" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "当前复习轮次" })).toBeNull();
+  });
+
+  it("leaves a run-center deep-linked round when opening question curation", async () => {
+    mockApi([waitingRound]);
+    render(<ReviewPage workspace={workspace} />, {
+      wrapper: wrapperAt(
+        "/review?section=practice&reviewSessionId=session-1&returnTo=%2Fagents%3Fstatus%3Dneeds_me",
+      ),
+    });
+
+    expect(await screen.findByRole("region", { name: "当前复习轮次" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "题库整理" }));
+    expect(await screen.findByRole("heading", { name: "题库整理" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "当前复习轮次" })).toBeNull();
+  });
+
+  it("opens a job-target scoped setup without broadening to other questions", async () => {
+    const questions = activeQuestions(2).map((question, index) => ({
+      ...question,
+      sourceJobTargetId: index === 0 ? "target-1" : "target-2",
+    }));
+    mockApi([], questions);
+    render(<ReviewPage workspace={workspace} />, {
+      wrapper: wrapperAt(
+        "/review?create=1&scope=job-target&jobTargetId=target-1&scopeLabel=Agent%20%E5%BC%80%E5%8F%91%E5%B2%97&returnTo=%2Ftargets%3Ftarget%3Dtarget-1&returnLabel=%E8%BF%94%E5%9B%9E%E6%B1%82%E8%81%8C%E7%9B%AE%E6%A0%87",
+      ),
+    });
+
+    expect(await screen.findByRole("region", { name: "本轮复习范围" })).toHaveTextContent("岗位专项");
+    expect(screen.getByRole("region", { name: "本轮复习范围" })).toHaveTextContent("Agent 开发岗");
+    expect(await screen.findByText("匹配题目 1 道")).toBeInTheDocument();
+    expect(screen.queryByText("复习模式")).toBeNull();
+    expect(screen.getByRole("link", { name: "返回求职目标" })).toHaveAttribute("href", "/targets?target=target-1");
+  });
+
+  it("does not fall back to ordinary questions when a scoped setup has no match", async () => {
+    mockApi([], activeQuestions(2));
+    render(<ReviewPage workspace={workspace} />, {
+      wrapper: wrapperAt("/review?create=1&scope=project&projectClaimId=project-1&scopeLabel=%E8%AE%A2%E5%8D%95%E7%B3%BB%E7%BB%9F"),
+    });
+
+    expect(await screen.findByText("当前范围还没有可复习题目")).toBeInTheDocument();
+    expect(screen.getByText("匹配题目 0 道")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "开始项目专项复习" })).toBeDisabled();
   });
 
   it("opens completed and skipped questions in read-only review mode and returns to the active question", async () => {

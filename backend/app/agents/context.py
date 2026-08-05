@@ -19,6 +19,7 @@ class AgentContext:
     profile_claim_types: tuple[str, ...] = ()
     tool_result_item_limit: int = 50
     tool_excerpt_char_limit: int = 2000
+    retrospective_id: str | None = None
     trace_warning: Callable[[str], None] | None = field(
         default=None, repr=False, compare=False
     )

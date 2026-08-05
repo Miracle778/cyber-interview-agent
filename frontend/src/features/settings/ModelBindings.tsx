@@ -8,7 +8,7 @@ import {
   listProviders,
   replaceWorkspaceModelBindings,
 } from "./settingsApi";
-import type { ModelRole, ProviderResource } from "./providerTypes";
+import { MODEL_ROLE_COUNT, type ModelRole, type ProviderResource } from "./providerTypes";
 
 const ROLE_LABELS: Record<ModelRole, string> = {
   question_generation: "题目生成",
@@ -19,6 +19,8 @@ const ROLE_LABELS: Record<ModelRole, string> = {
   profile_assessment: "个人资料分析",
   job_analysis: "岗位分析",
   project_deep_dive: "项目深挖",
+  retrospective_analysis: "面试复盘分析",
+  retrospective_chat: "面试复盘对话",
 };
 
 const ROLE_DESCRIPTIONS: Record<ModelRole, string> = {
@@ -30,6 +32,8 @@ const ROLE_DESCRIPTIONS: Record<ModelRole, string> = {
   profile_assessment: "生成个人资料完善建议",
   job_analysis: "从 JD 中识别岗位重点",
   project_deep_dive: "围绕真实项目连续追问",
+  retrospective_analysis: "整理转写、还原问题并生成逐题分析",
+  retrospective_chat: "解释复盘结论并提出可确认的修正建议",
 };
 
 const ROLE_GROUPS: Array<{
@@ -53,6 +57,11 @@ const ROLE_GROUPS: Array<{
     roles: ["job_analysis", "project_deep_dive"],
   },
   {
+    title: "面试复盘",
+    description: "负责真实面试记录的整理、分析与后续讨论",
+    roles: ["retrospective_analysis", "retrospective_chat"],
+  },
+  {
     title: "通用助手",
     description: "未归入专项流程的 Agent 对话",
     roles: ["agent_chat"],
@@ -68,6 +77,8 @@ const EMPTY_BINDINGS: Record<ModelRole, string> = {
   profile_assessment: "",
   job_analysis: "",
   project_deep_dive: "",
+  retrospective_analysis: "",
+  retrospective_chat: "",
 };
 
 interface ModelBindingsProps {
@@ -150,7 +161,7 @@ export function ModelBindings({ workspaceId, refreshKey = 0, onBindingsChanged, 
 
   async function handleSave() {
     if (!complete) {
-      setError(toActionableError(new Error("请为八种用途选择可用模型"), "保存模型绑定失败"));
+      setError(toActionableError(new Error(`请为全部 ${MODEL_ROLE_COUNT} 种任务用途选择可用模型`), "保存模型绑定失败"));
       return;
     }
     setSaving(true);
@@ -228,7 +239,7 @@ export function ModelBindings({ workspaceId, refreshKey = 0, onBindingsChanged, 
       <div className="model-bindings__savebar" data-dirty={dirty}>
         <div className="model-bindings__save-status">
           {saved ? <CheckCircle2 size={16} aria-hidden="true" /> : null}
-          <strong>{configuredCount}/8 已配置</strong>
+          <strong>{configuredCount}/{MODEL_ROLE_COUNT} 已配置</strong>
           <span>{dirty ? "有未保存修改" : saved ? "配置已保存" : "当前配置已生效"}</span>
         </div>
         <div className="btn-row">

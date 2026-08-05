@@ -24,6 +24,7 @@ import { ReviewRuntimePanel } from "./ReviewRuntimePanel";
 import { ReviewSetup } from "./ReviewSetup";
 import { ReviewShell, type ReviewSection } from "./ReviewShell";
 import type { ReviewQuestion, ReviewRound, ReviewTimelineMessage } from "./reviewTypes";
+import { reviewScopeTitle } from "./reviewScope";
 
 interface ReviewPageProps { workspace: WorkspaceConfig | null; draftQuestion?: ReviewQuestion | null; }
 
@@ -43,6 +44,18 @@ function currentEvaluationStage(events: AgentEvent[], attemptId: string | null):
     if (event.type === "review.evaluation.deciding_follow_up") stage = "deciding_follow_up";
   }
   return stage;
+}
+
+export function shouldShowStreamExecutionError(
+  executionStatus: string | null | undefined,
+  executionError: { code: string; message: string } | null,
+  evaluationFailureIsHandled: boolean,
+) {
+  return Boolean(
+    executionError
+    && executionStatus === "running"
+    && !evaluationFailureIsHandled,
+  );
 }
 
 function ReviewQuestionStepper({ round, viewedOrdinal, onSelect }: { round: ReviewRound; viewedOrdinal: number | null; onSelect: (ordinal: number) => void }) {
@@ -184,16 +197,31 @@ function ReviewReportViewer({
 
 export function ReviewPage({ workspace }: ReviewPageProps) {
   const client = useQueryClient();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const workspaceId = workspace?.id ?? "";
   const requestedSection = searchParams.get("section");
   const reviewSessionId = searchParams.get("reviewSessionId");
   const curationSessionId = searchParams.get("curationSessionId");
   const requestedReturnTo = searchParams.get("returnTo");
-  const returnTo = requestedReturnTo === "/agents"
-    || requestedReturnTo?.startsWith("/agents?")
+  const returnTo = requestedReturnTo?.startsWith("/") && !requestedReturnTo.startsWith("//")
     ? requestedReturnTo
     : null;
+  const returnLabel = searchParams.get("returnLabel")?.trim()
+    || (returnTo?.startsWith("/agents") ? "返回运行中心" : "返回来源页面");
+  const requestedScope = searchParams.get("scope");
+  const requestedTargetId = searchParams.get("jobTargetId")?.trim() ?? "";
+  const requestedProjectId = searchParams.get("projectClaimId")?.trim() ?? "";
+  const requestedScopeLabel = searchParams.get("scopeLabel")?.trim() ?? "";
+  const scopeSelection = requestedScope === "job-target" || requestedScope === "job_target"
+    ? requestedTargetId
+      ? { type: "job_target" as const, id: requestedTargetId, label: requestedScopeLabel || "当前求职目标" }
+      : null
+    : requestedScope === "project"
+      ? requestedProjectId
+        ? { type: "project" as const, id: requestedProjectId, label: requestedScopeLabel || "当前项目" }
+        : null
+      : null;
+  const scopeQueryInvalid = Boolean(requestedScope && !scopeSelection);
   const [section, setSection] = useState<ReviewSection>(
     requestedSection === "catalog" ? "catalog" : "practice",
   );
@@ -206,17 +234,32 @@ export function ReviewPage({ workspace }: ReviewPageProps) {
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
   const focusedWorkspaceRef = useRef<HTMLElement | null>(null);
   const reportApprovalRef = useRef<HTMLElement | null>(null);
+  const appliedReviewDeepLinkRef = useRef<string | null>(null);
+  const appliedCreateDeepLinkRef = useRef<string | null>(null);
   const rounds = useQuery({ queryKey: ["review-rounds", workspaceId], queryFn: () => listReviewRounds(workspaceId), enabled: Boolean(workspace) });
   const questions = useQuery({ queryKey: ["active-review-questions", workspaceId], queryFn: () => listActiveQuestions(workspaceId), enabled: Boolean(workspace) });
   const round = useQuery({ queryKey: ["review-round", selectedRoundId], queryFn: () => getReviewRound(selectedRoundId!), enabled: Boolean(selectedRoundId) });
   useEffect(() => {
-    if (!reviewSessionId || selectedRoundId || !rounds.data) return;
+    if (!reviewSessionId || appliedReviewDeepLinkRef.current === reviewSessionId || selectedRoundId || !rounds.data) return;
     const requestedRound = rounds.data.find((item) => item.sessionId === reviewSessionId);
     if (requestedRound) {
+      appliedReviewDeepLinkRef.current = reviewSessionId;
       setSection("practice");
       setSelectedRoundId(requestedRound.id);
     }
   }, [reviewSessionId, rounds.data, selectedRoundId]);
+  useEffect(() => {
+    if (!reviewSessionId) appliedReviewDeepLinkRef.current = null;
+  }, [reviewSessionId]);
+  useEffect(() => {
+    if (searchParams.get("create") !== "1") return;
+    const signature = `${requestedScope ?? "ordinary"}:${requestedTargetId}:${requestedProjectId}`;
+    if (appliedCreateDeepLinkRef.current === signature) return;
+    appliedCreateDeepLinkRef.current = signature;
+    setSection("practice");
+    setSelectedRoundId(null);
+    setCreating(true);
+  }, [requestedProjectId, requestedScope, requestedTargetId, scopeQueryInvalid, searchParams]);
   const reportsNeedProcessing = Boolean(
     round.data?.status === "report_pending"
     && round.data.reports.some((report) => report.status === "review_pending"),
@@ -284,8 +327,26 @@ export function ReviewPage({ workspace }: ReviewPageProps) {
   const busy = create.isPending || answer.isPending || skip.isPending || interrupt.isPending || cancel.isPending || retry.isPending || recover.isPending;
   const caught = create.error ?? answer.error ?? interrupt.error ?? retry.error ?? recover.error ?? skip.error ?? cancel.error ?? discuss.error ?? archive.error ?? restore.error ?? rounds.error ?? round.error;
   const error = caught ? toActionableError(caught, "复习操作失败") : null;
+  const evaluationFailureIsHandled = round.data?.attempts.at(-1)?.status === "evaluation_failed";
+  const streamExecutionError = shouldShowStreamExecutionError(
+    round.data?.executionStatus,
+    stream.executionError,
+    evaluationFailureIsHandled,
+  ) ? stream.executionError : null;
 
   if (!workspace) return <div className="empty-state"><p>请先初始化工作区</p><Link className="text-link" to="/settings">前往设置</Link></div>;
+
+  function openSectionRoot(nextSection: ReviewSection) {
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set("section", nextSection);
+    nextParams.delete("reviewSessionId");
+    nextParams.delete("curationSessionId");
+    setSearchParams(nextParams, { replace: true });
+    setSection(nextSection);
+    setSelectedRoundId(null);
+    setCreating(false);
+    setDiscussionTarget(null);
+  }
 
   async function submitAnswer(value: string, configuration: { providerModelId: string; reasoningEffort: "none" | "low" | "medium" | "high" }) {
     if (!round.data?.currentInput) throw new Error("当前没有待回答输入");
@@ -309,7 +370,7 @@ export function ReviewPage({ workspace }: ReviewPageProps) {
 
   const showRoundMenu = round.data && !["completed", "cancelled", "failed"].includes(round.data.status);
   const toolbarActions = (selectedRoundId || creating) && !discussionTarget ? <>
-    <Button variant="ghost" className="review-back" onClick={() => { setSelectedRoundId(null); setCreating(false); setDiscussionTarget(null); }}><ArrowLeft size={16} />返回历史</Button>
+    <Button variant="ghost" className="review-back" onClick={() => openSectionRoot("practice")}><ArrowLeft size={16} />返回历史</Button>
     {showRoundMenu ? <details className="review-round-menu"><summary aria-label="更多轮次操作"><MoreHorizontal size={19} /></summary><div><button type="button" className="is-danger" disabled={busy} onClick={() => cancel.mutate()}><StopCircle size={16} />结束本轮</button></div></details> : null}
   </> : null;
 
@@ -352,12 +413,13 @@ export function ReviewPage({ workspace }: ReviewPageProps) {
     </nav>
   ) : null;
 
-  return <ReviewShell section={section} actions={toolbarActions} returnTo={returnTo} onSectionChange={(value) => { setSection(value); setSelectedRoundId(null); setCreating(false); setDiscussionTarget(null); }}>
-    {section === "catalog" ? <QuestionCatalog workspace={workspace} initialSessionId={curationSessionId} /> : !selectedRoundId && !creating ? <ReviewLanding rounds={rounds.data ?? []} questionCount={questions.isPending ? null : questions.data?.length ?? 0} onCreate={() => setCreating(true)} onOpen={(id) => { setSelectedRoundId(id); setDiscussionTarget(null); }} onCatalog={() => setSection("catalog")} onArchive={(value) => archive.mutate(value)} onRestore={(value) => restore.mutate(value)} /> : <section className="review-workbench" aria-label="复习工作台">
+  return <ReviewShell section={section} actions={toolbarActions} returnTo={returnTo} returnLabel={returnLabel} onSectionChange={openSectionRoot}>
+    {section === "catalog" ? <QuestionCatalog workspace={workspace} initialSessionId={curationSessionId} /> : !selectedRoundId && !creating ? <ReviewLanding rounds={rounds.data ?? []} questionCount={questions.isPending ? null : questions.data?.length ?? 0} onCreate={() => setCreating(true)} onOpen={(id) => { setSelectedRoundId(id); setDiscussionTarget(null); }} onCatalog={() => openSectionRoot("catalog")} onArchive={(value) => archive.mutate(value)} onRestore={(value) => restore.mutate(value)} /> : <section className="review-workbench" aria-label="复习工作台">
       <main className="review-workbench__main">
-        {creating ? <ReviewSetup workspace={workspace} questions={questions.data ?? []} onCreate={(request) => create.mutate(request)} onCatalog={() => { setSection("catalog"); setCreating(false); }} busy={create.isPending} /> : null}
+        {scopeQueryInvalid ? <section className="review-readiness review-readiness--low" role="alert"><span className="review-readiness__icon"><AlertCircle size={20} /></span><div><h3>无法识别复习范围</h3><p>来源页面没有提供完整的岗位或项目信息，请返回后重新进入。</p></div></section> : null}
+        {creating && !scopeQueryInvalid ? <ReviewSetup key={`${scopeSelection?.type ?? "ordinary"}:${scopeSelection?.id ?? "all"}`} workspace={workspace} questions={questions.data ?? []} scope={scopeSelection} onCreate={(request) => create.mutate(request)} onCatalog={() => openSectionRoot("catalog")} busy={create.isPending} /> : null}
         {round.isPending && selectedRoundId ? <p className="status-note" role="status">正在恢复复习轮次…</p> : null}
-        {!discussionTarget && round.data && ["waiting_for_input", "running"].includes(round.data.status) && round.data.executionStatus !== "failed" ? <><ReviewQuestionStepper round={round.data} viewedOrdinal={viewedOrdinal} onSelect={(ordinal) => setViewedOrdinal(ordinal === round.data!.currentIndex + 1 ? null : ordinal)} />{viewedAttempt ? <ReviewAttemptPreview attempt={viewedAttempt} currentOrdinal={round.data.currentIndex + 1} onBack={() => setViewedOrdinal(null)} /> : <section ref={focusedWorkspaceRef} className="review-focus-workspace"><ReviewConversation round={round.data} optimisticMessage={optimisticMessage} busy={busy} evaluationStage={evaluationStage} onSubmit={submitAnswer} onSkip={() => skip.mutate()} onInterrupt={() => interrupt.mutate()} onRetry={() => retry.mutate()} /><div className="review-insight-column"><ReviewRuntimePanel round={round.data} evaluationStage={evaluationStage} />{round.data.executionStatus === "waiting_for_approval" ? <ActionCenter workspaceId={workspace.id} showDiagnostic={false} actionType="knowledge.publish" watchExecutionId={round.data.executionId} onResolved={() => void invalidateRound(round.data!.id)} /> : null}</div></section>}</> : null}
+        {!discussionTarget && round.data && ["waiting_for_input", "running"].includes(round.data.status) && round.data.executionStatus !== "failed" ? <><div className="review-active-scope"><span>{reviewScopeTitle(round.data)}</span><small>本轮题目范围已冻结</small></div><ReviewQuestionStepper round={round.data} viewedOrdinal={viewedOrdinal} onSelect={(ordinal) => setViewedOrdinal(ordinal === round.data!.currentIndex + 1 ? null : ordinal)} />{viewedAttempt ? <ReviewAttemptPreview attempt={viewedAttempt} currentOrdinal={round.data.currentIndex + 1} onBack={() => setViewedOrdinal(null)} /> : <section ref={focusedWorkspaceRef} className="review-focus-workspace"><ReviewConversation round={round.data} optimisticMessage={optimisticMessage} busy={busy} evaluationStage={evaluationStage} onSubmit={submitAnswer} onSkip={() => skip.mutate()} onInterrupt={() => interrupt.mutate()} onRetry={() => retry.mutate()} /><div className="review-insight-column"><ReviewRuntimePanel round={round.data} evaluationStage={evaluationStage} />{round.data.executionStatus === "waiting_for_approval" ? <ActionCenter workspaceId={workspace.id} showDiagnostic={false} actionType="knowledge.publish" watchExecutionId={round.data.executionId} onResolved={() => void invalidateRound(round.data!.id)} /> : null}</div></section>}</> : null}
         {discussionTarget && discussionAttempt && round.data ? (
           <ReviewDiscussion
             roundId={round.data.id}
@@ -425,7 +487,7 @@ export function ReviewPage({ workspace }: ReviewPageProps) {
             ) : null}
           </>
         )}
-        {error || (stream.executionError && round.data?.executionStatus !== "failed") ? <div className="error-banner" role="alert"><AlertCircle size={16} /><span>错误：{error?.message ?? stream.executionError?.message}</span><span>{error?.advice ?? "刷新轮次后重试"}</span></div> : null}
+        {error || streamExecutionError ? <div className="error-banner" role="alert"><AlertCircle size={16} /><span>错误：{error?.message ?? streamExecutionError?.message}</span><span>{error?.advice ?? "刷新轮次后重试"}</span></div> : null}
       </main>
     </section>}
   </ReviewShell>;

@@ -7,10 +7,36 @@ import { RequirementWorkbench } from "./RequirementWorkbench";
 import { ProjectQuestionCandidates } from "./ProjectQuestionCandidates";
 import { getTargetIdentity, JobTargetWorkspace } from "./JobTargetWorkspace";
 import { JobTargetList } from "./JobTargetList";
+import { JobTargetOverview } from "./JobTargetOverview";
 import { ProjectPriorityPanel } from "./ProjectPriorityPanel";
-import type { DeepDiveResource, JobAnalysis, JobRequirement } from "./jobTargetTypes";
+import type { DeepDiveResource, JobAnalysis, JobRequirement, JobTargetRetrospectiveSummary } from "./jobTargetTypes";
 
 describe("job target workspace", () => {
+  it("summarizes multi-round interview feedback without exposing report bodies", () => {
+    const onOpenRetrospectives = vi.fn();
+    const target = {
+      id: "t", workspaceId: "w", companyName: "示例公司", roleName: "后端工程师", seniority: "3-5 年",
+      sourceUrl: null, lifecycleStatus: "active", currentDocumentVersionId: "d", version: 1, createdAt: "", updatedAt: "",
+    } satisfies import("./jobTargetTypes").JobTarget;
+    const summary = {
+      retrospectiveCount: 3,
+      latest: { retrospectiveId: "r3", title: "三面复盘", roundLabel: "三面", interviewDate: "2026-08-01", outcome: "passed", lifecycleStatus: "active" },
+      unresolvedActionCount: 2,
+      gapCounts: { knowledge: 3, expression: 2 },
+      timeline: [],
+    } satisfies JobTargetRetrospectiveSummary;
+
+    render(<JobTargetOverview target={target} retrospectiveSummary={summary} onEditJd={vi.fn()} onCompleteInfo={vi.fn()} onStartAnalysis={vi.fn()} onControl={vi.fn()} onNavigate={vi.fn()} onStartTargetReview={vi.fn()} onOpenRetrospectives={onOpenRetrospectives} />);
+
+    const feedback = screen.getByRole("region", { name: "面试反馈" });
+    expect(within(feedback).getByText("3")).toBeVisible();
+    expect(within(feedback).getByText("最近一轮 · 通过")).toBeVisible();
+    expect(within(feedback).getByText("2")).toBeVisible();
+    expect(within(feedback).getByText(/知识 3 · 表达 2/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "查看全部复盘" }));
+    expect(onOpenRetrospectives).toHaveBeenCalledOnce();
+  });
+
   it("offers a compact target selector instead of forcing the desktop sidebar on mobile", () => {
     const onSelect = vi.fn();
     const targets = [
@@ -86,6 +112,17 @@ describe("job target workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
     expect(onEdit).toHaveBeenCalledWith("candidate-1", "订单系统 · 目标岗位追问", "请说明订单系统中的 Redis 取舍。");
     cleanup();
+  });
+
+  it("offers project review only after a project question is confirmed", () => {
+    const onStartReview = vi.fn();
+    render(<ProjectQuestionCandidates projectTitle="订单系统" candidates={[{
+      id: "candidate-confirmed", dimension: "architecture_solution", status: "confirmed",
+      question: { title: "订单系统架构", question: "如何设计订单系统？" },
+    }]} onStartReview={onStartReview} onDecide={vi.fn()} onBatchDecide={vi.fn()} onEdit={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "开始项目专项复习" }));
+    expect(onStartReview).toHaveBeenCalledOnce();
   });
 
   it("keeps team narration out of the confirmation queue and separates detail from bulk selection", () => {
@@ -183,8 +220,45 @@ describe("job target workspace", () => {
     render(<JobTargetWorkspace target={target} analysis={analysis} tab="deep-dive" onTab={vi.fn()} onCompleteInfo={onCompleteInfo}><div>项目内容</div></JobTargetWorkspace>);
 
     expect(screen.getByText(/还缺岗位名称/)).toBeVisible();
+    expect(screen.getByRole("link", { name: "面试复盘" })).toHaveAttribute("href", "/retrospectives?jobTargetId=t");
     fireEvent.click(screen.getByRole("button", { name: "待补充 补充岗位名称" }));
     expect(onCompleteInfo).toHaveBeenCalledOnce();
+  });
+
+  it("prioritizes incomplete target information and explains review readiness", () => {
+    const onCompleteInfo = vi.fn();
+    const onStartTargetReview = vi.fn();
+    const target = {
+      id: "t", workspaceId: "w", companyName: "示例公司", roleName: "", seniority: "", sourceUrl: null,
+      lifecycleStatus: "active", currentDocumentVersionId: "d", version: 1, createdAt: "", updatedAt: "",
+    } satisfies import("./jobTargetTypes").JobTarget;
+    const readiness = {
+      jobTargetId: "t", status: "requirements_pending", requirements: 5, coreProjectId: null, supplementaryProjectIds: [],
+      pendingRequirements: 2, confirmedRequirements: 3, rejectedRequirements: 0, confirmedProjectQuestions: 0, profileVersion: 2,
+    } satisfies import("./jobTargetTypes").TargetReadiness;
+
+    render(<JobTargetOverview
+      target={target}
+      readiness={readiness}
+      profileSummary={{ confirmedItems: 22, projectCount: 2 }}
+      onEditJd={vi.fn()}
+      onCompleteInfo={onCompleteInfo}
+      onStartAnalysis={vi.fn()}
+      onControl={vi.fn()}
+      onNavigate={vi.fn()}
+      onStartTargetReview={onStartTargetReview}
+      onOpenRetrospectives={vi.fn()}
+    />);
+
+    expect(screen.getByRole("heading", { name: "先补全岗位信息" })).toBeVisible();
+    expect(screen.getByText("3 条已确认")).toBeVisible();
+    expect(screen.getByText("2 条待确认")).toBeVisible();
+    expect(screen.getByText("22 条画像资料 · 2 个项目")).toBeVisible();
+    expect(screen.getByRole("button", { name: "开始岗位专项复习" })).toBeDisabled();
+    expect(screen.getByText("确认项目题后即可开始岗位专项复习")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "补全岗位信息" }));
+    expect(onCompleteInfo).toHaveBeenCalledOnce();
+    expect(onStartTargetReview).not.toHaveBeenCalled();
   });
 
   it("restores saved project priorities and makes save feedback visible", () => {

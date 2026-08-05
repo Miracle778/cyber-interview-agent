@@ -1,12 +1,24 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import SimpleNamespace
 
 import pytest
 
-from app.evaluation.contracts import JudgeDimensionResult, JudgeResult
+from app.evaluation.contracts import (
+    JudgeDimensionResult,
+    JudgeDimensionResultV2,
+    JudgeResult,
+    JudgeResultV2,
+)
+from app.evaluation.outcomes import (
+    BusinessOutcomePayload,
+    OutcomeCounters,
+    OutcomeIdentity,
+    OutcomeInput,
+    freeze_business_outcome,
+)
 from app.evaluation.registry import get_eval_pack
 from app.evaluation.repository import AgentEvaluationRepository
 from app.evaluation.sampling import decide_automatic_evaluation
@@ -21,6 +33,9 @@ from app.evaluation.snapshot import (
     FrozenTraceEvent,
 )
 from app.infrastructure.runtime_database import connect_runtime_database
+from app.application.session_service import ProductRepository
+from app.agents.definition_registry import require_agent_definition
+from app.agents.definition_snapshot import build_agent_definition_snapshot
 
 
 class FakeObservability:
@@ -96,6 +111,76 @@ class FakeJudge:
         )
 
 
+class FakeV2Judge:
+    async def evaluate_v2(self, *, view, pack, context):
+        return JudgeResultV2(
+            dimensions=[
+                JudgeDimensionResultV2(
+                    dimension_id=dimension.dimension_id,
+                    applicability=dimension.applicability,
+                    rating=(
+                        "meets"
+                        if dimension.applicability == "applicable"
+                        else None
+                    ),
+                    severity=(
+                        "none"
+                        if dimension.applicability == "applicable"
+                        else None
+                    ),
+                    confidence=(
+                        0.8
+                        if dimension.applicability == "applicable"
+                        else None
+                    ),
+                    cited_event_hashes=[],
+                    cited_artifact_hashes=[],
+                    evidence_gaps=(
+                        []
+                        if dimension.applicability == "applicable"
+                        else [dimension.applicability_reason]
+                    ),
+                    summary=dimension.applicability_reason,
+                    risks=[],
+                )
+                for dimension in view.dimensions
+            ],
+            summary="业务结果可用",
+            risks=[],
+            human_review_required=False,
+        )
+
+
+class FakeOutcomeAdapter:
+    def build(self, execution_id):
+        return freeze_business_outcome(
+            BusinessOutcomePayload(
+                task_type="question_curation",
+                identity=OutcomeIdentity(
+                    workspace_id="workspace-1",
+                    session_id="session-1",
+                    execution_id=execution_id,
+                    graph_id="question.curate",
+                    domain_refs={"batchId": "batch-1"},
+                ),
+                input=OutcomeInput(
+                    source_refs=("source-1",),
+                    input_hash="d" * 64,
+                    requested_scope={"batchId": "batch-1"},
+                ),
+                execution_status="completed",
+                terminal_state="review_pending",
+                items=(),
+                units=(),
+                unit_counters={
+                    "candidates": OutcomeCounters(
+                        total=0, completed=0, failed=0, skipped=0, pending=0
+                    )
+                },
+            )
+        )
+
+
 def _service(tmp_path, *, status="completed", judge=None, settings=None):
     connection = connect_runtime_database(tmp_path)
     observability = FakeObservability(status=status)
@@ -116,6 +201,39 @@ def _service(tmp_path, *, status="completed", judge=None, settings=None):
     return connection, observability, service
 
 
+def test_enabled_evaluation_captures_supported_execution_before_graph(tmp_path) -> None:
+    connection, _observability, service = _service(
+        tmp_path,
+        settings=SimpleNamespace(
+            enabled=True,
+            capture_regression_inputs=True,
+            automatic_daily_cap=20,
+            judge_provider_model_id=None,
+        ),
+    )
+    product = ProductRepository(connection)
+    session = product.create_session(
+        workspace_id="workspace-1",
+        kind="review.discussion",
+        title="Discussion",
+    )
+    execution = product.create_execution(
+        session.id,
+        input={"message": "explain"},
+        model_bindings={"answer_evaluation": "model-1"},
+    )
+    try:
+        service.capture_pre_execution_snapshot(execution)
+        snapshot = service.pre_execution_snapshot(execution.id)
+
+        assert snapshot is not None
+        assert snapshot["mode"] == "restorable"
+        assert snapshot["capturePoint"] == "before_graph_execution"
+        assert snapshot["sourceExecutionId"] == execution.id
+    finally:
+        connection.close()
+
+
 @pytest.mark.asyncio
 async def test_manual_judge_is_idempotent_and_does_not_change_business_status(
     tmp_path,
@@ -123,15 +241,63 @@ async def test_manual_judge_is_idempotent_and_does_not_change_business_status(
     connection, observability, service = _service(tmp_path)
     try:
         first = await service.evaluate(
-            "execution-1", idempotency_key="manual-request-1"
+            "execution-1", idempotency_key="manual-request-1", eval_pack_id="review.v1"
         )
         replay = await service.evaluate(
-            "execution-1", idempotency_key="manual-request-1"
+            "execution-1", idempotency_key="manual-request-1", eval_pack_id="review.v1"
         )
         assert first.id == replay.id
         assert first.status == "completed"
         assert observability.row["status"] == "completed"
         assert len(service.repository.list_dimension_results(first.id)) > 0
+    finally:
+        connection.close()
+
+
+@pytest.mark.asyncio
+async def test_evaluation_uses_frozen_pack_instead_of_current_registry(
+    tmp_path,
+) -> None:
+    connection, observability, service = _service(tmp_path)
+    current = build_agent_definition_snapshot(
+        definition=require_agent_definition("review.single"),
+        graph_version=1,
+        model_bindings={"answer_evaluation": "model-1"},
+    )
+    frozen = replace(
+        current,
+        agent_definition_version="historical-definition",
+        eval_pack_id="review.v1",
+        eval_pack_version=1,
+    )
+    observability.row["agent_definition_snapshot_json"] = frozen.to_json()
+    try:
+        result = await service.evaluate("execution-1")
+
+        assert result.status == "completed"
+        assert result.eval_pack_id == "review.v1"
+        assert result.eval_pack_version == 1
+    finally:
+        connection.close()
+
+
+@pytest.mark.asyncio
+async def test_evaluation_rejects_pack_override_that_differs_from_snapshot(
+    tmp_path,
+) -> None:
+    connection, observability, service = _service(tmp_path)
+    frozen = build_agent_definition_snapshot(
+        definition=require_agent_definition("review.single"),
+        graph_version=1,
+        model_bindings={"answer_evaluation": "model-1"},
+    )
+    observability.row["agent_definition_snapshot_json"] = frozen.to_json()
+    try:
+        with pytest.raises(
+            EvaluationNotSupportedError,
+            match="冻结的评估标准",
+        ):
+            await service.evaluate("execution-1", eval_pack_id="review.v1")
     finally:
         connection.close()
 
@@ -144,7 +310,7 @@ async def test_provider_failure_keeps_deterministic_results_and_business_run(
         tmp_path, judge=FakeJudge(fail=True)
     )
     try:
-        result = await service.evaluate("execution-1")
+        result = await service.evaluate("execution-1", eval_pack_id="review.v1")
         assert result.status == "failed"
         assert result.error_code == "judge_provider_failed"
         assert result.deterministic_result_json is not None
@@ -160,7 +326,7 @@ async def test_cancelled_judge_records_cancel_without_business_write(tmp_path) -
     )
     try:
         with pytest.raises(asyncio.CancelledError):
-            await service.evaluate("execution-1")
+            await service.evaluate("execution-1", eval_pack_id="review.v1")
         assert service.repository.list_runs()[0].status == "cancelled"
         assert observability.row["status"] == "completed"
     finally:
@@ -177,7 +343,8 @@ async def test_automatic_risk_runs_respect_daily_cap(tmp_path) -> None:
     )
     try:
         completed = await service.evaluate(
-            "execution-1", trigger="automatic", idempotency_key="automatic-1"
+            "execution-1", trigger="automatic", idempotency_key="automatic-1",
+            eval_pack_id="review.v1",
         )
         assert completed.status == "completed"
         with pytest.raises(AutomaticEvaluationSkipped, match="daily_cap"):
@@ -185,6 +352,7 @@ async def test_automatic_risk_runs_respect_daily_cap(tmp_path) -> None:
                 "execution-1",
                 trigger="automatic",
                 idempotency_key="automatic-2",
+                eval_pack_id="review.v1",
             )
     finally:
         connection.close()
@@ -209,5 +377,97 @@ def test_success_sampling_is_stable_and_recursive_agent_is_rejected(tmp_path) ->
     try:
         with pytest.raises(EvaluationNotSupportedError):
             asyncio.run(service.evaluate("execution-1"))
+    finally:
+        connection.close()
+
+
+@pytest.mark.asyncio
+async def test_v2_evaluation_uses_business_outcome_and_minimal_judge_view(
+    tmp_path,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+    observability = FakeObservability(graph_id="question.curate")
+    service = AgentEvaluationService(
+        workspace_id="workspace-1",
+        workspace_root=tmp_path,
+        repository=AgentEvaluationRepository(connection, "workspace-1"),
+        observability=observability,
+        model_bindings=lambda: {"answer_evaluation": "model-1"},
+        settings=lambda: SimpleNamespace(
+            enabled=True,
+            automatic_daily_cap=20,
+            judge_provider_model_id=None,
+        ),
+        judge_factory=lambda _model_id: FakeV2Judge(),
+        outcome_adapter_factory=lambda _task_type: FakeOutcomeAdapter(),
+    )
+    try:
+        result = await service.evaluate("execution-1")
+        dimensions = service.repository.list_dimension_results(result.id)
+        snapshot = result.snapshot_json
+
+        assert result.status == "completed"
+        assert result.eval_pack_id == "question-curation.v2"
+        assert result.evaluation_contract_version == 2
+        assert result.business_outcome_hash is not None
+        assert '"businessOutcome"' in snapshot
+        assert '"evaluationView"' in snapshot
+        assert "traceEvents" not in snapshot
+        assert '"mode":"minimal_evaluation_view"' in result.judge_data_scope_json
+        assert any(item.rating == "meets" for item in dimensions)
+        assert any(item.applicability == "not_applicable" for item in dimensions)
+    finally:
+        connection.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "graph_id",
+    (
+        "review.round",
+        "review.single",
+        "review.discussion",
+        "profile.ingest",
+        "profile.assess",
+        "profile.manage",
+        "job.analysis",
+        "project.deep_dive",
+    ),
+)
+async def test_primary_v2_packs_run_through_the_shared_service(
+    tmp_path,
+    graph_id,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+    connection.execute(
+        "INSERT INTO agent_sessions "
+        "(id, workspace_id, graph_id, graph_version, title) "
+        "VALUES ('session-1', 'workspace-1', ?, 1, 'Test')",
+        (graph_id,),
+    )
+    connection.execute(
+        "INSERT INTO agent_runs (id, session_id, status, input_json) "
+        "VALUES ('execution-1', 'session-1', 'completed', '{}')"
+    )
+    connection.commit()
+    service = AgentEvaluationService(
+        workspace_id="workspace-1",
+        workspace_root=tmp_path,
+        repository=AgentEvaluationRepository(connection, "workspace-1"),
+        observability=FakeObservability(graph_id=graph_id),
+        model_bindings=lambda: {"answer_evaluation": "model-1"},
+        settings=lambda: SimpleNamespace(
+            enabled=True,
+            automatic_daily_cap=20,
+            judge_provider_model_id=None,
+        ),
+        judge_factory=lambda _model_id: FakeV2Judge(),
+    )
+    try:
+        result = await service.evaluate("execution-1")
+        assert result.status == "completed"
+        assert result.evaluation_contract_version == 2
+        assert result.task_type != "legacy"
+        assert result.business_outcome_hash is not None
     finally:
         connection.close()

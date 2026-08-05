@@ -13,6 +13,7 @@ from app.api.dependencies import get_agent_application
 from app.api.routes_agent import router as agent_router
 from app.application.workspace_runtime import AgentApplication
 from app.diagnostics.agent_trace import read_trace_rows
+from app.observability.registry import require_registration
 
 
 def _graph_factory(kind, **dependencies):
@@ -39,6 +40,12 @@ def _graph_factory(kind, **dependencies):
     return graph.compile()
 
 
+def _test_registration_guard(kind: str, *, for_user_creation: bool = False):
+    if kind in {"diagnostic.echo", "diagnostic.slow", "diagnostic.draft"}:
+        return None
+    return require_registration(kind, for_user_creation=for_user_creation)
+
+
 @pytest_asyncio.fixture
 async def application(tmp_path: Path):
     workspace = tmp_path / "workspace"
@@ -48,6 +55,7 @@ async def application(tmp_path: Path):
         workspace_ids=lambda: ("w1",),
         model_bindings=lambda _workspace_id: {},
         graph_factory=_graph_factory,
+        registration_guard=_test_registration_guard,
     )
     try:
         yield value
@@ -61,6 +69,107 @@ def api(application):
     api.include_router(agent_router)
     api.dependency_overrides[get_agent_application] = lambda: application
     return api
+
+
+@pytest.mark.asyncio
+async def test_unregistered_agent_session_is_rejected_without_database_writes(
+    api, application
+):
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/api/agent/sessions",
+            json={"workspaceId": "w1", "kind": "unknown.agent"},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "agent_not_registered"
+    row = application._context("w1").repository.connection.execute(
+        "SELECT COUNT(*) AS count FROM agent_sessions"
+    ).fetchone()
+    assert row["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_system_only_agent_session_is_rejected_by_public_api(
+    api, application
+):
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/api/agent/sessions",
+            json={"workspaceId": "w1", "kind": "knowledge.publish"},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "agent_not_user_creatable"
+
+
+@pytest.mark.asyncio
+async def test_unregistered_historical_session_cannot_start_a_new_execution(
+    api, application
+):
+    context = application._context("w1")
+    session = context.repository.create_session(
+        workspace_id="w1",
+        kind="removed.agent.v1",
+        title="Historical session",
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            f"/api/agent/sessions/{session.id}/executions",
+            json={"input": {"text": "do not run"}},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "agent_not_registered"
+    row = context.repository.connection.execute(
+        "SELECT COUNT(*) AS count FROM agent_runs WHERE session_id = ?",
+        (session.id,),
+    ).fetchone()
+    assert row["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_unregistered_historical_execution_cannot_be_retried(
+    api, application
+):
+    context = application._context("w1")
+    session = context.repository.create_session(
+        workspace_id="w1",
+        kind="removed.agent.v1",
+        title="Historical session",
+    )
+    execution = context.repository.create_execution(
+        session.id, input={"text": "old"}, model_bindings={}
+    )
+    context.repository.transition_execution(
+        execution.id,
+        expected=("running",),
+        target="failed",
+        error_code="legacy_failure",
+        error_message="legacy failure",
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            f"/api/agent/executions/{execution.id}/retry", json={}
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "agent_not_registered"
+    row = context.repository.connection.execute(
+        "SELECT COUNT(*) AS count FROM agent_runs WHERE session_id = ?",
+        (session.id,),
+    ).fetchone()
+    assert row["count"] == 1
 
 
 @pytest.mark.asyncio

@@ -27,6 +27,8 @@ def _task(index: int) -> CurationSeedTaskRecord:
         material_support="unknown",
         needs_review=True,
         normalization_issues=(),
+        source_answer=None,
+        supplemental_answer=None,
         last_error_code=None,
         version=1,
         created_at="2026-07-22 00:00:00",

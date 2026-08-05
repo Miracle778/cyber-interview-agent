@@ -14,6 +14,11 @@ from langgraph.types import Command
 
 from app.agents.context import AgentContext
 from app.agents.agent_factory import ModelOverride
+from app.agents.definition_registry import resolve_agent_definition
+from app.agents.definition_snapshot import (
+    AgentDefinitionSnapshot,
+    build_agent_definition_snapshot,
+)
 from app.diagnostics.agent_trace import AgentTraceWriter, TraceIdentity
 from app.middleware.agent_trace_middleware import safe_error_payload
 from app.application.event_projector import AgentEventProjector
@@ -66,6 +71,8 @@ def _seed_quality_for_candidate(
                 "material_support": task.material_support,
                 "needs_review": task.needs_review,
                 "normalization_issues": task.normalization_issues,
+                "source_answer": task.source_answer,
+                "supplemental_answer": task.supplemental_answer,
             }
     return {
         "seed_task_id": None,
@@ -73,6 +80,8 @@ def _seed_quality_for_candidate(
         "material_support": "unknown",
         "needs_review": True,
         "normalization_issues": ("legacy_quality_unknown",),
+        "source_answer": None,
+        "supplemental_answer": None,
     }
 
 
@@ -161,6 +170,7 @@ class AgentExecutionService:
         profile_storage: MaterialStorage | None = None,
         trace_writer: AgentTraceWriter | None = None,
         trace_warning: Callable[[AgentContext, str], None] | None = None,
+        capture_pre_execution: Callable[[ExecutionRecord], None] | None = None,
     ) -> None:
         self._workspace_id = workspace_id
         self._workspace_root = workspace_root
@@ -178,6 +188,7 @@ class AgentExecutionService:
         self._profile_storage = profile_storage
         self._trace_writer = trace_writer or AgentTraceWriter()
         self._trace_warning = trace_warning
+        self._capture_pre_execution = capture_pre_execution
         self._trace_warned_runs: set[str] = set()
         self._checkpointer = AgentCheckpointer(workspace_root)
         self._tasks: dict[str, asyncio.Task[None]] = {}
@@ -221,6 +232,16 @@ class AgentExecutionService:
         retry_of_execution_id: str | None = None,
     ) -> ExecutionRecord:
         bindings = dict(self._model_bindings())
+        definition = resolve_agent_definition(session.kind)
+        definition_snapshot = (
+            AgentDefinitionSnapshot.legacy_snapshot()
+            if definition is None
+            else build_agent_definition_snapshot(
+                definition=definition,
+                graph_version=session.graph_version,
+                model_bindings=bindings,
+            )
+        )
         execution = self._repository.create_execution(
             session.id,
             input=input,
@@ -229,6 +250,7 @@ class AgentExecutionService:
             execution_id=execution_id,
             input_message_id=input_message_id,
             retry_of_execution_id=retry_of_execution_id,
+            definition_snapshot=definition_snapshot,
         )
         if project_input_message:
             message = self._repository.append_message(
@@ -281,6 +303,7 @@ class AgentExecutionService:
     ) -> None:
         if execution.status != "running":
             raise ValueError("prepared execution must be running")
+        self._capture_regression_snapshot(execution)
         self._spawn(execution.id, graph_input=graph_input)
 
     def run_background(
@@ -290,6 +313,7 @@ class AgentExecutionService:
             raise ValueError("prepared execution must be running")
         if execution.id in self._tasks:
             raise ValueError("execution already has a running task")
+        self._capture_regression_snapshot(execution)
         control = ExecutionControl()
         cancellation = ExecutionCancellation(
             repository=self._repository,
@@ -300,6 +324,17 @@ class AgentExecutionService:
             self._execute_background(execution.id, handler, cancellation)
         )
         self._register_task(execution.id, task, control)
+
+    def _capture_regression_snapshot(self, execution: ExecutionRecord) -> None:
+        if self._capture_pre_execution is None:
+            return
+        try:
+            self._capture_pre_execution(execution)
+        except Exception as error:
+            logging.getLogger(__name__).warning(
+                "failed to capture pre-execution regression snapshot: %s",
+                error,
+            )
 
     async def resume_approval(
         self, execution_id: str, decision: dict[str, Any], _receipt_id: str

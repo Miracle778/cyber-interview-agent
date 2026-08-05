@@ -7,7 +7,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 DocumentType = Literal[
-    "source", "question", "concept", "session_report", "mastery_report"
+    "source",
+    "question",
+    "concept",
+    "session_report",
+    "mastery_report",
+    "interview_retrospective",
 ]
 
 

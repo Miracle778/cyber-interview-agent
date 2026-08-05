@@ -2,6 +2,7 @@ import { CheckCircle2, CircleAlert, LoaderCircle } from "lucide-react";
 import { formatBeijingDateTime } from "../../shared/time";
 import {
   evaluationPackLabel,
+  evaluationContractLabel,
   evaluationStatusMeta,
 } from "./evaluationPresentation";
 import type { EvaluationRun } from "./evaluationTypes";
@@ -36,7 +37,7 @@ export function EvaluationRunList({
             <span>
               <strong>{evaluationPackLabel(run.evalPackId)}</strong>
               <small>
-                v{run.evalPackVersion} · {run.trigger === "manual" ? "手动" : run.trigger === "automatic" ? "自动" : "回归"}
+                {evaluationContractLabel(run)} · v{run.evalPackVersion} · {run.trigger === "manual" ? "手动" : run.trigger === "automatic" ? "自动" : "回归"}
                 {" · "}{evaluationStatusMeta(run.status).label}
                 {" · "}{formatBeijingDateTime(run.createdAt) ?? "时间未知"}
               </small>

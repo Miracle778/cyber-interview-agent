@@ -57,6 +57,7 @@ from app.review.models import (
     ReviewInputReceipt,
     ReviewInputRequestRecord,
     ReviewMode,
+    ReviewQuestionScope,
     ReviewRoundRecord,
     ReviewRoundSettings,
     RoundStatus,
@@ -908,8 +909,9 @@ class ReviewRepository:
                         "(id, batch_id, draft_id, question_json, source_refs_json, "
                         "correction_note, duplicate_of_question_id, seed_task_id, "
                         "answer_basis, material_support, needs_review, "
-                        "normalization_issues_json, status) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                        "normalization_issues_json, source_answer, "
+                        "supplemental_answer, status) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
                         "'review_pending')",
                         (
                             candidate_id,
@@ -929,6 +931,8 @@ class ReviewRepository:
                                     ("legacy_quality_unknown",),
                                 )
                             )),
+                            item.get("source_answer"),
+                            item.get("supplemental_answer"),
                         ),
                     )
                 else:
@@ -1853,6 +1857,8 @@ class ReviewRepository:
         material_support: str,
         needs_review: bool,
         normalization_issues: tuple[str, ...],
+        source_answer: str | None = None,
+        supplemental_answer: str | None = None,
     ) -> CurationSeedTaskRecord:
         if status not in {"completed", "degraded"}:
             raise ValueError("unsupported curation seed completion status")
@@ -1870,7 +1876,8 @@ class ReviewRepository:
             cursor = self._connection.execute(
                 "UPDATE review_curation_seed_tasks SET status = ?, candidate_json = ?, "
                 "answer_basis = ?, material_support = ?, needs_review = ?, "
-                "normalization_issues_json = ?, last_error_code = NULL, "
+                "normalization_issues_json = ?, source_answer = ?, "
+                "supplemental_answer = ?, last_error_code = NULL, "
                 "version = version + 1, updated_at = CURRENT_TIMESTAMP "
                 "WHERE id = ? AND version = ? AND status = 'running' "
                 "AND candidate_json IS NULL",
@@ -1881,6 +1888,8 @@ class ReviewRepository:
                     material_support,
                     int(needs_review),
                     _canonical_json(normalization_issues),
+                    source_answer,
+                    supplemental_answer,
                     seed_task_id,
                     expected_version,
                 ),
@@ -4210,6 +4219,12 @@ class ReviewRepository:
         *,
         attempt_id: str,
         idempotency_key: str,
+        expected_version: int,
+        current_index: int,
+        status: RoundStatus,
+        next_input_ordinal: int | None,
+        next_input_prompt: str | None,
+        next_input_version: int | None,
     ) -> ReviewRoundRecord:
         with self._transaction():
             existing = self._connection.execute(
@@ -4248,6 +4263,49 @@ class ReviewRepository:
                 "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (attempt_id,),
             )
+            cursor = self._connection.execute(
+                "UPDATE review_rounds SET current_index = ?, status = ?, "
+                "version = version + 1, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND version = ?",
+                (current_index, status, round_id, expected_version),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError(
+                    f"round {round_id!r} changed before skip"
+                )
+            next_input_values = (
+                next_input_ordinal,
+                next_input_prompt,
+                next_input_version,
+            )
+            if status == "waiting_for_input":
+                if any(value is None for value in next_input_values):
+                    raise ValueError("next input is required after skipping a question")
+                existing_input = self._connection.execute(
+                    "SELECT id, prompt FROM review_input_requests "
+                    "WHERE round_id = ? AND ordinal = ? AND kind = 'answer' "
+                    "AND version = ?",
+                    (round_id, next_input_ordinal, next_input_version),
+                ).fetchone()
+                if existing_input is None:
+                    self._connection.execute(
+                        "INSERT INTO review_input_requests "
+                        "(id, round_id, ordinal, kind, prompt, version) "
+                        "VALUES (?, ?, ?, 'answer', ?, ?)",
+                        (
+                            str(uuid4()),
+                            round_id,
+                            next_input_ordinal,
+                            next_input_prompt,
+                            next_input_version,
+                        ),
+                    )
+                elif existing_input["prompt"] != next_input_prompt:
+                    raise ReviewConflictError(
+                        "next input request identity has different prompt"
+                    )
+            elif any(value is not None for value in next_input_values):
+                raise ValueError("terminal skip cannot create another input")
             self._connection.execute(
                 "INSERT INTO review_round_control_receipts "
                 "(id, round_id, operation, idempotency_key) "
@@ -4921,6 +4979,8 @@ class ReviewRepository:
             normalization_issues=tuple(
                 json.loads(row["normalization_issues_json"])
             ),
+            source_answer=row["source_answer"],
+            supplemental_answer=row["supplemental_answer"],
             last_error_code=safe_error_code,
             version=row["version"],
             created_at=row["created_at"],
@@ -5021,6 +5081,24 @@ class ReviewRepository:
                 if data.get("source_id") is None
                 else str(data["source_id"])
             ),
+            question_scope=cast(
+                ReviewQuestionScope, data.get("question_scope", "ordinary")
+            ),
+            source_job_target_id=(
+                None
+                if data.get("source_job_target_id") is None
+                else str(data["source_job_target_id"])
+            ),
+            project_claim_id=(
+                None
+                if data.get("project_claim_id") is None
+                else str(data["project_claim_id"])
+            ),
+            scope_label=(
+                None
+                if data.get("scope_label") is None
+                else str(data["scope_label"])
+            ),
         )
 
     @staticmethod
@@ -5075,6 +5153,8 @@ class ReviewRepository:
             normalization_issues=tuple(
                 json.loads(row["normalization_issues_json"])
             ),
+            source_answer=row["source_answer"],
+            supplemental_answer=row["supplemental_answer"],
             confirmation_status=cast(
                 Literal["pending", "confirmed"],
                 row["confirmation_status"],

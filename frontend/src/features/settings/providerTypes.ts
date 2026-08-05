@@ -68,15 +68,21 @@ export interface UpdateProviderModelCommand {
   maxInputTokens?: number;
 }
 
-export type ModelRole =
-  | "question_generation"
-  | "answer_evaluation"
-  | "report_summarization"
-  | "agent_chat"
-  | "profile_extraction"
-  | "profile_assessment"
-  | "job_analysis"
-  | "project_deep_dive";
+export const MODEL_ROLES = [
+  "question_generation",
+  "answer_evaluation",
+  "report_summarization",
+  "agent_chat",
+  "profile_extraction",
+  "profile_assessment",
+  "job_analysis",
+  "project_deep_dive",
+  "retrospective_analysis",
+  "retrospective_chat",
+] as const;
+
+export type ModelRole = (typeof MODEL_ROLES)[number];
+export const MODEL_ROLE_COUNT = MODEL_ROLES.length;
 
 export interface WorkspaceResource {
   id: string;

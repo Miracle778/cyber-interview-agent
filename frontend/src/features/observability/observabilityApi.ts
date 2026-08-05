@@ -3,12 +3,13 @@ import { apiGet, apiPost } from "../../shared/api/client";
 import { createOperationId } from "../../shared/operationId";
 import {
   executionSummaryPageSchema,
-  executionSummarySchema,
+  executionDetailSchema,
   operationSummaryPageSchema,
   traceEventContentSchema,
   traceEventSummaryPageSchema,
   traceExportSchema,
   type ExecutionFilters,
+  type ExecutionDetail,
   type ExecutionSummary,
   type ExecutionSummaryPage,
   type OperationSummary,
@@ -57,12 +58,12 @@ export async function getObservabilityExecution(
   workspaceId: string,
   executionId: string,
   signal?: AbortSignal,
-): Promise<ExecutionSummary> {
+): Promise<ExecutionDetail> {
   const payload = await apiGet<unknown>(
     `/api/agent-observability/executions/${encodeURIComponent(executionId)}?workspaceId=${encodeURIComponent(workspaceId)}`,
     { signal },
   );
-  return parsePayload(() => executionSummarySchema.parse(payload));
+  return parsePayload(() => executionDetailSchema.parse(payload));
 }
 
 export async function listObservabilityOperations(

@@ -1,14 +1,70 @@
 # Cyber Interview Agent 当前任务规划
 
+## 当前设计修订：Agent Evaluation v2
+
+状态：Evaluation v2 Phase 1–5 已完成产品实现与阶段验收；v1 数据保持只读兼容，质量门禁仍默认关闭且没有批准的阻断规则。
+
+- v1 正式定位为“初版质检 / 历史结果复检”，不是候选业务 Agent 回归；
+- 评估主对象改为最终业务结果包，Trace 只解释形成过程；
+- v1 事件存在性检查改称“评估证据完整性检查”，不再宣称可阻断业务；
+- v2 使用 `applicable / not_applicable / insufficient_evidence` 与有锚点等级，不展示跨 Pack 综合百分制；
+- Eval Pack 按单一业务目标拆分，Judge 只读取任务所需的最小评估视图；
+- 真实回归必须在隔离环境重新运行基线和候选 Agent，并区分基础设施失败与内容质量退化；
+- v1 历史结果保持不可变，v2 采用增量契约和新 Pack 版本。
+
+正式输入：
+
+- `docs/superpowers/architecture-decisions/2026-07-31-agent-evaluation-outcome-and-regression-boundaries.md`
+- `docs/superpowers/specs/2026-07-31-agent-evaluation-v2-design.md`
+- `docs/superpowers/plans/2026-07-31-agent-evaluation-v2-migration.md`
+
+当前执行：Phase 1–5 已完成。合成的题目整理与深入讨论案例均通过真实 Provider、v2 Judge、执行前快照、双沙箱业务重跑和匿名 A/B Judge；质量实验室浏览器验收通过。后端 `1005 passed`、前端 `333 passed`、生产构建通过。下一步只在积累足够人工校准样本并新增 ADR 后，评估是否批准少量确定性规则进入发布门禁。
+
+## 当前任务：面试复盘 Agent
+
+状态：Task 1–10 已完成实现与阶段验收。面试复盘已形成从文字捕获、整理确认、逐题渐进分析，到候选审核、行动与发布、受限讨论、纠正重算、目标聚合和生命周期管理的完整首版闭环。
+
+- 每场复盘必须归属于求职目标，一轮面试对应一场复盘；
+- 首版输入为转写文本或事后回忆，不做音视频、OCR、联网核验或自动脱敏；
+- 原文、说话人整理和分析使用不可变版本链；
+- 推断问题在确认前不能进入正式题库、画像、项目讲解或岗位风险；
+- 报告优先、对话辅助，逐题结果渐进展示，不提供整场总分；
+- 模型只生成候选，跨题库、画像、项目讲解和 Knowledge 的写入由用户确认与领域 Receipt 完成；
+- 实施按捕获整理、渐进报告、候选沉淀、对话与收口四个纵向 Slice 推进。
+
+正式输入：
+
+- `docs/superpowers/specs/2026-08-01-interview-retrospective-agent-design.md`
+- `docs/superpowers/architecture-decisions/2026-08-01-interview-retrospective-versioned-evidence-and-cross-domain-boundaries.md`
+- `docs/superpowers/plans/2026-08-01-interview-retrospective-agent.md`
+
+首版其余复盘能力的阶段结论保留；准确转写子流程因真实长样本验收失败重新打开，不再按旧方案进入手工验收，也不以旧自动测试证据宣称该子流程可交付。
+
+当前增量：长文本 Cleanup 已从串行大窗口调整为自然边界小窗口、首窗说话人提示、并发二、显式 Provider 超时、应用层重试和超时窗口自适应拆分；自动回归完成后使用合成长转写做一次经用户授权的真实 Provider 验收。
+
+问题提取增量：不再使用 60,000 字前缀；源版本冻结录音覆盖范围，确认段落形成可恢复的分段 Map 工作项，全部成功后按稳定证据锚点 Reduce。自动验证完成后，仍需使用用户授权的候选人单边录音样本做真实 Provider 内容质量验收。
+
+转写修订增量：真实一小时样本已经否定“模型 turn → SegmentRecord → 逐 Diff 核对”的产品边界。该方案虽通过自动测试，但把内部窗口、说话人轮次和审计差异暴露成上千个用户操作项，最终文档质量也没有达到直接交给同一模型整理的基线，因此不再进入原方案手工验收。
+
+当前设计已修订为 `SourceVersion → 内部 CleanupRun/WindowResult → 单一 CleanTranscriptVersion → 稀疏 ReviewIssue → confirmed Anchor → QuestionExtractionRun`。窗口、重试、模型响应和 Diff 只属于运行/诊断层；用户只核对一份连续整理稿和少量真实歧义。参考边界与 Tradeoff 已写入 `docs/superpowers/specs/2026-08-02-interview-retrospective-transcript-correction-design.md`。
+
+当前实施：新数据边界、非重叠目标窗口、文档 Reduce、整篇文档保存/确认、确认后证据锚点、连续文档核对页和原文清除联动均已进入代码；历史 Segment/Correction 继续兼容读取。全量自动回归为后端 1,164 项、前端 394 项，production build 通过；隔离数据浏览器已验证“采用建议 → 保存整篇文档 → 确认并进入题目提取”的最小闭环。
+
+题目提取合同修正：提取 Map 已切为 `transcript_only`，不再发送画像、简历 Claim 和岗位文档；模型只负责问题语义与证据，序号和锚点由程序生成；隐藏 Schema 回灌已关闭，格式错误最多进行一次仅含错误候选及其引用证据的小型修复，应用层不再自动重发完整窗口。
+
+逐题分析 Tradeoff：完整冻结上下文保留为证据仓，单题调用只使用有界相关证据；SDK 隐式重试关闭，应用按题控制尝试并隔离失败；恢复复用同一 AnalysisRun。正式记录：`docs/superpowers/architecture-decisions/2026-08-03-retrospective-question-analysis-context-and-retry-boundary.md`。
+
+下一步：补齐运行 Trace 与业务“清除原文”的联动边界，完成一份无隐私长样本的“直接整理 vs 新 Workflow”同模型盲测，并执行真实长文本完整 happy path、停止恢复、单窗失败和紧凑 Schema 修复验收；真实质量未超过或至少不劣于直接整理基线前，不宣称该子流程可交付。
+
 ## 当前设计：Agent 可观测与质量评估工作台
 
-状态：三张高保真概念图、正式规格、架构决策、总实施索引与四个纵向 Slice 计划均已完成；尚未进入业务代码。
+状态：四个 Slice 已进入代码；运行与 Trace 能力已落地，质量评估为 v1 历史结果复检。下列内容保留为 2026-07-29 初始目标态，评估边界由上方 v2 修订。
 
 - 独立一级入口“Agent 运行中心”统一覆盖题目整理、复习助手、画像助手、岗位分析和项目深挖等全部 Agent；
 - “高级运行详情”按 Execution → Operation → Event 展示输入、输出、上下文、配置和事件；
-- “质量评估实验室”使用冻结真实案例比较 Prompt、模型、Tool 与 Schema 版本；
+- “质量评估实验室”当前冻结历史业务结果并比较 Eval Pack / Judge 结论，不重新运行 Prompt、模型、Tool 候选版本；
 - 本地 JSONL 保留完整正文，SQLite 只做可重建查询索引，OTel/Langfuse 只做可选安全投影；
-- 确定性规则可以阻断，LLM Judge 只提示或要求人工复核；
+- 当前确定性检查只验证评估证据事件是否完整；业务不变量和阻断规则留待 v2 校准；
 - 设计包含前后端契约、本地高级诊断开关、保留与隐私、失败降级、性能预算、视觉 Token、布局尺寸和 390/768/1024/1440 响应式验收；
 - 经逐项核查补齐业务/系统 Agent 分层、Observability Registry、能力声明、统一 ExecutionSummary、人工 Judge、自动采样、回归案例隐私、评估隔离和纵向交付门禁；
 - 已确认产品不展示费用、不维护价格表，首版 Eval Pack 由代码/Git 定义，UI 不提供任意 Prompt 编辑。
@@ -17,6 +73,7 @@
 
 - `docs/superpowers/specs/2026-07-29-agent-observability-and-quality-workbench-design.md`
 - `docs/superpowers/architecture-decisions/2026-07-29-agent-trace-ledger-and-evaluation-boundaries.md`
+- `docs/superpowers/architecture-decisions/2026-08-04-agent-control-plane-and-registration-contract.md`
 
 实施计划：
 
@@ -26,7 +83,7 @@
 - `docs/superpowers/plans/2026-07-29-agent-observability-slice-3-quality-evaluation.md`
 - `docs/superpowers/plans/2026-07-29-agent-observability-slice-4-retention-and-projection.md`
 
-下一步：从 Slice 1 的 Registry、Trace 元数据索引和全局运行中心开始实施；Slice 1 浏览器验收通过后再进入高级正文查看。
+下一步：保留现有 v1 能力与历史数据，按 v2 迁移计划分阶段演进；Agent Control Plane 按“接口门禁 → 单一 Definition/Builder → 子组件/Tool 门禁 → Execution Definition Snapshot”四阶段收敛，未注册 Agent 在新任务创建时 fail-closed，历史未知 Agent 保持只读可见。
 
 ## 当前增量：删除简历后的画像依据重算
 
@@ -448,3 +505,131 @@ current question
 | 正在运行筛选 | 已完成 | 按最新 Execution 活动态筛选，不再读取会话生命周期 |
 | 需要处理筛选 | 已完成 | 汇总最新 Execution 的失败/中断/取消状态与未解决 Action 数量 |
 | 定向验证 | 已完成 | 后端 3 项、前端 7 项和 TypeScript 通过；5174 未启动，浏览器检查待服务恢复后执行 |
+
+## 2026-08-02：个人资产—求职目标—专项复习第一批串联（实现完成）
+
+| 项目 | 状态 | 交付边界 |
+|---|---|---|
+| 个人画像价值层级 | 已完成 | 先展示职业资产、代表项目和技能；资料质量收为次级诊断；提供创建求职目标与自主复习入口 |
+| 求职目标准备总览 | 已完成 | 区分画像、岗位要求、重点项目和可复习项目题；按四步说明准备路径，岗位信息缺失时优先补全 |
+| 专项复习范围 | 已完成 | 普通、岗位、项目三类范围持久化在既有 settings JSON；按稳定来源 ID 严格选题，历史轮次默认自主复习 |
+| 跨页闭环 | 已完成 | 岗位总览与项目题进入对应专项设置；轮次和历史显示业务标签；一键返回来源页面 |
+| 成熟度边界 | 明确 | 本批不把复习结果回写岗位准备度，不修改 Agent、模型调用、评价状态机或数据库结构 |
+
+## 2026-08-02：面试复盘对话轮次还原（实现完成）
+
+| 项目 | 状态 | 交付边界 |
+|---|---|---|
+| 混合原文轮次拆分 | 已完成 | 同一 Source Unit 可恢复多个连续说话轮次，程序验证逐字原文覆盖并计算绝对 offset |
+| 单边录音问题恢复 | 已完成 | Cleanup 不伪造面试官原话；问题提取用 `origin=inferred`、回答证据和推断依据恢复问题 |
+| 输出容量 | 已完成 | 单轮次不重复原文；只有多轮次单元返回局部 `sourceText`，避免回到无界审计输出 |
+| 自动验证 | 已完成 | 复盘后端回归 105 项、Ruff 与差异检查通过 |
+
+## 2026-08-02：高级运行详情耗时时区修复（实现完成）
+
+| 项目 | 状态 | 交付边界 |
+|---|---|---|
+| SQLite UTC 时间解析 | 已完成 | 运行态耗时统一使用共享时间解析，不再固定多出北京时间 8 小时 |
+| 回归验证 | 已完成 | `ExecutionTracePage` 14 项、TypeScript 与差异检查通过 |
+## 2026-08-02：复盘整理重复调用纠偏（实现完成）
+
+- [x] 用真实 Trace 区分正常 400 字重叠、父子窗口重复和同窗自动重试；
+- [x] 程序补齐可确定的显示名与顺序单元 ID；
+- [x] 多轮边界证据缺失时安全降级，不以虚假 offset 通过校验；
+- [x] Schema/结构化输出缺失停止自动拆窗和盲重试；
+- [x] 复盘后端定向回归与静态检查通过；
+- [ ] 使用同一真实长转写重新运行，确认模型调用数量和最终整理质量。
+
+## 2026-08-02：复盘整理核对页面收敛（实现完成）
+
+- [x] 顶部改为剩余任务总数及说话人、关键文字、自动整理分类；
+- [x] 段落队列显示具体问题类型，不再统一使用“待确认”；
+- [x] 右侧一次处理一项关键文字修改，处理后自动进入下一项；
+- [x] 自动整理、段落高级设置、批量操作和生命周期操作分层收起；
+- [x] 复盘前端全组、TypeScript 与 production build 验证。
+
+## 2026-08-02：复盘模型整理稿与审核门禁一致性修复（实现完成）
+
+- [x] 用真实响应回归覆盖整段口头语、错字和断句修正，审核段落直接展示 `correctedText`；
+- [x] 低相似度、异常长度和明显内容搬移升级为整段高风险待确认，不再静默恢复原文；
+- [x] 数字、否定和职责等级继续保持高风险，不能被普通清洗规则降级或直接确认；
+- [x] Provider 仅遗漏首轮 `sourceText` 且后续证据构成原文精确后缀时恢复唯一前缀；其他不完整边界仍拒绝；
+- [x] Provider 格式化后续 `sourceText` 标点时，只用高相似唯一内容锚点定位边界，并从不可变原文重建精确证据；
+- [x] 用真实失败 Execution 的模型请求与响应离线重放，确认首窗生成 8 个连续段落；
+- [x] Provider 把后续 `sourceText` 写成清理稿时，只验证其起始内容锚点，正文继续走 `correctedText` 整体有界门禁；
+- [x] 用重试 Execution 的第二份真实响应再次离线重放为 8 段，后端相关回归 `54 passed`；
+- [x] 页面主正文改为“模型整理稿”，与 Provider `correctedText` 保持一致；
+- [x] 完成本轮后端 `53 passed`、前端 `40 passed`、Ruff、production build 与差异检查收口。
+
+## 2026-08-02：复盘整理连续失败容错（实现完成）
+
+- [x] 定位本次真实重试失败的两个不同原因：少返回 Source Unit、轮次边界无法逐字证明；
+- [x] 将可解析的 Provider Schema 漂移从窗口级失败降为 Source Unit 级原文兜底；
+- [x] 不可验证多轮边界合并为待确认单段，继续使用不可变原文 offset；
+- [x] 新增缺失单元、错误 ID、单轮错误证据与多轮边界异常回归；
+- [x] 三组真实失败 Execution 响应离线回放全部成功；
+- [x] 复盘后端定向回归 `118 passed`，相关 Ruff 检查通过。
+
+## 2026-08-03：复盘逐题分析超时隔离与原运行续跑（实现完成）
+
+- [x] 逐题分析请求只携带岗位基本信息、当前题目证据段及最多 6 条相关画像证据，不再发送完整画像和岗位文档；
+- [x] 逐题 Agent 显式使用 `120s / max_retries=0 / 4096 output tokens`，应用层统一控制最多 2 次尝试；
+- [x] 单题超时、限流或网络错误只影响当前题，其他题继续处理，已完成结果原地保存；
+- [x] 页面“重试失败步骤”恢复原 AnalysisRun，只执行未完成题目与后续汇总；
+- [x] 后端复盘相关 `56 passed`、前端页面 `9 passed`、受影响 Ruff 与差异检查通过。
+
+## 2026-08-03：复盘讨论 Harness 上下文边界（实现完成）
+
+- [x] 将产品对话历史与单次 Tool Call Agent State 分层，写入正式 ADR；
+- [x] 按 Token 预算选择最新完整问答轮次，不再嵌套固定 12 条 JSON；
+- [x] 为复盘讨论配置独立模型/Tool 调用预算和上下文历史预算；
+- [x] 验证压缩不拆分 `AIMessage(tool_calls) + ToolMessage`；
+- [x] 验证运行中取消只保留用户消息，不持久化半截助手回复；
+- [x] 完成后端定向回归 `52 passed` 与受影响 Ruff 检查。
+
+## 2026-08-04：复盘成果动作与单次运行质量页纠偏（实现完成）
+
+- [x] 本地行动项的完成、忽略均可恢复为待处理；未跨领域写入的候选可从“不加入资料库”恢复；
+- [x] “准备资产 / 行动与发布”改为“保存成果 / 下一步”，“发布”改为“生成复盘文档”；
+- [x] 从运行中心进入质量页时固定来源 Execution，不再显示无关历史报告；
+- [x] 质量结论先展示是否可用和优先事项，检查方式、设置、技术指标渐进披露；
+- [x] 历史对比改为显式开启，并限制为同 Pack、版本、合同与运行类型。
+
+## 2026-08-04：Agent Control Plane 分阶段收敛
+
+- [x] Phase 1：公共 Session / Execution / Retry 在写入前执行注册与生命周期门禁；system-only Agent 禁止用户创建；未知历史运行保留只读投影。
+- [x] Phase 2：合并 Observability Registration、生产 Graph 集合和 Builder 映射，形成单一 `AgentDefinitionRegistry`；运行中心、质量评估与 Runtime 门禁改读统一 Definition，旧 Observability 名称仅保留兼容外壳。
+- [x] Phase 3：AgentFactory 强制父 Agent、组件、模型角色、Tool 和 Scope 归属，并补齐 Trace Definition 身份；产品模型调用统一经过 Definition-bound Factory，静态门禁阻止新增底层 Resolver 直调。
+- [x] Phase 4：Execution 持久化不可变 Agent Definition Snapshot；新运行在 Graph/Provider 启动前冻结 Definition、Schema、Toolset、模型绑定、策略与 Eval Pack，历史运行使用显式 legacy 快照；Eval 与高级详情只读取冻结版本。
+
+## 2026-08-04：Agent 质量中心与复盘质量标准（实现完成）
+
+- [x] 把页面按质量检查、回归实验、质量趋势三个用户任务重构；
+- [x] 从冻结 Agent Definition 判断是否支持检查，并区分当前是否可以开始；
+- [x] 为 `interview.retrospective` 注册 `interview-retrospective.v2` 及确定性业务规则；
+- [x] 报告使用结论、优先问题和直接人工判断，技术信息渐进披露；
+- [x] 后端 44 项、前端 16 项、production build、差异检查及 5175 真实页面验收通过。
+
+## 2026-08-05：质量检查明细去技术化（实现完成）
+
+- [x] 将面向用户的内容检查与 Runtime 系统保护规则分层展示；
+- [x] 单次检查移除没有意义的“之前 / 变化”空列，历史对比开启后再展示；
+- [x] 检查项统一使用中文业务名称，Receipt、Event、hash、locator 等诊断字段默认收进“查看技术证据”；
+- [x] 右侧优先事项与质量概览改用可理解的用户说明；
+- [x] 前端定向 14 项、production build、差异检查及 5175 真实页面验收通过。
+
+## 2026-08-05：历史检索总结与结果区布局修复（实现完成）
+
+- [x] 将总结、错误和报告统一放入显式洞察区域，不再占用父级 Grid 的隐式行；
+- [x] 洞察区与检索结果区使用 40% / 60% 的有界布局，长总结独立滚动；
+- [x] 移动端恢复自然文档流；
+- [x] 完成定向测试、production build、差异检查及 5175 真实页面几何验收。
+
+## 2026-08-05：App SQLite 线程连接隔离与质量术语简化（实现完成）
+
+- [x] 复现生命周期单例 SQLite 物理连接被多个 AnyIO 工作线程同时使用时，事务状态和 `sqlite3.Row` 读取互相干扰的问题；
+- [x] 保留应用级单例入口，改为线程连接管理器，每个线程独立持有物理连接；
+- [x] 统一启用外键、5 秒 busy timeout，并在初始化连接启用 WAL；
+- [x] 新增跨线程事务隔离回归，覆盖同一管理器下不同线程不能共享事务状态；
+- [x] 将“迟到结果保护”改为“任务结束后结果保护”，用户说明统一改为旧结果不会覆盖最终结果；
+- [x] 完成后端 53 项、质量页 14 项、Ruff、compileall、production build 与差异检查。

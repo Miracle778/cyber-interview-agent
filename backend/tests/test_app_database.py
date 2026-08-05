@@ -31,10 +31,10 @@ def test_app_database_reopens_without_reapplying_migration(tmp_path):
     connect_app_database(tmp_path).close()
     connection = connect_app_database(tmp_path)
     rows = connection.execute("SELECT version FROM schema_migrations").fetchall()
-    assert [row["version"] for row in rows] == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert [row["version"] for row in rows] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
 
-def test_app_database_accepts_eight_model_roles(tmp_path):
+def test_app_database_accepts_ten_model_roles(tmp_path):
     connection = connect_app_database(tmp_path)
     connection.execute(
         "INSERT INTO workspaces (id, root_path, available) "
@@ -60,6 +60,8 @@ def test_app_database_accepts_eight_model_roles(tmp_path):
         "profile_assessment",
         "job_analysis",
         "project_deep_dive",
+        "retrospective_analysis",
+        "retrospective_chat",
     ):
         connection.execute(
             "INSERT INTO workspace_model_bindings "

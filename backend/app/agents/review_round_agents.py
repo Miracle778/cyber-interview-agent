@@ -8,7 +8,7 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage
 
 from app.agents.context import AgentContext
-from app.agents.agent_factory import AgentFactory, AgentSpec, ModelOverride
+from app.agents.agent_factory import AgentSpec, ModelOverride, RegisteredAgentFactory
 from app.agents.agent_invocation import final_ai_text, isolated_thread_config
 from app.agents.agent_protocols import AgentRunnable
 from app.agents.prompts.review_round_prompts import (
@@ -41,7 +41,7 @@ class ReviewRoundAgents:
     @classmethod
     def create(
         cls,
-        factory: AgentFactory,
+        factory: RegisteredAgentFactory,
         *,
         model_bindings: Mapping[str, str],
         middleware: tuple[AgentMiddleware, ...] = (),
@@ -59,9 +59,14 @@ class ReviewRoundAgents:
                     middleware=middleware,
                     response_format=RoundAnswerEvaluation,
                 ),
+                component_id="review_round_evaluator",
                 model_bindings=model_bindings,
                 model_override=answer_model_override,
-                checkpointer=checkpointer,
+                # The evaluator is a single-turn decision.  Its complete
+                # question and answer are supplied for every invocation, so
+                # retaining Agent messages would leak an earlier question
+                # into the next evaluation in the same review session.
+                checkpointer=None,
             ),
             reporter=factory.create(
                 AgentSpec(
@@ -71,9 +76,10 @@ class ReviewRoundAgents:
                     middleware=middleware,
                     response_format=ReviewSessionReportOutput,
                 ),
+                component_id="review_round_reporter",
                 model_bindings=model_bindings,
                 model_override=discussion_model_override,
-                checkpointer=checkpointer,
+                checkpointer=None,
             ),
             discussion=factory.create(
                 AgentSpec(
@@ -83,6 +89,7 @@ class ReviewRoundAgents:
                     tools=tuple(discussion_tools),
                     middleware=middleware,
                 ),
+                component_id="review_discussion",
                 model_bindings=model_bindings,
                 model_override=None,
                 checkpointer=checkpointer,
@@ -95,9 +102,10 @@ class ReviewRoundAgents:
                     middleware=middleware,
                     response_format=RoundAnswerEvaluation,
                 ),
+                component_id="project_answer_evaluator",
                 model_bindings=model_bindings,
                 model_override=answer_model_override,
-                checkpointer=checkpointer,
+                checkpointer=None,
             ),
             turn_classifier=factory.create(
                 AgentSpec(
@@ -107,9 +115,10 @@ class ReviewRoundAgents:
                     middleware=middleware,
                     response_format=ReviewTurnClassification,
                 ),
+                component_id="review_turn_classifier",
                 model_bindings=model_bindings,
                 model_override=answer_model_override,
-                checkpointer=checkpointer,
+                checkpointer=None,
             ),
         )
 

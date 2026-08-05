@@ -4,7 +4,7 @@
 
 ### A local-first, evidence-driven multi-agent system for interview preparation
 
-把零散资料、个人经历、目标岗位和训练反馈，持续转化为可追溯、可确认、可恢复的个人面试准备闭环。
+把零散资料、个人经历、目标岗位和训练反馈，持续转化为可追溯、可确认、可恢复、可诊断、可评估的个人面试准备闭环。
 
 `Python 3.12+` · `FastAPI` · `LangGraph` · `React 19` · `SQLite` · `SSE`
 
@@ -19,7 +19,10 @@ Cyber Interview Agent 为此建立一组职责明确的领域 Agent：
 - 题目整理与复习 Agent，把不规范笔记整理成候选题，经确认后进入题库，并根据练习结果持续更新掌握度；
 - 个人画像 Agent，从简历和补充资料中形成工作经历、项目、技能与职业方向，同时保留来源和版本；
 - 岗位与项目深挖 Agent，分析 JD、映射个人经历、识别差距，并把重点项目练成经得起追问的叙事和项目题；
-- 规划中的复盘、模拟面试和 Research Agent，将继续消费同一套可信资产，而不是每次从一段临时 Prompt 重新认识你。
+- 面试复盘 Agent，先把长录音转写或事后回忆整理成连续可核对的文字稿，再提取问题、逐题分析、讨论纠正，并跨多场复盘检索历史问题和生成总结报告；
+- 规划中的模拟面试和 Research Agent，将继续消费同一套可信资产，而不是每次从一段临时 Prompt 重新认识你。
+
+这些领域 Agent 共享同一套运行与质量底座：任务可以暂停、恢复和重试；运行过程可以从业务任务追到实际模型交互；历史结果可以按版本化标准重新质检。对显式开启记录的新运行，系统还会冻结执行前状态，让来源模型配置与当前配置在两个隔离沙箱中重新生成业务结果，再做确定性检查和匿名 A/B Judge。
 
 ![多个 Agent 共同管理长期面试准备](assets/readme/01-interview-preparation-loop.png)
 
@@ -60,6 +63,7 @@ Cyber Interview Agent 为此建立一组职责明确的领域 Agent：
 4. **可恢复执行**：`Session / Message / Execution / Event` 分离。模型失败或用户停止后，重试创建新的 Execution，而不是复制一条用户消息污染上下文。
 5. **人机协作**：模型输出 proposal；正式画像、题目和知识发布必须经过证据校验、版本检查、HITL 确认和幂等回执。
 6. **多模型运行时**：OpenAI、Anthropic 等 Provider 通过统一 binding 接入，角色可以独立选择模型与推理强度。
+7. **可观测与质量评估**：统一运行中心聚合任务状态和异常；高级 Trace 保留真实模型交互；任务级 Eval Pack、业务不变量、Judge 与人工反馈用于历史复检；执行前快照、双沙箱和盲测比较用于真正重新运行 Agent。
 
 ![受控的混合 Agent 架构与边界](assets/readme/02-hybrid-agent-architecture.png)
 
@@ -74,8 +78,34 @@ Cyber Interview Agent 为此建立一组职责明确的领域 Agent：
 - 已完成工作单元跳过，写入通过版本与幂等回执防止重复；
 - 失败消息可重试、替换或放弃，只有有效语义进入后续上下文；
 - 大材料不直接塞进 Agent state，原文与证据按领域版本留存。
+- 所有业务 Execution 汇总到运行中心；同一会话已被后续运行恢复的旧失败保留为历史证据，但不再误报为当前待处理。
 
 ![一次失败为什么不必从头再来的可恢复 Agent Runtime](assets/readme/03-agent-runtime-and-roadmap.png)
+
+## 从“能运行”到“能解释、能评估”
+
+Agent 的结果具有概率性，仅看到最终回答很难判断：它实际拿到了什么上下文、在哪一步失败、重试是否恢复，以及一次 Prompt 或模型调整是否真的更好。项目因此在业务 Agent 之上增加了两层工程能力：
+
+- **Agent 运行中心**回答“现在发生了什么”：只聚合有业务意义的 Execution，展示阶段、进度、耗时、token、上下文和待处理状态，并能返回对应的整理、复习或训练会话。
+- **高级运行详情**回答“为什么会这样”：以 `Execution → Operation → Event` 还原实际控制流；默认只显示安全摘要，本机主动开启高级诊断后才允许查看 Prompt、messages、上下文、工具输入和 Provider 响应。系统只展示服务商真实返回的 reasoning，不猜测模型思维。
+- **本地 Trace Ledger**保留诊断事实：JSONL 是完整 Trace 正文，SQLite 只是可重建的检索索引；题目、画像和岗位等业务事实仍由各自领域库负责，诊断数据不会成为第二套业务真相。
+
+![Agent 出错后如何定位和恢复](assets/readme/07-agent-observability-and-diagnosis.png)
+
+定位一次问题还不等于证明一次改版有效。质量实验室保留两条明确分开的路径：历史复检冻结已经产生的业务结果，用于比较 Eval Pack 或 Judge 变化；真实回归则需要事先开启“记录可回归输入”，把执行前数据库、会话 checkpoint 和本机材料冻结下来，再让来源模型配置与当前配置分别在两个临时沙箱运行。两边先检查最终业务结果不变量，Judge 只看到随机顺序的 Outcome A/B，网络超时、Provider 限流和数据库锁单列为基础设施失败。Judge 失败不会影响原任务，也没有权限改写业务事实。
+
+![从历史结果复检走向真实 Agent 回归](assets/readme/08-agent-quality-evaluation-boundary-v2.png)
+
+## 从一场复盘到可检索的长期经验
+
+面试复盘不是把整份转写交给一个大 Prompt 直接生成结论。系统把原始材料、模型处理中间态、用户确认稿和正式分析分开保存，形成一条可以恢复和追溯的固定 Workflow：
+
+1. **先校对连续文字稿**：导入手机录音转写或事后回忆后，模型在内部按自然边界分窗清理错字、术语和断句，再 Reduce 为一份连续文档；窗口、重试和模型响应留在 Trace，页面只要求用户核对完整采用稿和少量真实歧义。
+2. **再冻结证据并逐题分析**：用户确认文字稿后，程序生成稳定证据锚点；问题提取、推断题确认和逐题分析都引用这些锚点，失败可从未完成窗口或题目继续，不需要重跑整场。
+3. **讨论只读取有界上下文**：复盘讨论会话通过稳定题目 ID 和只读 Tool 按需读取原文片段、逐题结论与必要画像信息；Tool 声明、调用和返回都能在高级 Trace 中核对，不把完整复盘正文长期堆进聊天 state。
+4. **跨多场复盘检索与总结**：Workspace 历史检索先由模型生成有界搜索词和项目别名，再由本地确定性检索扫描已确认问题并冻结 Search Set。即时总结和版本化报告只读取该结果集；结果较多时采用分批 Map-Reduce，并由程序校验引用没有越界。
+
+当前历史检索采用“Agent 扩展查询 + 可解释词法评分”，支持问题、项目别名、回答证据和正式分析字段，不宣称已经具备向量语义检索的完整同义召回。原始转写默认不进入跨场检索语料，报告也不会未经确认自动发布到 Knowledge。
 
 ## 产品路线
 
@@ -86,11 +116,13 @@ Cyber Interview Agent 为此建立一组职责明确的领域 Agent：
 | **已具备** | Agent Runtime 与可信知识基础 | 工作区隔离、知识 Vault、版本、HITL、checkpoint、事件流和上下文装配，为所有领域 Agent 提供共同底座。 |
 | **已具备** | 题目整理与复习 | 从杂乱材料生成候选题，人工确认后发布；支持轮次练习、追问、评价、掌握度和深入讨论。 |
 | **已具备** | 可信个人画像 | 上传 Markdown、PDF、DOCX 简历，生成待确认画像；管理经历、项目、技能、来源、版本和画像助手会话。 |
-| **建设中** | 求职目标与项目训练 | 解析 JD、确认岗位要求、映射画像、选择重点项目、项目深挖并沉淀岗位专属项目题。 |
-| **规划中** | 面试复盘 Agent | 导入笔记或转录，提取问题、回答和追问，评估表现，并生成待确认的题库、项目叙事和画像变更。 |
+| **已具备** | 求职目标与项目训练 | 解析 JD、确认岗位要求、映射画像、选择重点项目、项目深挖并沉淀岗位专属项目题。 |
+| **已具备** | Agent 运行、Evaluation v2 与隔离回归 | 汇总跨领域运行、定位真实模型交互；按任务冻结最终业务结果并运行适用性分级、确定性业务规则、最小化 Judge View 和人工反馈；对提前记录的案例双沙箱重跑来源/当前配置并盲测比较。 |
+| **受控边界** | 历史代码与自动门禁 | 当前进程可以比较来源模型配置和当前配置，但不会动态加载任意 Git 历史提交；自动门禁默认关闭，只有经真实案例校准并另行批准的确定性规则才有资格阻断。 |
+| **已具备** | 面试复盘 Agent | 导入录音转写或事后回忆，核对连续整理稿，冻结证据后提取问题并逐题分析；支持受限讨论、纠正重算、候选资产审核，以及 Workspace 历史检索、即时总结和版本化报告。 |
 | **规划中** | 模拟面试 Agent | 支持技术、项目与 HR 场景；按预算自适应追问，分离面试官与评估者角色，产出可复用报告。 |
 | **规划中** | 受控面试情报 Research Agent | 用户明确授权后执行 `Plan → Search → Read → Cross-check → Synthesize`；保留来源 URL、时间与置信度，只生成待确认情报，不直接污染题库和画像。 |
-| **规划中** | 本地产品化与外部入口 | 语义检索、关系视图、Obsidian 冲突同步、评测与 tracing、导出备份，以及微信/飞书中的碎片输入与审核。 |
+| **规划中** | 本地产品化与外部入口 | 语义检索、关系视图、Obsidian 冲突同步、导出备份，以及微信/飞书中的碎片输入与审核。 |
 
 ## 快速开始
 
@@ -156,7 +188,7 @@ CYBER_INTERVIEW_AGENT_DATA_DIR=/private/tmp/cyber-interview-agent-readme-app \
 
 “本地优先”不等于“离线推理”：文件、索引、状态和 checkpoint 默认保存在本机；当使用外部模型 Provider 时，经过范围裁剪的上下文仍会发送给相应服务商。
 
-当前适用范围是：**单用户、本地优先、SQLite、单进程可恢复执行**。它不是分布式 Agent 平台、招聘信息聚合器或自动投递系统。
+当前适用范围是：**单用户、本地优先、SQLite、单进程可恢复执行**。它不是分布式 Agent 平台、招聘信息聚合器或自动投递系统。Trace 正文不提供远程浏览入口，保留清理由用户显式触发；质量 Judge 只是独立质量信号，不改写业务事实。真实回归只覆盖提前记录且用户确认保留正文的案例，当前不会自动拉起任意历史代码容器，也不计算模型金额成本。
 
 ### Agent Trace 诊断维护
 
@@ -185,5 +217,14 @@ python3 scripts/rebuild_agent_trace_index.py \
 - [可恢复 Agent 任务边界](docs/superpowers/architecture-decisions/2026-07-22-resumable-agent-task-boundary.md)
 - [统一个人画像与来源模型](docs/superpowers/architecture-decisions/2026-07-24-unified-profile-and-source-model.md)
 - [岗位目标与项目训练边界](docs/superpowers/architecture-decisions/2026-07-25-job-target-project-training-runtime-boundaries.md)
+- [Agent 可观测与质量工作台](docs/superpowers/specs/2026-07-29-agent-observability-and-quality-workbench-design.md)
+- [Trace Ledger 与质量评估边界](docs/superpowers/architecture-decisions/2026-07-29-agent-trace-ledger-and-evaluation-boundaries.md)
+- [Agent 质量评估 v2 设计](docs/superpowers/specs/2026-07-31-agent-evaluation-v2-design.md)
+- [业务结果与真实回归边界](docs/superpowers/architecture-decisions/2026-07-31-agent-evaluation-outcome-and-regression-boundaries.md)
+- [面试复盘 Agent 设计](docs/superpowers/specs/2026-08-01-interview-retrospective-agent-design.md)
+- [面试转写校对与证据边界](docs/superpowers/specs/2026-08-02-interview-retrospective-transcript-correction-design.md)
+- [复盘讨论上下文与 Tool 回放边界](docs/superpowers/architecture-decisions/2026-08-03-retrospective-chat-context-and-tool-replay-boundary.md)
+- [Workspace 历史复盘检索与总结报告](docs/superpowers/specs/2026-08-04-workspace-retrospective-search-and-report-design.md)
+- [历史检索 Agent 与证据边界](docs/superpowers/architecture-decisions/2026-08-04-retrospective-search-agent-and-evidence-boundary.md)
 
-项目持续围绕三项原则演进：模型判断可解释、关键变更可确认、长任务可恢复，并让每次准备和训练最终沉淀为真正属于用户的面试能力。
+项目持续围绕五项原则演进：模型判断可解释、关键变更可确认、长任务可恢复、异常过程可诊断、改版效果可评估，并让每次准备和训练最终沉淀为真正属于用户的面试能力。

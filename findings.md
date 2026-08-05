@@ -1,5 +1,99 @@
 # Agent Runtime 框架收敛关键发现
 
+## 2026-08-04：现有 Observability Registry 尚未形成完整 Agent Control Plane
+
+- 当前 Registry 已能统一顶层 Graph 的展示名、业务入口、控制能力、Eval Pack、系统组件和运行中心可见性，并通过生产 Graph 集合契约测试防止常规漏项。
+- `CreateSessionCommand.kind` 仍是任意字符串，Session 创建前没有统一注册校验；`ProductionGraphFactory`、生产 Graph 集合和 Registry 仍是平行事实源。
+- `AgentFactory.create()` 尚未校验父 Agent、子组件、model role、Tool 和 Scope 归属；影响业务结果的底层模型直调也没有统一代码门禁。
+- 采用 Git 版本化静态 Agent Control Plane：Definition 同时拥有身份、Builder、Schema、策略、运行中心和 Eval 契约；新任务 fail-closed，历史未知 Agent 只读兼容；内部子 Agent 进入 Operation 树而不是顶层任务列表。
+- 正式决定：`docs/superpowers/architecture-decisions/2026-08-04-agent-control-plane-and-registration-contract.md`。
+
+## 2026-08-04：Agent Control Plane Phase 2 单一 Definition 与 Builder
+
+- 原 `PRODUCTION_GRAPH_KINDS` 与 Observability Registry 只能做集合对拍，不能证明某个 ID 实际选择了哪个 Builder；岗位分析、项目深挖和面试复盘又通过独立 Agent bundle 工厂构建，因此“已登记”和“如何构建”仍是两套事实。
+- 新 `AgentDefinitionRegistry` 同时持有稳定 `agent_id`、`definition_version`、`builder_key`、生命周期、用户创建权限、运行中心元数据和 Eval Pack；GraphFactory 启动时要求 Definition 的 Builder Key 与实际 Builder Catalog 双向完全一致，缺失和孤儿 Builder 都 fail-fast。
+- `ProductionGraphFactory.__call__` 改为执行 `agent_id → Definition → builder_key → Builder`；岗位和复盘的公开 Agent bundle 工厂也经过同一路径。
+- 运行中心、可观测服务、质量评估和公共 Runtime 门禁直接消费 `AgentDefinitionRegistry`。`app.observability.registry` 只作为旧 import 的兼容门面，不再保存注册项。
+- 本阶段只统一当前 Definition 与 Builder；子组件 Tool/Scope 门禁和 Execution Definition Snapshot 仍属于 Phase 3、Phase 4。
+
+## 2026-08-04：Agent Control Plane Phase 3 子组件与模型调用门禁
+
+- 仅把 `child_components` 写进 Registry 仍然只是说明性元数据；真正的执行门禁必须让 Factory 先绑定顶层 Definition，再允许解析模型、创建组件或生成 Tool Policy。
+- `AgentFactory.bind(agent_id)` 现在返回 Definition-bound Factory。组件创建前依次校验 `component_id`、model role 和实际 Tool；Tool Policy 创建前校验 Tool 与 Scope，任何越界都在 Resolver/Provider 调用前 fail-closed。
+- 所有生产 Agent bundle 和上下文摘要模型都经过绑定后的 Factory。未绑定的 `AgentFactory.create/resolve_model/resolve_context_limit` 保留为显式失败入口，避免旧调用方式静默绕过控制面。
+- 静态 AST 契约测试扫描 `backend/app` 对 `ChatModelResolver` 的直接导入；当前只允许控制面 Factory 和应用组合根。它不能替代运行时校验，但能在 CI 中阻止常见新增绕过。
+- Trace 的每条模型请求/响应现在携带顶层 `agent_id`、`agent_definition_version` 和 `component_id`；上下文压缩也使用父 Agent 的 Definition 身份和固定 `context_summarization` 组件，不再成为匿名模型调用。
+- 当前 Profile 三个顶层 Definition 仍共享一个会构造完整 Agent bundle 的 Builder，因此声明的是现有 Bundle 上限，而非每条 Graph 的理论最小组件集。进一步拆细 Builder 属于后续可逆优化，不阻塞本阶段的最小权限运行时校验。
+- Phase 3 没有持久化完整 Execution Definition Snapshot；历史运行的 Builder、Prompt、Toolset 与模型绑定冻结仍属于 Phase 4，不能从当前 Trace 字段推断为已经完成。
+
+## 2026-08-04：Agent Control Plane Phase 4 Execution Definition Snapshot
+
+- Registry 表示当前可创建合同，不能用来解释历史运行；Execution 现在在 Graph 和 Provider 启动前冻结独立 Snapshot，并由数据库触发器禁止原地修改。
+- Snapshot 保存稳定 Agent/Definition/Graph/Builder 身份、输入输出 Schema、Prompt Schema 版本表、子组件与模型角色、Tool/Scope 合同及摘要、实际模型绑定摘要、上下文/重试/Trace Policy 和 Eval Pack 版本。模型摘要只包含 Definition 声明的 role，工作区其他模型绑定不会污染历史指纹。
+- 迁移前运行统一回填显式 `legacy=true`，运行详情明确提示“未保存快照”，Eval 仅在 legacy 路径保留旧 Registry 兼容；系统绝不把当前 Definition 反推成旧运行事实。
+- 非 legacy 运行的质量评估只允许冻结的 Pack ID/version；当前代码不再保留的历史 Pack 版本会稳定返回“不支持”，不会悄悄换成新版规则。
+- 高级运行详情折叠展示冻结的 Agent、Graph、Builder、Schema、Prompt、Eval 与策略/摘要；普通任务列表仍只读轻量 Summary，不把控制面技术字段暴露成日常噪音。
+- 当前多数 Prompt 仍是代码内字符串，尚未成为独立版本化资产，因此 `prompt_schema_versions` 会显式冻结为空表；这表示“未版本化”，不是伪造版本。后续 Prompt 资产化时只需补 Definition 声明，不需要改 Snapshot 格式。
+
+## 2026-08-02：轻量创建契约需要前后端保持一致
+
+- 正式规格允许复盘流程只填写岗位名称创建轻量求职目标，但前端按钮和后端 Service 都沿用了“岗位 + 职级成对必填”的旧规则，导致用户已填写公司和岗位仍无法保存。
+- 可选性必须同时体现在字段标签、按钮门禁和服务端校验中；这次统一为“岗位必填，公司与职级可选”，并只禁止职级脱离岗位单独出现。
+
+## 2026-08-02：规范必须同时落到结构、防御样式和实页状态
+
+- 工作台声明四行、正常 DOM 只渲染三个直接子节点时，Grid 会把主工作区放进第三个 `auto` 行，把真正的 `1fr` 伸展行留空；条件错误条必须包进固定控制区，不能通过永久预留可选行维持布局。
+- 业务页的宽泛 `header span` 再次命中共享 Button 的内部标签，说明书面约束不足以防止同类回归；业务侧必须改用语义类，共享 Button 标签也必须以更高组件选择器继承颜色、字体并清除外部边距。
+- “无横向溢出”不能证明桌面布局正确。工作台验收还必须测量主区域是否抵达视口底边、空状态是否只有一个主叙事、主按钮计算颜色是否符合共享组件，以及未选中的同级标签是否已经拥有真实计数。
+
+## 2026-08-02：面试复盘渐进分析的身份与恢复边界
+
+- QuestionUnit 归属于确认后的 CleanupVersion，而不是某一次 AnalysisRun；重试时删除再插入会级联删除旧逐题分析。实现必须按服务端 stable key 对账并复用 QuestionUnit ID，未再次出现的问题标记 superseded，才能保留运行历史。
+- “工作项完成后再停止”不等于重新跑整场。问题提取和每道题都要独立提交；继续时只领取 pending/retryable/interrupted，已完成提取的 attempt count 保持不变。
+- 渐进页面允许用户在后台仍运行时确认推断题。若直接把 running finalizer 改回 pending，旧处理会在完成时发生状态冲突；使用 `rerun_requested` 标记，让当前临界区落盘后自动回到 pending，可以保证修订不被迟到结果覆盖。
+- 同一个已确认 CleanupVersion 和冻结上下文摘要必须幂等复用；显式 retry 通过 `retry_of_analysis_run_id` 创建新运行。两者不能混为一种，否则刷新会制造重复分析，或真正重试会覆盖历史。
+- 推断题可以先生成 draft 逐题分析用于预览，但只有 confirmed 问题进入最终汇总；rejected、superseded 和 pending 都不能进入正式报告、候选资产或整场统计。
+
+## 2026-08-01：Evaluation v2 真实回归验收
+
+- 同一输入、同一模型配置仍可能产生不同业务结果；真实题目整理 A/B 中一边出现模型补充截断，另一边完整，说明回归必须比较重新生成的 Outcome，不能只重新 Judge 历史文本。
+- 盲评内部使用 A/B 随机顺序，但持久化结果会重映射为 `baseline/candidate/tie`；产品页面必须展示“来源配置/当前配置”，不能泄露 A/B 或原始英文状态。
+- 对话与题目整理的真实案例均证明 `separateSandboxes=true`、`productionWrites=false`，且无基础设施失败；这足以证明当前模型配置比较链路成立，但两边仍使用 `codeMode=current_process`，不等同于任意 Git 历史代码回放。
+- Judge 对模型补充的技术正确性只能给语义信号；来源忠实度、补充透明度和处理计数由字段级 provenance 与确定性规则分别约束，任何 Judge 胜负都不进入发布门禁。
+
+## 2026-07-31：Evaluation v1 实现审计与 v2 边界
+
+- 当前 5 个 Pack 的 21 个维度由 Judge 统一输出 0–100 分，没有 N/A 或证据不足状态；宽泛 Pack 被多个业务目标复用，存在任务不匹配。
+- `evaluate_deterministic_rules()` 只判断所需 Trace 事件是否存在，`blocking` 字段没有接入领域门禁，因此只能称为评估证据完整性检查。
+- 回归案例虽然保存 `snapshot_json`，但回归端点仍调用 `evaluate(case.execution_id)`；它会重新构建并 Judge 原 Execution，不会用案例输入运行候选业务 Agent。
+- 当前 Judge 读取完整 `FrozenEvaluationSnapshot`，外部模型可能得到超出任务需要的私有 Trace；v2 必须先构建任务级最小 `EvaluationView`。
+- 题目整理已经有 `source_answer`、`supplemental_answer` 和 `answer_basis`，但最终候选合并为 `reference_answer` 后会丢失字段级来源语义；来源忠实度不能用来惩罚明确标记的模型补全。
+- 相似度阈值只适合召回疑似重复项，不能替代 exact/same-core/parent-child/related 等关系判断和用户合并决定。
+- 画像、JD 和项目评估都需要把“未记录/未评估/推断/本人确认”与“直接来源”分开；没有证据不能推断用户没有某项经历。
+- 真正回归必须冻结输入与必要领域状态，在隔离环境分别运行基线和候选 Agent，再比较最终业务结果；重新 Judge 历史结果只能验证评估标准变化。
+
+## 2026-08-01：Evaluation v2 确定性规则证据边界
+
+- 最终业务结果可以直接证明 Workspace/Execution 身份一致、稳定 ID 唯一、公开计数守恒以及 direct/normalized 字段是否保留来源引用。
+- 最终快照不能独立证明迟到结果没有覆盖、Tool/写入边界始终合规或 Receipt/Event 全程一致；这些维度必须等待领域 Adapter 投影状态转换历史、审计和 Receipt，当前返回 `insufficient_evidence`。
+- 规则结果新增领域 `evidenceRefs`，不再把领域行引用塞进 `citedEventHashes`；所有规则保持 advisory，初始合成校准用例只能证明规则实现符合标签，不能证明真实数据误报率足以启用门禁。
+- Phase 3 的公共 Adapter 可以统一投影 ID、终态、计数、来源和用户决定，但任务不变量必须继续由领域语义解释：例如 `review.currentIndex` 只能与通过/跳过结果比较，画像更新/拒绝必须有 expected version，JD quote 必须满足 `body[start:end] == quote`。
+- 最终快照不能证明“讨论前后题号完全没变”、迟到 Provider 结果是否曾尝试回写等时序事实；这类规则保持 `inconclusive`，后续需补前后状态快照或 Receipt，而不是让 Judge 推断。
+- 题目答案过去只保留合并后的 `reference_answer`；迁移 043 新增 `source_answer` 与 `supplemental_answer`，新候选可以分别评价原文忠实度和模型补全质量，旧候选仍保留兼容读取并显式暴露证据缺口。
+- 真正可恢复的回归快照必须在 `run_prepared/run_background` 启动前冻结，而不是 `prepare` 结束时冻结；题目批次、画像材料等领域关联可能在两者之间才完成绑定。
+- 对话 Agent 回归除 runtime DB 与材料外还必须冻结 `checkpoints.sqlite`，否则只能重放单轮输入，不能复现当时的会话上下文。
+- 当前进程能够真实比较“来源模型配置”和“当前模型配置”，但没有旧代码制品加载器；结果会明确记录 `codeMode=current_process`，不能宣传为任意 Git 历史提交回放。
+- 质量门禁只接受经过真实案例校准并显式批准的确定性 rule ID；Judge 胜负、语义等级、Token 和延迟不能自动阻断。当前批准集合为空，因此门禁保持默认关闭。
+
+## 2026-08-01：面试复盘版本与跨领域边界
+
+- 复盘不能只保存 Markdown、聊天消息或 Agent checkpoint；原始输入、说话人整理、问题确认、逐题分析和用户决定需要独立不可变版本与业务表。
+- 求职目标是强制父级，但正式题库、统一画像、通用项目讲解和 Knowledge 继续由各自领域拥有；删除复盘或目标不能级联删除这些已确认资产。
+- 分析处理 Session 与持续对话 Session 分离，避免后台事件污染用户对话，也避免聊天消息成为分析状态源。
+- 长转写整理同样需要持久化窗口工作项；仅有逐题分析工作项无法满足整理阶段的停止、恢复和幂等 Reducer。
+- 首版新增 `retrospective_analysis` 和 `retrospective_chat` 两个模型用途，分别复用岗位分析和项目深挖的既有绑定完成升级回填。
+- runtime migration 045 新增 13 张复盘领域表；app migration 010 扩展为 10 个模型用途，既有 Workspace 可无损升级。
+
 ## 2026-07-29：项目级 Agent 可观测与质量评估设计
 
 - 当前 per-Execution JSONL 已能保存模型和 Tool 的真实交换，但 UUID 文件布局、无查询索引和无产品化 UI 使其仍是诊断基础设施，不是产品级可观测能力。
@@ -7,7 +101,7 @@
 - 项目级入口必须覆盖全部 Agent；业务页只保留当前运行摘要和下钻入口，不能把全局运行中心放在复习或题库子页面。
 - 采用本地 Trace Ledger：JSONL 是完整正文，SQLite 是可重建索引，大型正文使用受控 Artifact；不建设第二 Runtime 或独立 Gateway。
 - 高级查看允许读取 Prompt、上下文、Tool 和 Provider 原始响应，但 secret 永不保存；思维过程只展示 Provider 实际返回字段。
-- 质量评估采用共用内核与角色专用版本化 Eval Pack；确定性规则可阻断，Judge 不自动阻断，评估失败不影响业务。
+- 初始目标设想为共用内核与角色专用版本化 Eval Pack；2026-07-31 审计确认当前 v1 规则不能阻断，后续按任务级 Pack 与真实业务不变量迁移。
 - 默认长期保留元数据、完整正文保留 90 天；Workspace 可配置永久、定期清理或不保存正文。
 - 当前产品没有账号或权限系统；高级正文使用本地高级诊断开关，Workspace 和路径校验仍由 API 强制执行。
 - 当前生产 Trace 写入 v2，Reader 只需兼容可能存在的 v1；完整父子树通过下一版 Schema 实现，不能把“兼容”误写成“本地已经存在两版数据”。
@@ -843,3 +937,264 @@
 - 根因不是卡片数量，而是新页面虽然被标记为工作台，却没有复用共享 `TaskWorkspace/TaskWorkspacePane`；父容器通过页面专属类名名单分配高度，新页面遗漏后被外层 `overflow: hidden` 裁切。
 - 修复不能停留在给名单补一个类名。来源核对页已接回共享工作台组件，父容器同时识别通用 `.task-workspace` 标记；标题与筛选占固定行，卡片列表是唯一滚动区。
 - 移动端继续恢复自然文档流。布局准则新增强制复用共享工作台组件的条款，避免后续子页再次复制一套高度计算。
+
+## 2026-08-02：渐进报告必须同时投影持久结果与响应式焦点
+
+- `interview_gaps` 已经随逐题分析落库，但原报告资源只返回 analysis，导致前端无法展示四类差距。领域报告契约必须投影 gap，而不能让页面从原始工作项 JSON 反推。
+- 渐进列表的默认焦点属于持久业务状态的视图规则：失败优先，其次高风险、已完成；一旦 URL 中的用户选择仍有效，新结果到达不能抢走焦点。
+- 768 宽度下，应用侧栏、复盘记录栏、问题栏和详情四层并排会把正文压缩到 247px。1023 以下应把问题栏与详情改为上下布局，390 再把外层记录与详情改为自然单列。
+- 共享 `.task-workspace` 的后加载 `display:grid` 会覆盖同权重的移动端 `display:block`。页面断点应使用组件双类名提高选择器优先级，避免依赖 `!important` 或页面高度计算。
+
+## 2026-08-02：面试复盘候选与跨领域写入边界
+
+- 候选生成必须读取已落库的 confirmed QuestionUnit 和 formal QuestionAnalysis；模型输出本身不能直接触达题库、画像、项目叙事或 Knowledge。
+- 相似题分数只用于展示匹配选项，不能自动合并。`link_existing` 必须再次读取目标领域的当前资源并验证 Workspace。
+- `create_new` 进入 Review 自己的 `review_pending` 草稿/候选链，不直接激活正式题目；只有已关联的 active Review Question 才能生成“立即练习”链接。
+- Profile 与项目叙事通过 Profile 所有者创建带 `agent_inference` 来源的待确认 Proposal；复盘 Receipt 只在领域调用成功后落库。
+- 被拒绝候选以 fingerprint 保留，重复 finalizer 不重新打开；批量部分失败只把失败项留在 failed，成功项及其 Receipt 不回滚。
+- Knowledge 发布草稿只从确认问题、正式分析、已确认经历、行动项和稳定链接投影，原始转写、pending 推断、Prompt、Provider 响应和聊天消息没有进入渲染输入。
+
+## 2026-08-02：面试复盘候选审核界面边界
+
+- 逐题复盘、准备资产、行动与发布是同一场复盘的三个视图，入口必须始终可见；切换候选分组不能让其他分组消失。
+- 候选批量操作只能提交用户明确勾选的稳定 candidate ID。刷新后成功项退出待处理计数，failed 项继续处于可选状态并显示稳定错误原因。
+- Profile 项目建议不能依赖前端临时拼装完整领域对象；后端适配器从候选事实生成合法默认 proposal，更新已有项目时先合并当前确认版本，再交给 Profile 领域校验。
+- “立即练习”只在正式 Review Question 已关联后展示；Review 待确认候选不能伪装成可练习题目。
+- 发布界面只提供安全章节选择，不出现原始转写选项；草稿生成后提供返回 Knowledge 的明确入口。
+
+## 2026-08-02：复盘对话纠正与局部重算边界
+
+- 复盘对话复用用户可见 chat Session，但模型只获得七个精确只读 Tool；Workspace 与 retrospective ID 由服务端 `AgentContext` 注入，模型参数只允许当前复盘内的 question ID 或搜索词。
+- 普通解释只追加消息，不创建分析版本。题目文字、片段归属、说话人和结论重判必须先持久化为 pending 纠正建议；拒绝只改变建议状态。
+- 问题文字/片段/结论纠正保留原 CleanupVersion，创建一个局部 AnalysisRun，只调度目标问题与 gap、candidate、projection 三个 finalizer；其他问题分析复制到新运行，报告不会在局部重算期间丢失。
+- 说话人纠正属于整理证据变化，必须复制为新的 CleanupVersion 并重新执行整场问题提取，不能原地修改已确认整理版本。
+- 确认命令在调度模型前先保存确定性变更、结果版本和建议状态；即使后台模型失败，也保留可恢复的新版本，不会重复应用同一纠正。
+
+## 2026-08-02：面试复盘聚合与生命周期收口
+
+- 求职目标聚合只读取非回收复盘及其 active AnalysisRun，返回场次、最近轮次/结果、未完成行动项与四类 gap 数量；不复制报告正文，也不制造跨轮次总分。
+- 清除原文是不可逆的能力降级，不等同于删除复盘：源正文、整理片段正文、工作项输出和分析摘录被清空，哈希、结构化结论、行动项及已发布的外部资产继续保留。
+- `activeSourceVersionId` 仍用于稳定指向历史源版本，因此 API 另外投影 `activeSourceAvailable`。页面据此隐藏重复清除和重新整理动作，并明确显示“原文已清除”。
+- 永久删除只删除复盘私有聚合；复习题、画像/项目 Proposal 与 Knowledge 草稿属于各自领域，删除影响预检必须明确说明保留边界，并要求输入“永久删除”。
+- 创建复盘包含“保存原文”和“启动整理”两个提交边界。模型未配置时后者失败，页面仍必须关闭创建弹窗、选中已保存记录并提示稍后继续，否则会诱导用户重复创建。
+- 实页验收发现 disabled cleanup query 被手工 `refetch()` 后会请求 `/cleanup-runs/null`。禁用查询不是不可执行查询；调用方必须在稳定 ID 存在时才显式 refetch。
+
+## 2026-08-02：复习模式与题目范围必须分离
+
+- 随机混合、薄弱优先、专题复习等是选题策略；自主、岗位、项目是题目来源范围。把“项目专项”做成新模式会把策略和数据边界耦合，后续无法在项目范围内继续使用薄弱优先等策略。
+- 范围只保存稳定来源 ID 和用于展示的冻结名称，实际题目仍使用既有 Catalog 元数据筛选；轮次创建后继续冻结 Question Snapshot，不复制岗位或画像事实。
+- 范围匹配为零时必须阻止创建并说明原因，不能退回全部题库，否则用户以为在练岗位题，实际练到无关题目。
+- 旧轮次 settings JSON 没有范围字段时默认 `ordinary`，因此不需要数据库迁移，也不会改变既有复习历史。
+
+## 2026-08-02：复盘整理的运行可见性与失败恢复
+
+- Session 的 `visibility=system` 只决定它是否出现在普通会话列表，不能把一个 Registry 中的业务 Agent 变成系统 Agent；运行中心是否默认可见必须以可观测 Registry 的 `system` 分类为准。
+- 历史复盘 Session 使用 `.analysis` / `.chat` graph ID，新运行改用规范的 `interview.retrospective`；可观测与质量评估入口必须解析旧别名，避免已有运行永久消失。
+- Cleanup 正式段落只在所有窗口完成后落库，但每个完成窗口已经保存结构化输出。运行中或失败时应从工作项投影只读的部分结果，并公开完成数、总数、当前窗口和稳定错误码。
+- 实际 9,850 字首窗口发生 Provider 超时，原 24,000 字窗口过大。初步修复曾改为 6,000 字、500 字重叠，长文本调度增量又收紧为自然边界优先的 4,000 字、400 字重叠；尚无任何完成窗口的旧失败任务在重试时安全重排，已经有部分成果的任务绝不删除已保存窗口。
+
+## 2026-08-02：一小时转写不能依赖串行窗口与 SDK 隐式重试
+
+- 设置页连接测试只发送 `ping` 并要求 1 Token；Cleanup 自动测试使用确定性 Fake。二者都不能证明近万字结构化输出能在真实 Provider 时限内完成。
+- 原 Cleanup 没有专用调用策略，Anthropic 兼容客户端按默认 30 秒及两次隐式重试形成约 91 秒黑盒等待。长任务必须关闭 SDK 隐式重试，由持久工作项记录每次应用尝试。
+- 单纯缩小窗口仍会让一小时转写串行等待。安全并发边界为首窗串行建立说话人提示，后续最多并发二；Worker 只写各自输出，Reducer 继续独占正式片段顺序。
+- 重叠窗口不能只靠文本完全相同去重。窗口必须区分可读上下文和允许输出范围，以 `emitFrom` 阻止模型重复输出重叠区。
+- 超时不能重跑整场。大窗口原子替换成更小持久窗口；单窗失败继续处理其他窗口，最终以 failed + 部分结果等待用户重试。
+
+## 2026-08-02：问题提取必须按证据段落 Map/Reduce
+
+- Cleanup 分窗只能解决说话人整理；原分析仍把前 60,000 字一次送入问题提取，超过部分会静默遗漏，不能支撑一小时转写。
+- 问题窗口必须沿用用户已确认 Segment，而不是重新按原文字符切割；这样锚点、说话人修正和后续逐题分析共享同一证据 ID。
+- 相邻窗口的语义连续由原始段落重叠负责，不能把上一窗自然语言摘要当作下一窗证据，否则候选人单边录音容易累积模型推断。
+- 去重键不能只看问题文字。同一问题在不同位置重复出现是两次面试事件；同锚点才合并证据，不同锚点必须保留。
+- 正式 QuestionUnit 必须等全部 Map 成功后再由确定性 Reduce 创建。失败时可以展示窗口进度，但不能把不完整题目集合伪装成整场结果。
+
+## 2026-08-02：转写修订必须成为可审计证据层
+
+- 手机录音转写的错别字和技术词错误会污染后续问题识别与分析，但“语言更通顺”不能成为覆盖原文的理由；不可变 SourceVersion、模型建议、用户决定和最终采用正文必须分层保存。
+- 低风险格式/识别修订可自动采用；否定、数字、主体和技术结论一律升级为高风险。未解决高风险项是确认门禁，不是普通提示。
+- 整段手动编辑表达了比逐条模型建议更高优先级的用户决定。同一批请求同时出现手工正文和旧 correction decision 时，应保留旧修订为 superseded 审计历史，但不能让旧决定反向覆盖手工正文。
+- Cleanup 的窗口完成数可以作为确定进度，当前窗口运行时长只能作为活动反馈；刷新后的计时必须来自服务端工作项时间，不能从页面挂载时间重新开始。
+- 运行中心的绿色只表示 Provider 已返回，不表示对象正文“正确”。对象数组应使用普通矩形字段块，只有基础值数组适合紧凑胶囊标签。
+
+## 2026-08-02：长文本结构化输出的容量与证据正确性必须分开解决
+
+- 真实 Cleanup Trace 中，成功窗口已返回 40～60 条修订并消耗 7,356～8,159 输出 Token；失败响应统一由 Provider 以 `stop_reason=max_tokens` 截断，不是后端主动截短完整 JSON。
+- 即使响应完整，模型生成的绝对 offset 与 `originalText` 在真实样本中仍无法通过不可变原文校验。只提高输出 Token 只能缓解容量，不能修复证据正确性。
+- Cleanup 协议改为由程序切稳定 Source Unit 并拥有 offset；模型只返回 `unitId`、说话人和 `correctedText`；程序通过 Diff 物化 CorrectionRecord，并保守升级数字、否定、时间和不确定改写。
+- Cleanup 关闭结构化 Tool 内部自动纠错。一次 Provider 响应失败后回到持久工作项层；超时、截断和 Schema/单元不一致只拆分当前窗口，不解析残缺 `raw_arguments`，不重放已完成窗口。
+- 这是“模型负责语义、程序负责事实与门禁”的 Tradeoff：增加了单元切分和 Diff 规则，但换取了可估算的输出规模、可证明的证据位置和有界恢复。
+
+## 2026-08-02：高级运行详情的“实时”是索引刷新，不是残缺结构化响应流
+
+- Trace 中间件在 Provider 调用前落 `model.request`，只在完整响应返回后落 `model.response`；对于 Tool/Schema 输出，这是正确的原子边界，不能为了视觉流式而渲染尚未闭合的 JSON。
+- 原页面三个 Query 都没有刷新策略，因此进入详情后只看到进入时的静态快照。运行态应刷新执行摘要、Operation 和事件索引，并在终态转换时补一次收尾读取，防止执行状态先于最终索引可见。
+- 等待用户输入/确认不是后台模型仍在生成，不应持续轮询；首版只对 `queued` / `running` 刷新。
+
+## 2026-08-02：字符 Diff 不能直接等价为用户审核任务
+
+- 真实一小时转写产生 1,006 个 pending 高风险项，不是存在 1,006 个关键语义错误，而是模型轻微润色后，`SequenceMatcher` 的每个非格式差异都被默认升级为高风险。
+- 程序可承载这些记录，但用户无法逐条审核；同时原更新命令最多接受 1,000 条决定，导致页面即使提供批量操作也无法处理该真实数据规模。
+- 修订应分成三类：确定安全则自动采用，关键语义变化则人工确认，无法唯一判断的普通措辞变化则保留原文并丢弃建议。Diff 负责定位，不负责制造待办。
+- 历史运行无法重新解释 Provider 输出时，最安全的恢复动作是批量保留原文；新运行通过严格 Prompt 和物化过滤避免再次产生修订爆炸。
+
+## 2026-08-02：对话还原失败的主因是输出契约，不只是 Prompt 文案
+
+- 旧契约强制一个 Source Unit 只返回一个说话人，并禁止拆分；当单元同时包含提问和回答时，模型即使理解说话人切换也无法表达。
+- “直接交给聊天模型”看起来效果更好，是因为模型同时执行了 ASR 纠错、对话轮次切分和问题反推；产品实现必须把三者的数据性质分开，避免推断问题冒充录音原话。
+- 让模型返回字符 offset 不可靠；让每个轮次重复完整原文又会放大输出。折中方案是单轮次默认覆盖整个稳定 Source Unit，仅在多轮次时返回逐字局部 `sourceText`，由程序验证完整覆盖并计算 offset。
+- 候选人单边录音中恢复问题是合理能力，但应落在已有 QuestionUnit 的 `origin=inferred`、`answerSegmentIds` 和 `inferenceBasis`，而不是插入 Cleanup Segment。
+
+## 2026-08-02：运行详情固定多出 480 分钟是 SQLite UTC 字符串被当成本地时间
+
+- Runtime/SQLite 返回的无时区时间形如 `2026-08-02 09:00:00`，项目约定其语义为 UTC。
+- 高级运行详情使用浏览器 `Date.parse`，在北京时间环境把它解释为本地 09:00；与真实当前 17:00 相减后固定多出 8 小时，即 480 分钟。
+- 项目已有 `parseApiTimestamp` 将 SQLite 格式显式补为 `Z`。实时耗时与其他业务页面必须复用该入口，不能直接解析无时区字符串。
+## 2026-08-02：Cleanup Schema 失败被误判为窗口过大
+
+- 真实 18:18 Provider Trace 证明重复输入并非普通 400 字窗口重叠：首个 `0–3973` 窗口在应用校验失败后被拆成 `0–2159` 等子窗口，父子请求重复 2,159 字；部分子窗口随后又被原样自动重试。
+- Provider 的主要不兼容是省略可确定的 `displayName`、偶尔省略按顺序可恢复的 `unitId`，以及多轮次未返回逐字 `sourceText`。这些属于输出契约适配问题，缩小输入窗口不能修复。
+- Cleanup 现在由程序补齐显示名和缺失的顺序单元 ID；多轮次完全缺少边界证据时安全合并为一个 `unknown/待确认` 段，不伪造 offset。
+- 只有超时和输出截断可以拆分窗口；Schema/结构化输出缺失不再自动拆分或原样重试，首窗出现全局契约错误时立即失败，避免继续消耗后续窗口 Token。
+- 用户显式点击继续时重新武装所有未完成窗口并重置其尝试预算；已完成窗口及输出保持不变，因此修复前的部分失败运行可以直接继续，不需要从头创建。
+
+## 2026-08-02：复盘整理核对页面认知负担
+
+- 原页面把段落、说话人、全部文字修订、批量兜底和生命周期动作同时铺开；三栏本身不是问题，问题是每一层都拥有相同视觉权重。
+- “高风险待处理”与“格式整理 + 模型置信度”同时出现，会让用户误以为标点修改也需要逐项决策；置信度是模型诊断信息，不是用户决策依据。
+- 工作台继续保留队列与详情，但详情改为单项核对器；自动整理只提供折叠审计，关键修改处理后自动推进，低频和生命周期操作降级到菜单。
+
+## 2026-08-02：模型建议稿与审核正文差异的真实原因
+
+- 前端没有取错字段；原实现让运行中心展示 Provider 的 `correctedText`，复盘核对页却展示确定性门禁重建的 `SegmentRecord.body`，因此产生两套正文。
+- 原分类器只自动采用格式变化和“Diff 建议文本本身等于术语提示”的变化，因此口头禅、紧邻重复以及术语内部单字修正会被静默恢复为原文。
+- 真实响应证明逐 opcode 白名单会把完整 `correctedText` 几乎全部静默恢复为原文，并产生 `corrections=[]`。正确边界是先在整轮层面拒绝低相似度、异常长度和明显内容搬移；通过门禁后，普通 ASR 错字、口头语和断句修正自动采用，数字、否定和职责升级继续阻塞。
+- 当前改为审核页直接显示 `correctedText`；确定性门禁只决定是否需要用户确认以及最终采用模型稿、原文或手工稿，不再偷偷改写可见正文。
+- Provider 还会在多轮输出中省略第一轮 `sourceText`，甚至格式化后续证据标点。模型证据只能作为轮次起点锚点；程序在内容锚点唯一且高相似时从不可变原文重建正文，任意中间缺失、定位歧义或内容差异过大仍必须拒绝。
+
+## 2026-08-02：首窗直接失败来自 Provider 修改证据标点
+
+- Execution `2943dfa5-3b85-48d6-8796-a9699a5bfb25` 在 27.5 秒内正常返回 6 个 Source Unit，失败不是超时或截断，而是后端物化阶段的 `schema_validation_error`。
+- `unit:2247:2920` 的首轮 `sourceText` 被省略，后续证据又把原文“然后的话呃出于”改成“然后的话呃 ，出于”。旧恢复逻辑要求后续证据构成逐字精确后缀，因此拒绝首窗；首窗失败后调度器按防浪费策略不再调用后两个窗口，所以页面表现为直接失败。
+- `sourceText` 不能继续被当成最终证据正文。程序现在只用其去除标点后的唯一前缀定位轮次起点，再从不可变 Source Unit 切出真实正文和 offset；锚点内容相似度不足、中间缺失或定位不唯一仍拒绝。
+- 同一次真实响应在新逻辑下离线重放成功，得到 8 个连续段落，角色顺序为 4 个 candidate、1 个 interviewer、3 个 candidate。
+- 重试 Execution `24842e8a-f4d8-4348-8c3a-469b26c742ce` 又暴露第二种违约：第三轮 `sourceText` 不只是格式化标点，而是几乎直接复制了 `correctedText`。轮次边界仍可由其开头的唯一原文锚点确定，因此不应拿整段 `sourceText` 做证据相似度门禁；真正的正文安全性应由不可变原文切片与 `correctedText` 的整体有界 Diff 负责。
+- 第二次真实响应在修复后同样离线重放成功为 8 段；后端开发进程使用 `uvicorn --reload`，无需手工重启即可加载修复。
+
+## 2026-08-02：复盘整理重试仍失败的真实根因
+
+- 真实 Execution `025f877c-084f-4a1d-a543-e16f497b9d69` 并非 Provider 全部不可用：首窗成功，后两窗分别因为只返回 2/3 个 emit Source Unit，以及多轮 `sourceText` 无法逐字覆盖不可变原文而失败。
+- 原实现把“单元缺失”和“轮次边界不可证明”都升级成整个窗口的 `schema_validation_error`；显式重试会再次遇到同类非确定性输出，因此用户看到连续任务失败。
+- 修复边界调整为：响应整体可解析时，Schema 漂移只降低受影响单元的自动整理质量。缺失/未知单元保留原文并标记说话人待确认；边界不可证明时合并完整 Source Unit 为单段。程序持有的原文和 offset 始终是唯一证据权威。
+- 三组真实响应离线回放结果：首窗 expected/returned `6/6`；第二窗 `3/2` 并安全补齐 1 个原文单元；第三窗 `5/5` 并对不可验证边界执行单段降级。三窗均不再抛异常。
+- 新鲜验证：复盘后端定向回归 `118 passed`，相关 Ruff 检查通过。
+
+## 2026-08-02：转写 Cleanup 必须以完整文档为 Artifact
+
+- 真实一小时样本证明，模型窗口、Source Unit、说话人 turn、字符 Diff 和用户审核段落不能共用同一业务颗粒；否则内部处理规模会直接变成上千项用户操作。
+- DeerFlow 的 Artifact/Context Engineering、LangGraph 的 Map-Reduce、GraphRAG 的 Document/Text Unit 分层和 Haystack 的 Cleaner/Splitter/Writer 流水线都指向同一边界：切片用于容量、隔离和来源追踪，最终产物仍是完整文档或报告。
+- 新设计以 `CleanTranscriptVersion.body` 作为 Cleanup 唯一用户产物；WindowResult 和 Diff 留在运行/诊断层，只有无法安全决定的术语、数字、主体和职责变化形成稀疏 ReviewIssue。
+- 问题提取只读取 confirmed CleanTranscriptVersion，并在确认后确定性生成 Anchor；不再读取模型 turn 直接持久化的段落队列。
+- 真实验收必须加入与“直接把同样文本交给同一模型整理”的盲测基线。接口成功、自动测试通过和 Trace 可读都不能替代最终文档质量。
+# 2026-08-02：审核段落应该直接显示模型整理稿
+
+- 之前 Materializer 对高风险 Diff 自动恢复原文，导致段落正文与 Provider `correctedText` 不一致；再从 Trace 临时查响应只制造了第二套正文来源。
+- 审核阶段现在以 `correctedText` 作为可见候选稿；风险由 Correction 门禁表达，而不是通过偷偷换回原文表达。
+- `pending` 不等于采用已确认：它只表示页面先展示模型建议，但用户未决定前不能确认整理结果或进入分析。
+
+## 2026-08-02：单文档实现后的边界结论
+
+- 产品正文与内部计算颗粒已经分离：目标窗口可拆分、重试和并发，只有拼接后的 `document_body` 能进入人工核对与后续题目提取。
+- 上下文重叠不能进入 Provider 的所有权输出。窗口协议必须显式区分 `beforeContext / targetText / afterContext`，否则任何 Reduce 去重都只能依赖脆弱的文本相似度。
+- 对长文档最稳妥的确认边界不是保存模型 turn，而是确认完整文档后由程序按自然段和有界长度生成证据锚点；它既能支撑 QuestionUnit 的证据引用，又不会把锚点数量暴露为用户任务数。
+- 整篇编辑后 ReviewIssue offset 只适用于当前审核会话，因此问题决定必须与最终全文一起保存；确认后全文不可原地修改，后续变更创建新 CleanupVersion。
+- 删除源材料时，仅清数据库派生正文仍不足以覆盖诊断 Trace；Trace 有独立保留策略和清理流程。业务清除与诊断保留是否强制联动仍是未关闭的隐私边界，不能在浏览器验收前略过。
+
+## 2026-08-03：准确转写双栏比例被通用断点规则反转
+
+- 单文档工作台默认把完整正文设为主栏、待确认项设为 280–360px 辅栏；但 `max-width: 1023px` 下更靠后的 `.cleanup-workbench__workspace` 通用规则重新把第一栏固定为 240–280px，并让第二栏占满剩余空间。
+- 结果是在常见 1024 附近视口中，正文编辑区比待确认区更窄。修复必须在同一断点为 `clean-transcript__workspace` 明确恢复“正文约 64%、辅栏约 36%”，而不是继续修改默认桌面规则。
+- 768–899px 可用详情宽度不足以稳定容纳两栏，改为上下布局；右侧长原文仅作为核对预览，限制高度并内部滚动，避免挤压主要文档。
+- 待确认列表原先使用内容高度行，下面的长详情参与 Grid 尺寸计算后会把列表压缩到接近 0，只剩上下边框。列表必须拥有 160–280px 的稳定可见区，详情占剩余空间并独立滚动。
+
+## 2026-08-03：单文档核对页仍存在三块等权竞争
+
+- 修复正文/待确认双栏比例后，外层复盘列表仍在 1024px 附近占 34vw；它与内层正文、待确认栏叠加后形成三块近似等权区域，用户无法一眼判断当前主任务。
+- 复盘列表是导航，不是核对内容。选中记录后应限制在 220–300px，并把剩余宽度优先给完整文字；待确认区继续作为稳定辅助栏，而不是再次平分详情区。
+- 页面标题、生命周期控制、列表标题、生命周期菜单和核对标题连续堆叠时，会在正文前形成多层横向分隔。无需删除功能，但必须收紧垂直间距，让“完整文字 + 待确认问题”更早进入视野。
+
+## 2026-08-03：问题提取上下文与结构化输出膨胀根因
+
+- `_analysis_context_snapshot` 同时服务问题提取和逐题分析，使提取请求无条件携带岗位文档摘录和已确认画像 Claim；这些数据既不是“面试中问了什么”的证据，也会增加隐私暴露、Token 和履历补题偏差。
+- `QuestionExtractionOutput` 直接作为 Provider Tool Schema，把 `ordinal`、`anchorSegmentId` 和分类等确定性/非关键字段交给模型；真实响应漏掉这些字段后产生批量 Pydantic 校验错误。
+- ToolStrategy 的 `handle_errors=True` 会把无效响应与校验错误重新注入同一 Agent 调用，应用层又对整个窗口自动重试，因此错误请求不是恒定大小，而是发生上下文膨胀。
+- 修正后提取使用独立 `QuestionExtractionModelOutput`：模型只返回问题语义和证据；程序分配序号、锚点并校验证据范围。提取输入固定为 `transcript_only`。
+- Schema 隐式回灌关闭；首次错误最多用错误候选及其引用证据做一次紧凑修复，第二次失败或越窗证据直接停止当前窗口，已完成窗口仍保留。
+
+## 2026-08-03：逐题分析失败不是单纯的超时参数不足
+
+- 真实失败请求把冻结 `contextSnapshot` 中的完整画像和岗位文档重复发送给每一道题；单题输入随画像增长，既增加延迟与隐私暴露，也让无关履历干扰当前问题分析。
+- 旧逐题 Agent 没有显式 `ModelInvocationPolicy`。Provider 约 30 秒超时后被 SDK 默认重试两次，最终表现为单题约 90 秒才失败；单纯调大超时只会继续放大最坏等待。
+- 修复采用三层边界：请求层按题检索证据并设置硬上限；调用层关闭 SDK 隐式重试；工作项层按题隔离、应用级最多两次尝试，预算耗尽后继续处理其他题。
+- 最终汇总依赖全部逐题结果，因此某题耗尽预算时运行仍标记失败，但失败发生在其他题推进之后；恢复同一 AnalysisRun 时，已完成的问题提取和逐题结果不会重算。
+- 该模式可承受未来 `QuestionExtractionContext` 增长：冻结全量上下文只作为证据仓，模型调用读取经过检索和预算裁剪的视图，输入不会随资料总量线性增长。
+
+## 2026-08-03：复盘讨论 SQLite 锁与模型请求 Trace 缺失
+
+- 真实失败不是模型未调用：首轮 `model.response` 已返回 Tool 计划，随后并发只读 Tool 在审计和产品事件写入之间触发 `database is locked`，因此没有进入第二轮模型请求。
+- `ProductEventStream.publish` 在异步事件循环直接执行同步 SQLite 写入；当它等待异步 Tool 审计持有的写锁时，会阻塞持锁协程继续提交，WAL 和 `busy_timeout` 无法修复这种调度互锁。
+- `model.request` 缺失是另一条独立故障：真实 LangChain Tool 被当作普通 Pydantic Model JSON 序列化，其参数 Schema 含 Python Model 类，Trace fail-open 后业务继续执行但请求事件静默丢失。
+- 修复把产品事件同步写入移到工作线程，保留有界锁重试；Trace 对 Tool 只记录公开合同，并为 Pydantic 序列化增加不可抛出的降级路径。
+- 该问题属于所有共享 SQLite 的 Agent 运行时边界，已记录独立 Tradeoff ADR：`docs/superpowers/architecture-decisions/2026-08-03-async-sqlite-agent-runtime-write-boundary.md`。
+
+## 2026-08-03：复盘讨论上下文与 Tool Call 恢复边界
+
+- 旧实现把最近 12 条产品消息嵌入当前 `HumanMessage.recentConversation`，固定条数既不能约束 Token，也让消息级压缩无法识别完整问答轮次。
+- 复盘讨论的 7 个 Tool 均为本地、有界、只读查询；当前没有必要为它们引入持久化 Checkpointer 和 ToolInvocation 状态机。取消中途调用后由用户重试安全重放，成本和一致性风险更低。
+- 产品消息是跨运行的长期事实；`AIMessage.tool_calls` 与对应 `ToolMessage` 是单次运行态。两者不应写入同一产品消息表，否则恢复时容易重复工具调用或污染用户可见对话。
+- 新上下文装配器按 Token 预算从新到旧选择完整 `user + assistant` 轮次，忽略未完成的历史 user 消息，并把各角色恢复为独立 LangChain Message；当前请求只保留消息、选中题目和裁剪统计。
+- LangChain Summarization 的安全 cutoff 会在切点落入 `ToolMessage` 时回退到对应 `AIMessage(tool_calls)`，因此不会制造孤立 Tool 结果；取消检查位于模型调用后、助手消息落库前，保证不保存半截回复。
+
+## 2026-08-04：复盘后续动作与质量页不能混用内部状态和用户决策
+
+- 行动项的 `completed / dismissed` 只是当前复盘里的整理状态，并没有产生外部副作用；把它们做成不可撤销会迫使用户害怕试用勾选和忽略。
+- 候选的拒绝状态在尚未写入目标领域前同样只是筛选决定；恢复时必须复用原候选和 fingerprint，不能重新生成一条候选。
+- “发布”在这里实际是生成一个可继续审核的 Knowledge Draft，不是对外公开；用户界面应说“生成复盘文档”，架构层继续保留 Draft/HITL/Receipt。
+- 单次运行质量页最严重的问题不是维度多，而是来源不可信：指定 Execution 没有报告时旧页面会显示另一条历史报告。质量页必须先锁定来源，再谈对比；对比结果必须合同兼容且由用户显式开启。
+- Token、Runtime 和检查配置是诊断信息，不应与“能否使用、先处理什么”同级常驻。
+
+## 2026-08-04：注册门禁必须区分新建 fail-closed 与历史读取 fail-open
+
+- 只在 `ProductionGraphFactory` 遇到未知 kind 时失败已经太晚：Session 和 Execution 已经落库，运行中心会留下无法解释的脏任务。
+- 新建边界必须先校验注册、生命周期和 `user_creatable`，并在任何数据库写入或 Provider 调用之前返回稳定错误。
+- 历史数据不能复用同一 fail-closed 规则，否则已删除 Agent 的运行会从运行中心消失；历史投影必须无 Builder、无控制能力、无业务跳转，只允许查看。
+- 测试或诊断 Harness 使用的临时 Graph 应通过构造时注入的测试门禁显式声明，不能迫使生产 Registry 收录只为测试存在的 Agent。
+
+## 2026-08-04：质量支持能力不能从当前运行操作反推
+
+- 运行时 `capabilities` 是“现在允许做什么”的动态集合；未完成运行会移除 `manual_judge`，因此它不能回答 Agent 是否在架构上支持质量检查。
+- 质量支持能力必须来自 Execution 冻结的 Agent Definition Snapshot 中的 `eval_pack_id`；当前是否可开始检查再叠加运行状态判断。
+- 历史运行需要保留创建时合同，不能用当前 Registry 反推，否则新增 Eval Pack 后旧运行会被误报成当时已经支持检查。
+- 报告汇总和优先问题必须共享同一个 `dimensionOutcome` 判定；对 `insufficient_evidence` 另写过滤条件会产生“有关注项但没有问题”的用户矛盾。
+
+## 2026-08-05：质量检查可读性不是逐项翻译问题
+
+- 英文检查名来自未知维度直接展示内部 `dimension_id` 的兜底逻辑；只补翻译仍会让业务质量和 Runtime 保护规则争夺同一视觉层级。
+- 用户首先需要知道结果是否可用、哪里需要确认；任务归属、幂等写入、迟到结果和来源追溯属于系统可靠性检查，应默认折叠。
+- Receipt、Event、hash、locator 和原始缺口代码是排障证据，不应进入结论、优先事项或默认展开的检查说明。
+- 无历史基线时展示“之前 / 变化”只会产生两列横杠；单次报告应只保留“检查内容 / 本次结果”，由用户显式开启历史对比后再增加变化列。
+
+## 2026-08-05：动态总结不能依赖父级 Grid 自动落位
+
+- 历史检索父容器原本只有一个弹性内容行；总结动态插入后先占用该行，检索工作区被推入隐式行，在固定高度与 `overflow: hidden` 组合下发生视觉重叠。
+- 仅给总结设置 `max-height` 不足以解决问题：Grid 的自动轨道仍会按总结的固有高度参与分配，可能把结果区压缩到 0。
+- 修复使用一个固定占据父级弹性行的 `history-search__body`，内部显式划分总结洞察区和检索结果区；有总结时最多占 40%，结果区保留其余空间，无总结时结果区占满。
+- 5175 实页几何证据：720px 高窗口中洞察区 114px、结果区 171px，边界相接且交叠为 0px。
+
+## 2026-08-05：SQLite 单例应是连接管理器，而不是跨线程共享物理连接
+
+- `check_same_thread=False` 只关闭 SQLite 的线程归属检查，不会让一条物理连接上的 Cursor、事务状态和 `sqlite3.Row` 元数据变成并发安全。
+- 应用 lifespan 注入的 Workspace、Provider、Settings 回调会被多个 AnyIO 工作线程并发调用；共享同一物理连接时，一次列表查询可能被另一线程的查询状态干扰，表现为偶发 `IndexError: tuple index out of range`，随即重试又恢复。
+- 正确边界仍是一个应用级连接管理器，但它按线程延迟创建物理连接。这样 Repository 无需改接口，同时每个同步请求只使用当前线程的事务和 Cursor。
+- WAL 负责读写并发，`busy_timeout` 负责短暂写锁等待；它们不能替代连接隔离，也不能把一个长事务自动变安全。
+- 回归测试用一个线程持有事务、另一个线程读取 `in_transaction`：旧共享连接会观察到 `True`，线程连接管理器必须稳定返回 `False`。

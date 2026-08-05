@@ -21,6 +21,9 @@ export const executionSummarySchema = z.object({
   status: z.string().min(1),
   traceHealth: z.enum(["complete", "partial", "missing", "unavailable"]),
   capabilities: z.array(observabilityCapabilitySchema),
+  evaluationSupported: z.boolean().optional(),
+  evaluationAvailable: z.boolean().optional(),
+  evaluationUnavailableReason: z.string().nullable().optional(),
   route: z.string(),
   systemOperationCount: z.number().int().nonnegative(),
   modelCallCount: z.number().int().nonnegative(),
@@ -33,6 +36,33 @@ export const executionSummarySchema = z.object({
   startedAt: z.string().nullable(),
   finishedAt: z.string().nullable(),
   errorCode: z.string().nullable(),
+});
+
+export const agentDefinitionSnapshotSchema = z.object({
+  snapshotVersion: z.number().int().positive(),
+  legacy: z.boolean(),
+  agentId: z.string().min(1).nullable(),
+  agentDefinitionVersion: z.string().min(1).nullable(),
+  graphVersion: z.number().int().positive().nullable(),
+  builderKey: z.string().min(1).nullable(),
+  promptSchemaVersions: z.record(z.string()),
+  inputSchemaVersion: z.string().min(1).nullable(),
+  outputSchemaVersion: z.string().min(1).nullable(),
+  childComponents: z.array(z.string()),
+  modelRoles: z.array(z.string()),
+  allowedTools: z.array(z.string()),
+  allowedScopes: z.array(z.string()),
+  toolsetDigest: z.string().nullable(),
+  modelBindingDigest: z.string().nullable(),
+  contextPolicyId: z.string().min(1).nullable(),
+  retryPolicyId: z.string().min(1).nullable(),
+  tracePolicyId: z.string().min(1).nullable(),
+  evalPackId: z.string().min(1).nullable(),
+  evalPackVersion: z.number().int().positive().nullable(),
+});
+
+export const executionDetailSchema = executionSummarySchema.extend({
+  definitionSnapshot: agentDefinitionSnapshotSchema,
 });
 
 export const executionSummaryPageSchema = z.object({
@@ -118,6 +148,8 @@ export type ObservabilityCapability = z.infer<
   typeof observabilityCapabilitySchema
 >;
 export type ExecutionSummary = z.infer<typeof executionSummarySchema>;
+export type AgentDefinitionSnapshot = z.infer<typeof agentDefinitionSnapshotSchema>;
+export type ExecutionDetail = z.infer<typeof executionDetailSchema>;
 export type ExecutionSummaryPage = z.infer<typeof executionSummaryPageSchema>;
 export type ExecutionChangedEvent = z.infer<typeof executionChangedEventSchema>;
 export type OperationSummary = z.infer<typeof operationSummarySchema>;

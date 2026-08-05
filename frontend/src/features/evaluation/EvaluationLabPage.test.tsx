@@ -10,6 +10,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import { EvaluationLabPage } from "./EvaluationLabPage";
+import type { EvaluationRun } from "./evaluationTypes";
 
 
 const workspace: WorkspaceConfig = {
@@ -19,15 +20,20 @@ const workspace: WorkspaceConfig = {
   vaultPath: "/tmp/interview/vault",
 };
 
-const run = {
+const run: EvaluationRun = {
   id: "eval-1",
   workspaceId: "workspace-1",
   executionId: "execution-1",
   evalPackId: "review.v1",
   evalPackVersion: 1,
+  evaluationContractVersion: 1,
+  taskType: "legacy",
+  runKind: "historical_review",
   trigger: "manual",
   status: "completed",
   frozenInputHash: "a".repeat(64),
+  businessOutcomeHash: null,
+  judgeDataScope: {},
   judgeProviderModelId: "model-1",
   errorCode: null,
   createdAt: "2026-07-30T00:00:00Z",
@@ -38,12 +44,17 @@ const run = {
       dimensionId: "key_point_coverage",
       source: "judge",
       status: "scored",
+      applicability: "applicable",
+      rating: null,
+      severity: null,
       score: 86,
       confidence: 0.82,
       summary: "关键结论有事件证据支持",
       citedEventHashes: ["event-hash-1"],
       citedArtifactHashes: ["artifact-hash-1"],
       risks: [],
+      evidenceGaps: [],
+      evidenceRefs: [],
     },
   ],
   deterministicResult: { status: "passed" },
@@ -83,10 +94,12 @@ const execution = {
   errorCode: null,
 };
 
-function renderPage() {
+function renderPage(
+  entry = "/agents/evaluations?executionId=execution-1",
+) {
   return render(
     <MemoryRouter
-      initialEntries={["/agents/evaluations?executionId=execution-1"]}
+      initialEntries={[entry]}
     >
       <QueryClientProvider client={new QueryClient({
         defaultOptions: {
@@ -146,7 +159,7 @@ afterEach(() => {
 });
 
 describe("EvaluationLabPage", () => {
-  it("starts with an approachable quality overview and preserves quality tools", async () => {
+  it("uses a clear quality-center workflow without an advanced-mode detour", async () => {
     const requests = mockEvaluationPage();
 
     renderPage();
@@ -154,11 +167,12 @@ describe("EvaluationLabPage", () => {
     expect(
       await screen.findByRole("heading", { name: "质量概览" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "运行中心" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "运行质量" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
+    expect(screen.getByRole("heading", { name: "Agent 质量中心" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^质量检查/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /^回归实验/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^质量趋势/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "高级评估" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "运行中心" })).not.toBeInTheDocument();
     expect(screen.getAllByText("复习轮次 · 10 题").length).toBeGreaterThan(0);
     expect(screen.getAllByText("表现稳定").length).toBeGreaterThan(0);
 
@@ -178,22 +192,31 @@ describe("EvaluationLabPage", () => {
     expect(
       screen.getByRole("heading", { name: "这次运行表现怎么样" }),
     ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "评估工具" }));
-    expect(screen.getByRole("tab", { name: "质量报告" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "质量趋势" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看检查依据" }));
+    expect(screen.getByText("选择运行")).toBeInTheDocument();
+    expect(screen.getByText("查看结果")).toBeInTheDocument();
+    expect(screen.getByText("人工确认")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /确认无问题/ })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: /确认有问题/ })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /暂不判断/ })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "反馈结论" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("之前结果")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "对比历史结果" }));
     expect(screen.getByLabelText("之前结果")).toBeInTheDocument();
-    expect(screen.getByLabelText("当前结果")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "检查结论" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "复测案例" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("当前结果")).not.toBeInTheDocument();
+    expect(screen.getByText("本次结论")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "评估案例" })).not.toBeInTheDocument();
     expect(
       screen.queryByRole("heading", { name: "长期质量趋势" }),
     ).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "质量趋势" }));
+    fireEvent.click(screen.getByRole("tab", { name: /^质量趋势/ }));
     expect(
       screen.getByRole("heading", { name: "长期质量趋势" }),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "质量报告" }));
+    fireEvent.click(screen.getByRole("tab", { name: /^质量检查/ }));
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    fireEvent.click(screen.getByRole("button", { name: "查看检查依据" }));
+    fireEvent.click(screen.getByRole("button", { name: "查看检查明细" }));
     fireEvent.click(screen.getByRole("button", { name: /关键点覆盖/ }));
     expect(screen.getByText(/event-hash/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "开始质量检查" }));
@@ -203,21 +226,25 @@ describe("EvaluationLabPage", () => {
         && request.url.includes("/api/agent-evaluations/runs?")
       ),
     ).toBe(true));
+    fireEvent.click(screen.getByRole("tab", { name: /^回归实验/ }));
+    expect(screen.getByRole("heading", { name: "评估案例" })).toBeInTheDocument();
+    expect(screen.getByText("选择案例")).toBeInTheDocument();
+    expect(screen.getByText("运行复测")).toBeInTheDocument();
+    expect(screen.getByText("比较变化")).toBeInTheDocument();
   });
 
   it("keeps raw AI-check data hidden when backend does not disclose it", async () => {
     mockEvaluationPage();
-    renderPage();
+    renderPage("/agents/evaluations?view=tools&executionId=execution-1");
 
-    await screen.findByRole("heading", { name: "质量概览" });
-    fireEvent.click(screen.getByRole("button", { name: "评估工具" }));
+    await screen.findByText("查看结果");
     expect(
       screen.queryByText("高级诊断：AI 检查原始输入与输出"),
     ).not.toBeInTheDocument();
     expect(screen.queryByText(/cost/i)).not.toBeInTheDocument();
   });
 
-  it("keeps the current report usable when previous results are incompatible", async () => {
+  it("only offers history that uses the same evaluation contract", async () => {
     const baseline = {
       ...run,
       id: "eval-2",
@@ -239,19 +266,106 @@ describe("EvaluationLabPage", () => {
       409,
     );
 
-    renderPage();
-    await screen.findByRole("heading", { name: "质量概览" });
-    fireEvent.click(screen.getByRole("button", { name: "评估工具" }));
-    fireEvent.change(screen.getByLabelText("之前结果"), {
-      target: { value: "eval-2" },
-    });
+    renderPage("/agents/evaluations?view=tools&executionId=execution-1");
+    await screen.findByText("查看结果");
+    fireEvent.click(screen.getByRole("button", { name: "对比历史结果" }));
+    expect(screen.getByText("暂时没有使用相同标准和版本的历史结果。")).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /画像助手/ })).not.toBeInTheDocument();
+  });
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "当前报告仍可查看",
+  it("shows v2 applicability labels without inventing a total score", async () => {
+    const v2Run: EvaluationRun = {
+      ...run,
+      id: "eval-v2",
+      evalPackId: "question-curation.v2",
+      evalPackVersion: 2,
+      evaluationContractVersion: 2,
+      taskType: "question_curation",
+      runKind: "historical_review",
+      businessOutcomeHash: "b".repeat(64),
+      judgeDataScope: { mode: "minimal_evaluation_view" },
+      dimensions: [
+        {
+          ...run.dimensions[0],
+          dimensionId: "source_answer_fidelity",
+          score: null,
+          applicability: "not_applicable",
+          rating: null,
+          severity: null,
+          confidence: null,
+          evidenceGaps: ["材料未提供原文答案"],
+        },
+        {
+          ...run.dimensions[0],
+          dimensionId: "model_completion_quality",
+          score: null,
+          applicability: "applicable",
+          rating: "needs_review",
+          severity: "medium",
+          evidenceGaps: [],
+        },
+      ],
+    };
+    mockEvaluationPage([v2Run]);
+    renderPage("/agents/evaluations?view=tools&executionId=execution-1");
+
+    await screen.findByText("查看结果");
+    fireEvent.click(screen.getByRole("button", { name: "查看检查明细" }));
+
+    expect(screen.getByText("业务结果质检")).toBeInTheDocument();
+    expect(screen.getByText("不适用")).toBeInTheDocument();
+    expect(screen.getByText("建议复核")).toBeInTheDocument();
+    expect(screen.queryByText("总分")).not.toBeInTheDocument();
+  });
+
+  it("explains unsupported runs and never offers a fake start action", async () => {
+    const unsupported = {
+      ...execution,
+      id: "execution-system",
+      sessionId: "session-system",
+      displayName: "运行时维护",
+      title: "Trace 索引维护",
+      capabilities: ["export_trace"],
+      system: true,
+    };
+    mockEvaluationPage([], [unsupported]);
+    renderPage("/agents/evaluations");
+
+    await screen.findByRole("heading", { name: "质量概览" });
+    expect(screen.getByText("暂不支持检查")).toBeInTheDocument();
+    expect(screen.getByText(/该运行没有声明人工质量检查能力/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "开始检查" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "开始质量检查" })).not.toBeInTheDocument();
+  });
+
+  it("distinguishes a supported Agent from a run that is not ready yet", async () => {
+    const running = {
+      ...execution,
+      id: "execution-running",
+      sessionId: "session-running",
+      status: "running",
+      capabilities: ["open_business", "cancel"],
+      evaluationSupported: true,
+      evaluationAvailable: false,
+      evaluationUnavailableReason: "运行完成后才能开始质量检查",
+    };
+    mockEvaluationPage([], [running]);
+    renderPage("/agents/evaluations");
+
+    await screen.findByRole("heading", { name: "质量概览" });
+    expect(screen.getByText("等待运行完成")).toBeInTheDocument();
+    expect(screen.getByText("运行完成后才能开始质量检查")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "开始检查" })).not.toBeInTheDocument();
+  });
+
+  it("maps legacy tools links to the quality-check entrance", async () => {
+    mockEvaluationPage();
+    renderPage("/agents/evaluations?view=tools&executionId=execution-1");
+
+    expect(await screen.findByText("查看结果")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^质量检查/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
     );
-    expect(
-      screen.getByRole("heading", { name: "检查结果对比" }),
-    ).toBeInTheDocument();
-    expect(screen.getAllByText("86").length).toBeGreaterThan(0);
   });
 });

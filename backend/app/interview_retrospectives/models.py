@@ -1,0 +1,395 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal, TypeAlias
+
+
+RetrospectiveLifecycle: TypeAlias = Literal["active", "archived", "recycled"]
+InterviewOutcome: TypeAlias = Literal[
+    "pending", "passed", "failed", "cancelled", "unrecorded"
+]
+SourceKind: TypeAlias = Literal["transcript", "recollection"]
+RecordingCoverage: TypeAlias = Literal[
+    "full_dialogue", "candidate_only", "mixed_unknown"
+]
+SpeakerRole: TypeAlias = Literal["candidate", "interviewer", "unknown"]
+QuestionOrigin: TypeAlias = Literal["original", "inferred"]
+QuestionDecision: TypeAlias = Literal["pending", "confirmed", "rejected", "superseded"]
+QuestionKind: TypeAlias = Literal[
+    "technical_knowledge",
+    "project_experience",
+    "system_design",
+    "behavioral_collaboration",
+    "motivation_hr",
+    "unknown",
+]
+AnalysisVerdict: TypeAlias = Literal[
+    "strong", "improvable", "high_risk", "insufficient_evidence"
+]
+EvidenceLevel: TypeAlias = Literal[
+    "internal_evidence", "profile_conflict", "model_judgment", "insufficient"
+]
+GapKind: TypeAlias = Literal["material", "expression", "knowledge", "experience"]
+CandidateKind: TypeAlias = Literal[
+    "review_question", "profile_claim", "project_narrative", "summary"
+]
+CorrectionType: TypeAlias = Literal[
+    "question_text_correction",
+    "question_segment_rebind",
+    "speaker_correction",
+    "analysis_reconsideration",
+]
+TranscriptCorrectionType: TypeAlias = Literal[
+    "formatting", "recognition", "semantic"
+]
+TranscriptCorrectionRisk: TypeAlias = Literal["low", "high"]
+TranscriptCorrectionDecision: TypeAlias = Literal[
+    "auto_accepted",
+    "pending",
+    "accepted",
+    "kept_original",
+    "manual",
+    "superseded",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class RetrospectiveRecord:
+    id: str
+    workspace_id: str
+    job_target_id: str
+    title: str
+    round_label: str
+    interview_date: str | None
+    outcome: InterviewOutcome
+    note: str
+    lifecycle_status: RetrospectiveLifecycle
+    active_source_version_id: str | None
+    active_cleanup_version_id: str | None
+    active_analysis_run_id: str | None
+    analysis_session_id: str
+    chat_session_id: str
+    version: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class SourceVersionRecord:
+    id: str
+    retrospective_id: str
+    ordinal: int
+    source_kind: SourceKind
+    recording_coverage: RecordingCoverage
+    file_name: str | None
+    body: str
+    content_sha256: str
+    cleared_at: str | None
+    created_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class CleanupVersionRecord:
+    id: str
+    retrospective_id: str
+    source_version_id: str
+    ordinal: int
+    execution_id: str | None
+    input_digest: str
+    status: str
+    stage: str
+    control_intent: str | None
+    confirmed_at: str | None
+    version: int
+    created_at: str
+    updated_at: str
+    document_body: str | None = None
+    document_sha256: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptReviewIssueRecord:
+    id: str
+    cleanup_version_id: str
+    ordinal: int
+    document_start: int
+    document_end: int
+    excerpt: str
+    suggestion: str | None
+    issue_kind: Literal["uncertain_term", "speaker", "semantic"]
+    reason: str
+    confidence: float
+    decision: Literal["pending", "accepted", "kept", "manual"]
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class CleanupWorkItemRecord:
+    id: str
+    cleanup_version_id: str
+    work_key: str
+    source_start: int
+    source_end: int
+    input_digest: str
+    status: str
+    output: dict[str, object] | None
+    attempt_count: int
+    last_error_code: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class SegmentRecord:
+    id: str
+    cleanup_version_id: str
+    ordinal: int
+    speaker_role: SpeakerRole
+    raw_speaker_label: str | None
+    display_name: str
+    body: str
+    source_start: int
+    source_end: int
+    confidence: float
+    uncertainty_reason: str | None
+    ignored: bool
+    version: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptCorrectionRecord:
+    id: str
+    cleanup_version_id: str
+    segment_id: str
+    source_start: int
+    source_end: int
+    original_text: str | None
+    original_sha256: str
+    suggested_text: str | None
+    adopted_text: str | None
+    change_type: TranscriptCorrectionType
+    risk_level: TranscriptCorrectionRisk
+    reason: str | None
+    confidence: float
+    decision: TranscriptCorrectionDecision
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class QuestionUnitRecord:
+    id: str
+    retrospective_id: str
+    cleanup_version_id: str
+    stable_key: str
+    ordinal: int
+    question_kind: QuestionKind
+    origin: QuestionOrigin
+    question_text: str
+    question_segment_ids: tuple[str, ...]
+    answer_segment_ids: tuple[str, ...]
+    inference_basis: str
+    confidence: float
+    decision_status: QuestionDecision
+    version: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class AnalysisRunRecord:
+    id: str
+    retrospective_id: str
+    cleanup_version_id: str
+    execution_id: str | None
+    retry_of_analysis_run_id: str | None
+    input_digest: str
+    context_snapshot_json: str
+    status: str
+    stage: str
+    control_intent: str | None
+    completed_items: int
+    total_items: int
+    current_work_key: str | None
+    cumulative_elapsed_ms: int
+    latest_progress_at: str | None
+    summary_json: str | None
+    version: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class AnalysisWorkItemRecord:
+    id: str
+    analysis_run_id: str
+    question_unit_id: str | None
+    work_key: str
+    input_digest: str
+    status: str
+    output: dict[str, object] | None
+    attempt_count: int
+    last_error_code: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class QuestionAnalysisRecord:
+    id: str
+    analysis_run_id: str
+    question_unit_id: str
+    verdict: AnalysisVerdict
+    strengths: tuple[dict[str, object], ...]
+    improvements: tuple[dict[str, object], ...]
+    omissions: tuple[dict[str, object], ...]
+    evidence_level: EvidenceLevel
+    confidence: float
+    improvement_outline: tuple[str, ...]
+    suggested_answer: str
+    source_excerpt: str
+    source_excerpt_sha256: str | None
+    source_available: bool
+    result_status: str
+    version: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class GapRecord:
+    id: str
+    analysis_run_id: str
+    question_analysis_id: str
+    question_unit_id: str
+    gap_kind: GapKind
+    summary: str
+    evidence: tuple[str, ...]
+    status: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class AssetCandidateRecord:
+    id: str
+    retrospective_id: str
+    analysis_run_id: str
+    question_unit_id: str | None
+    candidate_kind: CandidateKind
+    fingerprint: str
+    payload_json: str
+    match_json: str
+    status: str
+    target_resource_type: str | None
+    target_resource_id: str | None
+    last_error_code: str | None
+    version: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class ActionItemRecord:
+    id: str
+    retrospective_id: str
+    analysis_run_id: str
+    question_unit_id: str | None
+    gap_id: str | None
+    action_kind: GapKind
+    title: str
+    detail: str
+    status: str
+    version: int
+    completed_at: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class CorrectionProposalRecord:
+    id: str
+    retrospective_id: str
+    chat_message_id: str | None
+    proposal_type: CorrectionType
+    target_question_id: str | None
+    source_cleanup_version_id: str
+    source_analysis_run_id: str | None
+    before: dict[str, object]
+    after: dict[str, object]
+    rationale: str
+    expected_version: int
+    status: str
+    resulting_cleanup_version_id: str | None
+    resulting_analysis_run_id: str | None
+    version: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class RetrospectiveSearchSetRecord:
+    id: str
+    workspace_id: str
+    session_id: str | None
+    execution_id: str | None
+    query_text: str
+    filters: dict[str, object]
+    search_plan: dict[str, object]
+    status: str
+    total_questions: int
+    total_retrospectives: int
+    summary_markdown: str
+    summary_citations: tuple[str, ...]
+    summary_execution_id: str | None
+    last_error_code: str | None
+    version: int
+    completed_at: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class RetrospectiveSearchResultRecord:
+    id: str
+    search_set_id: str
+    retrospective_id: str | None
+    question_unit_id: str | None
+    question_analysis_id: str | None
+    rank: int
+    score: float
+    matched_terms: tuple[str, ...]
+    source_metadata: dict[str, object]
+    question_snapshot: dict[str, object]
+    answer_excerpt: str
+    analysis_snapshot: dict[str, object]
+    source_available: bool
+    created_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class RetrospectiveSearchReportRecord:
+    id: str
+    workspace_id: str
+    search_set_id: str | None
+    report_key: str
+    ordinal: int
+    supersedes_report_id: str | None
+    execution_id: str | None
+    title: str
+    focus: str
+    selected_result_ids: tuple[str, ...]
+    body: dict[str, object]
+    markdown: str
+    citation_question_ids: tuple[str, ...]
+    include_answer_excerpts: bool
+    include_action_plan: bool
+    status: str
+    last_error_code: str | None
+    version: int
+    completed_at: str | None
+    created_at: str
+    updated_at: str

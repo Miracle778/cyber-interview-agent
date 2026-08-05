@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 
 from app.infrastructure.runtime_database import connect_runtime_database
+from app.agents.definition_registry import require_agent_definition
+from app.agents.definition_snapshot import build_agent_definition_snapshot
 from app.observability.indexer import TraceLedgerIndexer
 from app.observability.repository import TraceIndexRepository
 from app.observability.service import (
@@ -195,6 +197,73 @@ def test_assembles_usage_context_latency_retry_and_runtime_capabilities(
     assert "resume" not in summary.capabilities
 
 
+def test_execution_detail_exposes_frozen_definition_snapshot(tmp_path: Path) -> None:
+    service, connection = _service(tmp_path)
+    definition = require_agent_definition("review.single")
+    snapshot = build_agent_definition_snapshot(
+        definition=definition,
+        graph_version=7,
+        model_bindings={"answer_evaluation": "model-frozen"},
+    )
+    connection.execute(
+        "INSERT INTO agent_sessions "
+        "(id, workspace_id, graph_id, graph_version, title, visibility) "
+        "VALUES ('session-frozen', 'workspace-1', 'review.single', 7, "
+        "'Frozen run', 'user')"
+    )
+    connection.execute(
+        "INSERT INTO agent_runs "
+        "(id, session_id, status, agent_definition_snapshot_json) "
+        "VALUES ('run-frozen', 'session-frozen', 'completed', ?)",
+        (snapshot.to_json(),),
+    )
+    connection.commit()
+
+    detail = service.get_execution("run-frozen")
+
+    assert detail.definition_snapshot.agent_id == "review.single"
+    assert detail.definition_snapshot.agent_definition_version == "1"
+    assert detail.definition_snapshot.graph_version == 7
+    assert detail.definition_snapshot.eval_pack_id == "review-single.v2"
+    assert detail.definition_snapshot.eval_pack_version == 2
+    assert detail.definition_snapshot.legacy is False
+    assert detail.evaluation_supported is True
+    assert detail.evaluation_available is True
+    assert detail.evaluation_unavailable_reason is None
+    connection.close()
+
+
+def test_quality_support_is_distinct_from_current_manual_judge_action(tmp_path: Path) -> None:
+    service, connection = _service(tmp_path)
+    definition = require_agent_definition("review.single")
+    snapshot = build_agent_definition_snapshot(
+        definition=definition,
+        graph_version=1,
+        model_bindings={"answer_evaluation": "model-frozen"},
+    )
+    connection.execute(
+        "INSERT INTO agent_sessions "
+        "(id, workspace_id, graph_id, graph_version, title, visibility) "
+        "VALUES ('session-running', 'workspace-1', 'review.single', 1, "
+        "'Running review', 'user')"
+    )
+    connection.execute(
+        "INSERT INTO agent_runs "
+        "(id, session_id, status, agent_definition_snapshot_json) "
+        "VALUES ('run-running', 'session-running', 'running', ?)",
+        (snapshot.to_json(),),
+    )
+    connection.commit()
+
+    summary = service.get_execution("run-running")
+
+    assert "manual_judge" not in summary.capabilities
+    assert summary.evaluation_supported is True
+    assert summary.evaluation_available is False
+    assert summary.evaluation_unavailable_reason == "运行完成后才能开始质量检查"
+    connection.close()
+
+
 def test_cursor_filters_and_system_agent_visibility_are_stable(
     tmp_path: Path,
 ) -> None:
@@ -261,6 +330,97 @@ def test_cursor_filters_and_system_agent_visibility_are_stable(
 
     with pytest.raises(AgentExecutionNotFoundError):
         service.get_execution("run-publication")
+
+
+def test_retrospective_history_execution_is_visible_in_run_center(tmp_path: Path) -> None:
+    service, connection = _service(tmp_path)
+    _insert_run(
+        connection,
+        run_id="run-retrospective-history",
+        graph_id="interview.retrospective.history",
+        status="completed",
+        created_at="2026-08-04T12:00:00+00:00",
+        visibility="system",
+        title="历史复盘检索：数字签名",
+    )
+
+    page = service.list_executions(limit=50)
+
+    assert [item.id for item in page.items] == ["run-retrospective-history"]
+    assert page.items[0].title == "历史复盘检索：数字签名"
+
+
+def test_business_agent_stays_visible_when_its_session_is_internal(
+    tmp_path: Path,
+) -> None:
+    service, connection = _service(tmp_path)
+    _insert_run(
+        connection,
+        run_id="run-retrospective",
+        graph_id="interview.retrospective",
+        status="running",
+        created_at="2026-08-02T05:00:15+00:00",
+        visibility="system",
+        title="复盘分析：示例公司后端二面",
+    )
+
+    page = service.list_executions(limit=50)
+
+    assert [item.id for item in page.items] == ["run-retrospective"]
+    assert page.items[0].display_name == "面试复盘"
+    assert page.items[0].system is False
+    connection.close()
+
+
+def test_legacy_retrospective_graph_alias_remains_observable(
+    tmp_path: Path,
+) -> None:
+    service, connection = _service(tmp_path)
+    _insert_run(
+        connection,
+        run_id="run-retrospective-legacy",
+        graph_id="interview.retrospective.analysis",
+        status="failed",
+        created_at="2026-08-02T05:01:47+00:00",
+        visibility="system",
+        title="复盘分析：示例公司后端二面",
+    )
+
+    page = service.list_executions(limit=50)
+    canonical_filter = service.list_executions(
+        agent="interview.retrospective", limit=50
+    )
+
+    assert [item.id for item in page.items] == ["run-retrospective-legacy"]
+    assert [item.id for item in canonical_filter.items] == [
+        "run-retrospective-legacy"
+    ]
+    assert service.get_execution("run-retrospective-legacy").display_name == "面试复盘"
+    connection.close()
+
+
+def test_unregistered_historical_agent_remains_read_only_observable(
+    tmp_path: Path,
+) -> None:
+    service, connection = _service(tmp_path)
+    _insert_run(
+        connection,
+        run_id="run-removed-agent",
+        graph_id="removed.agent.v1",
+        status="completed",
+        created_at="2025-01-01T00:00:00+00:00",
+        title="旧版本任务",
+    )
+
+    page = service.list_executions(limit=50)
+
+    assert [item.id for item in page.items] == ["run-removed-agent"]
+    item = page.items[0]
+    assert item.display_name == "历史 Agent"
+    assert item.capabilities == []
+    assert item.route == ""
+    assert service.get_execution("run-removed-agent").id == "run-removed-agent"
+    connection.close()
 
 
 def test_status_filters_group_internal_runtime_states(

@@ -115,7 +115,7 @@ def test_indexes_v3_parent_child_operation_without_rewriting_identity(
                 "parent_operation_id": "agent-operation",
                 "operation_kind": "model",
                 "agent_role": "answer_evaluation",
-                "agent_name": "answer_evaluation",
+                "agent_name": "review_round_evaluator:2",
                 "event_type": "model.request",
                 "timestamp": "2026-07-29T12:00:00+00:00",
                 "sequence": 1,
@@ -131,7 +131,7 @@ def test_indexes_v3_parent_child_operation_without_rewriting_identity(
                 "parent_operation_id": "agent-operation",
                 "operation_kind": "model",
                 "agent_role": "answer_evaluation",
-                "agent_name": "answer_evaluation",
+                "agent_name": "review_round_evaluator:2",
                 "event_type": "model.response",
                 "timestamp": "2026-07-29T12:00:01+00:00",
                 "sequence": 2,
@@ -149,6 +149,7 @@ def test_indexes_v3_parent_child_operation_without_rewriting_identity(
     }
     assert operations["model-operation"]["parent_operation_id"] == "agent-operation"
     assert operations["agent-operation"]["kind"] == "agent"
+    assert operations["agent-operation"]["name"] == "review_round_evaluator:2"
     assert operations["model-operation"]["status"] == "completed"
     assert operations["model-operation"]["latency_ms"] == 1_000
 

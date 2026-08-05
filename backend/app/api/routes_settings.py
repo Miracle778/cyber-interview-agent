@@ -84,6 +84,7 @@ def replace_agent_quality_evaluation_settings(
 ) -> AgentQualityEvaluationSettingsResource:
     return service.replace_agent_quality_evaluation_settings(
         enabled=command.enabled,
+        capture_regression_inputs=command.capture_regression_inputs,
         automatic_sample_percent=command.automatic_sample_percent,
         automatic_daily_cap=command.automatic_daily_cap,
         judge_provider_model_id=command.judge_provider_model_id,

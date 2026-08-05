@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   ArrowUpRight,
   Bot,
-  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   CircleAlert,
@@ -21,8 +20,6 @@ import type { WorkspaceConfig } from "../settings/settingsApi";
 import {
   ExecutionList,
   executionNeedsAction,
-  executionResultSummary,
-  executionTaskTitle,
 } from "./ExecutionList";
 import { ExecutionPreview } from "./ExecutionPreview";
 import {
@@ -52,6 +49,14 @@ const EMPTY_FILTERS: ExecutionFilters = {
 };
 
 const STATUS_GROUPS: Record<string, Set<string>> = {
+  focused: new Set([
+    "running",
+    "queued",
+    "waiting_for_input",
+    "waiting_for_approval",
+    "partial_success",
+    "failed",
+  ]),
   needs_me: new Set([
     "queued",
     "waiting_for_input",
@@ -68,6 +73,8 @@ const STATUS_GROUPS: Record<string, Set<string>> = {
   stopped: new Set(["interrupted", "cancelled"]),
 };
 
+const CURRENT_EXECUTION_STATUS_FILTERS = new Set(["focused", "needs_me"]);
+
 function matchesFilters(
   execution: ExecutionSummary,
   filters: ExecutionFilters,
@@ -75,15 +82,15 @@ function matchesFilters(
 ) {
   if (!filters.includeSystemAgents && execution.system) return false;
   if (
-    filters.status === "needs_me"
+    CURRENT_EXECUTION_STATUS_FILTERS.has(filters.status)
     && (
       !currentExecutionIds.has(execution.id)
-      || !STATUS_GROUPS.needs_me.has(execution.status)
+      || !STATUS_GROUPS[filters.status].has(execution.status)
     )
   ) return false;
   if (
     filters.status &&
-    filters.status !== "needs_me" &&
+    !CURRENT_EXECUTION_STATUS_FILTERS.has(filters.status) &&
     (STATUS_GROUPS[filters.status]
       ? !STATUS_GROUPS[filters.status].has(execution.status)
       : execution.status !== filters.status)
@@ -132,28 +139,35 @@ function countStatuses(
   ).length;
 }
 
-function actionLabel(execution: ExecutionSummary) {
-  if (["waiting_for_input", "waiting_for_approval"].includes(execution.status)) {
-    return "继续处理";
-  }
-  if (execution.status === "queued") return "查看进度";
-  return "查看并处理";
-}
-
 function defaultPreviewOpen() {
   return globalThis.matchMedia?.("(min-width: 1024px)").matches ?? true;
+}
+
+function filterSearchParams(filters: ExecutionFilters) {
+  const next = new URLSearchParams();
+  if (filters.search.trim()) next.set("search", filters.search.trim());
+  if (filters.status) next.set("status", filters.status);
+  if (filters.agentName) next.set("agentName", filters.agentName);
+  if (filters.includeSystemAgents) next.set("includeSystemAgents", "true");
+  return next;
+}
+
+function filtersFromSearchParams(searchParams: URLSearchParams): ExecutionFilters {
+  return {
+    search: searchParams.get("search") ?? "",
+    status: searchParams.get("status") ?? "",
+    agentName: searchParams.get("agentName") ?? "",
+    includeSystemAgents: searchParams.get("includeSystemAgents") === "true",
+  };
 }
 
 export function AgentRunCenterPage({
   workspace,
 }: AgentRunCenterPageProps) {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [filters, setFilters] = useState<ExecutionFilters>(() => ({
-    search: searchParams.get("search") ?? "",
-    status: searchParams.get("status") ?? "",
-    agentName: searchParams.get("agentName") ?? "",
-    includeSystemAgents: searchParams.get("includeSystemAgents") === "true",
-  }));
+  const [filters, setFilters] = useState<ExecutionFilters>(() =>
+    filtersFromSearchParams(searchParams)
+  );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(defaultPreviewOpen);
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
@@ -195,16 +209,12 @@ export function AgentRunCenterPage({
     setSelectedId(null);
     setPreviewOpen(defaultPreviewOpen());
     setLiveById({});
-    setFilters(EMPTY_FILTERS);
+    setFilters(filtersFromSearchParams(searchParams));
     setPage(1);
-  }, [workspace?.id]);
+  }, [searchParams, workspace?.id]);
 
   useEffect(() => {
-    const next = new URLSearchParams();
-    if (filters.search.trim()) next.set("search", filters.search.trim());
-    if (filters.status) next.set("status", filters.status);
-    if (filters.agentName) next.set("agentName", filters.agentName);
-    if (filters.includeSystemAgents) next.set("includeSystemAgents", "true");
+    const next = filterSearchParams(filters);
     if (next.toString() !== searchParams.toString()) {
       setSearchParams(next, { replace: true });
     }
@@ -245,6 +255,13 @@ export function AgentRunCenterPage({
     ),
     [allExecutions, currentExecutionIds],
   );
+  const focusedItems = useMemo(
+    () => allExecutions.filter((execution) =>
+      currentExecutionIds.has(execution.id)
+      && STATUS_GROUPS.focused.has(execution.status)
+    ),
+    [allExecutions, currentExecutionIds],
+  );
   const totalPages = Math.max(1, Math.ceil(executions.length / PAGE_SIZE));
   const visibleExecutions = executions.slice(
     (page - 1) * PAGE_SIZE,
@@ -258,12 +275,12 @@ export function AgentRunCenterPage({
       query.isError
     ) return;
     defaultStatusApplied.current = true;
-    if (!searchParams.has("status") && actionItems.length > 0) {
+    if (!searchParams.has("status") && focusedItems.length > 0) {
       setFilters((current) => (
-        current.status ? current : { ...current, status: "needs_me" }
+        current.status ? current : { ...current, status: "focused" }
       ));
     }
-  }, [actionItems.length, query.isError, query.isPending, searchParams]);
+  }, [focusedItems.length, query.isError, query.isPending, searchParams]);
 
   useEffect(() => {
     setPage(1);
@@ -288,8 +305,10 @@ export function AgentRunCenterPage({
   const currentSessionExecution = selected
     ? currentExecutionBySession.get(selected.sessionId) ?? selected
     : null;
-  const returnTo =
-    `/agents${searchParams.size ? `?${searchParams.toString()}` : ""}`;
+  const returnSearchParams = filterSearchParams(filters);
+  const returnTo = `/agents${
+    returnSearchParams.size ? `?${returnSearchParams.toString()}` : ""
+  }`;
   const agentNames = useMemo(
     () => [...new Set(allExecutions.map((item) => item.displayName))]
       .sort((left, right) => left.localeCompare(right, "zh-CN")),
@@ -297,11 +316,11 @@ export function AgentRunCenterPage({
   );
   const counts = useMemo(() => ({
     all: allExecutions.length,
-    needsMe: actionItems.length,
-    running: countStatuses(allExecutions, "running"),
+    focused: focusedItems.length,
     completed: countStatuses(allExecutions, "completed"),
     failed: countStatuses(allExecutions, "failed"),
-  }), [actionItems.length, allExecutions]);
+    stopped: countStatuses(allExecutions, STATUS_GROUPS.stopped),
+  }), [allExecutions, focusedItems.length]);
   const exactAttentionStatus = ["partial_success", "failed"].includes(filters.status)
     ? filters.status
     : "";
@@ -319,10 +338,10 @@ export function AgentRunCenterPage({
   };
 
   return (
-    <section aria-label="任务运行" className="agent-run-center agent-run-center--friendly">
+    <section aria-label="Agent 运行中心" className="agent-run-center agent-run-center--friendly">
       <header className="agent-run-center__header">
         <div>
-          <h1 id="agent-run-center-title">任务运行</h1>
+          <h1 id="agent-run-center-title">Agent 运行中心</h1>
           <p>查看 Agent 正在做什么，需要你处理的事项会优先显示。</p>
         </div>
         <div className="agent-run-center__header-actions">
@@ -384,28 +403,6 @@ export function AgentRunCenterPage({
                 </div>
                 <strong>{actionItems.length}</strong>
               </button>
-              <div className="agent-action-center__items">
-                {actionItems.slice(0, 2).map((execution) => (
-                  <article key={execution.id}>
-                    <span
-                      className="agent-action-center__icon"
-                      data-tone={execution.status === "failed" ? "danger" : "warning"}
-                      aria-hidden="true"
-                    >
-                      {execution.status === "failed"
-                        ? <AlertTriangle size={18} />
-                        : <CheckCircle2 size={18} />}
-                    </span>
-                    <div>
-                      <strong>{executionTaskTitle(execution)}</strong>
-                      <p>{executionResultSummary(execution)}</p>
-                    </div>
-                    <button type="button" onClick={() => selectExecution(execution.id)}>
-                      {actionLabel(execution)}
-                    </button>
-                  </article>
-                ))}
-              </div>
               </section>
             ) : null}
 
@@ -418,10 +415,10 @@ export function AgentRunCenterPage({
               <nav className="agent-run-status-tabs" aria-label="任务状态">
                 {[
                   ["", "全部", counts.all],
-                  ["needs_me", "需要我", counts.needsMe],
-                  ["running", "进行中", counts.running],
+                  ["focused", "关注中", counts.focused],
                   ["completed", "已完成", counts.completed],
                   ["failed", "失败", counts.failed],
+                  ["stopped", "已暂停/取消", counts.stopped],
                 ].map(([value, label, count]) => (
                   <button
                     key={String(value)}
@@ -520,8 +517,9 @@ export function AgentRunCenterPage({
                 }
               >
                 <option value="">全部状态</option>
-                <option value="needs_me">需要我处理</option>
-                <option value="running">进行中</option>
+                <option value="focused">关注中（需处理或进行中）</option>
+                <option value="needs_me">仅需要我处理</option>
+                <option value="running">仅进行中</option>
                 <option value="waiting">等待处理</option>
                 <option value="completed">已完成</option>
                 <option value="attention">需要关注</option>

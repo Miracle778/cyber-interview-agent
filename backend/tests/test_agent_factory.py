@@ -161,8 +161,9 @@ def test_agent_factory_delegates_to_create_agent_without_invocation_wrapper(
         response_format=AnswerEvaluation,
     )
 
-    result = factory.create(
+    result = factory.bind("question.curate").create(
         spec,
+        component_id="curation_command_classifier",
         model_bindings={"question_generation": "provider-model-1"},
     )
 
@@ -206,14 +207,15 @@ async def test_agent_factory_returns_a_real_runnable_agent_graph():
             assert (role, provider_model_id) == ("agent_chat", "model-1")
             return model
 
-    agent = AgentFactory(StubResolver()).create(
+    agent = AgentFactory(StubResolver()).bind("review.discussion").create(
         AgentSpec(
             role="agent_chat",
-            execution_name="test_chat",
+            execution_name="review_discussion",
             prompt=PromptSpec(
                 id="test-agent-chat", version="1.0", system="Be concise"
             ),
         ),
+        component_id="review_discussion",
         model_bindings={"agent_chat": "model-1"},
     )
     context = AgentContext(
@@ -268,7 +270,7 @@ async def test_agent_factory_can_disable_tool_strategy_schema_retries() -> None:
         def resolve(self, *, role, provider_model_id):
             return model
 
-    agent = AgentFactory(StubResolver()).create(
+    agent = AgentFactory(StubResolver()).bind("question.curate").create(
         AgentSpec(
             role="question_generation",
             execution_name="question_discovery",
@@ -276,6 +278,7 @@ async def test_agent_factory_can_disable_tool_strategy_schema_retries() -> None:
             response_format=AnswerEvaluation,
             structured_output_handle_errors=False,
         ),
+        component_id="question_discovery",
         model_bindings={"question_generation": "model-1"},
     )
     context = AgentContext(
@@ -312,16 +315,17 @@ def test_agent_factory_uses_validated_session_model_override(monkeypatch):
     )
     factory = AgentFactory(StubResolver())
 
-    factory.create(
+    factory.bind("quality.evaluate").create(
         AgentSpec(
             role="answer_evaluation",
-            execution_name="test_evaluator",
+            execution_name="quality_evaluation_judge",
             prompt=PromptSpec(
                 id="test-answer-evaluation",
                 version="1.0",
                 system="Evaluate",
             ),
         ),
+        component_id="quality_evaluation_judge",
         model_bindings={"answer_evaluation": "workspace-default"},
         model_override=ModelOverride(
             provider_model_id="session-model",

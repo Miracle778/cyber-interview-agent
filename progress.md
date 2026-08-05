@@ -1,5 +1,134 @@
 # Agent Runtime 框架收敛进度
 
+## 2026-08-04：Agent Control Plane 与强制注册契约完成决策记录
+
+- 提交 `d40d5324` 保存“保存成果 / 下一步”与 Evaluation v2 体验调整，作为注册架构修改前的可回退基线。
+- 新增 Accepted ADR，明确 Registry 是代码级 Agent Control Plane，不是网络服务发现；采用静态、Git 版本化 Definition，拒绝前端名单、仅枚举和数据库动态注册作为当前方案。
+- 决定 Session 创建前强制注册校验，Registry 合并 Builder 单一事实源，AgentFactory 校验父子组件与 Tool/Scope，Execution 冻结 Definition Snapshot。
+- 决定业务 Agent 作为运行中心顶层任务，内部子 Agent 只进入执行树；新任务 fail-closed，历史未知 Agent 只读兼容。
+- 当前仅完成架构记录，尚未实施四阶段代码迁移；后续从 Phase 1 接口门禁开始，不能把 ADR 目标表述成已落地能力。
+
+## 2026-08-02：复盘内快速新建求职目标门禁修复
+
+- 复盘新建流程的轻量目标现在只要求岗位名称；公司与经验/职级明确标为可选，填写公司和岗位后即可保存。
+- 后端同步移除“岗位与职级必须同时填写”的旧限制，避免前端放行后接口仍拒绝；仍拒绝只填职级、不填岗位的无效组合。
+- 新鲜证据：前端复盘创建/页面测试 `10 passed`，后端目标服务与复盘 API `13 passed`；TypeScript、production build、Ruff 与差异检查通过。
+
+## 2026-08-02：面试复盘桌面空状态与共享按钮回归修复
+
+- 修复复盘页面为条件错误条预留固定 Grid 行导致正常状态把伸展行空置的问题；标题、控制区和工作区现在稳定占用三行，错误条收进控制区，1440×900 下工作区底边与视口底边同为 900px。
+- 标题说明改用独立语义类，停止用宽泛 `header span` 命中 Button 内部标签；共享 Button 标签同时强制继承按钮颜色和字体，实页主按钮背景 `rgb(64, 86, 180)`、文字 `rgb(255, 255, 255)`。
+- 三个生命周期标签并行读取当前求职目标范围内的真实数量，加载期间显示占位，不再等点击后才显示数字；空集合改为单一整页空状态，不再同时出现空列表和空详情。
+- 新鲜证据：页面测试 `7 passed`、TypeScript、production build 与 `git diff --check` 通过；浏览器只读复核覆盖 1440×900 和 390×844，均无水平溢出，控制台 warning/error 为 0，未创建或修改复盘数据。
+
+## 2026-08-02：面试复盘 Task 5 渐进分析后端闭环
+
+- 新增严格的问题提取与逐题分析输出：保留 original/inferred 来源、片段引用、推断依据、证据等级、四类缺口和建议答案，不提供整场总分。
+- 分析按 `question_extraction -> question_analysis:* -> gap_verification -> candidate_generation -> final_projection` 持久工作项渐进执行；问题在整场完成前即可读取，单题完成后原子保留。
+- 冻结求职目标、当前 JD 摘要、已确认画像版本与有限条目、Prompt/模型身份、题目/Knowledge 引用集合；Provider 只收到有界片段，不收到存储路径或完整画像文档。
+- 停止保留已完成提取和逐题结果，继续只处理未完成项；相同摘要幂等复用，显式重试复用稳定 QuestionUnit 并保留旧 AnalysisRun 历史。
+- 推断题默认 pending；确认/编辑只重跑该题和聚合 finalizer，拒绝/废弃只重跑聚合。并发决策使用 rerun 标记避免覆盖正在完成的旧工作项。
+- 新增分析启动、详情、停止、继续、重试、问题列表、问题决策和渐进报告 API；报告只投影真实持久状态与已完成结果，不在客户端合成缺失项。
+- 新鲜证据：Task 5 聚焦 `30 passed`；复盘全域、画像上下文和数据库组合 `54 passed`；岗位域回归 `7 passed`；Ruff、Python compileall 与 `git diff --check` 通过。计划中已不存在的 `test_execution_cancellation.py` 由新增的真实后台停止/继续集成用例覆盖。
+- 产品成熟度：渐进分析资源已接入报告优先工作台，用户可边运行边查看完成题目、处理推断题和定位失败题；真实 Provider 内容质量仍待最终阶段验收。
+- 下一步：Task 7 确定性候选适配器与 Receipt。
+
+## 2026-08-02：面试复盘 Task 6 报告优先渐进工作台
+
+- 新增持久进度、问题时间线和逐题分析详情；运行中只轮询活动状态，已完成题目立即可看，不生成整场总分。
+- 失败题使用错误色并成为默认焦点；无失败时依次选择高风险、首个已完成问题。用户选择写入 `questionId`，渐进刷新不会覆盖有效选择。
+- 推断题显示推断依据与确认/拒绝动作；分析详情覆盖证据等级、优点、提升点、遗漏、四类差距、回答结构、参考表达和原文清除提示，空区块不渲染。
+- 报告接口补回已落库但遗漏投影的 gap 列表；高级运行详情接收受限 `returnTo`，可返回原复盘和原问题。
+- 1440 保持问题栏与详情并排；768 改为上下布局，390 外层记录、问题列表和详情均为单列。浏览器实测无横向溢出。
+- 自动证据：前端 75 个测试文件、357 项全通过；Task 6 相关 21 项通过；后端复盘分析/API 14 项通过；TypeScript、production build、Ruff、Ruff format 与差异检查通过。
+
+## 2026-08-01：面试复盘 Slice 1 捕获与整理闭环
+
+- 新增一级入口 `/retrospectives` 与求职目标深链，提供进行中/已归档/回收站生命周期页签、稳定目标筛选、复盘列表和响应式主从工作台。
+- 新建流程支持录音转写/事后回忆、粘贴或导入 TXT/Markdown、500,000 字限制，以及不离开当前流程的轻量求职目标创建。
+- 整理工作台接通后台进度、停止/继续/失败重试、说话人校正、全局身份对调、段落忽略、版本化保存和确认门禁；版本冲突会提示并重新载入最新结果。
+- 新增“当前整理版本”读取端点；离开页面后从一级导航返回，不依赖旧 URL 也能恢复未确认进度。确认后的版本仍由 `activeCleanupVersionId` 读取。
+- 自动证据：后端复盘 API `4 passed`，前端最终受影响集合 `42 passed`，Ruff、Python compileall、TypeScript、production build 与 `git diff --check` 通过；仅保留既有大 chunk 提示。
+- 浏览器假模型闭环覆盖 1440×900 与 390×844：创建目标、粘贴文字、启动整理、修订未知说话人、保存、确认、刷新恢复均通过；两档 `scrollWidth == clientWidth`，控制台 warning/error 为 0。原生日期控件的自动填充未触发 React `onChange`，已用后端 camelCase API 与前端日期组件测试确认产品字段正常。
+- 产品成熟度：Slice 1 可用于文本捕获和整理确认；尚未提取问题、生成逐题分析、候选沉淀或复盘对话。
+- 下一步：Task 5 渐进问题提取与逐题分析后端。
+
+## 2026-08-01：面试复盘 Task 3 后台整理闭环
+
+- 新增无 Tool 的 `retrospective_analysis` Cleanup Agent、严格结构化输出、24,000 字窗口与 1,000 字重叠 Reducer；偏移回退、窗口越界和未知字段会被拒绝。
+- 新增持久 CleanupVersion/WorkItem 调度：启动立即返回 Execution，停止保留已完成窗口，继续只领取未完成窗口；应用重启会把被中断的运行转换为可继续状态。
+- 新增面试复盘 camelCase API、停止/继续控制及幂等重放，覆盖创建、原文版本、整理、人工修订/确认、归档/回收/恢复和删除影响分析。
+- Runtime 已注册“面试复盘”运行中心元数据；Trace 写入失败保持 fail-open，不改变整理结果。
+- 新鲜聚焦证据：受影响后端组合 `55 passed`，Trace fail-open/停止继续补充测试 `2 passed`；Ruff、Python compileall 与 `git diff --check` 通过。完整前端回归已在迁移基线运行 `339 passed`，本任务未重复运行。
+- 产品成熟度：Slice 1 后端已可供页面调用；用户尚无前端入口，真实 Provider、浏览器和窄屏验收留到 Task 4。
+- 下一步：Task 4 捕获与整理工作台 UI。
+
+## 2026-08-01：面试复盘迁移到最新产品基线
+
+- 确认本地 `feature/review-agent-workspace` 的 `a4fb776` 才是最新产品基线；旧复盘分支基于过期远程主线，未继续在错误基线上开发。
+- 从 `a4fb776` 创建独立 `codex/interview-retrospective-agent-v2` 工作区，迁入复盘 Task 1–2 与清洗契约三笔提交；原 feature 工作区的未提交前端文件和 handoff 文档保持不变。
+- 为避开 Evaluation v2 已使用的 runtime 041–044 和 app 009，复盘迁移顺延为 runtime 045、app 010，并同步修正连续升级断言与正式计划引用。
+- 新基线验证：复盘/迁移/Repository/Service/Projection/契约定向 `27 passed`，受影响后端组合曾达 `72 passed / 1 stale assertion`，修正后失败项通过；前端完整 `68 files / 339 passed`。
+- 下一步继续 Task 3 的真实 Cleanup Agent、后台执行和 API，不再回到旧复盘分支开发。
+
+## 2026-08-01：Evaluation v2 Phase 1–5 阶段收口
+
+- 在开发工作区开启显式本机回归输入记录，用不含个人资料的 Redis 合成问题完成深入讨论与题目整理两条真实 Provider 路径。
+- 两条路径均完成 v2 Judge、可运行案例冻结、来源/当前模型配置双沙箱重放和匿名 A/B Judge；正式工作区零写入，基础设施失败为 0。
+- 质量实验室已展示 v2 适用性、确定性规则、AI 分级、人工判断、精确实现版本、双沙箱/零正式写入、盲评结论和趋势分组，不再直出 `completed` 等内部状态。
+- 最终验证：后端 `1005 passed`；前端 `68 files / 333 passed`；TypeScript、production build 与浏览器验收通过。构建仅保留既有大 chunk 提示。
+- 完整回归发现并修正两个旧测试契约：应用迁移清单补到 9，候选资源断言接纳 `sourceAnswer/supplementalAnswer`；产品代码未因测试失败降级。
+
+## 2026-08-01：Evaluation v2 Phase 3 核心迁移
+
+- 新增题目改写、复习轮次/单题/讨论、画像提取/评估/助手/写入边界、岗位要求分析、项目深挖/项目题生成共 11 个 v2 Pack；连同题目整理共 12 个。
+- 新增通用 SQLite Outcome Adapter 和 Pack 级最小 Judge View，默认 Observability Registry 已切换到对应 v2 Pack，仍保留显式 v1 历史复检。
+- 迁移 043 分开保存原资料答案和 AI 补充，题库详情与整理产物页分别展示来源。
+- 任务级 advisory Rule 已覆盖复习推进、画像 Evidence/Tool/写入、JD offset/推断边界、项目 Gap/题库关联；不可证明项返回证据不足。
+- 定向验证：后端 84 项持久化/迁移/Adapter/服务用例、规则与服务 29 项；前端 TypeScript、题目详情 6 项及展示语义 4 项通过。
+
+## 2026-08-01：Evaluation v2 Phase 1 Task 2
+
+- 新增不可变 `BusinessOutcomeProjection` 公共契约，hash 只由业务输入摘要、最终领域状态、处理单元、候选、来源类型和用户决定生成，不包含 Trace 正文。
+- 首个题目整理适配器可从原始或恢复 Execution 定位批次，投影 work item、seed task、候选状态、确认/拒绝/忽略决定和 Graph/领域版本。
+- 对 `mixed` 答案同时标记 direct 与 inferred，并明确记录 `source_supplemental_answer_not_separated`；当前存储无法恢复原文答案与模型补充时不伪造字段。
+- 定向回归覆盖投影内容、hash 稳定性、用户确认后 hash 变化、评估契约和题目整理工作单元，共 `46 passed in 3.58s`；compileall 与 `git diff --check` 通过。
+- 本任务没有把投影接入 v1 Judge，也没有新增外部模型调用；其他业务域适配器留在各自 Phase 3 Slice。
+
+## 2026-08-01：Evaluation v2 Phase 1 Task 1
+
+- 新增 runtime migration 041，以增量字段保存契约版本、任务类型、运行类型、业务结果 hash、Judge 数据范围，以及维度适用性、等级、严重度和证据缺口。
+- v1 创建路径保留默认契约并明确标为 `historical_review`；当前 Judge 的真实数据范围记录为 `legacy_full_snapshot`，没有伪装成最小视图。
+- 新增 `JudgeDimensionResultV2`，强制适用维度提供等级/严重度/置信度，不适用或证据不足维度不得携带质量评级。
+- 迁移验证覆盖 v1 运行和维度行原值保留；Repository/API/Judge 受影响定向回归共 `54 passed`，Python 测试耗时 3.77 秒。
+- 本任务没有改前端、没有迁移现有 v1 评估结果、没有启用阻断规则，也没有运行全量测试。
+
+## 2026-07-31：Evaluation v2 文档边界完成
+
+- 逐项审计 5 类 v1 Eval Pack、21 个维度、确定性检查、Judge 输入与回归 API，并与用户完成 32 项口径确认。
+- 新增 ADR，决定以最终业务结果为评估对象，分离 Rule/Judge/人工职责，并明确历史复检不等于真实 Agent 回归。
+- 新增 v2 规格，覆盖业务结果投影、适用性、等级/严重度/置信度、最小 Judge 视图，以及题目、复习、画像、JD、项目深挖的任务级维度。
+- 新增分阶段迁移计划：v1/v2 共存、确定性不变量、五个业务迁移 Slice、隔离业务重跑和后续趋势/门禁。
+- 修订 2026-07-29 规格、ADR 和计划的成熟度表述；README 改为如实说明当前“历史结果复检”和规划中的“真实回归”。
+- 新增 README 手绘图 `assets/readme/08-agent-quality-evaluation-boundary-v2.png`；旧图保留，未删除任何历史资产。
+- 本轮未修改后端、数据库或前端代码，未迁移或删除 v1 评估数据。
+
+## 2026-08-01：面试复盘需求冻结与 Task 1 完成
+
+- 通过 27 个单项产品决策冻结首版范围：目标归属、文字输入、说话人确认、推断问题、无总分、四类缺口、候选审核、局部重算、渐进运行、报告优先、双入口、移动端和发布边界。
+- 新增正式规格、版本/证据/跨领域 ADR 和 10 Task 实施计划；计划按四个可独立验收的纵向 Slice 执行，并由单 Agent 内联完成。
+- Task 1 在最新产品基线上使用 runtime migration 045、app migration 010，新增复盘领域 records/errors 和前后端两个模型用途；补齐整理窗口工作项这一计划自审缺口。
+- RED 明确验证缺表、缺角色和设置页缺入口；GREEN 后迁移/数据库/Provider 受影响回归 `46 passed`，设置组件 `2 passed`，TypeScript、Python compileall 与 `git diff --check` 通过。
+- 下一步：Task 2 实现复盘生命周期、源版本、整理版本与删除不变量。
+
+## 2026-08-01：面试复盘 Task 2 领域生命周期完成
+
+- 新增 Workspace 安全 Repository/Service、源版本幂等导入、500,000 字符和 `.txt/.md` 边界、整理片段确认门禁与正文安全投影。
+- 原文清除会删除源正文、整理片段正文、工作项正文和分析来源摘录，同时保留哈希、结构化元数据与下游资产边界。
+- 归档、回收、恢复、运行阻断删除、永久删除私有 Session 和删除影响预检已具备确定性领域语义。
+- RED/GREEN 覆盖归属、幂等、输入边界、未知说话人、原文清除、活动 Execution、生命周期、投影和删除影响；合并 Job Target 受影响回归 `20 passed`。
+- 下一步：Task 3 接入真实 Cleanup Agent、后台 Execution、API 和运行中心 Registry。
+
 ## 2026-07-29：Agent 可观测与质量评估实施计划完成
 
 - 根据已确认规格与 ADR，完成一个总索引和四个纵向 Slice 计划，共 1,268 行：
@@ -1316,9 +1445,417 @@
 
 增量布局修复：来源核对页改用共享 `TaskWorkspace/TaskWorkspacePane`，桌面端固定标题与筛选、仅卡片列表滚动，移动端恢复自然滚动；父容器改为识别通用工作台标记，不再依赖新页面类名名单。`ProfilePage` 4 项、TypeScript、production build 和差异检查通过；5174 未启动，未补浏览器证据。
 
+## 2026-08-02：个人资产—求职目标—专项复习第一批串联
+
+- 个人画像首页改为“职业资产”叙事，突出已确认资料、代表项目和技能，并提供求职目标、自主复习两个下一步；来源问题保留在可展开的资料质量区。
+- 求职目标准备总览新增四类准备摘要和四步路径；岗位基本信息不完整时优先补全，只有已确认项目题时才启用岗位专项复习。
+- ReviewRound settings 新增向后兼容的 `question_scope/source_job_target_id/project_claim_id/scope_label`；选择器先按岗位或项目来源隔离，再应用难度和主题策略。
+- 岗位与项目入口均打开同一个复习工作台；专项设置显示来源、匹配数和安全空状态，历史/活动轮次显示自主、岗位专项或项目专项，返回按钮回到原业务页面。
+- 自动证据：后端定向 `30 passed`，前端定向 `43 passed`，TypeScript、Python compileall 通过。
+- 5174 只读证据：自主复习历史显示正常；个人画像 CTA 和求职目标准备总览可见；当前目标没有已确认项目题，岗位专项设置显示 0 题并正确禁用，未扩大到普通题库；1280 宽度无横向溢出。未创建轮次、未调用模型、未改现有数据。
+- 增量布局修复：总览下方四张稀疏等高卡收敛为紧凑“准备路径”，明确已完成、当前建议、待完成和未解锁状态；专项复习入口不再嵌套大尺寸按钮。目标组件 `16 passed`，TypeScript 与差异检查通过；隔离浏览器无 Workspace，未构造测试数据。
+- 个人画像概览增量修复：求职方向与核心技能改为主次双栏且等高；没有待完善项时不再显示黄色空提醒，有真实缺口时才跨栏展示。材料版本详情查询只接受当前 Workspace 且仍在版本列表中的选择，并在 Workspace 切换时清空文档/证据选择，避免旧版本 ID 产生瞬时 404。画像定向 `8 passed`、TypeScript 与差异检查通过；5174 实页复核双栏为 `414 / 736px`、同高 `164px`，控制台无错误或警告。
+- 证书与成果页改为内容自适应：两类都有内容时双栏，仅一类有内容时单栏铺满；两类均为空时默认引导补充成果，证书保留为可选轻入口。画像组件 `3 passed`、TypeScript 与差异检查通过；5174 实页确认成果区宽 `1166px`、无横向溢出，控制台无错误或警告。
+
 ## 2026-07-29：题目识别单块失败兜底
 
 - 识别工作项首次失败后在 Graph 内自动重试一次；第二次仍失败才跳过该单元，其他单元继续并保留成果。
 - 模型明确用自然语言表示无可识别题目时安全归一化为零题；不明确的非结构化正文继续报错，避免静默漏题。
 - 单块失败只在测试层通过 `PartialFailureAgents` 确定性注入；产品 Agent、用户材料和运行环境均不包含故障标记或开发开关。
 - 自动验证：题目整理 Graph `50 passed`、运行面板 `18 passed`、TypeScript 与差异检查通过。
+
+## 2026-08-01：Evaluation v2 Phase 1 业务结果评估闭环
+
+- 新增 `question-curation.v2`：题目整理新评估不再读取完整 Trace，而是从领域表生成不可变业务结果投影和任务级最小 Judge View。
+- 代码预判明显的“不适用”和“证据不足”；混合答案尚未拆字段时不会伪造原文忠实度结论，只有适用维度才产生质量等级。
+- Judge 工厂同时提供 v1 百分制和 v2 等级制结构化输出；v1 历史结果和数据保持不变。
+- API 已保存业务结果 hash、Judge 数据类别和明确排除项；前端区分“初版质检 / 业务结果质检”，展示符合要求、基本可用、建议复核、严重问题、证据不足和不适用，不生成 v2 总分。
+- 定向证据：后端 19 项通过；前端评估组件 13 项和 TypeScript 通过；`git diff --check` 通过。
+
+## 2026-08-01：Evaluation v2 Phase 2 确定性规则与校准
+
+- migration 042 为维度结果增加业务 `evidenceRefs`，领域行、结果 hash、计数和来源引用不再伪装成 Trace event hash。
+- 公共只读规则检查 Workspace/Execution 身份、稳定 ID、计数守恒和来源引用；迟到结果、Tool/写入边界、Receipt/Event 一致性在证据未投影时明确返回证据不足。
+- v1 页面改称“评估证据完整性检查”；v2 页面显示“确定性业务规则”，二者均不暴露或启用阻断能力。
+- 新增可重复的正向、负向、模糊校准用例与 FP/FN 报告；当前合成样例为 0/0，但正式文档明确不能据此升级发布门禁。
+- 定向证据：后端 55 项、前端 13 项和 TypeScript 通过。
+
+## 2026-08-01：Evaluation v2 Phase 3–5 任务评估与隔离回归
+
+- 12 个任务级 v2 Pack 已接通 Outcome Adapter、最小 Judge View 和任务业务规则；题目原文答案与 AI 补充独立持久化、展示和评价。
+- 新增显式“记录可回归输入”本机设置；Graph 启动前冻结 runtime DB、checkpoint 和材料。历史运行没有执行前快照时只保存为不可运行的历史结果案例。
+- 来源模型配置和当前模型配置分别通过产品 Workspace Runtime 在两个临时沙箱重跑；确定性规则先执行，匿名 A/B Judge 后执行，网络、限流、锁和 Judge Provider 失败单独记录。
+- 题目整理和 review discussion 两条 Runtime 集成用例证明业务结果被重新生成、正式 Workspace 不变、沙箱清理和版本清单存在。
+- v2 趋势按 Pack、契约版本和 run kind 分组；新增需复核/严重、Judge-人工一致、用户修改/拒绝和基础设施失败指标。
+- 自动门禁模块默认关闭、批准规则集合为空，只允许未来经真实案例校准和 ADR 批准的确定性规则阻断；Judge 结论不进入门禁。
+- 新鲜定向证据：回归/设置/迁移/Judge 后端 22 项，质量门禁与 Runtime 集成 7 项；前端类型检查及设置/评估页面 7 项通过。完整回归、真实 Provider 浏览器案例和文档门禁待最终收口统一执行。
+
+## 2026-08-02：面试复盘 Task 7 候选沉淀与安全发布
+
+- 候选生成接入分析 finalizer，只读取 confirmed/formal 结果；Review 相似题、项目画像匹配均只形成建议，不自动合并。
+- 题库新建/补充进入 Review 自有待确认草稿，画像与项目讲解进入 Profile 待确认 Proposal；所有用户决定均使用乐观锁和复盘 Receipt。
+- 行动项按 gap 生成并支持完成/忽略；立即练习只接受 active Review Question，并返回稳定复盘来源链接。
+- 新增 `interview_retrospective` Knowledge 文档类型和 migration 046；发布稿按用户选择投影，不接收原始转写、pending 推断、Prompt、Provider 响应或聊天消息。
+- 新增候选、批量决定、行动项和发布草稿 API；批量部分失败保留成功结果和失败候选，重复请求不产生重复跨域资源。
+- 自动证据：候选/发布/API 聚焦测试 14 项通过；复盘、Review、Profile 与 Knowledge 受影响回归 134 项通过；Ruff、compileall 与差异检查通过。
+
+## 2026-08-02：面试复盘 Task 8 候选审核、行动与发布界面
+
+- 复盘详情新增“逐题复盘 / 准备资产 / 行动与发布”三个常驻入口；准备资产内部保留复习题、项目与画像、复盘总结三个常驻分组及服务端计数。
+- 候选支持已有题匹配、新建题、画像/项目 Proposal、拒绝、显式勾选批量处理和失败原因；正式题关联后提供稳定“立即练习”链接。
+- 行动项采用紧凑清单；发布区只允许选择安全章节，明确排除原始转写、待确认推断、聊天、Prompt 和模型原始响应，完成后可返回 Knowledge。
+- 前端真实接入 Task 7 candidate/action/publication API；批量部分失败保留失败项。后端补齐空 action payload 下的合法项目建议默认值，并在更新时合并当前确认版本。
+- 自动证据：Task 8 前端组件/页面聚焦 `12 passed`，后端候选聚焦 `6 passed`，TypeScript、Ruff、production build 与差异检查通过。
+- 隔离浏览器验收：桌面端完成题库关联、行动完成、Knowledge 草稿生成；390px 下无页面横向溢出、行动/发布单列展示，浏览器控制台 error 为 0。验收使用虚构 API 数据，未调用真实 Provider。
+- 下一步：Task 9 受限对话、纠正建议确认与局部重算。
+
+## 2026-08-02：面试复盘 Task 9 受限讨论与纠正重算
+
+- 新增七个精确只读复盘 Tool，统一限制当前 Workspace/复盘、最多 20 项和单段 2,000 字；Tool schema 不接受 Workspace、复盘 ID 或任意文件路径。
+- 对话输出严格区分普通解释与四类纠正建议。解释只追加用户/助手消息；纠正建议保存来源 Cleanup/Analysis、目标问题、服务端实际 before、模型建议 after 和 expected version，确认前不修改业务数据。
+- 问题文字、片段归属和分析重判确认后创建局部 AnalysisRun，只重算目标问题与三个 finalizer，并复制其他题的正式分析；说话人纠正创建新 CleanupVersion 后全量重算。拒绝不创建版本。
+- 新增次级“讨论与纠正”抽屉，不替换当前报告/问题选择；复用共享 AgentComposer 的 IME 键盘、停止和失败重试体验，纠正卡以可读 before/after 提供明确确认与拒绝动作，390px 使用全屏单列。
+- 自动证据：复盘后端全组 `63 passed`；Task 9 核心后端 `9 passed`；前端讨论/工作台 `4 passed`，TypeScript、Ruff、production build 与差异检查通过。整套前端并发回归中新增用例全部通过，两个既有设置页因并发超时，随后单独复验 `5 passed`。
+- 产品成熟度：受限追问、显式纠正和局部重算链路可用；求职目标聚合、原文清除/删除影响、完整真实页面验收和最终用户指南留给 Task 10。
+- 下一步：Task 10 聚合、生命周期收口、完整浏览器验收与阶段文档门禁。
+
+## 2026-08-02：面试复盘 Task 10 与首版阶段收口
+
+- 求职目标总览新增面试反馈聚合：复盘场次、最近轮次/结果、未完成行动项和 gap 类型数量，支持目标深链返回复盘工作台。
+- 复盘工作台补齐原文清除、归档、回收、恢复、删除影响和永久删除；原文清除后保留结构化结论/外部资产并阻止重新分析，永久删除要求精确确认文字。
+- 浏览器验收覆盖隔离工作区创建、模型未配置的部分成功、目标聚合、归档/恢复、回收站、删除影响、原文清除和 390px 布局。验收发现并修复“已保存却留在创建弹窗”及 `/cleanup-runs/null` 两个真实缺陷。
+- 自动证据：完整后端 `1081 passed`；复盘后端全组 `65 passed`；Task 10 后端聚焦 `6 passed`，API 增量 `1 passed`；前端聚焦最终 `27 passed`，TypeScript 与 production build 通过，Ruff 与差异检查通过。
+- 产品成熟度：首版跨层功能和确定性状态边界已完成；真实 Provider 的提取/分析内容质量、极长转写和不同模型波动仍需用户样本校准。
+- 所有权状态：`stateful` 七件套与最终人工验证指南已生成；用户学习与练习均为非阻塞理解债务。
+- 下一产品任务：用户按验证指南做一次真实 Provider 手工验收，再决定进入模拟面试 Agent 或继续校准复盘体验。
+
+## 2026-08-02：岗位专项复习串联合入面试复盘分支
+
+- 将 `feature/review-agent-workspace` 本地合入 `codex/interview-retrospective-agent-v2`，保留岗位/项目范围选题、画像到求职目标的返回链路和专项复习入口。
+- 求职目标总览同时保留新版四步准备路径与面试反馈聚合，不以其中一条用户旅程覆盖另一条；导航同时支持项目题确认、岗位专项复习和岗位复盘。
+- 合并冲突集中在总览组件、页面接线、样式与增量记录；后端范围契约和复盘领域保持各自边界，没有修改已有复盘状态机。
+- 合并验证：前端 TypeScript 通过，交界面组件测试 `42 passed`；后端岗位范围选题、复习 API 与复盘聚合测试 `101 passed`；首次前端合并回归暴露 1 个仅由新增步骤编号引起的测试选择器歧义，收紧到“面试反馈”区域后通过。
+
+## 2026-08-02：面试复盘整理运行可见性与失败反馈
+
+- 复盘整理/分析统一使用规范 Agent graph ID，运行中心和质量评估继续兼容历史 `.analysis` / `.chat` 运行；业务复盘即使使用内部 Session，也不再被“系统 Agent”筛选隐藏。
+- Cleanup API 新增窗口完成进度、当前工作项、稳定错误码和已完成窗口的只读部分结果；页面在运行和失败状态下显示真实进度、友好错误、保留结果及明确重试入口。
+- 单窗口上限改为 6,000 字并保留 500 字上下文重叠。没有任何完成成果的历史失败任务重试时自动重排，已有部分成果则原样保留并只重试未完成窗口。
+- 定向验证：后端运行中心、Cleanup 与复盘 API `20 passed`；前端工作台/页面 `11 passed`；Ruff、TypeScript 和差异检查通过。
+
+## 2026-08-02：面试复盘长文本 Cleanup 调度
+
+- 初始窗口改为自然边界优先、最多 4,000 字和 400 字重叠；重叠区通过 `emitFrom` 仅提供上下文，不允许重复输出。
+- 首个成功窗口生成最多 8 个说话人提示，后续窗口并发上限为 2；窗口输出逐项持久化，最终正式片段仍按绝对 offset 单线程归并。
+- Cleanup 使用 8,192 输出 Token、120 秒单次超时和 0 次 SDK 隐式重试；每个工作项最多应用层尝试 2 次，超时且大于 2,500 字的窗口自动原子拆分。
+- 单窗耗尽重试后不再阻塞后续窗口；页面展示活动窗口、已保存数量、待重试窗口和部分结果。
+- 收口验证：受影响后端回归 `104 passed`，前端复盘工作台/页面 `11 passed`，TypeScript、production build、Ruff 和差异检查均通过；构建只有既有大 chunk 警告。真实 Provider 合成长文本验收会产生外部模型调用，保留为经用户明确同意后执行的人工验证项。
+- 浏览器最小验收尝试使用 `/tmp` 隔离数据启动 8003/5176 服务，服务本身启动成功，但浏览器控制的 localhost URL 安全策略拒绝页面 reload；未绕过策略，临时服务已停止，阶段文档门禁因此保持未关闭。
+
+## 2026-08-02：面试复盘长文本问题提取
+
+- migration 048 为源版本增加录音覆盖范围；创建页可声明双方对话、主要只有本人或混合不确定，事后回忆固定为混合不确定。
+- 确认段落按最多 12,000 字与 4 段重叠规划 `question_extraction:<first>:<last>`，两个窗口并发执行，每窗显式 120 秒边界与两次应用尝试。
+- 超时多段窗口原子替换为持久化子窗口；已完成输出可停止、刷新和恢复。`question_reduce` 在所有 Map 完成前保持 blocked，不产生部分正式题目。
+- `anchorSegmentId` 区分原话问题与根据回答推断的问题；同锚点合并证据，不同锚点保留重复出现，跨窗承接只接受结构化 `continues_previous`。
+- 前端显示分段识别窗口进度、合并阶段以及“原始问题 / 推断题”标签。前端组件 `34 passed`、production build 和 Ruff 通过；后端完整回归 `1113 passed, 1 warning`，差异检查通过。
+- 隔离浏览器验收覆盖三种录音范围、“事后回忆”隐藏录音范围、分段进度 `1 / 2`、刷新保持、完成态“原始问题 / 推断题”以及 390px 无横向溢出；验收数据为本地合成持久化数据，未调用真实 Provider。
+
+## 2026-08-02：面试复盘转写修订与运行反馈
+
+- migration 049 新增 Cleanup CorrectionRecord；Agent 同窗输出段落与修订，Reducer 按绝对 offset 校验原文、去重并把冲突升级为高风险。
+- Cleanup 页面支持低风险已修订提示、高风险接受/保留/手动处理、确认门禁、真实窗口进度、持续时间、最近保存和长任务说明；刷新后继续使用服务端时间。
+- 分析与导出链路读取确认后的 SegmentRecord.body；分析工作区新增“已修订 N 处”原文对照。整段手工正文优先于同批旧修订决定，模型记录保留为 superseded 审计历史。
+- 运行中心结构化模型响应改为中性正文表面；对象数组使用普通矩形字段块，基础值数组保留紧凑标签，修复绿色背景叠加巨大白色圆形。
+- 新鲜验证：复盘后端 `90 passed`；复盘前端与运行详情 `45 passed`；Ruff 和 production build 通过，构建仅有既有大 chunk 警告。隔离浏览器无 Workspace，未制造数据或调用 Provider；真实长录音与修订视觉仍待功能工作区人工验收。
+- 实页发现 103 KB 模型响应的 64 KB 分页被呈现为“半截 JSON + 整行蓝色加载条”。现改为 200 KB 以内自动取完所有分页再解析；超大正文的手动入口收敛为带加载字节进度的次级按钮。
+
+## 2026-08-02：Cleanup 稳定原文单元与有界输出修复
+
+- 根据真实 Provider Trace 增补 ADR：4,000 字窗口的完整段落 + 修订审计输出会逼近 8,192 Token，且模型 offset 在完整响应中仍不可靠，因此不采用“只加 Token”作为正确性方案。
+- 后端把每窗原文切成最多 800 字的稳定 Source Unit；模型只返回 emit 单元的 ID、说话人和修订稿，程序用不可变原文 Diff 生成精确 CorrectionRecord。
+- 数字、否定、时间和无法唯一确认的修改由程序保守标为高风险；只有格式变化和完全命中当前术语提示的识别修订自动采用。
+- Cleanup 的 `ToolStrategy` 关闭内部错误回灌；`max_tokens`、缺失结构、错误单元 ID 分别归类为稳定错误，超时/截断/Schema 错误只拆分当前窗口。
+- 新鲜证据：复盘及可观测受影响后端 `109 passed`；完整后端 `1136 passed, 1 warning`；全量 Ruff 与 `git diff --check` 通过。真实 Provider 中长样本尚未复跑，保留为用户环境人工验收边界。
+
+## 2026-08-02：高级运行详情实时刷新
+
+- 高级运行详情在执行状态为 `queued` / `running` 时每秒刷新执行摘要、Operation 与事件索引；进入终态后补一次收尾刷新并停止轮询。
+- 模型结构化响应仍保持完整返回后原子展示，不把流式残片当成可读 JSON；运行中的总耗时按开始时间持续更新。
+- 定向验证：`ExecutionTracePage.test.tsx` 13 项通过，新增用例覆盖响应自动出现；TypeScript 类型检查通过。
+
+## 2026-08-02：转写修订待办规模收敛
+
+- Cleanup Prompt 禁止润色、语序调整和口语替换；无法唯一确认时要求逐字保留原文。
+- 程序不再把所有字符差异默认升级为高风险：格式和允许术语继续安全采用，数字/否定/时间等关键变化继续阻塞，普通改写直接保留原文且不生成审核项。
+- 历史运行新增“全部保留原文并保存”批量兜底，更新命令的决定上限从 1,000 调整为 5,000，可处理当前 1,006 项数据。
+- 新鲜验证：Cleanup/Agent/API 后端 `59 passed`；Cleanup 工作台与复盘页面前端 `14 passed`；Ruff、TypeScript 和 production build 通过，构建仅有既有大 chunk 警告。
+
+## 2026-08-02：面试复盘对话轮次还原
+
+- Cleanup 模型输出由“每个 Source Unit 一个说话人”升级为 `unitId + turns`，同一原文单元内可以按语义恢复面试官与候选人的连续轮次。
+- 多轮次必须返回逐字 `sourceText`，程序验证顺序拼接与不可变原文完全一致并计算轮次 offset；遗漏、改写或换序会拒绝当前窗口。
+- 单轮次省略 `sourceText` 并默认覆盖完整 Source Unit，避免每个窗口重复原文而重新触发输出 Token 截断。
+- Cleanup Prompt 允许断句、口头赘词、紧邻重复和高置信 ASR/术语修正，同时保护数字、否定、组织名称和职责等级；不确定术语保留原文并说明原因。
+- 候选人单边录音的缺失问题仍在问题提取阶段生成带回答证据的 `origin=inferred` 问题，不污染 CleanupVersion 原话证据。
+- TDD 新增混合轮次恢复与原文覆盖拒绝用例；复盘后端回归 `105 passed`，Ruff 与差异检查通过。
+
+## 2026-08-02：高级运行详情实时耗时时区修复
+
+- 运行态总耗时不再直接用 `Date.parse` 解析 SQLite 无时区 UTC 字符串，统一改用共享 `parseApiTimestamp`。
+- 新增北京时间环境回归用例：开始时间 `2026-08-02 09:00:00`、当前时间 `09:00:23Z` 必须显示 `23 秒`，不能显示 `480:23`。
+- 新鲜验证：`ExecutionTracePage.test.tsx` 14 项、TypeScript 与差异检查通过。
+## 2026-08-02：复盘整理重复模型请求修复
+
+- 核对真实 Execution `3b05eaed-318d-4c5a-a9eb-8a577df1b75d`：原实现共发出 18 次 Cleanup 请求并最终 `schema_validation_error`；确认存在父窗拆子窗的大范围重复和同窗原样重试。
+- 模型契约允许程序确定性补齐 `displayName` 与按序缺失的 `unitId`；缺少可验证多轮边界时保留整个 Source Unit 为待确认单段，继续保护不可变原文范围。
+- 调度器只对 `provider_timeout/output_truncated` 做自适应拆分；`schema_validation_error/structured_output_missing` 不再自动重试，首窗失败时快速终止。
+- 显式继续会重置 retryable 窗口的尝试预算并保留 completed 窗口，现有失败运行可在新代码下继续未完成部分。
+- 新鲜验证：完整复盘后端定向回归 `107 passed`；全量后端 Ruff 与差异检查通过。
+
+## 2026-08-02：复盘整理核对页面收敛
+
+- 顶部以“还需处理 N 项”建立唯一主任务，并拆分说话人、关键文字和自动整理数量。
+- 段落队列显示具体待办类型；详情一次只展示一项关键修改，接受/保留后自动推进，手工修改保持显式保存。
+- 低风险自动整理、更多段落设置、批量处理和复盘生命周期动作均收进次级入口；桌面段落队列收敛为 300–340px。
+- 自动验证：复盘前端 `40 passed`，TypeScript、production build 与差异检查通过；构建仅有既有大 chunk 警告。
+
+## 2026-08-02：复盘模型整理稿与审核门禁一致性修复
+
+- 用真实 Provider 响应复现：逐 opcode 白名单会把模型已清理正文几乎全部静默恢复为原文，且 `corrections=[]`；现改为先做整轮有界检查，再自动采用普通 ASR 错字、口头语和断句修正。
+- 数字、否定、时间和职责等级优先于普通识别修正，继续阻止确认；低相似度、异常长度和明显内容搬移显示模型稿并升级为整段高风险待确认。
+- 多轮响应仅遗漏第一轮 `sourceText`、其余证据为不可变原文精确后缀时，可唯一恢复首段边界；其他缺失、错序和改写仍拒绝。
+- 真实 Execution `2943dfa5-3b85-48d6-8796-a9699a5bfb25` 暴露 Provider 会同时省略首轮证据并格式化后续证据标点。现将模型 `sourceText` 降为轮次起点锚点，唯一定位后由程序从不可变原文重建正文和 offset；同一响应离线重放成功生成 8 段。
+- 重试 Execution `24842e8a-f4d8-4348-8c3a-469b26c742ce` 进一步证明 Provider 会把后续 `sourceText` 整段写成清理稿。程序现只校验后续轮次起始内容锚点唯一性，正文安全继续由不可变原文切片和 `correctedText` 有界门禁承担；第二次真实响应也已离线重放为 8 段。
+- 前端字段改称“模型整理稿”，直接对应 Provider `correctedText`；原文和人工决定留在下方核对区。
+- 新鲜验证：复盘后端 Cleanup/Service/API `53 passed`、复盘前端 `40 passed`、Ruff、production build 与差异检查通过；构建仅有既有大 chunk 警告。
+
+## 2026-08-02：复盘整理 Schema 漂移容错
+
+- Source Unit 数量/ID 映射不再在 Agent 层直接终止任务；物化层按程序持有的 emit 单元确定性映射，缺失或未知项使用原文待确认兜底。
+- 单轮输出忽略 Provider 自报的 `sourceText` 并覆盖完整不可变单元；多轮边界无法证明时合并为完整单段，保留角色不确定性而不是伪造 offset。
+- 新增缺失单元、错误 ID、单轮错误证据和多轮不可覆盖的回归测试。
+- 使用本次失败 Execution 的三组真实 Provider 响应完成离线回放，全部物化成功；后端复盘定向套件 `118 passed`，相关 Ruff 检查通过。
+# 2026-08-02：复盘段落直接展示模型整理稿
+
+- 审核段落正文直接保存并展示模型 `correctedText`；数字、否定、职责和大改写仍保留高风险确认门禁。
+- pending 修订初始 adopted text 与模型稿一致；接受不改正文，保留原文或手工决定后再替换。
+- 移除“查看模型响应”入口及 Trace 临时映射，页面只保留一份主正文。
+- 自动验证：后端复盘定向回归 `119 passed`，前端复盘功能 `40 passed`，TypeScript 与 production build 通过。
+
+## 2026-08-02：复盘准确转写文档设计重构
+
+- 根据真实长转写验收结果，停止沿用“模型 turn 直接成为 Segment、每个 Diff 进入人工核对”的旧方案；现有自动测试只证明状态与兼容逻辑，不能证明产品质量达标。
+- 重写 `docs/superpowers/specs/2026-08-02-interview-retrospective-transcript-correction-design.md`，新增旧方案局限、根因、成熟项目参考、单一文档 Artifact、稀疏 ReviewIssue、确认后 Anchor 和真实基线盲测要求。
+- 参考来源明确限定为架构模式：DeerFlow 的 Artifact/受控上下文、LangGraph Map-Reduce、GraphRAG Document/Text Unit 分层、Haystack 文档预处理流水线；没有声称这些项目直接实现中文 ASR 纠错。
+- 产品实现尚未按新设计修改。下一步先重写实施计划和受影响 ADR，再调整后端数据边界、Cleanup 合同、单文档页面与题目提取输入。
+
+## 2026-08-02：准确转写单文档 Workflow 首轮实现
+
+- 新增 `document_body/document_sha256` 与稀疏 `interview_transcript_review_issues`，新 Cleanup 不再在窗口完成时生成用户段落和逐字符 Correction。
+- Cleanup 模型协议改为非重叠 `targetText` + 只读前后上下文，只返回 `correctedTarget` 与少量 `uncertainItems`；程序按目标范围顺序拼成一次且仅一次的完整文档。
+- 增加整篇文档 PUT API。用户可直接编辑完整文字，并记录接受建议、保留当前文字或手工处理的决定；文档哈希与乐观锁由后端维护。
+- 确认动作校验完整文档、摘要和 pending issue，并在同一事务内生成后续问题提取所需的自然段/有界长度证据锚点；旧 Cleanup 仍走历史 Segment 门禁。
+- Cleanup 页面在新数据上只展示一份连续全文和右侧稀疏问题列表，不再展示窗口、Source Unit、Diff 或上千段卡片；旧数据路径保持兼容。
+- 清除原文会同步清除准确转写全文、摘要和 ReviewIssue，并继续清除旧段落、Correction 与分析摘录。
+- 新鲜自动验证：后端准确转写/分析相关 `148 passed`，隐私/删除/Trace 保留相关 `14 passed`；前端复盘 `41 passed`，TypeScript 与 production build 通过。真实 Provider 盲测和浏览器验收仍待完成。
+
+## 2026-08-02：准确转写单文档最小浏览器验收
+
+- 使用隔离临时工作区和非隐私短样本进入新 Cleanup 页面，页面只展示一份连续全文与 1 个稀疏术语问题，没有窗口、Source Unit、逐字符 Diff 或段落卡片队列。
+- 点击“采用建议”后正文由“数字签明”更新为“数字签名”，“保存整理稿”由禁用变为可用；保存后待确认数从 1 变为 0，刷新后的服务端文档保持更新结果。
+- 点击“确认并进入题目提取”后阶段切换为“整理结果已确认”，页面只显示下一步“开始分析”，证明文档保存、ReviewIssue 决定、确认门禁和锚点生成已贯通。
+- 本次仅证明隔离数据下的最小 UI/API 闭环，不代替真实一小时转写的 Provider 质量盲测，也不覆盖停止、恢复、单窗口失败和 Trace 正文清除联动。
+
+## 2026-08-03：准确转写核对栏比例修复
+
+- 修复 1024 附近视口中通用 Cleanup 断点规则覆盖单文档布局的问题，完整正文恢复为主栏，待确认区收敛为约 36% 的辅助栏。
+- 768–899px 改为上下布局；待确认项中的长原文预览限制为 240px 高并在内部滚动，避免大段文字抢占页面主体。
+- 新鲜验证：Cleanup 与页面测试 `17 passed`，TypeScript 和 production build 通过；仅保留既有大 chunk 警告。
+- 待确认区补充“待确认列表（N）”明确入口，列表固定保留 160–280px 可见高度；当前项详情改为剩余区域独立滚动，不再把 47 项列表压成空白边框。对应可访问标签与列表按钮测试已补充，同一组 `17 passed` 和 production build 再次通过。
+
+## 2026-08-03：复盘核对页整体层级收敛
+
+- 首轮只把单条“复盘记录”列表由 29% 收敛到 22%，在 5175 实页上仍保留了原有三栏的等权观感；复核后改为真正的窄导航：桌面 190–230px、1024px 附近 176–200px，并在所有桌面宽度移除重复记录图标、压缩单条高度。
+- 页面标题、生命周期页签、记录标题、核对标题与底部动作区统一降低垂直密度；正文继续占主宽度，待确认区保持稳定辅助宽度，避免三块区域等权竞争。
+- 5175 实页复核后确认 300–360px 的待确认栏不足以承担高频核对；改为桌面 420–520px、1024px 附近 330–380px，并把列表可见区从右栏高度的 42% 提高到 54%，详情继续使用剩余空间独立滚动。
+- 新鲜验证：5175 进程工作目录确认是当前功能工作区；Cleanup 与页面测试 `17 passed`，TypeScript / production build 和差异检查通过，构建仅保留既有大 chunk 警告。隔离浏览器没有用户工作区数据，因此没有伪造带真实记录的浏览器截图。
+
+## 2026-08-03：准确转写专注核对模式
+
+- 使用 `ui-ux-pro-max` 按内容优先、渐进披露、避免嵌套同级导航和长文档可读宽度复审页面；确认问题根因是全局侧栏之外又常驻“复盘记录”主栏，而不是待确认栏少几十像素。
+- 进入新式准确转写核对态后，页面切为专注模式：隐藏生命周期筛选和常驻复盘记录栏，顶部只保留当前复盘上下文、返回列表和次级管理入口。
+- 主体重构为完整文字 + 待确认工作区两栏；待确认区约占 44%，其列表优先获得 58% 高度，899px 以下继续切为上下布局。
+- 5175 Safari 实页确认专注模式已生效：常驻记录栏和生命周期筛选消失，顶部返回入口、当前复盘、管理菜单均可达；正文与待确认列表在首屏并列，右栏可同时浏览多条待办。
+- 新鲜验证：页面与 Cleanup 测试 `18 passed`，TypeScript / production build 和差异检查通过；构建仅保留既有大 chunk 警告。
+
+## 2026-08-03：准确转写单项校对台重构
+
+- 再次使用 `ui-ux-pro-max` 复审后确认，长文、完整问题队列和单项详情同时常驻会造成认知过载；页面从“三块信息并排”重构为“正文 + 当前一项”的单任务校对台。
+- 完整文字改为居中的文档纸张表面并限制可读行长；右侧只显示当前问题的类型、当前文字、模型建议、原因和决定动作，处理后按原顺序自动推进。
+- 48 项完整队列收进“全部问题”渐进入口；新增处理进度、上一个/下一个和“在全文定位”，移动端队列使用覆盖层而不是继续压缩正文。
+- 5175 Safari 真实开发工作区已复验专注态：常驻记录栏消失，正文和当前第 1/48 项在首屏并列，所有主动作可达。
+- 新鲜验证：Cleanup 与页面测试 `18 passed`，production build、差异检查通过；构建仅保留既有大 chunk 警告。
+
+## 2026-08-03：模型候选词与可执行建议语义修复
+
+- 定位到后端在不确定项无法唯一匹配时，会把整个文本窗口作为 `excerpt`，却继续保留短 `suggestion`；前端因此可能把整段文字替换成一个候选词。
+- 新生成的歧义项现在只保存核对上下文，并把候选词写进原因说明，不再产生可自动采用的建议。
+- 前端兼容已有数据：歧义旧记录改称“模型标记的候选词”，明确提示无法自动定位，并隐藏采用按钮；唯一定位的修改则统一显示“原词 → 建议词”。
+- 新鲜验证：后端 Cleanup `38 passed`，复盘前端 `19 passed`，production build 与差异检查通过；5175 实页确认旧记录候选线索可见且不存在采用按钮。
+
+## 2026-08-03：普通候选词误报过滤与历史门禁迁移
+
+- 将 Provider 的低置信度诊断与用户待办彻底分离：术语项必须同时满足“原词在整理稿中唯一定位、建议词与原词不同、存在具体替代词”才会生成 ReviewIssue；普通技术词、同值建议和无法定位的候选不再阻塞用户。
+- 说话人或关键语义确实不确定且能精确定位时仍保留人工核对，避免为了减少数量而吞掉真正影响复盘事实的问题；完整原始模型响应继续保存在 Agent 运行中心供诊断。
+- Prompt 将不确定项上限收敛为每窗口 8 项，并明确禁止输出普通词表；运行时迁移 051 把已有歧义候选、无替代词和同值替代的 pending 记录标记为 `kept`，保留审计记录但解除确认门禁。
+- 新鲜验证：Cleanup、Agent Prompt 与运行时迁移定向回归 `108 passed`，Ruff 通过；5175 真实开发数据刷新后由“待确认 48”变为“整篇文字已可确认 / 已处理 48/48”。
+
+## 2026-08-03：运行中心暂停/取消快捷筛选
+
+- 将已有但隐藏在高级筛选中的 `interrupted + cancelled` 组合状态提升到任务列表顶部，新增“已暂停/取消”快捷标签与实时数量。
+- 点击标签只展示暂停或取消的 Execution，其他状态标签保持可见，筛选仍通过既有 `stopped` URL 状态复用统一逻辑。
+- 新鲜验证：`AgentRunCenterPage` 15 项测试和 TypeScript 检查通过；5175 真实开发数据显示“已暂停/取消 3”，点击后准确列出 1 条暂停和 2 条取消任务。
+
+## 2026-08-03：复盘问题提取最小上下文与有界 Schema 修复
+
+- 问题提取请求删除共享 `contextSnapshot`，只发送当前转写窗口、录音覆盖范围和 `transcript_only` 声明；逐题分析仍保留其独立冻结上下文。
+- 新增模型侧 `QuestionExtractionModelOutput`，Provider 不再负责 `ordinal` 和 `anchorSegmentId`；程序按返回顺序与首个问题/回答证据确定性物化完整领域合同。
+- 关闭问题提取 ToolStrategy 的隐式错误回灌；首次 Schema 错误只发送无效候选、800 字内校验摘要及最多 12 个已引用证据片段进行一次修复，修复再次失败后不再重发完整窗口。
+- 应用层将 Schema 缺失标为不可自动重试错误；窗口保持 retryable 供用户显式恢复，其他已完成窗口不丢失。
+- 新鲜定向验证：Agent 合同、窗口 Reduce、分析状态机和 API 共 `58 passed`；受影响文件 Ruff 通过。
+
+## 2026-08-03：复盘逐题分析超时隔离与恢复
+
+- 为 `interview_retrospective_question_analysis` 增加显式调用策略：`max_output_tokens=4096`、`request_timeout_seconds=120`、`max_retries=0`。
+- `render_question_analysis_input` 不再透传完整冻结上下文；岗位仅保留 ID、公司、职位、职级，画像通过当前题目与证据段检索，最多 6 条、单条 2,400 字符、总计 8,000 字符。
+- 分析调度器将瞬时错误限制在当前问题工作项内：每题最多自动尝试 2 次；失败项延后，其他题优先推进；恢复同一运行时只执行 retryable/pending 项及后续汇总。
+- 前端“重试失败步骤”由创建新重试运行改为调用 `resumeAnalysis`，保留原运行的提取结果与已完成逐题分析。
+- RED 证据：上下文测试曾发现完整岗位文档和无关画像仍被发送；隔离测试曾只调用失败题一次；页面测试曾调用 `retryAnalysis`。
+- GREEN 证据：后端复盘 Agent/Analysis/API `56 passed`；前端 `InterviewRetrospectivePage` `9 passed`；受影响 Ruff 与 `git diff --check` 通过。
+- 新增独立 Tradeoff ADR：`docs/superpowers/architecture-decisions/2026-08-03-retrospective-question-analysis-context-and-retry-boundary.md`，记录真实故障、备选方案、采用边界、代价、重新评估条件和面试讲述口径。
+
+## 2026-08-03：复盘分析页专注阅读布局
+
+- 从复盘列表选择记录后统一进入专注阅读态：隐藏外层复盘记录栏，顶部提供明确的“复盘列表”返回入口，避免同一条记录在内外两层重复出现。
+- 完成状态收敛为单行摘要，移除已经完成后的满宽进度条；问题列表合并重复状态标签，原始题不再额外展示“原始问题”，仅保留有辨识价值的“推断题”。
+- 桌面问题列表固定在约 300–340px，详情区使用剩余宽度；1024px 仍保持双栏，899px 以下才切换上下布局。内部推断依据转换为用户语言，不再直接显示 `recordingCoverage` 等协议字段。
+- 新鲜验证：相关复盘前端测试 `18 passed`，production build 通过；5175 真实开发数据在 1280×720 与 1024×768 完成浏览器复验，专注态、首屏内容密度和返回列表路径均符合预期。
+
+## 2026-08-03：逐题复盘信息层级重构
+
+- 修正前一轮只压缩外层布局、没有解决逐题详情“调试报告式堆叠”的偏差：回答原文、全部分析、遗漏、差距和参考表达不再同时占据默认首屏。
+- 默认阅读路径改为“题目与推断确认 → 值得保留 / 优先改进 → 推荐回答结构”；完整分析、回答原文和参考表达分别通过原生 `details` 渐进展开，键盘焦点和完整内容仍保留。
+- 问题列表将“推断题”和分析结论合并为单行状态；焦点态移除重复的内层复盘标题，把“讨论与纠正”并入页签导航，减少一整行无效页面框架。
+- 新鲜验证：逐题详情、问题列表、工作区和页面测试 `15 passed`，production build 与差异检查通过；5175 真实数据在 1280×720 和 1024×768 复验，1024 下结论卡切为单列，折叠原文可正常展开。
+
+## 2026-08-03：Agent SQLite 写入边界与模型请求 Trace 修复
+
+- 为真实复盘 Tool 补充 Trace 回归，复现并修复参数 Schema 含 Python 类型时 `model.request` 被静默丢弃的问题；现在只保存 Tool 公开合同，局部不可序列化值稳定降级。
+- 为产品事件流补充事件循环活性回归，复现并修复同步 SQLite 写锁等待阻塞异步 Tool 审计提交的问题；同步 `append_event` 改由工作线程执行，既有瞬时锁退避继续生效。
+- 新鲜验证：Agent Trace、事件时间线、Tool Policy 与 Tool Audit 回归 `30 passed`；两个专门 RED 用例均已转为 GREEN。
+- 新增正式 Tradeoff ADR：`docs/superpowers/architecture-decisions/2026-08-03-async-sqlite-agent-runtime-write-boundary.md`，明确拒绝“只加超时”、全局锁和立即迁移 PostgreSQL，并记录当前 SQLite 单写者成熟度边界。
+
+## 2026-08-03：复盘讨论 Agent 对话规范补齐
+
+- 修复复盘讨论复用共享消息组件时落入默认“画像助手”名称的问题；所有历史、运行中和新回复统一显式标识为“复盘助手”。
+- 讨论打开后从“记录列表 + 详情”切换为完整 Agent 会话工作台，不再让左侧复盘记录挤占或遮挡消息区；桌面主区使用剩余宽度，右侧固定 300–340px，移动端继续全屏。
+- 按 Agent 对话规范补齐标题栏 Execution 状态、本次运行过程卡、失败重试、空会话快捷问题、离开底部后的新回复提示，以及固定右栏的本次参考范围、使用边界、待处理、运行状态和折叠技术详情；等待输入、等待确认、失败、中断和停止不再误判为完成。
+- 5175 真实页面复验：1280px 视口下工作台宽 1040px、右栏约 307px，复盘记录栏已收起；页面不再出现“画像助手”，能看到“复盘助手”“可继续对话”和完整右侧运行状态。
+- 新鲜验证：复盘讨论与工作区测试 `13 passed`，TypeScript、production build 和差异检查通过；5175 实页确认标题栏显示“可继续对话”，构建仅保留既有大 chunk 警告。
+
+## 2026-08-03：复盘讨论 Harness 上下文边界
+
+- 新增正式 ADR `2026-08-03-retrospective-chat-context-and-tool-replay-boundary.md`，明确产品历史、单次 Agent State、压缩安全点、取消语义以及未来引入长耗时/写 Tool 后的升级条件。
+- 历史对话从“最近 12 条嵌套 JSON”改为“Token 预算内的最新完整轮次”，并作为独立 Human/AI Message 发送；未完成轮次不会重新进入下一次讨论。
+- 复盘讨论使用独立预算档：单次最多 12 次模型调用、6 次 Tool 调用；历史预算取最小上下文窗口的 20%，限制在 1,000–8,000 Token。
+- 补充完整轮次裁剪、超大轮次原子舍弃、消息角色装配、Tool request/result 安全切点、独立预算及取消不落半截助手消息测试。
+- 新鲜验证：相关后端 `52 passed`，受影响 Ruff 检查通过。
+
+## 2026-08-03：模型请求可用 Tool 可读展示
+
+- 补齐 Agent 运行中心 `model.request` 的可读视图：从既有 Trace 载荷读取本次绑定的 Tool，默认展示能力用途、技术名称和说明，参数 Schema 按单个 Tool 折叠。
+- 明确区分“本次可用”和“实际已调用”：可用 Tool 区块不会把绑定能力误报成已执行动作，真实调用仍以执行树中的 `tool.request / tool.response` 为准；原始事件 JSON 保持不变。
+- 新鲜验证：`TraceEventInspector` 定向测试 `10 passed`，TypeScript 与差异检查通过。全量前端测试另有一条既存的运行中心 `returnTo` 链接断言失败，与本次 Tool 展示无关。
+
+## 2026-08-04：复盘成果动作和运行质量页交互纠偏
+
+- 复盘候选新增 `reopen` 决定；仅拒绝且尚未跨领域写入的候选可恢复为待处理，并复用原记录与 fingerprint。
+- 复盘内行动项支持 `pending / completed / dismissed` 双向恢复，完成勾选可以取消，忽略项可以恢复。
+- 页面标签改为“保存成果 / 下一步”，候选操作改为“不加入资料库”，Knowledge 路径改为“生成复盘文档”。
+- 质量页固定来源 Execution；无报告时显示当前来源空状态，不再回退到其他历史结果。历史对比只在用户开启后展示兼容结果，技术指标默认收起。
+- 质量右栏以“可以使用 / 建议核对 / 需要处理”和优先事项为主，检查方式与设置折叠。
+- 新鲜验证：后端候选与行动状态 `7 passed`；前端候选、行动、工作区和质量页 `15 passed`；TypeScript 检查通过。
+- 5175 真实开发数据验收：复盘页显示“保存成果 / 下一步”、完成事项有“恢复”、文档入口为“生成复盘文档”；指定无报告 Execution 只显示该运行的空状态，已有报告默认隐藏历史对比与技术指标，右栏先给“建议核对”和处理优先级。
+
+## 2026-08-04：Agent Control Plane Phase 1 注册门禁
+
+- 现有 Observability Registry 增加 `lifecycle`、`user_creatable` 和统一 `require_registration()`，成为迁移期创建门禁；Phase 2 再收敛 Builder 和完整 Definition。
+- 公共 Session 创建、Execution 启动和失败执行重试在数据库写入前校验 Agent；未知、历史别名、disabled、deprecated 或 system-only Agent 返回稳定 422 错误码。
+- 领域内部创建 system Session 继续通过受信服务入口，不复用公共用户创建权限。
+- 已从 Registry 删除的历史 Graph 使用“历史 Agent”只读投影进入运行中心，不提供业务入口或控制能力，也不能启动或重试。
+- RED 证据：未知历史 Session 启动接口曾返回 202 并写入 Execution；未知历史执行重试曾错误返回 409。
+- GREEN 证据：注册表、Agent API、运行中心服务定向回归 `35 passed`；兼容回归 `58 passed`，仅有既有 Starlette TestClient 弃用警告。
+- 后端全量首错停止运行到本轮无关的既有迁移断言前为 `538 passed`；`test_interview_retrospective_migration.py` 仍硬编码只允许 1–50 号迁移，而当前仓库已有 51、52 号迁移。继续全量运行还会命中既有 SQLite 后台写线程与关闭连接竞态导致的解释器段错误，因此本轮不把“全量通过”作为完成证据。
+
+## 2026-08-04：Agent Control Plane Phase 2 单一 Definition 与 Builder
+
+- 新增不可变 `AgentDefinitionRegistry`，合并运行中心元数据、生命周期、用户创建权限、Eval Pack、历史别名与延迟 Builder Key。
+- 删除 `PRODUCTION_GRAPH_KINDS`；ProductionGraphFactory 启动时校验 Builder Catalog 与 Definition 双向一致，所有顶层构建先解析 Definition。
+- 运行中心、Observability Service、Eval Service 和 AgentApplication 注册门禁改为直接消费统一 Definition；旧 Observability Registry 仅保留兼容导出。
+- 自动验证：合并运行 Definition/Builder、运行中心、质量评估、岗位、复盘及相关 Factory 定向回归 `139 passed`；受影响 Ruff 与差异检查通过。
+- 成熟度边界：Phase 2 已消除顶层 Agent 身份与 Builder 的第二事实源；组件归属、Tool/Scope、模型角色和 Execution 冻结快照仍待 Phase 3/4。
+
+## 2026-08-04：Agent Control Plane Phase 3 子组件、Tool 与模型调用门禁
+
+- `AgentDefinition` 增加 `child_components / model_roles / allowed_tools / allowed_scopes` 可执行合同；质量 Judge 也作为隐藏 system Agent 注册，不再绕过控制面创建模型组件。
+- 新增 Definition-bound `RegisteredAgentFactory`：创建组件、解析模型、读取上下文策略和生成 Tool Policy 前校验父 Agent、组件、model role、Tool 与 Scope；未绑定的旧 Factory 调用稳定失败。
+- 题目整理、复习、画像、岗位、项目深挖、面试复盘和质量评估的生产 Agent bundle 已全部迁移到绑定 Factory；上下文压缩模型同样携带父 Definition 身份。
+- Trace JSONL 的模型请求/响应补充 `agent_id`、`agent_definition_version` 和 `component_id`；新增静态 import 边界，产品代码直接导入底层 `ChatModelResolver` 会触发契约测试失败。
+- 新鲜自动验证：Agent、Graph 与 Workspace Registry 受影响回归 `328 passed`；Python compileall、受影响 Ruff 和 `git diff --check` 通过。
+- 成熟度边界：本阶段保证“当前 Definition 下谁可以调用什么”并留下组件身份；完整不可变 Execution Definition Snapshot、历史版本展示和 Eval 冻结读取仍待 Phase 4。
+
+## 2026-08-04：Agent Control Plane Phase 4 Execution Definition Snapshot
+
+- Runtime migration 053 为 `agent_runs` 增加非空 Definition Snapshot；旧数据回填显式 legacy sentinel，并以 SQLite trigger 阻止快照变更。
+- `AgentExecutionService.prepare()` 在创建运行时从统一 Definition 和当次模型绑定构建快照；Repository/Record、Observability detail API 和前端高级详情贯通冻结合同。
+- Eval v1/v2 快照携带 Agent Definition Snapshot；非 legacy 运行严格使用冻结 Eval Pack ID/version，Pack 覆盖不一致或历史版本已不可用时稳定拒绝。
+- RED/GREEN 覆盖持久化与不可变、legacy 不反推、执行前冻结、运行详情读取、历史 Pack 优先与错误覆盖拒绝；修正复盘迁移测试中已过期的迁移编号断言。
+- 新鲜验证：Phase 4 跨层定向回归 `109 passed`；Agent/Graph/Workspace Registry 扩展回归 `335 passed`；前端运行详情/事件/质量页 `30 passed`；Ruff、TypeScript、production build 与 `git diff --check` 通过。
+- 成熟度边界：当前 Prompt 还不是独立版本化资产，Definition 快照会如实记录空的 Prompt Schema 版本表；已有大 chunk 提示和 Starlette TestClient 弃用 warning 未由本阶段引入。
+
+## 2026-08-04：Agent 质量中心与复盘质量标准
+
+- 页面重构为质量检查、回归实验、质量趋势三个独立任务，并为单次检查增加选择运行、查看结果、人工确认三步路径。
+- Agent Definition 注册合同要求人工质量检查必须绑定 Eval Pack；运行投影分别暴露静态支持能力与当前可执行性，历史原因可解释。
+- 新增 `interview-retrospective.v2`、复盘业务结果适配器、维度适用性和四条确定性规则；报告人工判断改为三个直接选项。
+- 修复右侧汇总与优先问题使用不同判定条件造成的矛盾，证据不足也会进入最多三条的优先列表。
+- 新鲜证据：后端 `44 passed`，前端 `16 passed`，production build 与 `git diff --check` 通过；5175 实页完成概览、报告、回归实验和趋势验收，未触发新评估或 Provider。
+
+## 2026-08-04：展示前项目级冒烟缺陷修复
+
+- 修复复盘讨论普通正文被误判为结构化输出失败、SQLite 后台事件写入与 Runtime 关闭竞态、画像优势询问误路由、历史检索总结缺少独立运行身份与进行中反馈。
+- 修复运行中心业务页返回筛选丢失及工作区延迟加载覆盖 URL 筛选；设置页模型角色统计改为统一 10 项角色常量。
+- 新鲜证据：后端全量 `1222 passed`，前端全量 `421 passed`，production build、受影响 Ruff 与 `git diff --check` 通过；5175 实页确认 `10/10 已配置` 和 `?status=focused` 正确恢复“关注中”。
+- 真实 Provider 正文降级本轮由确定性回归覆盖，未新增外部模型调用；本地完整复验记录见 `docs/verification/interview-retrospective.md`。
+
+## 2026-08-05：质量检查报告完成渐进披露改造
+
+- 默认报告只展示中文内容检查、结果和用户可理解的说明；8 项系统可靠性检查收进独立折叠组，技术证据在单项内部二次折叠。
+- 单次运行报告由四列表格收敛为两列；历史对比仍保留基线和变化信息。
+- 质量概览与报告右栏不再直接暴露 Receipt、Event、hash、locator 等内部术语。
+- 新鲜证据：前端定向 `14 passed`、production build 和 `git diff --check` 通过；5175 实页确认默认显示 8 项内容检查、系统可靠性检查折叠且页面无原始英文维度名，未触发新评估或 Provider 调用。
+
+## 2026-08-05：修复历史检索总结覆盖结果区
+
+- 为历史检索新增统一 body 与 insights 容器，总结、错误、进度和已生成报告在同一有界区域内独立滚动。
+- 结果工作区拥有独立显式 Grid 行，不再被动态总结推入隐式行；桌面端最多按 40% / 60% 分配，移动端保持自然流。
+- 定向测试、production build 和 `git diff --check` 通过；5175 实页在 720px 高窗口中测得交叠 `0px`，结果区保持 `171px` 可用高度。
+
+## 2026-08-05：App SQLite 线程连接隔离与质量术语简化
+
+- 将 `connect_app_database()` 返回值改为连接兼容的 `ThreadLocalAppConnection`：应用仍只维护一个管理器，各工作线程各自延迟创建 SQLite 物理连接。
+- 初始化连接负责迁移与 WAL，所有线程连接统一启用 `foreign_keys` 和 `busy_timeout=5000`；应用关闭时集中关闭已创建连接。
+- 新增跨线程事务隔离测试，修复前稳定失败为另一线程观察到共享事务状态，修复后通过。
+- 质量页将 `runtime.late_result_protection` 展示为“任务结束后结果保护”，并用“旧结果是否会覆盖最终结果”解释通过、证据不足和风险状态。
+- 验证：后端相关 `53 passed`；质量页相关 `14 passed`；Ruff、compileall、前端 production build、`git diff --check` 均通过。构建仅保留既有大 chunk 警告。

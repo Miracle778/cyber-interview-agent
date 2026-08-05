@@ -3,6 +3,7 @@ import {
   Bot,
   Check,
   CheckCircle2,
+  ChevronRight,
   CircleMinus,
   Clock3,
   FileCheck2,
@@ -11,13 +12,14 @@ import {
   UserCheck,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { formatBeijingDateTime } from "../../shared/time";
 import { SelectControl } from "../../shared/ui/SelectControl";
 import type { ExecutionSummary } from "../observability/observabilityTypes";
 import {
   dimensionOutcome,
+  dimensionUserSummary,
   summarizeEvaluation,
 } from "./evaluationPresentation";
 import type {
@@ -31,6 +33,9 @@ type QualityState = "stable" | "attention" | "unchecked";
 interface QualityOverviewItem {
   execution: ExecutionSummary;
   evaluation: EvaluationRun | null;
+  supportsEvaluation: boolean;
+  canStartEvaluation: boolean;
+  evaluationUnavailableReason: string | null;
   state: QualityState;
   conclusion: string;
   issue: string;
@@ -75,15 +80,17 @@ export function EvaluationOverview({
 }: EvaluationOverviewProps) {
   const [range, setRange] = useState("7");
   const [agent, setAgent] = useState("");
+  const [qualityFilter, setQualityFilter] = useState<QualityState | null>(null);
   const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(
     null,
   );
-  const [detailOpen, setDetailOpen] = useState(true);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const detailRef = useRef<HTMLElement>(null);
   const allItems = useMemo(
     () => buildQualityOverviewItems(runs, executions),
     [executions, runs],
   );
-  const visibleItems = useMemo(() => {
+  const scopedItems = useMemo(() => {
     const cutoff = range === "all"
       ? null
       : Date.now() - Number(range) * 24 * 60 * 60 * 1000;
@@ -93,23 +100,34 @@ export function EvaluationOverview({
       return new Date(item.execution.createdAt).getTime() >= cutoff;
     });
   }, [agent, allItems, range]);
+  const visibleItems = useMemo(
+    () => qualityFilter
+      ? scopedItems.filter((item) => item.state === qualityFilter)
+      : scopedItems,
+    [qualityFilter, scopedItems],
+  );
   const agentNames = useMemo(
     () => [...new Set(allItems.map((item) => item.execution.displayName))]
       .sort((left, right) => left.localeCompare(right, "zh-CN")),
     [allItems],
   );
   const counts = useMemo(
-    () => visibleItems.reduce(
+    () => scopedItems.reduce(
       (result, item) => ({
         ...result,
         [item.state]: result[item.state] + 1,
       }),
       { stable: 0, attention: 0, unchecked: 0 },
     ),
-    [visibleItems],
+    [scopedItems],
   );
-  const attentionItems = visibleItems.filter(
-    (item) => item.state === "attention",
+  const panelState = qualityFilter ?? "attention";
+  const panelMeta = QUALITY_META[panelState];
+  const panelItems = useMemo(
+    () => qualityFilter
+      ? visibleItems
+      : scopedItems.filter((item) => item.state === "attention"),
+    [qualityFilter, scopedItems, visibleItems],
   );
   const trend = useMemo(
     () => buildQualityTrend(visibleItems),
@@ -121,16 +139,29 @@ export function EvaluationOverview({
       selectedExecutionId
       && visibleItems.some((item) => item.execution.id === selectedExecutionId)
     ) return;
-    const next = attentionItems[0] ?? visibleItems[0] ?? null;
+    const next = panelItems[0] ?? visibleItems[0] ?? null;
     setSelectedExecutionId(next?.execution.id ?? null);
-    setDetailOpen(Boolean(next));
-    onSelectEvaluation(next?.evaluation?.id ?? null);
+    setDetailOpen(false);
+    onSelectEvaluation(null);
   }, [
-    attentionItems,
+    panelItems,
     onSelectEvaluation,
     selectedExecutionId,
     visibleItems,
   ]);
+
+  useEffect(() => {
+    if (!detailOpen) return undefined;
+    detailRef.current?.focus();
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setDetailOpen(false);
+        onSelectEvaluation(null);
+      }
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [detailOpen, onSelectEvaluation]);
 
   const selected = visibleItems.find(
     (item) => item.execution.id === selectedExecutionId,
@@ -148,6 +179,16 @@ export function EvaluationOverview({
     setSelectedExecutionId(item.execution.id);
     setDetailOpen(true);
     onSelectEvaluation(item.evaluation?.id ?? null);
+  }
+
+  function closeDetail() {
+    setDetailOpen(false);
+    onSelectEvaluation(null);
+  }
+
+  function toggleQualityFilter(state: QualityState) {
+    setQualityFilter((current) => current === state ? null : state);
+    closeDetail();
   }
 
   return (
@@ -183,12 +224,17 @@ export function EvaluationOverview({
               const Icon = meta.icon;
               return (
                 <li key={state} data-tone={meta.tone}>
-                  <span><Icon aria-hidden="true" /></span>
-                  <div>
-                    <small>{meta.label}</small>
-                    <strong>{counts[state]}</strong>
-                    {state === "attention" ? <em>优先查看影响结果的问题</em> : null}
-                  </div>
+                  <button
+                    type="button"
+                    aria-pressed={qualityFilter === state}
+                    onClick={() => toggleQualityFilter(state)}
+                  >
+                    <span><Icon aria-hidden="true" /></span>
+                    <div>
+                      <small>{meta.label}</small>
+                      <strong>{counts[state]}</strong>
+                    </div>
+                  </button>
                 </li>
               );
             })}
@@ -237,23 +283,26 @@ export function EvaluationOverview({
                     );
                     return (
                       <li key={point.key}>
-                        <div
-                          className="quality-trend__bar"
-                          style={{ height: `${Math.max(18, (point.total / maximum) * 100)}%` }}
-                          aria-label={`${point.label}：稳定 ${point.stable}，关注 ${point.attention}，未检查 ${point.unchecked}`}
-                        >
-                          <i
-                            data-tone="neutral"
-                            style={{ flexGrow: point.unchecked }}
-                          />
-                          <i
-                            data-tone="warning"
-                            style={{ flexGrow: point.attention }}
-                          />
-                          <i
-                            data-tone="success"
-                            style={{ flexGrow: point.stable }}
-                          />
+                        <div className="quality-trend__plot">
+                          <strong>{point.total}</strong>
+                          <div
+                            className="quality-trend__bar"
+                            style={{ height: `${Math.max(18, (point.total / maximum) * 100)}%` }}
+                            aria-label={`${point.label}：稳定 ${point.stable}，关注 ${point.attention}，未检查 ${point.unchecked}`}
+                          >
+                            <i
+                              data-tone="neutral"
+                              style={{ flexGrow: point.unchecked }}
+                            />
+                            <i
+                              data-tone="warning"
+                              style={{ flexGrow: point.attention }}
+                            />
+                            <i
+                              data-tone="success"
+                              style={{ flexGrow: point.stable }}
+                            />
+                          </div>
                         </div>
                         <span>{point.label}</span>
                       </li>
@@ -268,47 +317,47 @@ export function EvaluationOverview({
 
           <section className="quality-attention" aria-labelledby="quality-attention-title">
             <header>
-              <h2 id="quality-attention-title">需要关注</h2>
-              <span>{attentionItems.length}</span>
+              <h2 id="quality-attention-title">{panelMeta.label}</h2>
+              <span data-tone={panelMeta.tone}>{panelItems.length}</span>
             </header>
-            {attentionItems.length ? (
+            {panelItems.length ? (
               <ul>
-                {attentionItems.slice(0, 4).map((item) => {
+                {panelItems.slice(0, 4).map((item) => {
                   const meta = QUALITY_META[item.state];
                   const Icon = meta.icon;
                   return (
                     <li key={item.execution.id}>
-                      <span data-tone={meta.tone}><Icon aria-hidden="true" /></span>
-                      <div>
-                        <strong>{qualityTaskTitle(item.execution)}</strong>
-                        <p>{item.issue}</p>
-                        <small>
-                          {item.execution.displayName} · {formatBeijingDateTime(
-                            item.evaluation?.completedAt
-                              ?? item.execution.finishedAt
-                              ?? item.execution.createdAt,
-                          )}
-                        </small>
-                      </div>
-                      {item.evaluation ? (
-                        <button type="button" onClick={() => selectItem(item)}>
-                          查看详情
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => onOpenTools(item.execution.id)}
-                        >
-                          前往检查
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        className="quality-attention__row"
+                        data-selected={item.execution.id === selectedExecutionId}
+                        onClick={() => item.evaluation
+                          ? selectItem(item)
+                          : item.canStartEvaluation
+                            ? onOpenTools(item.execution.id)
+                            : selectItem(item)}
+                      >
+                        <span data-tone={meta.tone}><Icon aria-hidden="true" /></span>
+                        <div>
+                          <strong>{qualityTaskTitle(item.execution)}</strong>
+                          <p>{item.issue}</p>
+                          <small>
+                            {item.execution.displayName} · {formatBeijingDateTime(
+                              item.evaluation?.completedAt
+                                ?? item.execution.finishedAt
+                                ?? item.execution.createdAt,
+                            )}
+                          </small>
+                        </div>
+                        <ChevronRight aria-hidden="true" />
+                      </button>
                     </li>
                   );
                 })}
               </ul>
             ) : (
               <p className="quality-overview__empty">
-                <Check aria-hidden="true" />当前范围没有需要关注的运行。
+                <Check aria-hidden="true" />当前范围没有“{panelMeta.label}”的运行。
               </p>
             )}
           </section>
@@ -358,13 +407,17 @@ export function EvaluationOverview({
                         <button type="button" onClick={() => selectItem(item)}>
                           查看详情
                         </button>
-                      ) : (
+                      ) : item.canStartEvaluation ? (
                         <button
                           type="button"
                           onClick={() => onOpenTools(item.execution.id)}
                         >
                           开始检查
                         </button>
+                      ) : (
+                        <span className="quality-result-status" data-tone="neutral">
+                          仅可查看运行
+                        </span>
                       )}
                     </td>
                   </tr>
@@ -376,7 +429,20 @@ export function EvaluationOverview({
       </main>
 
       {selected && detailOpen ? (
-        <aside className="quality-detail" aria-labelledby="quality-detail-title">
+        <>
+          <div
+            className="quality-detail-backdrop"
+            aria-hidden="true"
+            onMouseDown={closeDetail}
+          />
+          <aside
+            ref={detailRef}
+            className="quality-detail"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="quality-detail-title"
+            tabIndex={-1}
+          >
           <header>
             <div>
               <h2 id="quality-detail-title">
@@ -387,10 +453,7 @@ export function EvaluationOverview({
               <button
                 type="button"
                 aria-label="关闭质量详情"
-                onClick={() => {
-                  setDetailOpen(false);
-                  onSelectEvaluation(null);
-                }}
+                onClick={closeDetail}
               >
                 <X aria-hidden="true" />
               </button>
@@ -405,20 +468,25 @@ export function EvaluationOverview({
               )}
             </small>
           </header>
-          <section>
-            <h3>主要结论</h3>
+          <section
+            className="quality-detail__summary"
+            data-tone={QUALITY_META[selected.state].tone}
+          >
+            <h3>{selected.state === "stable" ? "检查结论" : "为什么需要关注"}</h3>
             <p>{selected.issue}</p>
+            {selected.impact.trim() !== selected.issue.trim() ? (
+              <div>
+                <strong>可能影响</strong>
+                <p>{selected.impact}</p>
+              </div>
+            ) : null}
           </section>
           <section>
-            <h3>影响</h3>
-            <p>{selected.impact}</p>
-          </section>
-          <section>
-            <h3>建议</h3>
+            <h3>建议怎么处理</h3>
             <p>{selected.advice}</p>
           </section>
-          <section>
-            <h3>检查结论来源</h3>
+          <details className="quality-detail__evidence">
+            <summary>检查依据 <span>需要时展开</span></summary>
             <ul className="quality-detail__sources">
               <li>
                 <Bot aria-hidden="true" />
@@ -445,7 +513,7 @@ export function EvaluationOverview({
                 </small></span>
               </li>
             </ul>
-          </section>
+          </details>
           <footer>
             <Link to={`/agents/executions/${selected.execution.id}`}>
               查看对应运行
@@ -457,16 +525,17 @@ export function EvaluationOverview({
               >
                 查看检查依据
               </button>
-            ) : (
+            ) : selected.canStartEvaluation ? (
               <button
                 type="button"
                 onClick={() => onOpenTools(selected.execution.id)}
               >
                 开始质量检查
               </button>
-            )}
+            ) : null}
           </footer>
-        </aside>
+          </aside>
+        </>
       ) : null}
     </div>
   );
@@ -493,21 +562,49 @@ export function buildQualityOverviewItems(
     )
     .map((execution) => {
       const evaluation = latestByExecution.get(execution.id) ?? null;
+      const supportsEvaluation = execution.evaluationSupported
+        ?? execution.capabilities.includes("manual_judge");
+      const canStartEvaluation = execution.evaluationAvailable
+        ?? execution.capabilities.includes("manual_judge");
+      const evaluationUnavailableReason = execution.evaluationUnavailableReason ?? null;
       if (!evaluation || ["pending", "queued", "running"].includes(evaluation.status)) {
         return {
           execution,
           evaluation,
+          supportsEvaluation,
+          canStartEvaluation,
+          evaluationUnavailableReason,
           state: "unchecked",
-          conclusion: evaluation ? "检查进行中" : "尚未检查",
-          issue: evaluation ? "质量检查仍在进行" : "尚未进行质量检查",
-          impact: "当前还没有足够信息判断这次运行的质量。",
-          advice: "可以开始质量检查，或稍后等待检查完成。",
+          conclusion: evaluation
+            ? "检查进行中"
+            : canStartEvaluation
+              ? "尚未检查"
+              : supportsEvaluation
+                ? "等待运行完成"
+                : "暂不支持检查",
+          issue: evaluation
+            ? "质量检查仍在进行"
+            : canStartEvaluation
+              ? "尚未进行质量检查"
+              : evaluationUnavailableReason
+                ?? "该运行没有声明人工质量检查能力",
+          impact: supportsEvaluation
+            ? "当前还没有足够信息判断这次运行的质量。"
+            : "该运行仍可在运行中心查看，但不能在这里生成质量结论。",
+          advice: canStartEvaluation
+            ? "可以开始质量检查。"
+            : supportsEvaluation
+              ? "等待运行完成后再开始质量检查。"
+            : "如需支持，应由 Agent 注册定义绑定 Eval Pack 并声明 manual_judge 能力。",
         };
       }
       if (evaluation.status === "failed") {
         return {
           execution,
           evaluation,
+          supportsEvaluation,
+          canStartEvaluation,
+          evaluationUnavailableReason,
           state: "attention",
           conclusion: "检查未完成",
           issue: evaluation.errorCode
@@ -531,14 +628,17 @@ export function buildQualityOverviewItems(
       return {
         execution,
         evaluation,
+        supportsEvaluation,
+        canStartEvaluation,
+        evaluationUnavailableReason,
         state,
         conclusion: state === "stable" ? "表现稳定" : "需要关注",
         issue: state === "stable"
           ? "未发现明显质量问题"
-          : primary?.dimension.risks[0]
-            ?? primary?.dimension.summary
-            ?? "部分质量维度需要进一步核对",
-        impact: conciseQualityText(primary?.dimension.summary)
+          : primary
+            ? dimensionUserSummary(primary.dimension)
+            : "部分质量维度需要进一步核对",
+        impact: conciseQualityText(primary ? dimensionUserSummary(primary.dimension) : undefined)
           || (state === "stable"
             ? "现有检查依据支持继续使用本次结果。"
             : "可能影响结果的准确性、完整性或可用性。"),

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Header, Query, Response, status
 from app.api.dependencies import get_agent_application
 from app.application.workspace_runtime import AgentApplication
 from app.job_targets.errors import JobTargetNotFound
+from app.job_targets.projection import retrospective_summary_resource
 from app.schemas.job_targets import (
     ConfirmJobDocumentCommand,
     CreateJobTargetCommand,
@@ -23,6 +24,7 @@ from app.schemas.job_targets import (
     RequirementDecisionResource,
     SafeRequirementConfirmationCommand,
     TargetDeletionImpactResource,
+    TargetRetrospectiveSummaryResource,
     UpdateJobTargetCommand,
     AnalysisControlCommand,
     JobAnalysisStartCommand,
@@ -175,6 +177,19 @@ async def retry_work_item(target_id: str, run_id: str, item_id: str, command: An
 @router.get("/api/job-targets/{target_id}/readiness")
 def target_readiness(target_id: str, workspace_id: Annotated[str, Query(alias="workspaceId")], application: AgentApplication = Depends(get_agent_application)):
     return application.job_training(workspace_id).readiness(target_id)
+
+
+@router.get(
+    "/api/job-targets/{target_id}/retrospective-summary",
+    response_model=TargetRetrospectiveSummaryResource,
+)
+def target_retrospective_summary(
+    target_id: str,
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    application: AgentApplication = Depends(get_agent_application),
+):
+    summary = application.interview_retrospectives(workspace_id).target_summary(target_id)
+    return retrospective_summary_resource(summary)
 
 
 @router.post("/api/job-targets/{target_id}/projects/{project_id}/deep-dives", status_code=201)

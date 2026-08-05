@@ -21,6 +21,9 @@ class ProjectingSummarizationMiddleware(SummarizationMiddleware):
         threshold_tokens: int,
         trace_writer=None,
         provider_model_id: str = "unknown",
+        agent_id: str | None = None,
+        agent_definition_version: str | None = None,
+        component_id: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -28,6 +31,9 @@ class ProjectingSummarizationMiddleware(SummarizationMiddleware):
         self.threshold_tokens = threshold_tokens
         self._trace_writer = trace_writer
         self._provider_model_id = provider_model_id
+        self._agent_id = agent_id
+        self._agent_definition_version = agent_definition_version
+        self._component_id = component_id
 
     async def abefore_model(self, state, runtime):
         current_tokens = self.token_counter(state.get("messages", ()))
@@ -94,6 +100,9 @@ class ProjectingSummarizationMiddleware(SummarizationMiddleware):
             agent_role="report_summarization",
             agent_name="context_summary",
             invocation_id=invocation_id,
+            agent_id=self._agent_id,
+            agent_definition_version=self._agent_definition_version,
+            component_id=self._component_id,
             operation_id=stable_trace_operation_id(
                 context.run_id,
                 invocation_id,

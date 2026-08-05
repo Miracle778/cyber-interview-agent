@@ -25,6 +25,7 @@ export function ProjectQuestionCandidates({
   onDecide,
   onBatchDecide,
   onEdit,
+  onStartReview,
 }: {
   projectTitle?: string;
   candidates: ProjectQuestionCandidate[];
@@ -32,6 +33,7 @@ export function ProjectQuestionCandidates({
   onDecide: (id: string, decision: "confirmed" | "ignored" | "duplicate") => void;
   onBatchDecide: (ids: string[], decision: "confirmed" | "ignored") => void;
   onEdit: (id: string, title: string, question: string) => void;
+  onStartReview?: () => void;
 }) {
   const pending = useMemo(
     () => candidates.filter((item) => item.status === "review_pending"),
@@ -65,6 +67,7 @@ export function ProjectQuestionCandidates({
       <div className="project-question-candidates__summary" aria-label="候选题状态">
         <strong>{pending.length}</strong><span>待确认</span>
         <strong>{candidates.filter((item) => item.status === "confirmed").length}</strong><span>已入库</span>
+        {onStartReview ? <Button size="sm" onClick={onStartReview}>开始项目专项复习</Button> : null}
       </div>
     </header>
 

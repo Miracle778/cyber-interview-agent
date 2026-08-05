@@ -55,6 +55,7 @@ export function ProfilePage({ workspace }: { workspace: WorkspaceConfig | null }
   const inputRef = useRef<HTMLInputElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const workspaceId = workspace?.id ?? "";
+  const selectionWorkspaceId = useRef(workspaceId);
   const [tab, setTab] = useState<ProfileTab>("profile");
   const [supportFilter, setSupportFilter] = useState<ProfileSupportFilter>("all");
   const [selectedMaterialId, setSelectedMaterialId] = useState<string | null>(null);
@@ -74,6 +75,16 @@ export function ProfilePage({ workspace }: { workspace: WorkspaceConfig | null }
   const returnLabel = typeof returnState?.returnLabel === "string" ? returnState.returnLabel : "返回项目深挖";
 
   useEffect(() => { headingRef.current?.focus(); }, []);
+
+  const selectionBelongsToWorkspace = selectionWorkspaceId.current === workspaceId;
+  useEffect(() => {
+    if (selectionWorkspaceId.current === workspaceId) return;
+    selectionWorkspaceId.current = workspaceId;
+    setSelectedMaterialId(null);
+    setSelectedVersionId(null);
+    setSelectedEvidence(null);
+    setDocumentView(null);
+  }, [workspaceId]);
 
   const materialsQuery = useQuery({
     queryKey: ["profile-materials", workspaceId],
@@ -108,7 +119,10 @@ export function ProfilePage({ workspace }: { workspace: WorkspaceConfig | null }
     if (!versions.some((item) => item.id === selectedVersionId)) setSelectedVersionId(activeMaterial?.currentVersionId && versions.some((item) => item.id === activeMaterial.currentVersionId) ? activeMaterial.currentVersionId : versions[0].id);
   }, [activeMaterial?.currentVersionId, selectedVersionId, versions]);
 
-  const detailVersionId = selectedEvidence?.materialVersionId ?? selectedVersionId;
+  const selectedVersionExists = Boolean(selectedVersionId && versions.some((item) => item.id === selectedVersionId));
+  const detailVersionId = selectionBelongsToWorkspace
+    ? selectedEvidence?.materialVersionId ?? (selectedVersionExists ? selectedVersionId : null)
+    : null;
   const detailQuery = useQuery({
     queryKey: ["profile-material-version", workspaceId, detailVersionId],
     queryFn: ({ signal }) => getMaterialVersion(workspaceId, detailVersionId!, signal),
@@ -126,7 +140,7 @@ export function ProfilePage({ workspace }: { workspace: WorkspaceConfig | null }
   const documentQuery = useQuery({
     queryKey: ["profile-material-document", workspaceId, documentView?.versionId],
     queryFn: ({ signal }) => getMaterialDocument(workspaceId, documentView!.versionId, signal),
-    enabled: Boolean(workspace && documentView),
+    enabled: Boolean(workspace && selectionBelongsToWorkspace && documentView),
   });
 
   async function refreshProfile(materialId = activeMaterial?.id, versionId = selectedVersionId) {
@@ -294,7 +308,7 @@ export function ProfilePage({ workspace }: { workspace: WorkspaceConfig | null }
     {documentView && documentQuery.isLoading ? <div className="profile-loading" role="status"><p>正在打开完整简历…</p></div> : null}
     {documentView && documentQuery.isError ? <div className="profile-page-error" role="alert"><AlertCircle size={21} /><div><strong>完整简历暂时无法打开</strong><p>{errorMessage(documentQuery.error)}</p></div><Button variant="secondary" onClick={() => void documentQuery.refetch()}>重新读取</Button></div> : null}
     {documentView && documentQuery.data ? <ProfileDocumentReader document={documentQuery.data} focusEvidenceId={documentView.evidenceId} downloadUrl={materialFileDownloadUrl(workspaceId, documentView.versionId)} onBack={() => { setDocumentView(null); setSelectedEvidence(null); }} /> : null}
-    {!documentView && tab === "profile" ? <UnifiedProfileOverview profile={unifiedQuery.data ?? null} loading={unifiedQuery.isLoading} onUpload={chooseFile} onCreate={(category = "project") => { setEditorError(null); setCreatingCategory(category); setEditingCard(null); }} onEdit={(card) => { setEditorError(null); setEditingCard(card); setCreatingCategory(null); }} onOpenPending={() => setTab("pending")} onOpenSupportReview={(filter) => { setSupportFilter(filter); setTab("support"); }} onSetPrimaryDirection={(claimId) => presentation.mutate(claimId)} /> : null}
+    {!documentView && tab === "profile" ? <UnifiedProfileOverview profile={unifiedQuery.data ?? null} loading={unifiedQuery.isLoading} onUpload={chooseFile} onCreate={(category = "project") => { setEditorError(null); setCreatingCategory(category); setEditingCard(null); }} onEdit={(card) => { setEditorError(null); setEditingCard(card); setCreatingCategory(null); }} onOpenPending={() => setTab("pending")} onOpenSupportReview={(filter) => { setSupportFilter(filter); setTab("support"); }} onSetPrimaryDirection={(claimId) => presentation.mutate(claimId)} onCreateJobTarget={() => navigate("/targets?create=1&from=profile")} onOpenReview={() => navigate("/review")} /> : null}
     {!documentView && tab === "support" ? <ProfileSupportReview profile={unifiedQuery.data ?? null} loading={unifiedQuery.isLoading} initialFilter={supportFilter} onEdit={(card) => { setEditorError(null); setEditingCard(card); setCreatingCategory(null); }} /> : null}
     {activeMaterial && !documentView && tab === "sources" ? <ResumeVersions materials={materials} versions={versions} selectedMaterialId={activeMaterial.id} selectedVersionId={selectedVersionId} detail={detail} pendingProposalCount={unifiedQuery.data?.pendingCount ?? null} busy={busy} onSelectMaterial={(id) => { setSelectedMaterialId(id); setSelectedVersionId(null); }} onSelectVersion={setSelectedVersionId} onRetry={(id) => retry.mutate(id)} onArchive={(item) => archive.mutate(item)} onRestore={(item) => restore.mutate(item)} onSetPrimary={(item, versionId) => primary.mutate({ material: item, versionId })} onPermanentDelete={() => setDeletionOpen(true)} onPermanentDeleteVersion={(item, version) => setVersionDeletionTarget({ material: item, version })} onOpenDocument={(evidenceId) => { if (selectedVersionId) setDocumentView({ versionId: selectedVersionId, ...(evidenceId ? { evidenceId } : {}) }); }} onAddVersion={chooseFile} processFocusRequest={processFocusRequest} /> : null}
     {!documentView && tab === "pending" ? <ProfilePendingReview workspaceId={workspaceId} snapshot={claimsQuery.data ?? null} loading={claimsQuery.isLoading} onRefresh={async () => { await Promise.all([claimsQuery.refetch(), refreshProfile()]); }} onOpenEvidence={(evidence) => { setSelectedEvidence(evidence); setDocumentView({ versionId: evidence.materialVersionId, evidenceId: evidence.id }); }} /> : null}

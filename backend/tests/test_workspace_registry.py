@@ -1,4 +1,5 @@
 import sqlite3
+import threading
 from pathlib import Path
 
 import pytest
@@ -63,6 +64,54 @@ def test_workspace_persists_across_restart_and_relinks(app_connection, tmp_path)
         reopened.commit()
     finally:
         reopened.close()
+
+
+def test_app_database_does_not_share_transaction_state_between_threads(tmp_path):
+    connection = connect_app_database(tmp_path)
+    transaction_started = threading.Event()
+    observation_finished = threading.Event()
+    observed_transaction_states: list[bool] = []
+    worker_errors: list[BaseException] = []
+
+    def hold_transaction() -> None:
+        try:
+            connection.execute("BEGIN")
+            transaction_started.set()
+            if not observation_finished.wait(timeout=2):
+                raise TimeoutError("worker did not inspect its database connection")
+            connection.rollback()
+        except BaseException as error:  # pragma: no cover - asserted below
+            worker_errors.append(error)
+            transaction_started.set()
+            observation_finished.set()
+
+    def inspect_transaction_state() -> None:
+        try:
+            if not transaction_started.wait(timeout=2):
+                raise TimeoutError("transaction worker did not start")
+            observed_transaction_states.append(connection.in_transaction)
+        except BaseException as error:  # pragma: no cover - asserted below
+            worker_errors.append(error)
+        finally:
+            observation_finished.set()
+
+    first = threading.Thread(target=hold_transaction)
+    second = threading.Thread(target=inspect_transaction_state)
+    try:
+        first.start()
+        second.start()
+        first.join(timeout=3)
+        second.join(timeout=3)
+
+        assert not first.is_alive()
+        assert not second.is_alive()
+        assert worker_errors == []
+        assert observed_transaction_states == [False]
+    finally:
+        observation_finished.set()
+        first.join(timeout=1)
+        second.join(timeout=1)
+        connection.close()
 
 
 def test_workspace_binds_answer_evaluation_model(app_connection, tmp_path):

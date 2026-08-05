@@ -282,6 +282,43 @@ async def test_source_file_round_uses_only_that_source_and_clamps_count(
 
 
 @pytest.mark.asyncio
+async def test_job_target_round_persists_and_applies_its_scope(
+    api, application
+) -> None:
+    repository = application.review("w1").repository
+    repository._connection.execute(  # noqa: SLF001
+        "UPDATE review_question_catalog SET source_job_target_id = ? WHERE question_id = ?",
+        ("target-1", "q1"),
+    )
+    repository._connection.commit()  # noqa: SLF001
+
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = await client.post(
+            "/api/review/rounds",
+            json={
+                "workspaceId": "w1",
+                "selectedTopics": [],
+                "difficulties": ["medium"],
+                "mode": "random-mixed",
+                "questionCount": 1,
+                "answerModelId": "model-1",
+                "questionScope": "job_target",
+                "sourceJobTargetId": "target-1",
+                "scopeLabel": "Agent 开发岗",
+            },
+        )
+
+    assert created.status_code == 201, created.text
+    value = created.json()
+    assert value["currentQuestion"]["id"] == "q1"
+    assert value["settings"]["question_scope"] == "job_target"
+    assert value["settings"]["source_job_target_id"] == "target-1"
+    assert value["settings"]["scope_label"] == "Agent 开发岗"
+
+
+@pytest.mark.asyncio
 async def test_active_catalog_and_round_answer_are_resource_driven(
     api, application
 ) -> None:

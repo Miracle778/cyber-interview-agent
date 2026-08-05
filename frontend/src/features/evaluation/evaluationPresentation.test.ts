@@ -18,12 +18,17 @@ function dimension(
     dimensionId: "source_fidelity",
     source: score === null ? "deterministic" : "judge",
     status,
+    applicability: "applicable",
+    rating: null,
+    severity: null,
     score,
     confidence: score === null ? null : .8,
     summary: "测试结论",
     citedEventHashes: [],
     citedArtifactHashes: [],
     risks: [],
+    evidenceGaps: [],
+    evidenceRefs: [],
   };
 }
 
@@ -34,9 +39,14 @@ function run(dimensions: EvaluationDimension[]): EvaluationRun {
     executionId: "execution-1",
     evalPackId: "question-curation.v1",
     evalPackVersion: 2,
+    evaluationContractVersion: 1,
+    taskType: "legacy",
+    runKind: "historical_review",
     trigger: "manual",
     status: "completed",
     frozenInputHash: "hash",
+    businessOutcomeHash: null,
+    judgeDataScope: {},
     judgeProviderModelId: "judge-model",
     errorCode: null,
     createdAt: "2026-07-30T00:00:00Z",
@@ -51,14 +61,16 @@ function run(dimensions: EvaluationDimension[]): EvaluationRun {
 describe("evaluation presentation semantics", () => {
   it("translates packs, dimensions and statuses into business language", () => {
     expect(evaluationPackLabel("question-curation.v1")).toBe("题目整理质量");
+    expect(evaluationPackLabel("project-question-generation.v2")).toBe("项目题生成业务结果质量");
     expect(dimensionLabel("source_fidelity")).toBe("来源忠实度");
+    expect(dimensionLabel("review.progression_guard")).toBe("复习推进守卫");
     expect(evaluationStatusMeta("completed").label).toBe("评估完成");
     expect(formatEvaluationVersion(run([]))).toBe("题目整理质量 · v2");
   });
 
   it("uses readable fallbacks for unknown identifiers", () => {
     expect(evaluationPackLabel("new-agent_pack.v3")).toBe("New Agent Pack");
-    expect(dimensionLabel("novel_quality_signal")).toBe("Novel Quality Signal");
+    expect(dimensionLabel("novel_quality_signal")).toBe("其他检查项");
   });
 
   it("derives display tones without pretending they are backend gates", () => {

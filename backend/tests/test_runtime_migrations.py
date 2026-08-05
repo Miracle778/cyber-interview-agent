@@ -98,6 +98,7 @@ EVALUATION_TABLES = {
     "agent_eval_dimension_results",
     "agent_eval_human_feedback",
     "agent_eval_regression_cases",
+    "agent_eval_regression_runs",
     "agent_eval_daily_counters",
 }
 
@@ -215,12 +216,35 @@ def test_fresh_database_applies_all_runtime_migrations(tmp_path: Path) -> None:
         for row in connection.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == list(range(1, 41))
+        ] == list(range(1, 54))
     assert "agent_context_usage" in _tables(connection)
     assert "profile_deletion_plans" in _tables(connection)
     assert "deleted_at" in {
         row[1] for row in connection.execute("PRAGMA table_info(profile_materials)")
     }
+    connection.close()
+
+
+def test_migration_044_adds_versioned_cases_and_isolated_regression_runs(
+    tmp_path: Path,
+) -> None:
+    connection = connect_runtime_database(tmp_path)
+    case_columns = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info(agent_eval_regression_cases)"
+        )
+    }
+    assert {
+        "case_contract_version",
+        "task_type",
+        "sanitized_input_json",
+        "required_domain_snapshot_json",
+        "privacy_manifest_json",
+        "baseline_versions_json",
+        "source_business_outcome_json",
+    } <= case_columns
+    assert "agent_eval_regression_runs" in _tables(connection)
     connection.close()
 
 
@@ -243,6 +267,44 @@ def test_migration_034_repairs_review_assistance_tables_missing_from_applied_031
         "SELECT name FROM runtime_schema_migrations WHERE version = 34"
     ).fetchone()[0] == "034_repair_review_assistance_tables.sql"
     repaired.close()
+
+
+def test_migration_041_adds_v2_evaluation_fields_without_rewriting_v1_rows(
+    tmp_path: Path,
+) -> None:
+    legacy = _create_runtime_at_version(tmp_path, 40)
+    legacy.execute(
+        "INSERT INTO agent_eval_runs "
+        "(id, workspace_id, execution_id, eval_pack_id, eval_pack_version, "
+        "trigger, frozen_input_hash, snapshot_json, idempotency_key) "
+        "VALUES ('eval-v1', 'workspace-1', 'execution-1', 'review.v1', 1, "
+        "'manual', ?, '{\"safe\":true}', 'manual-v1')",
+        ("a" * 64,),
+    )
+    legacy.execute(
+        "INSERT INTO agent_eval_dimension_results "
+        "(eval_run_id, dimension_id, source, status, score, confidence, summary) "
+        "VALUES ('eval-v1', 'key_point_coverage', 'judge', 'scored', 80, 0.8, "
+        "'legacy result')"
+    )
+    legacy.commit()
+    legacy.close()
+
+    migrated = connect_runtime_database(tmp_path)
+    run = migrated.execute(
+        "SELECT evaluation_contract_version, task_type, run_kind, "
+        "business_outcome_hash, judge_data_scope_json "
+        "FROM agent_eval_runs WHERE id = 'eval-v1'"
+    ).fetchone()
+    dimension = migrated.execute(
+        "SELECT applicability, rating, severity, evidence_gaps_json "
+        "FROM agent_eval_dimension_results WHERE eval_run_id = 'eval-v1'"
+    ).fetchone()
+
+    assert tuple(run) == (1, "legacy", "historical_review", None, "{}")
+    assert tuple(dimension) == ("applicable", None, None, "[]")
+    assert migrated.execute("PRAGMA foreign_key_check").fetchall() == []
+    migrated.close()
 
 
 def test_current_runtime_schema_opens_while_another_writer_is_active(
@@ -550,6 +612,8 @@ def test_migration_026_adds_seed_state_and_backfills_candidate_quality(
         "material_support",
         "needs_review",
         "normalization_issues_json",
+        "source_answer",
+        "supplemental_answer",
         "last_error_code",
         "version",
         "created_at",
@@ -1011,7 +1075,110 @@ def test_existing_generation_two_database_applies_r2_migration(
         for row in reopened.execute(
             "SELECT version FROM runtime_schema_migrations ORDER BY version"
         )
-        ] == list(range(1, 41))
+            ] == list(range(1, 54))
+    reopened.close()
+
+
+def test_migration_053_adds_immutable_agent_definition_snapshot(
+    tmp_path: Path,
+) -> None:
+    connection = _create_runtime_at_version(tmp_path, 52)
+    connection.execute(
+        "INSERT INTO agent_sessions "
+        "(id, workspace_id, graph_id, graph_version, title) "
+        "VALUES ('legacy-session', 'w1', 'review.single', 1, 'Legacy')"
+    )
+    connection.execute(
+        "INSERT INTO agent_runs (id, session_id, status) "
+        "VALUES ('legacy-run', 'legacy-session', 'completed')"
+    )
+    connection.commit()
+    connection.close()
+
+    reopened = connect_runtime_database(tmp_path)
+    columns = {
+        row["name"]
+        for row in reopened.execute("PRAGMA table_info(agent_runs)")
+    }
+    stored = reopened.execute(
+        "SELECT agent_definition_snapshot_json FROM agent_runs WHERE id = 'legacy-run'"
+    ).fetchone()[0]
+
+    assert "agent_definition_snapshot_json" in columns
+    assert stored == '{"snapshot_version":1,"legacy":true}'
+    with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+        reopened.execute(
+            "UPDATE agent_runs SET agent_definition_snapshot_json = '{}' "
+            "WHERE id = 'legacy-run'"
+        )
+    reopened.close()
+
+
+def test_review_issue_migration_resolves_legacy_non_actionable_candidates(
+    tmp_path: Path,
+) -> None:
+    connection = _create_runtime_at_version(tmp_path, 50)
+    connection.executemany(
+        "INSERT INTO agent_sessions "
+        "(id, workspace_id, graph_id, graph_version, title) VALUES (?, 'w1', ?, 1, ?)",
+        (
+            ("analysis-session", "interview.retrospective.analysis", "Analysis"),
+            ("chat-session", "interview.retrospective.chat", "Chat"),
+        ),
+    )
+    connection.execute(
+        "INSERT INTO job_targets "
+        "(id, workspace_id, role_name, seniority) "
+        "VALUES ('target', 'w1', '工程师', '3-5 年')"
+    )
+    connection.execute(
+        "INSERT INTO interview_retrospectives "
+        "(id, workspace_id, job_target_id, title, round_label, analysis_session_id, "
+        "chat_session_id, create_idempotency_key) VALUES "
+        "('retro', 'w1', 'target', '复盘', '一面', 'analysis-session', "
+        "'chat-session', 'create-retro')"
+    )
+    connection.execute(
+        "INSERT INTO interview_source_versions "
+        "(id, retrospective_id, ordinal, source_kind, body, content_sha256) VALUES "
+        "('source', 'retro', 1, 'transcript', '数字签名', ?)",
+        ("a" * 64,),
+    )
+    connection.execute(
+        "INSERT INTO interview_cleanup_versions "
+        "(id, retrospective_id, source_version_id, ordinal, input_digest, status, "
+        "stage, document_body, document_sha256) VALUES "
+        "('cleanup', 'retro', 'source', 1, ?, 'review_pending', "
+        "'waiting_for_review', '数字签名', ?)",
+        ("b" * 64, "c" * 64),
+    )
+    connection.executemany(
+        "INSERT INTO interview_transcript_review_issues "
+        "(id, cleanup_version_id, ordinal, document_start, document_end, excerpt, "
+        "suggestion, issue_kind, reason, confidence) VALUES "
+        "(?, 'cleanup', ?, 0, 4, '数字签名', ?, 'uncertain_term', ?, 0.6)",
+        (
+            (
+                "ambiguous",
+                1,
+                "代码签名",
+                "模型返回的不确定项无法在当前目标正文中唯一定位，请核对该窗口",
+            ),
+            ("same", 2, "数字签名", "模型不能百分之百确认",),
+            ("missing", 3, None, "模型不能百分之百确认",),
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    reopened = connect_runtime_database(tmp_path)
+
+    assert [
+        row[0]
+        for row in reopened.execute(
+            "SELECT decision FROM interview_transcript_review_issues ORDER BY ordinal"
+        )
+    ] == ["kept", "kept", "kept"]
     reopened.close()
 
 

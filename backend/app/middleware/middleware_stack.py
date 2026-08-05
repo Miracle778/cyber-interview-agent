@@ -47,6 +47,10 @@ PROFILE_CHAT_BUDGET_PROFILE = MiddlewareBudgetProfile(
     tool_run_limit=6,
     tool_limit_exit_behavior="continue",
 )
+RETROSPECTIVE_CHAT_BUDGET_PROFILE = MiddlewareBudgetProfile(
+    tool_run_limit=6,
+    tool_limit_exit_behavior="continue",
+)
 
 
 def build_default_middleware(
@@ -54,6 +58,9 @@ def build_default_middleware(
     summary_model: BaseChatModel,
     summary_provider_model_id: str = "unknown",
     trace_writer=None,
+    agent_id: str | None = None,
+    agent_definition_version: str | None = None,
+    component_id: str | None = None,
     projection: MiddlewareProjection,
     policy,
     observability: ObservabilitySink,
@@ -82,6 +89,9 @@ def build_default_middleware(
             threshold_tokens=summary_threshold_tokens,
             trace_writer=trace_writer,
             provider_model_id=summary_provider_model_id,
+            agent_id=agent_id,
+            agent_definition_version=agent_definition_version,
+            component_id=component_id,
         ),
         ContextEditingMiddleware(),
         ModelCallLimitMiddleware(

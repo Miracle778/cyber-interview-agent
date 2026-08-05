@@ -109,7 +109,7 @@ class WorkspaceService:
         self,
     ) -> AgentQualityEvaluationSettingsResource:
         row = self._connection.execute(
-            "SELECT enabled, automatic_sample_percent, automatic_daily_cap, "
+            "SELECT enabled, capture_regression_inputs, automatic_sample_percent, automatic_daily_cap, "
             "judge_provider_model_id, updated_at "
             "FROM agent_quality_eval_settings WHERE singleton = 1"
         ).fetchone()
@@ -117,6 +117,7 @@ class WorkspaceService:
             raise RuntimeError("agent quality evaluation singleton is missing")
         return AgentQualityEvaluationSettingsResource(
             enabled=bool(row["enabled"]),
+            capture_regression_inputs=bool(row["capture_regression_inputs"]),
             automatic_sample_percent=row["automatic_sample_percent"],
             automatic_daily_cap=row["automatic_daily_cap"],
             judge_provider_model_id=row["judge_provider_model_id"],
@@ -127,6 +128,7 @@ class WorkspaceService:
         self,
         *,
         enabled: bool,
+        capture_regression_inputs: bool,
         automatic_sample_percent: int,
         automatic_daily_cap: int,
         judge_provider_model_id: str | None,
@@ -139,11 +141,13 @@ class WorkspaceService:
         with self._transaction():
             self._connection.execute(
                 "UPDATE agent_quality_eval_settings SET enabled = ?, "
+                "capture_regression_inputs = ?, "
                 "automatic_sample_percent = ?, automatic_daily_cap = ?, "
                 "judge_provider_model_id = ?, updated_at = CURRENT_TIMESTAMP "
                 "WHERE singleton = 1",
                 (
                     int(enabled),
+                    int(capture_regression_inputs),
                     automatic_sample_percent,
                     automatic_daily_cap,
                     judge_provider_model_id,

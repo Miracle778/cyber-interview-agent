@@ -13,6 +13,9 @@ from app.api.routes_hitl import router as hitl_router
 from app.api.routes_knowledge import router as knowledge_router
 from app.api.routes_profile import router as profile_router
 from app.api.routes_job_targets import router as job_targets_router
+from app.api.routes_interview_retrospectives import (
+    router as interview_retrospectives_router,
+)
 from app.api.routes_observability import router as observability_router
 from app.api.routes_agent_evaluations import router as evaluations_router
 from app.api.routes_review import router as review_router
@@ -95,6 +98,12 @@ from app.job_targets.errors import (
     JobTargetNotFound,
     JobTargetConflict,
     JobTargetBusy,
+)
+from app.interview_retrospectives.errors import (
+    RetrospectiveBusy,
+    RetrospectiveDomainError,
+    RetrospectiveNotFound,
+    RetrospectiveSourceTooLarge,
 )
 from app.services.secrets import (
     EnvironmentSecretStore,
@@ -180,6 +189,7 @@ app.include_router(drafts_router)
 app.include_router(review_router)
 app.include_router(profile_router)
 app.include_router(job_targets_router)
+app.include_router(interview_retrospectives_router)
 app.include_router(observability_router)
 app.include_router(evaluations_router)
 
@@ -230,6 +240,28 @@ async def job_target_domain_error(
     if isinstance(error, JobTargetNotFound):
         return _profile_error(404, error.code, "求职目标记录不存在或无权访问", retryable=False)
     if isinstance(error, (JobTargetConflict, JobTargetBusy)):
+        return _profile_error(409, error.code, str(error), retryable=True)
+    return _profile_error(422, error.code, str(error), retryable=False)
+
+
+@app.exception_handler(RetrospectiveDomainError)
+async def retrospective_domain_error(
+    _request: Request, error: RetrospectiveDomainError
+) -> JSONResponse:
+    if isinstance(error, RetrospectiveNotFound):
+        return _profile_error(
+            404, error.code, "面试复盘记录不存在或无权访问", retryable=False
+        )
+    if isinstance(error, RetrospectiveSourceTooLarge):
+        return _profile_error(413, error.code, str(error), retryable=False)
+    if isinstance(error, RetrospectiveBusy):
+        return _profile_error(409, error.code, str(error), retryable=True)
+    if error.code in {
+        "retrospective_version_conflict",
+        "retrospective_idempotency_conflict",
+        "retrospective_delete_blocked",
+        "retrospective_model_not_configured",
+    }:
         return _profile_error(409, error.code, str(error), retryable=True)
     return _profile_error(422, error.code, str(error), retryable=False)
 

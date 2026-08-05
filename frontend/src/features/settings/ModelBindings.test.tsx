@@ -11,6 +11,8 @@ const roles = {
   profile_assessment: "m1",
   job_analysis: "m1",
   project_deep_dive: "m1",
+  retrospective_analysis: "m1",
+  retrospective_chat: "m1",
 };
 
 const provider = {
@@ -57,7 +59,7 @@ afterEach(() => {
 });
 
 describe("ModelBindings", () => {
-  it("loads eight roles and saves a complete binding payload", async () => {
+  it("loads ten roles and saves a complete binding payload", async () => {
     let putBody: unknown;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = typeof input === "string" ? input : (input as Request).url;
@@ -86,6 +88,9 @@ describe("ModelBindings", () => {
     expect(screen.getByLabelText("个人资料分析")).toHaveValue("m1");
     expect(screen.getByLabelText("岗位分析")).toHaveValue("m1");
     expect(screen.getByLabelText("项目深挖")).toHaveValue("m1");
+    expect(screen.getByLabelText("面试复盘分析")).toHaveValue("m1");
+    expect(screen.getByLabelText("面试复盘对话")).toHaveValue("m1");
+    expect(screen.getByText("10/10 已配置")).toBeVisible();
 
     fireEvent.change(screen.getByLabelText("通用对话"), {
       target: { value: "m2" },

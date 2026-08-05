@@ -158,6 +158,68 @@ def test_source_file_never_leaks_questions_from_another_source() -> None:
     assert {item.question_id for item in selected} == {"a", "c"}
 
 
+def test_job_target_scope_never_leaks_questions_from_another_target() -> None:
+    first, second, ordinary = _catalog(
+        _snapshot("a"), _snapshot("b"), _snapshot("c")
+    )
+    catalog = (
+        replace(first, source_job_target_id="target-a"),
+        replace(second, source_job_target_id="target-b"),
+        ordinary,
+    )
+
+    selected = QuestionSelector().select(
+        catalog,
+        _mastery(),
+        replace(
+            _settings(count=1),
+            question_scope="job_target",
+            source_job_target_id="target-a",
+        ),
+        seed=1,
+    )
+
+    assert [item.question_id for item in selected] == ["a"]
+
+
+def test_project_scope_never_leaks_questions_from_another_project() -> None:
+    first, second, ordinary = _catalog(
+        _snapshot("a"), _snapshot("b"), _snapshot("c")
+    )
+    catalog = (
+        replace(first, project_claim_id="project-a"),
+        replace(second, project_claim_id="project-b"),
+        ordinary,
+    )
+
+    selected = QuestionSelector().select(
+        catalog,
+        _mastery(),
+        replace(
+            _settings(count=1),
+            question_scope="project",
+            project_claim_id="project-a",
+        ),
+        seed=1,
+    )
+
+    assert [item.question_id for item in selected] == ["a"]
+
+
+def test_ordinary_scope_keeps_the_existing_catalog_behavior() -> None:
+    first, second = _catalog(_snapshot("a"), _snapshot("b"))
+    catalog = (
+        replace(first, source_job_target_id="target-a"),
+        replace(second, project_claim_id="project-b"),
+    )
+
+    selected = QuestionSelector().select(
+        catalog, _mastery(), _settings(count=2), seed=1
+    )
+
+    assert {item.question_id for item in selected} == {"a", "b"}
+
+
 def test_insufficient_inventory_reports_available_and_requested() -> None:
     inactive = replace(_catalog(_snapshot("a"))[0], active=False)
 
@@ -218,3 +280,27 @@ def test_topic_focused_requires_topics() -> None:
 def test_source_file_requires_source_id() -> None:
     with pytest.raises(ValueError, match="source_id"):
         _settings(mode="source-file")
+
+
+@pytest.mark.parametrize(
+    ("scope", "target_id", "project_id"),
+    [
+        ("job_target", None, None),
+        ("project", None, None),
+        ("ordinary", "target-a", None),
+        ("ordinary", None, "project-a"),
+        ("job_target", "target-a", "project-a"),
+    ],
+)
+def test_question_scope_requires_exactly_its_matching_origin(
+    scope: str,
+    target_id: str | None,
+    project_id: str | None,
+) -> None:
+    with pytest.raises(ValueError, match="scope"):
+        replace(
+            _settings(),
+            question_scope=scope,
+            source_job_target_id=target_id,
+            project_claim_id=project_id,
+        )

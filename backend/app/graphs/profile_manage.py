@@ -61,7 +61,7 @@ class ProfileManageState(TypedDict, total=False):
 ActionPlanCardProjector = Callable[[object], Awaitable[None]]
 
 
-_ASSESS_RE = re.compile(r"评估|诊断|优势|短板|差距|风险|分析(?:一下)?(?:我的)?画像")
+_ASSESS_RE = re.compile(r"评估|诊断|短板|差距|风险|分析(?:一下)?(?:我的)?画像")
 _MULTI_RE = re.compile(r"同时|并且|以及|然后|一并|全部|批量|规划|计划|优化简历")
 _CHANGE_RE = re.compile(r"新增|添加|修改|更新|删除|去掉|拒绝|改成|改为|设为|调整")
 _PROPOSE_RE = re.compile(r"整理成(?:个人)?画像(?:更新)?建议|生成画像更新建议|加入待确认")

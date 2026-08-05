@@ -12,7 +12,10 @@ import { formatDuration, statusLabel } from "./ExecutionList";
 import {
   friendlyEventName,
   friendlyOperationName,
+  executionStartPresentation,
+  failureEventWasRecovered,
   isFailureEventType,
+  operationWasRecovered,
   operationStatusLabel,
 } from "./observabilityLabels";
 import type { OperationSummary, TraceEventSummary } from "./observabilityTypes";
@@ -126,9 +129,13 @@ export function OperationTree({
       ...(childrenByParent.get(operation.id) ?? []),
       ...(displayRoots[0]?.id === operation.id ? promotedRoots : []),
     ];
-    const operationEvents = eventsByOperation.get(operation.id) ?? [];
+    const operationEvents = (eventsByOperation.get(operation.id) ?? []).filter(
+      (event) => event.eventType !== "execution.started"
+        || executionStartPresentation(event, events) !== null,
+    );
     const hasChildren = children.length > 0 || operationEvents.length > 0;
     const expanded = hasChildren && !collapsedIds.has(operation.id);
+    const recovered = operationWasRecovered(operation, events, operations);
     const timelineItems = [
       ...children.map((child, index) => ({
         kind: "operation" as const,
@@ -199,7 +206,7 @@ export function OperationTree({
           <span className="operation-tree__copy">
             <strong title={operation.name}>{friendlyOperationName(operation)}</strong>
             <small>
-              {operationStatusLabel(operation.status, executionStatus)
+              {operationStatusLabel(operation.status, executionStatus, recovered)
                 ?? statusLabel(operation.status)}
               {" · "}
               {formatDuration(operation.latencyMs)}
@@ -208,16 +215,26 @@ export function OperationTree({
         </button>
         {expanded ? (
           <ul role="group">
-            {timelineItems.map((item) => item.kind === "operation"
-              ? renderOperation(item.operation, level + 1)
-              : (
+            {timelineItems.map((item) => {
+              if (item.kind === "operation") {
+                return renderOperation(item.operation, level + 1);
+              }
+              const recoveredFailure = failureEventWasRecovered(item.event, events);
+              const startPresentation = executionStartPresentation(item.event, events);
+              return (
               <li role="none" key={item.event.eventId}>
                 <button
                   type="button"
                   role="treeitem"
                   aria-level={level + 1}
                   aria-selected={selectedEventId === item.event.eventId}
-                  data-tone={isFailureEventType(item.event.eventType) ? "danger" : undefined}
+                  data-tone={
+                    recoveredFailure
+                      ? "recovered"
+                      : isFailureEventType(item.event.eventType)
+                        ? "danger"
+                        : undefined
+                  }
                   className="operation-tree__item operation-tree__event"
                   onClick={() => onSelectEvent?.(item.event.eventId)}
                   onKeyDown={(keyboardEvent) => {
@@ -236,7 +253,11 @@ export function OperationTree({
                   </span>
                   <span className="operation-tree__copy">
                     <strong title={item.event.eventType}>
-                      {friendlyEventName(item.event.eventType)}
+                      {friendlyEventName(
+                        item.event.eventType,
+                        recoveredFailure,
+                        startPresentation === "recovery",
+                      )}
                     </strong>
                     <small>
                       事件 #{item.event.sequence} · {item.event.byteLength.toLocaleString()} B
@@ -244,7 +265,8 @@ export function OperationTree({
                   </span>
                 </button>
               </li>
-              ))}
+              );
+            })}
           </ul>
         ) : null}
       </li>

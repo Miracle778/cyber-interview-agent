@@ -5,6 +5,9 @@
 - 适用范围：项目内全部 Runtime Agent、模型调用、Tool 调用和领域 Graph
 - 关联设计：`../specs/2026-07-29-agent-observability-and-quality-workbench-design.md`
 
+> 2026-07-31 评估边界修订：Trace Ledger、产品披露和 Workspace 决策保持有效；质量对象、Rule/Judge 分工、评分方式与真实回归定义由
+> `2026-07-31-agent-evaluation-outcome-and-regression-boundaries.md` 取代。现有 v1 属于历史结果复检，不代表候选业务 Agent 已重新运行。
+
 ## 背景
 
 项目已经具备：
@@ -109,10 +112,12 @@
 
 ### 5. 质量评估
 
+以下内容记录 v1 的初始设计意图。当前代码已经实现冻结 Execution、Judge、人工反馈和历史结果复检；“确定性规则可阻断”和“基线/候选业务 Agent 使用同一案例重新运行”尚未实现，不作为当前产品承诺。后续采用 2026-07-31 ADR 的 v2 边界。
+
 - 使用“共用质量内核 + 角色专用、版本化 Eval Pack”；
 - 每个业务 Agent 绑定自身 Pack；系统组件只有在失败、降级或采样命中时使用对应 Pack；
 - 评估 Invocation、Trajectory、Outcome 和 Longitudinal 四层；
-- 确定性规则可以阻断发布；
+- v1 初始目标设想确定性规则可以阻断发布；实现审计确认当前只做 Trace 证据完整性检查，阻断能力未落地，后续必须按 v2 ADR 校准；
 - LLM Judge 主观评分不能自动阻断，只能提示或要求人工复核；
 - 高风险操作继续由领域规则和 HITL 决定；
 - Eval 失败为未评估，业务 fail-open；
@@ -128,7 +133,7 @@ Eval Engine 使用隔离的只读快照和安全 Tool Adapter，不能写入正�
 
 - 真实失败可冻结为版本化回归案例；
 - 案例保存必要的脱敏输入、期望不变量、来源 Trace 和环境摘要；
-- 基线与候选使用相同案例、工具和参数比较；
+- v2 目标是让基线与候选业务 Agent 使用相同案例、工具和参数重新运行后比较；v1 只重新质检原历史结果；
 - 优先展示分项证据和 pairwise 结论，不依赖单一总分；
 - 用户对结果的修改、接受和拒绝可以形成反馈，但不能直接充当绝对正确标签。
 - 自动 Judge 不永久冻结完整私有正文；加入回归集前由用户预览最小脱敏快照；

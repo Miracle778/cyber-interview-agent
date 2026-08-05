@@ -127,6 +127,23 @@ class TargetDeletionImpactResource(AgentModel):
     preserved_published_questions: bool
 
 
+class TargetRetrospectiveTimelineItem(AgentModel):
+    retrospective_id: str
+    title: str
+    round_label: str
+    interview_date: str | None
+    outcome: str
+    lifecycle_status: str
+
+
+class TargetRetrospectiveSummaryResource(AgentModel):
+    retrospective_count: int
+    latest: TargetRetrospectiveTimelineItem | None
+    unresolved_action_count: int
+    gap_counts: dict[str, int]
+    timeline: list[TargetRetrospectiveTimelineItem]
+
+
 class JobTargetDeleteCommand(AgentModel):
     workspace_id: str
 

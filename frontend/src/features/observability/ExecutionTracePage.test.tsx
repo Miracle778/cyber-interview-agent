@@ -37,6 +37,28 @@ const execution = {
   startedAt: "2026-07-29T06:26:00Z",
   finishedAt: "2026-07-29T06:26:18.400Z",
   errorCode: null,
+  definitionSnapshot: {
+    snapshotVersion: 1,
+    legacy: false,
+    agentId: "question.curate",
+    agentDefinitionVersion: "3",
+    graphVersion: 2,
+    builderKey: "question_curate",
+    promptSchemaVersions: { discovery: "v2" },
+    inputSchemaVersion: "2",
+    outputSchemaVersion: "3",
+    childComponents: ["question_discovery"],
+    modelRoles: ["question_generation"],
+    allowedTools: [],
+    allowedScopes: [],
+    toolsetDigest: "toolset-digest",
+    modelBindingDigest: "model-binding-digest",
+    contextPolicyId: "agent-context.v1",
+    retryPolicyId: "application-retry.v1",
+    tracePolicyId: "trace-ledger.v3",
+    evalPackId: "question-curation.v2",
+    evalPackVersion: 2,
+  },
 };
 
 const previousExecution = {
@@ -103,6 +125,9 @@ function mockTrace(
 ) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
+    if (url.includes("/api/settings/providers")) {
+      return Response.json([]);
+    }
     if (url.includes("/api/settings/agent-diagnostics")) {
       return Response.json({
         advancedEnabled,
@@ -154,11 +179,12 @@ function Providers({ children }: { children: ReactNode }) {
   );
 }
 
-function renderTrace(from = "/agents?status=failed&search=MyBatis") {
+function renderTrace(from = "/agents?status=failed&search=MyBatis", search = "") {
   return render(
     <MemoryRouter
       initialEntries={[{
         pathname: "/agents/executions/run-1",
+        search,
         state: { from },
       }]}
     >
@@ -180,6 +206,56 @@ afterEach(() => {
 });
 
 describe("ExecutionTracePage", () => {
+  it("shows the immutable Agent definition used by this execution", async () => {
+    mockTrace();
+
+    renderTrace();
+
+    const disclosure = await screen.findByText("本次运行定义");
+    fireEvent.click(disclosure);
+    expect(screen.getByText("question.curate · Definition v3")).toBeInTheDocument();
+    expect(screen.getByText("Graph v2")).toBeInTheDocument();
+    expect(screen.getByText("question-curation.v2 · v2")).toBeInTheDocument();
+    expect(screen.getByText("trace-ledger.v3")).toBeInTheDocument();
+    expect(screen.getByText("v2 / v3")).toBeInTheDocument();
+    expect(screen.getByText("discovery v2")).toBeInTheDocument();
+  });
+
+  it("marks legacy executions without inferring the current registry", async () => {
+    mockTrace({
+      ...execution,
+      definitionSnapshot: {
+        snapshotVersion: 1,
+        legacy: true,
+        agentId: null,
+        agentDefinitionVersion: null,
+        graphVersion: null,
+        builderKey: null,
+        promptSchemaVersions: {},
+        inputSchemaVersion: null,
+        outputSchemaVersion: null,
+        childComponents: [],
+        modelRoles: [],
+        allowedTools: [],
+        allowedScopes: [],
+        toolsetDigest: null,
+        modelBindingDigest: null,
+        contextPolicyId: null,
+        retryPolicyId: null,
+        tracePolicyId: null,
+        evalPackId: null,
+        evalPackVersion: null,
+      },
+    });
+
+    renderTrace();
+
+    fireEvent.click(await screen.findByText("本次运行定义"));
+    expect(screen.getByText(
+      "历史运行未保存定义快照，不使用当前配置反推。",
+    )).toBeInTheDocument();
+  });
+
   it("renders a hierarchical operation tree and only safe operation metadata", async () => {
     const fetchSpy = mockTrace();
 
@@ -315,7 +391,7 @@ describe("ExecutionTracePage", () => {
     const treeItems = await screen.findAllByRole("treeitem");
     const labels = treeItems.map((item) => item.textContent ?? "");
     expect(labels.findIndex((label) => label.includes("任务开始"))).toBeLessThan(
-      labels.findIndex((label) => label.includes("任务运行")),
+      labels.findIndex((label) => label.includes("本次运行")),
     );
     expect(labels.findIndex((label) => label.includes("模型请求"))).toBeLessThan(
       labels.findIndex((label) => label.includes("模型响应")),
@@ -323,10 +399,72 @@ describe("ExecutionTracePage", () => {
     expect(labels.findIndex((label) => label.includes("模型响应"))).toBeLessThan(
       labels.findIndex((label) => label.includes("任务完成")),
     );
-    expect(screen.getByRole("treeitem", { name: /任务运行/ })).toHaveAttribute(
+    expect(screen.getByRole("treeitem", { name: /本次运行/ })).toHaveAttribute(
       "aria-level",
       "2",
     );
+  });
+
+  it("groups each review answer evaluation and hides meaningless resume markers", async () => {
+    const reviewExecution = {
+      ...execution,
+      graphId: "review.round",
+      displayName: "复习助手",
+      status: "waiting_for_input",
+      finishedAt: null,
+    };
+    const reviewOperations = [
+      {
+        ...operations[0],
+        status: "running",
+        finishedAt: null,
+      },
+      {
+        ...operations[1],
+        id: "evaluation-2",
+        name: "review_round_evaluator:2",
+        agentRole: "answer_evaluation",
+        status: "completed",
+      },
+      {
+        ...operations[2],
+        id: "model-2",
+        parentOperationId: "evaluation-2",
+        name: "review_round_evaluator:2",
+        agentRole: "answer_evaluation",
+      },
+      {
+        ...operations[1],
+        id: "evaluation-3",
+        name: "review_round_evaluator:3",
+        agentRole: "answer_evaluation",
+        status: "completed",
+      },
+      {
+        ...operations[2],
+        id: "model-3",
+        parentOperationId: "evaluation-3",
+        name: "review_round_evaluator:3",
+        agentRole: "answer_evaluation",
+      },
+    ];
+    mockTrace(reviewExecution, reviewOperations, [
+      { eventId: "start-1", operationId: "execution:run-1", eventType: "execution.started", observedAt: "2026-07-29T06:26:00Z", byteLength: 536, sequence: 1 },
+      { eventId: "resume-2", operationId: "execution:run-1", eventType: "execution.started", observedAt: "2026-07-29T06:26:01Z", byteLength: 536, sequence: 2 },
+      { eventId: "request-2", operationId: "model-2", eventType: "model.request", observedAt: "2026-07-29T06:26:02Z", byteLength: 800, sequence: 3 },
+      { eventId: "response-2", operationId: "model-2", eventType: "model.response", observedAt: "2026-07-29T06:26:03Z", byteLength: 900, sequence: 4 },
+      { eventId: "resume-3", operationId: "execution:run-1", eventType: "execution.started", observedAt: "2026-07-29T06:26:04Z", byteLength: 536, sequence: 5 },
+      { eventId: "request-3", operationId: "model-3", eventType: "model.request", observedAt: "2026-07-29T06:26:05Z", byteLength: 800, sequence: 6 },
+      { eventId: "response-3", operationId: "model-3", eventType: "model.response", observedAt: "2026-07-29T06:26:06Z", byteLength: 900, sequence: 7 },
+    ]);
+
+    renderTrace();
+
+    const tree = await screen.findByRole("tree", { name: "执行过程" });
+    expect(within(tree).getAllByRole("treeitem", { name: /任务开始/ })).toHaveLength(1);
+    expect(within(tree).getByRole("treeitem", { name: /第 2 题 · 回答评价/ })).toBeInTheDocument();
+    expect(within(tree).getByRole("treeitem", { name: /第 3 题 · 回答评价/ })).toBeInTheDocument();
+    expect(within(tree).getAllByRole("treeitem", { name: /模型调用/ })).toHaveLength(2);
   });
 
   it("degrades missing and partial traces without turning them into page errors", async () => {
@@ -363,6 +501,15 @@ describe("ExecutionTracePage", () => {
 
     const back = await screen.findByRole("link", { name: "返回运行中心" });
     expect(back).toHaveAttribute("href", "/agents?status=failed&search=MyBatis");
+  });
+
+  it("returns to the selected retrospective question when opened from a report", async () => {
+    mockTrace();
+    const returnTo = "/retrospectives?retrospectiveId=retro-1&questionId=q-2";
+    renderTrace("/agents", `?returnTo=${encodeURIComponent(returnTo)}`);
+
+    const back = await screen.findByRole("link", { name: "返回面试复盘" });
+    expect(back).toHaveAttribute("href", returnTo);
   });
 
   it("leads with actionable failure guidance and reconciles unfinished step labels", async () => {
@@ -424,6 +571,165 @@ describe("ExecutionTracePage", () => {
     expect(failedEvent).toHaveAttribute("aria-selected", "true");
     expect(await screen.findByRole("heading", { name: "任务失败" })).toBeInTheDocument();
     expect(screen.getByText("这一步没有完成")).toBeInTheDocument();
+  });
+
+  it("marks an earlier model failure as recovered after execution resumes", async () => {
+    const resumedExecution = {
+      ...execution,
+      graphId: "review.round",
+      displayName: "复习助手",
+      status: "running",
+      finishedAt: null,
+    };
+    const resumedOperations = [
+      {
+        ...operations[0],
+        name: "execution_runtime",
+        status: "running",
+        finishedAt: null,
+      },
+      {
+        ...operations[1],
+        name: "review_round_evaluator",
+        status: "failed",
+        finishedAt: "2026-07-29T06:26:14Z",
+      },
+      {
+        ...operations[2],
+        name: "review_round_evaluator",
+        status: "failed",
+        finishedAt: "2026-07-29T06:26:14Z",
+      },
+    ];
+    const resumedEvents = [
+      {
+        eventId: "event-model-error",
+        operationId: "model-1",
+        eventType: "model.error",
+        observedAt: "2026-07-29T06:26:14Z",
+        byteLength: 616,
+        sequence: 4,
+      },
+      {
+        eventId: "event-resumed",
+        operationId: "execution:run-1",
+        eventType: "execution.started",
+        observedAt: "2026-07-29T06:26:15Z",
+        byteLength: 536,
+        sequence: 5,
+      },
+    ];
+    mockTrace(resumedExecution, resumedOperations, resumedEvents);
+
+    renderTrace();
+
+    const tree = await screen.findByRole("tree", { name: "执行过程" });
+    const recoveredEvent = within(tree).getByRole("treeitem", {
+      name: /模型处理异常 · 已恢复/,
+    });
+    expect(recoveredEvent).toHaveAttribute("data-tone", "recovered");
+    expect(within(tree).getByRole("treeitem", {
+      name: /回答评价 历史异常 · 已恢复/,
+    })).toBeInTheDocument();
+    expect(within(tree).getByRole("treeitem", {
+      name: /模型调用 历史异常 · 已恢复/,
+    })).toBeInTheDocument();
+    expect(within(tree).getByRole("treeitem", {
+      name: /任务恢复/,
+    })).toBeInTheDocument();
+    fireEvent.click(recoveredEvent);
+    expect(await screen.findByRole("heading", {
+      name: "模型处理异常 · 已恢复",
+    })).toBeInTheDocument();
+    expect(screen.getByText("这一步曾发生异常，后续已恢复")).toBeInTheDocument();
+  });
+
+  it("refreshes a running trace until the atomic model response appears", async () => {
+    let executionRequests = 0;
+    let operationRequests = 0;
+    let eventRequests = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/api/settings/agent-diagnostics")) {
+        return Response.json({ advancedEnabled: false, updatedAt: "2026-08-02T09:00:00Z" });
+      }
+      if (url.includes("/operations?")) {
+        operationRequests += 1;
+        return Response.json({
+          items: operations.map((operation) => ({
+            ...operation,
+            status: operationRequests === 1 ? "running" : "completed",
+            finishedAt: operationRequests === 1 ? null : operation.finishedAt,
+          })),
+        });
+      }
+      if (url.includes("/events?")) {
+        eventRequests += 1;
+        const items = [{
+          eventId: "request-live",
+          operationId: "model-1",
+          eventType: "model.request",
+          observedAt: "2026-08-02T09:00:00Z",
+          byteLength: 800,
+          sequence: 1,
+        }];
+        if (eventRequests > 1) {
+          items.push({
+            eventId: "response-live",
+            operationId: "model-1",
+            eventType: "model.response",
+            observedAt: "2026-08-02T09:00:01Z",
+            byteLength: 900,
+            sequence: 2,
+          });
+        }
+        return Response.json({ items });
+      }
+      if (url.includes("/api/agent-observability/executions/run-1?")) {
+        executionRequests += 1;
+        return Response.json({
+          ...execution,
+          status: executionRequests === 1 ? "running" : "completed",
+          finishedAt: executionRequests === 1 ? null : execution.finishedAt,
+        });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+
+    renderTrace();
+
+    expect(await screen.findByRole("treeitem", { name: /模型请求/ })).toBeInTheDocument();
+    expect(screen.queryByRole("treeitem", { name: /模型响应/ })).not.toBeInTheDocument();
+    expect(await screen.findByRole("treeitem", { name: /模型响应/ }, { timeout: 2_500 })).toBeInTheDocument();
+    expect(executionRequests).toBeGreaterThanOrEqual(2);
+    expect(operationRequests).toBeGreaterThanOrEqual(2);
+    expect(eventRequests).toBeGreaterThanOrEqual(2);
+    const settledRequestCounts = {
+      executionRequests,
+      operationRequests,
+      eventRequests,
+    };
+    await new Promise((resolve) => window.setTimeout(resolve, 1_100));
+    expect({ executionRequests, operationRequests, eventRequests }).toEqual(settledRequestCounts);
+  });
+
+  it("treats a SQLite running start timestamp as UTC when showing live elapsed time", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(
+      new Date("2026-08-02T09:00:23Z").getTime(),
+    );
+    mockTrace({
+      ...execution,
+      status: "running",
+      startedAt: "2026-08-02 09:00:00",
+      finishedAt: null,
+      latencyMs: 0,
+    });
+
+    renderTrace();
+
+    const metrics = await screen.findByRole("list", { name: "运行指标" });
+    expect(within(metrics).getByText("23 秒")).toBeInTheDocument();
+    expect(within(metrics).queryByText(/480/)).not.toBeInTheDocument();
   });
 
   it("does not query without a selected workspace", () => {

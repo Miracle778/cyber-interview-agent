@@ -7,7 +7,7 @@ from typing import Any
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage
 
-from app.agents.agent_factory import AgentFactory, AgentSpec
+from app.agents.agent_factory import AgentSpec, RegisteredAgentFactory
 from app.agents.agent_invocation import final_ai_text, isolated_thread_config
 from app.agents.agent_protocols import AgentRunnable
 from app.agents.context import AgentContext
@@ -42,7 +42,7 @@ class ProfileAgents:
     @classmethod
     def create(
         cls,
-        factory: AgentFactory,
+        factory: RegisteredAgentFactory,
         *,
         model_bindings: Mapping[str, str],
         middleware: tuple[AgentMiddleware, ...] = (),
@@ -59,6 +59,7 @@ class ProfileAgents:
                     middleware=middleware,
                     response_format=ProfileExtractionOutput,
                 ),
+                component_id="profile_extraction",
                 model_bindings=model_bindings,
                 checkpointer=checkpointer,
             ),
@@ -70,6 +71,7 @@ class ProfileAgents:
                     middleware=middleware,
                     response_format=ProfileAssessmentOutput,
                 ),
+                component_id="profile_assessment",
                 model_bindings=model_bindings,
                 checkpointer=checkpointer,
             ),
@@ -81,6 +83,7 @@ class ProfileAgents:
                     tools=tuple(chat_tools),
                     middleware=middleware,
                 ),
+                component_id="profile_chat",
                 model_bindings=model_bindings,
                 checkpointer=checkpointer,
             ),
@@ -93,6 +96,7 @@ class ProfileAgents:
                     middleware=middleware,
                     response_format=ProfileActionPlanProposal,
                 ),
+                component_id="profile_action_planner",
                 model_bindings=model_bindings,
                 checkpointer=checkpointer,
             ),
@@ -104,6 +108,7 @@ class ProfileAgents:
                     middleware=middleware,
                     response_format=ProfileConversationProposalOutput,
                 ),
+                component_id="profile_conversation_proposal",
                 model_bindings=model_bindings,
                 checkpointer=checkpointer,
             ),

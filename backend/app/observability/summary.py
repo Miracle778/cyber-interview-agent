@@ -4,15 +4,18 @@ from datetime import datetime
 from typing import Any
 
 from app.observability.models import ObservabilityCapability, TraceHealth
-from app.observability.registry import (
-    AGENT_OBSERVABILITY_REGISTRY,
-    AgentObservabilityRegistration,
+from app.agents.definition_registry import (
+    AgentDefinition,
+    resolve_agent_definition,
 )
 from app.observability.repository import TraceIndexRepository
 from app.schemas.observability import (
+    AgentDefinitionSnapshotResource,
+    ExecutionDetailResource,
     ExecutionSummaryResource,
     OperationSummaryResource,
 )
+from app.agents.definition_snapshot import AgentDefinitionSnapshot
 
 
 class ExecutionSummaryAssembler:
@@ -30,15 +33,16 @@ class ExecutionSummaryAssembler:
         self.trace_repository = trace_repository
 
     def assemble(self, run: dict[str, Any]) -> ExecutionSummaryResource:
-        registration = AGENT_OBSERVABILITY_REGISTRY[run["graph_id"]]
+        registration = resolve_agent_definition(
+            run["graph_id"], include_historical=True
+        )
+        assert registration is not None
         trace = self.trace_repository.get_execution(run["id"])
         operations = self.trace_repository.list_operations(run["id"])
         usage = self._usage(run["id"])
         context = self._context_usage(run["id"])
         trace_health = (
-            TraceHealth.MISSING
-            if trace is None
-            else TraceHealth(trace["trace_health"])
+            TraceHealth.MISSING if trace is None else TraceHealth(trace["trace_health"])
         )
         model_call_count = sum(
             1 for operation in operations if operation["kind"] == "model"
@@ -46,17 +50,18 @@ class ExecutionSummaryAssembler:
         system_operation_count = sum(
             1 for operation in operations if operation["kind"] != "execution"
         )
-        retry_count = sum(
-            int(operation["retry_count"]) for operation in operations
-        )
+        retry_count = sum(int(operation["retry_count"]) for operation in operations)
         latency_ms = self._latency_ms(trace, operations)
+        snapshot = _definition_snapshot(run)
+        evaluation_supported = snapshot.eval_pack_id is not None
+        evaluation_available = evaluation_supported and run["status"] == "completed"
         return ExecutionSummaryResource(
             id=run["id"],
             session_id=run["session_id"],
             workspace_id=self.workspace_id,
             graph_id=run["graph_id"],
             display_name=registration.display_name,
-            system=registration.system or run["visibility"] == "system",
+            system=registration.system,
             title=run["title"],
             status=run["status"],
             trace_health=trace_health,
@@ -64,6 +69,12 @@ class ExecutionSummaryAssembler:
                 registration,
                 status=run["status"],
                 trace_health=trace_health,
+            ),
+            evaluation_supported=evaluation_supported,
+            evaluation_available=evaluation_available,
+            evaluation_unavailable_reason=_evaluation_unavailable_reason(
+                snapshot=snapshot,
+                status=run["status"],
             ),
             route=registration.route_template,
             system_operation_count=system_operation_count,
@@ -77,6 +88,16 @@ class ExecutionSummaryAssembler:
             started_at=run["started_at"],
             finished_at=run["finished_at"],
             error_code=run["error_code"],
+        )
+
+    def assemble_detail(self, run: dict[str, Any]) -> ExecutionDetailResource:
+        summary = self.assemble(run)
+        snapshot = _definition_snapshot(run)
+        return ExecutionDetailResource(
+            **summary.model_dump(),
+            definition_snapshot=AgentDefinitionSnapshotResource(
+                **snapshot.to_payload()
+            ),
         )
 
     def operations(self, run_id: str) -> tuple[OperationSummaryResource, ...]:
@@ -137,7 +158,7 @@ class ExecutionSummaryAssembler:
 
 
 def _runtime_capabilities(
-    registration: AgentObservabilityRegistration,
+    registration: AgentDefinition,
     *,
     status: str,
     trace_health: TraceHealth,
@@ -169,13 +190,34 @@ def _runtime_capabilities(
     return [capability for capability in order if capability in available]
 
 
+def _definition_snapshot(run: dict[str, Any]) -> AgentDefinitionSnapshot:
+    raw_snapshot = run.get("agent_definition_snapshot_json")
+    return AgentDefinitionSnapshot.from_json(
+        raw_snapshot
+        if isinstance(raw_snapshot, str)
+        else AgentDefinitionSnapshot.legacy_snapshot().to_json()
+    )
+
+
+def _evaluation_unavailable_reason(
+    *,
+    snapshot: AgentDefinitionSnapshot,
+    status: str,
+) -> str | None:
+    if snapshot.eval_pack_id is None:
+        if snapshot.legacy:
+            return "该历史运行创建时尚未启用质量检查"
+        return "该 Agent 未注册质量检查标准"
+    if status != "completed":
+        return "运行完成后才能开始质量检查"
+    return None
+
+
 def _elapsed_ms(started_at: str | None, finished_at: str | None) -> int | None:
     if not started_at or not finished_at:
         return None
     try:
-        delta = datetime.fromisoformat(finished_at) - datetime.fromisoformat(
-            started_at
-        )
+        delta = datetime.fromisoformat(finished_at) - datetime.fromisoformat(started_at)
     except ValueError:
         return None
     return max(int(delta.total_seconds() * 1000), 0)

@@ -11,8 +11,7 @@ from app.agents.context_assembly import (
     ContextTurn,
     TokenCounter,
 )
-from app.agents.agent_factory import AgentFactory, AgentSpec
-from app.agents.agent_factory import ModelOverride
+from app.agents.agent_factory import AgentSpec, ModelOverride, RegisteredAgentFactory
 from app.agents.agent_protocols import AgentRunnable, StreamingAgentRunnable
 from app.agents.prompts.curation_command_prompts import (
     CURATION_COMMAND_CLASSIFIER_PROMPT,
@@ -106,7 +105,7 @@ class CurationCommandAgents:
     @classmethod
     def create(
         cls,
-        factory: AgentFactory,
+        factory: RegisteredAgentFactory,
         *,
         model_bindings,
         interaction_override: ModelOverride | None = None,
@@ -122,6 +121,7 @@ class CurationCommandAgents:
                 middleware=tuple(middleware),
                 response_format=CurationCommandPlan,
             ),
+            component_id="curation_command_classifier",
             model_bindings=model_bindings,
             model_override=interaction_override,
             checkpointer=None,
@@ -134,6 +134,7 @@ class CurationCommandAgents:
                 middleware=tuple(middleware),
                 response_format=CurationDialogueSummary,
             ),
+            component_id="curation_context_summarizer",
             model_bindings=model_bindings,
             model_override=None,
             checkpointer=None,
@@ -145,6 +146,7 @@ class CurationCommandAgents:
                 prompt=CURATION_COMMAND_RESPONDER_PROMPT,
                 middleware=tuple(middleware),
             ),
+            component_id="curation_command_responder",
             model_bindings=model_bindings,
             model_override=interaction_override,
             checkpointer=None,

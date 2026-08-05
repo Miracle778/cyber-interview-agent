@@ -25,6 +25,28 @@ export interface JobTarget {
   updatedAt: string;
 }
 
+export interface JobTargetRetrospectiveSummary {
+  retrospectiveCount: number;
+  latest: null | {
+    retrospectiveId: string;
+    title: string;
+    roundLabel: string;
+    interviewDate: string | null;
+    outcome: string;
+    lifecycleStatus: string;
+  };
+  unresolvedActionCount: number;
+  gapCounts: Record<string, number>;
+  timeline: Array<{
+    retrospectiveId: string;
+    title: string;
+    roundLabel: string;
+    interviewDate: string | null;
+    outcome: string;
+    lifecycleStatus: string;
+  }>;
+}
+
 export interface JobDocumentVersion {
   id: string;
   jobTargetId: string;
@@ -137,6 +159,11 @@ export interface TargetReadiness {
   jobTargetId: string;
   status: TargetDerivedStatus;
   requirements: number;
+  pendingRequirements: number;
+  confirmedRequirements: number;
+  rejectedRequirements: number;
+  confirmedProjectQuestions: number;
+  profileVersion: number | null;
   coreProjectId: string | null;
   supplementaryProjectIds: string[];
 }

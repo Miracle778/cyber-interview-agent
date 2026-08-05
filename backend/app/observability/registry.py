@@ -1,208 +1,55 @@
+"""Compatibility facade for the Agent control-plane definition registry.
+
+New product code should import from ``app.agents.definition_registry``.  The
+old observability names remain temporarily so existing extensions do not need
+to migrate in the same release.
+"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-from app.observability.models import ObservabilityCapability
-
-
-@dataclass(frozen=True, slots=True)
-class AgentObservabilityRegistration:
-    graph_id: str
-    display_name: str
-    route_template: str
-    capabilities: frozenset[ObservabilityCapability]
-    eval_pack_id: str | None
-    system_components: tuple[str, ...]
-    system: bool = False
-    run_center_visible: bool = True
-
-
-def _registration(
-    graph_id: str,
-    display_name: str,
-    route_template: str,
-    *capabilities: ObservabilityCapability,
-    eval_pack_id: str | None = None,
-    system_components: tuple[str, ...] = (),
-    system: bool = False,
-    run_center_visible: bool = True,
-) -> AgentObservabilityRegistration:
-    return AgentObservabilityRegistration(
-        graph_id=graph_id,
-        display_name=display_name,
-        route_template=route_template,
-        capabilities=frozenset(capabilities),
-        eval_pack_id=eval_pack_id,
-        system_components=system_components,
-        system=system,
-        run_center_visible=run_center_visible,
-    )
-
-
-_REGISTRATIONS = (
-    _registration(
-        "question.curate",
-        "题库整理",
-        "/review",
-        "open_business",
-        "cancel",
-        "retry",
-        "resume",
-        "manual_judge",
-        "export_trace",
-        eval_pack_id="question-curation.v1",
-        system_components=("question_generation", "report_summarization"),
-    ),
-    _registration(
-        "question.revise",
-        "题目重写",
-        "/review",
-        "open_business",
-        "cancel",
-        "retry",
-        "resume",
-        "manual_judge",
-        "export_trace",
-        eval_pack_id="question-curation.v1",
-        system_components=("question_generation", "report_summarization"),
-    ),
-    _registration(
-        "review.round",
-        "复习助手",
-        "/review",
-        "open_business",
-        "cancel",
-        "retry",
-        "resume",
-        "manual_judge",
-        "export_trace",
-        eval_pack_id="review.v1",
-        system_components=("answer_evaluation", "agent_chat", "report_summarization"),
-    ),
-    _registration(
-        "review.discussion",
-        "深入讨论",
-        "/review",
-        "open_business",
-        "cancel",
-        "retry",
-        "resume",
-        "manual_judge",
-        "export_trace",
-        eval_pack_id="review.v1",
-        system_components=("agent_chat", "report_summarization"),
-    ),
-    _registration(
-        "review.single",
-        "单题复习",
-        "/review",
-        "open_business",
-        "cancel",
-        "retry",
-        "manual_judge",
-        "export_trace",
-        eval_pack_id="review.v1",
-        system_components=("answer_evaluation", "report_summarization"),
-    ),
-    _registration(
-        "profile.manage",
-        "画像助手",
-        "/profile/assistant",
-        "open_business",
-        "cancel",
-        "retry",
-        "resume",
-        "manual_judge",
-        "export_trace",
-        eval_pack_id="profile.v1",
-        system_components=("agent_chat", "profile_assessment"),
-    ),
-    _registration(
-        "job.analysis",
-        "岗位分析",
-        "/targets",
-        "open_business",
-        "cancel",
-        "retry",
-        "resume",
-        "manual_judge",
-        "export_trace",
-        eval_pack_id="job-analysis.v1",
-        system_components=("job_analysis",),
-    ),
-    _registration(
-        "project.deep_dive",
-        "项目深挖",
-        "/targets",
-        "open_business",
-        "cancel",
-        "retry",
-        "resume",
-        "manual_judge",
-        "export_trace",
-        eval_pack_id="project-deep-dive.v1",
-        system_components=("project_deep_dive",),
-    ),
-    _registration(
-        "profile.ingest",
-        "简历画像整理",
-        "",
-        "export_trace",
-        eval_pack_id="profile.v1",
-        system_components=("profile_extraction",),
-        system=True,
-    ),
-    _registration(
-        "profile.assess",
-        "画像评估",
-        "",
-        "export_trace",
-        eval_pack_id="profile.v1",
-        system_components=("profile_assessment",),
-        system=True,
-    ),
-    _registration(
-        "knowledge.publish",
-        "知识发布",
-        "",
-        "export_trace",
-        system=True,
-        run_center_visible=False,
-    ),
-    _registration(
-        "diagnostic.echo",
-        "诊断回声",
-        "",
-        system=True,
-        run_center_visible=False,
-    ),
-    _registration(
-        "diagnostic.approval",
-        "诊断确认",
-        "",
-        system=True,
-        run_center_visible=False,
-    ),
-    _registration(
-        "diagnostic.security",
-        "诊断安全",
-        "",
-        system=True,
-        run_center_visible=False,
-    ),
+from app.agents.definition_registry import (
+    AGENT_DEFINITIONS,
+    AGENT_DEFINITION_REGISTRY,
+    AgentDefinition,
+    AgentLifecycle,
+    AgentRegistrationError,
 )
 
 
-AGENT_OBSERVABILITY_REGISTRY = {
-    registration.graph_id: registration for registration in _REGISTRATIONS
-}
+AgentObservabilityRegistration = AgentDefinition
+AGENT_OBSERVABILITY_REGISTRY = AGENT_DEFINITIONS
 
-if len(AGENT_OBSERVABILITY_REGISTRY) != len(_REGISTRATIONS):
-    raise RuntimeError("Agent observability registry contains duplicate graph IDs")
+
+def resolve_observability_registration(
+    graph_id: str,
+    *,
+    include_historical: bool = False,
+) -> AgentDefinition | None:
+    return AGENT_DEFINITION_REGISTRY.resolve(
+        graph_id,
+        include_historical=include_historical,
+    )
+
+
+def require_registration(
+    graph_id: str,
+    *,
+    for_user_creation: bool = False,
+) -> AgentDefinition:
+    return AGENT_DEFINITION_REGISTRY.require(
+        graph_id,
+        for_user_creation=for_user_creation,
+    )
 
 
 def assert_registry_complete(graph_ids: frozenset[str] | set[str]) -> None:
-    expected = set(AGENT_OBSERVABILITY_REGISTRY)
+    """Deprecated compatibility assertion for external callers.
+
+    Production code no longer provides a parallel Graph ID set.  This helper
+    remains only to fail older integrations that still compare such a set.
+    """
+
+    expected = set(AGENT_DEFINITION_REGISTRY.agent_ids)
     actual = set(graph_ids)
     missing = sorted(expected - actual)
     unknown = sorted(actual - expected)
@@ -212,6 +59,16 @@ def assert_registry_complete(graph_ids: frozenset[str] | set[str]) -> None:
             details.append(f"missing={','.join(missing)}")
         if unknown:
             details.append(f"unknown={','.join(unknown)}")
-        raise RuntimeError(
-            "Agent observability registry mismatch: " + "; ".join(details)
-        )
+        raise RuntimeError("Agent definition registry mismatch: " + "; ".join(details))
+
+
+__all__ = [
+    "AGENT_DEFINITION_REGISTRY",
+    "AGENT_OBSERVABILITY_REGISTRY",
+    "AgentLifecycle",
+    "AgentObservabilityRegistration",
+    "AgentRegistrationError",
+    "assert_registry_complete",
+    "require_registration",
+    "resolve_observability_registration",
+]

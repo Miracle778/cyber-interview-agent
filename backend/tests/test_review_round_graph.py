@@ -13,7 +13,11 @@ from app.agents.review_round_contracts import (
 )
 from app.agents.review_round_agents import ReviewRoundAgents
 from app.application.session_service import ProductRepository
-from app.graphs.review_round import DraftRef, create_review_round_graph
+from app.graphs.review_round import (
+    DraftRef,
+    _coverage_decisions,
+    create_review_round_graph,
+)
 from app.infrastructure.runtime_database import connect_runtime_database
 from app.review.models import (
     MasteryProjection,
@@ -131,6 +135,7 @@ async def test_report_uses_report_role_thread() -> None:
 def test_round_agents_apply_model_override_only_to_evaluator() -> None:
     factory = RecordingFactory()
     override = ModelOverride("provider-model-1", "high")
+    checkpointer = object()
 
     ReviewRoundAgents.create(
         factory,  # type: ignore[arg-type]
@@ -140,12 +145,25 @@ def test_round_agents_apply_model_override_only_to_evaluator() -> None:
             "agent_chat": "chat",
         },
         answer_model_override=override,
+        checkpointer=checkpointer,
     )
 
-    by_role = {spec.role: values for spec, values in factory.calls}
-    assert by_role["answer_evaluation"]["model_override"] == override
-    assert by_role["report_summarization"]["model_override"] is None
-    assert by_role["agent_chat"]["model_override"] is None
+    by_name = {spec.execution_name: values for spec, values in factory.calls}
+    assert by_name["review_round_evaluator"]["model_override"] == override
+    assert by_name["review_round_reporter"]["model_override"] is None
+    assert by_name["review_discussion"]["model_override"] is None
+
+    # Evaluation, classification, and reporting are single-turn decisions.
+    # Their complete inputs are assembled by domain code, so sharing the
+    # session checkpointer would leak prior questions into later requests.
+    for name in (
+        "review_round_evaluator",
+        "project_answer_evaluator",
+        "review_turn_classifier",
+        "review_round_reporter",
+    ):
+        assert by_name[name]["checkpointer"] is None
+    assert by_name["review_discussion"]["checkpointer"] is checkpointer
 
 
 class SequencedRoundAgents:
@@ -239,6 +257,47 @@ def _checkpoint_question() -> QuestionSnapshot:
         ),
         follow_ups=("为什么不能从消息反推业务状态？",),
     )
+
+
+def test_coverage_maps_model_annotations_back_to_frozen_key_points() -> None:
+    evaluation = RoundAnswerEvaluation(
+        score="partial",
+        covered_key_points=[],
+        partial_key_points=["活跃事务列表（用户只提到了列表）"],
+        missing_key_points=["上下界（回答中没有说明）"],
+        evidence_by_point={
+            "活跃事务列表（用户只提到了列表）": "用户提到了活跃事务列表",
+        },
+        evidence="回答只覆盖了一部分。",
+        follow_up_required=True,
+        follow_up_prompt="请补充上下界。",
+        mastery_suggestion="partial",
+    )
+
+    coverage = _coverage_decisions(("上下界", "活跃事务列表"), evaluation)
+
+    assert [(item.point, item.status) for item in coverage] == [
+        ("上下界", "uncovered"),
+        ("活跃事务列表", "partial"),
+    ]
+    assert coverage[1].evidence == ("用户提到了活跃事务列表",)
+
+
+def test_coverage_ignores_unmappable_model_points_conservatively() -> None:
+    evaluation = RoundAnswerEvaluation(
+        score="good",
+        covered_key_points=["模型自行增加的关键点"],
+        partial_key_points=[],
+        missing_key_points=[],
+        evidence="模型返回了题目之外的关键点。",
+        follow_up_required=False,
+        follow_up_prompt=None,
+        mastery_suggestion="stable",
+    )
+
+    coverage = _coverage_decisions(("上下界", "活跃事务列表"), evaluation)
+
+    assert all(item.status == "uncovered" for item in coverage)
 
 
 @pytest.mark.asyncio

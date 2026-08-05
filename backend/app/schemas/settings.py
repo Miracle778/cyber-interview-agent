@@ -34,6 +34,7 @@ class AgentDiagnosticsSettingsResource(CamelModel):
 
 class UpdateAgentQualityEvaluationSettingsCommand(CamelModel):
     enabled: StrictBool
+    capture_regression_inputs: StrictBool = False
     automatic_sample_percent: int = Field(ge=0, le=100)
     automatic_daily_cap: int = Field(ge=0, le=1000)
     judge_provider_model_id: str | None = None
@@ -41,6 +42,7 @@ class UpdateAgentQualityEvaluationSettingsCommand(CamelModel):
 
 class AgentQualityEvaluationSettingsResource(CamelModel):
     enabled: bool
+    capture_regression_inputs: bool
     automatic_sample_percent: int
     automatic_daily_cap: int
     judge_provider_model_id: str | None
@@ -193,6 +195,8 @@ ModelRole = Literal[
     "profile_assessment",
     "job_analysis",
     "project_deep_dive",
+    "retrospective_analysis",
+    "retrospective_chat",
 ]
 MODEL_ROLES = {
     "question_generation",
@@ -203,6 +207,8 @@ MODEL_ROLES = {
     "profile_assessment",
     "job_analysis",
     "project_deep_dive",
+    "retrospective_analysis",
+    "retrospective_chat",
 }
 
 

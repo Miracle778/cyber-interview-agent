@@ -8,6 +8,7 @@ interface AgentWorkspaceShellProps {
   asideOpen: boolean;
   onAsideOpenChange: (open: boolean) => void;
   asideLabel?: string;
+  headerTrailing?: ReactNode;
 }
 
 export function AgentWorkspaceShell({
@@ -17,6 +18,7 @@ export function AgentWorkspaceShell({
   asideOpen,
   onAsideOpenChange,
   asideLabel = "本次依据",
+  headerTrailing,
 }: AgentWorkspaceShellProps) {
   useEffect(() => {
     const compact = globalThis.matchMedia?.("(max-width: 1199px)");
@@ -44,6 +46,7 @@ export function AgentWorkspaceShell({
           {asideOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
           <span>{asideOpen ? "收起依据" : asideLabel}</span>
         </button>
+        {headerTrailing}
       </header>
       <div className="agent-workspace__body">
         <div className="agent-workspace__conversation">{conversation}</div>

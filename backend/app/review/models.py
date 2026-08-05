@@ -15,6 +15,7 @@ ReviewMode: TypeAlias = Literal[
     "recent-mistake",
     "source-file",
 ]
+ReviewQuestionScope: TypeAlias = Literal["ordinary", "job_target", "project"]
 RoundStatus: TypeAlias = Literal[
     "waiting_for_input",
     "running",
@@ -151,6 +152,10 @@ class ReviewRoundSettings:
     answer_model_id: str
     reasoning_effort: ReasoningEffort
     source_id: str | None = None
+    question_scope: ReviewQuestionScope = "ordinary"
+    source_job_target_id: str | None = None
+    project_claim_id: str | None = None
+    scope_label: str | None = None
 
     def __post_init__(self) -> None:
         if not 1 <= self.question_count <= 50:
@@ -165,6 +170,23 @@ class ReviewRoundSettings:
             raise ValueError("source-file rounds require source_id")
         if self.source_id is not None and not self.source_id.strip():
             raise ValueError("source_id must not be empty")
+        if self.question_scope == "ordinary":
+            if self.source_job_target_id is not None or self.project_claim_id is not None:
+                raise ValueError("ordinary scope must not include an origin id")
+            if self.scope_label is not None:
+                raise ValueError("ordinary scope must not include a scope label")
+        elif self.question_scope == "job_target":
+            if not self.source_job_target_id or self.project_claim_id is not None:
+                raise ValueError("job_target scope requires only source_job_target_id")
+        elif self.question_scope == "project":
+            if not self.project_claim_id or self.source_job_target_id is not None:
+                raise ValueError("project scope requires only project_claim_id")
+        else:
+            raise ValueError("unsupported question scope")
+        if self.mode == "source-file" and self.question_scope != "ordinary":
+            raise ValueError("source-file mode supports only ordinary scope")
+        if self.scope_label is not None and not self.scope_label.strip():
+            raise ValueError("scope label must not be empty")
         if any(not topic.strip() for topic in self.topics):
             raise ValueError("topics must not contain empty values")
         if not self.difficulties or any(
@@ -267,6 +289,8 @@ class CurationSeedTaskRecord:
     material_support: MaterialSupport
     needs_review: bool
     normalization_issues: tuple[str, ...]
+    source_answer: str | None
+    supplemental_answer: str | None
     last_error_code: str | None
     version: int
     created_at: str
@@ -336,6 +360,8 @@ class QuestionCandidateRecord:
     material_support: MaterialSupport
     needs_review: bool
     normalization_issues: tuple[str, ...]
+    source_answer: str | None
+    supplemental_answer: str | None
     confirmation_status: Literal["pending", "confirmed"]
     confirmation_version: int
     confirmed_at: str | None

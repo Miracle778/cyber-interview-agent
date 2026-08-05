@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import sqlite3
 from collections.abc import AsyncIterator, Callable, Mapping
@@ -45,25 +46,52 @@ from app.knowledge.drafts import (
 from app.knowledge.publication import PublicationService
 from app.knowledge.publication_handler import KnowledgePublishActionHandler
 from app.knowledge.workspace_layout import initialize_knowledge_artifacts
-from app.middleware.usage_projection_middleware import ContextUsageProjection, UsageProjection
+from app.middleware.usage_projection_middleware import (
+    ContextUsageProjection,
+    UsageProjection,
+)
 from app.review.application import ReviewApplication
 from app.review.service import ReviewDomainService
 from app.review.selector import QuestionSelector
 from app.review.repository import ReviewRepository
 from app.tools.audit import ToolAuditRepository
+from app.tools.interview_retrospective_tools import (
+    create_interview_retrospective_tools,
+)
+from app.tools.profile_tools import search_active_knowledge
 from app.agents.context import AgentContext
-from app.diagnostics.agent_trace import AgentTraceWriter, initialize_agent_trace_directory
+from app.diagnostics.agent_trace import (
+    AgentTraceWriter,
+    initialize_agent_trace_directory,
+)
 from app.profile.repository import ProfileRepository
 from app.profile.service import ProfileService
 from app.profile.storage import MaterialStorage
 from app.job_targets.repository import JobTargetRepository
 from app.job_targets.service import JobTargetService
 from app.job_targets.application import JobTargetApplication
+from app.interview_retrospectives.application import (
+    InterviewRetrospectiveApplication,
+)
+from app.interview_retrospectives.repository import (
+    InterviewRetrospectiveRepository,
+)
+from app.interview_retrospectives.service import InterviewRetrospectiveService
 from app.observability.indexer import TraceLedgerIndexer
 from app.observability.repository import TraceIndexRepository
 from app.observability.service import AgentObservabilityService
+from app.agents.definition_registry import require_agent_definition
 from app.evaluation.repository import AgentEvaluationRepository
 from app.evaluation.service import AgentEvaluationService
+from app.evaluation.regression import (
+    CallableRegressionImplementation,
+    RegressionExecutionResult,
+    RegressionImplementationCatalog,
+)
+from app.evaluation.outcome_adapters.question_curation import (
+    QuestionCurationOutcomeAdapter,
+)
+from app.evaluation.outcome_adapters.domain import create_sqlite_outcome_adapter
 from app.observability.retention import TraceRetentionService
 from app.observability.cleanup import TraceCleanupService
 from app.observability.projection import TraceMetadataProjector
@@ -114,9 +142,7 @@ class SqliteMiddlewareProjection:
         self._connection.commit()
         return cursor.rowcount == 1
 
-    def record_context_usage(
-        self, context, usage: ContextUsageProjection
-    ) -> bool:
+    def record_context_usage(self, context, usage: ContextUsageProjection) -> bool:
         self._connection.execute(
             "INSERT INTO agent_context_usage "
             "(session_id, run_id, current_tokens, threshold_tokens, estimated) "
@@ -222,14 +248,13 @@ class WorkspaceRuntime:
     profile: ProfileService
     job_targets: JobTargetService
     job_training: JobTargetApplication
+    interview_retrospectives: InterviewRetrospectiveApplication
     agent_observability: AgentObservabilityService
     agent_evaluation: AgentEvaluationService | None
     trace_retention: TraceRetentionService
     trace_cleanup: TraceCleanupService
     trace_projection: TraceMetadataProjector
-    publication_locks: dict[str, asyncio.Lock] = field(
-        default_factory=dict, repr=False
-    )
+    publication_locks: dict[str, asyncio.Lock] = field(default_factory=dict, repr=False)
 
     @classmethod
     def create(
@@ -243,6 +268,7 @@ class WorkspaceRuntime:
         validate_review_model: Callable[[str, str], None],
         advanced_diagnostics_enabled: Callable[[], bool],
         quality_evaluation_settings: Callable[[], object] | None = None,
+        enable_agent_evaluation: bool = True,
     ) -> "WorkspaceRuntime":
         connection = connect_thread_local_runtime_database(root)
         initialize_agent_trace_directory(root)
@@ -292,12 +318,14 @@ class WorkspaceRuntime:
             validate_curation_artifact=drafts.validate_curation_artifact,
         )
         holder: dict[str, HitlService] = {}
-        trace_writer = getattr(graph_factory, "trace_writer", None) or AgentTraceWriter()
+        trace_writer = (
+            getattr(graph_factory, "trace_writer", None) or AgentTraceWriter()
+        )
         evaluation_repository = AgentEvaluationRepository(connection, workspace_id)
         evaluation_factory = getattr(graph_factory, "create_evaluation_judge", None)
         agent_evaluation = (
             None
-            if evaluation_factory is None
+            if evaluation_factory is None or not enable_agent_evaluation
             else AgentEvaluationService(
                 workspace_id=workspace_id,
                 workspace_root=root,
@@ -311,6 +339,7 @@ class WorkspaceRuntime:
                         (),
                         {
                             "enabled": False,
+                            "capture_regression_inputs": False,
                             "automatic_daily_cap": 20,
                             "judge_provider_model_id": None,
                         },
@@ -354,6 +383,11 @@ class WorkspaceRuntime:
             profile_storage=profile_storage,
             trace_writer=trace_writer,
             trace_warning=projection.warning,
+            capture_pre_execution=(
+                None
+                if agent_evaluation is None
+                else agent_evaluation.capture_pre_execution_snapshot
+            ),
         )
         projection_service = ReviewDomainService(
             repository=reviews,
@@ -381,13 +415,10 @@ class WorkspaceRuntime:
             graph_factory, "create_curation_command_agents", None
         )
         configured_model_bindings = model_bindings()
-        command_agents_available = (
-            command_agents_factory is not None
-            and {
-                "question_generation",
-                "report_summarization",
-            }.issubset(configured_model_bindings)
-        )
+        command_agents_available = command_agents_factory is not None and {
+            "question_generation",
+            "report_summarization",
+        }.issubset(configured_model_bindings)
         command_agents = (
             None
             if not command_agents_available
@@ -400,20 +431,15 @@ class WorkspaceRuntime:
             )
         )
 
-        job_agents_factory = getattr(
-            graph_factory, "create_job_target_agents", None
-        )
+        job_agents_factory = getattr(graph_factory, "create_job_target_agents", None)
         review_agents_factory = getattr(
             graph_factory, "create_review_round_agents", None
         )
-        job_agents_available = (
-            job_agents_factory is not None
-            and {
-                "job_analysis",
-                "project_deep_dive",
-                "report_summarization",
-            }.issubset(configured_model_bindings)
-        )
+        job_agents_available = job_agents_factory is not None and {
+            "job_analysis",
+            "project_deep_dive",
+            "report_summarization",
+        }.issubset(configured_model_bindings)
         job_agents = (
             None
             if not job_agents_available
@@ -476,9 +502,7 @@ class WorkspaceRuntime:
                 audit=audit,
                 observability=observability,
                 publish_event=events.publish,
-                interaction_override=ModelOverride(
-                    provider_model_id, reasoning_effort
-                ),
+                interaction_override=ModelOverride(provider_model_id, reasoning_effort),
             )
             result = await agents.classify_turn(
                 question=question,
@@ -532,7 +556,10 @@ class WorkspaceRuntime:
             run_ingest=lambda execution: executions.run_prepared(
                 execution, graph_input=execution.input
             ),
-            publish_event=lambda session_id, execution_id, event_type, payload: repository.append_event(
+            publish_event=lambda session_id,
+            execution_id,
+            event_type,
+            payload: repository.append_event(
                 session_id, execution_id, event_type, payload
             ),
         )
@@ -551,10 +578,227 @@ class WorkspaceRuntime:
             executions=executions,
             product_repository=repository,
             agents=job_agents,
-            agents_factory=(
-                create_job_agents if job_agents_available else None
-            ),
+            agents_factory=(create_job_agents if job_agents_available else None),
         )
+        retrospective_repository = InterviewRetrospectiveRepository(connection)
+        retrospective_service = InterviewRetrospectiveService(
+            workspace_id=workspace_id,
+            repository=retrospective_repository,
+            job_targets=job_targets.repository,
+        )
+        retrospective_agents_factory = getattr(
+            graph_factory, "create_interview_retrospective_agents", None
+        )
+
+        def _target_search(context, query, limit, excerpt_limit):
+            retrospective = retrospective_repository.get_retrospective(
+                context.retrospective_id
+            )
+            rows = job_targets.list_preparation_requirements(
+                retrospective.job_target_id
+            )
+            return [
+                {
+                    "id": item.id,
+                    "text": item.text[:excerpt_limit],
+                    "confirmationStatus": item.confirmation_status,
+                    "preparationStatus": item.preparation_status,
+                }
+                for item in rows
+                if query.casefold() in item.text.casefold()
+            ][:limit]
+
+        def _profile_search(_context, query, limit, excerpt_limit):
+            snapshot = profile.confirmed_profile_context(
+                purpose="interview_retrospective", limit=min(20, limit)
+            )
+            values = []
+            for item in snapshot.items:
+                rendered = json.dumps(item.value, ensure_ascii=False)
+                if query.casefold() not in rendered.casefold():
+                    continue
+                values.append(
+                    {
+                        "id": item.claim_id,
+                        "type": item.claim_type,
+                        "value": rendered[:excerpt_limit],
+                        "supportStatus": item.support_status,
+                    }
+                )
+            return values[:limit]
+
+        def _review_search(_context, query, limit, excerpt_limit):
+            return [
+                {
+                    "id": item.snapshot.question_id,
+                    "title": item.snapshot.title[:excerpt_limit],
+                    "questionText": item.snapshot.question_text[:excerpt_limit],
+                }
+                for item in review.list_questions()
+                if query.casefold()
+                in (item.snapshot.title + " " + item.snapshot.question_text).casefold()
+            ][:limit]
+
+        def _knowledge_search(context, query, limit, excerpt_limit):
+            knowledge_context = AgentContext(
+                workspace_id=context.workspace_id,
+                workspace_root=context.workspace_root,
+                session_id=context.session_id,
+                run_id=context.run_id,
+                allowed_tools=frozenset({"search_active_knowledge"}),
+                allowed_scopes=frozenset({"knowledge.active"}),
+                tool_result_item_limit=min(20, limit),
+                tool_excerpt_char_limit=min(2_000, excerpt_limit),
+            )
+            result = search_active_knowledge(
+                profile.repository, knowledge_context, query=query
+            )
+            return list(result.get("items", []))
+
+        retrospective_agents = (
+            None
+            if retrospective_agents_factory is None
+            or not {
+                "retrospective_analysis",
+                "retrospective_chat",
+                "report_summarization",
+            }.issubset(configured_model_bindings)
+            else retrospective_agents_factory(
+                model_bindings=configured_model_bindings,
+                projection=projection,
+                audit=audit,
+                observability=observability,
+                publish_event=events.publish,
+                chat_tools=create_interview_retrospective_tools(
+                    retrospective_repository,
+                    target_search=_target_search,
+                    profile_search=_profile_search,
+                    review_search=_review_search,
+                    knowledge_search=_knowledge_search,
+                ),
+            )
+        )
+        interview_retrospectives = InterviewRetrospectiveApplication(
+            workspace_id=workspace_id,
+            service=retrospective_service,
+            repository=retrospective_repository,
+            sessions=sessions,
+            executions=executions,
+            products=repository,
+            agents=retrospective_agents,
+            profile=profile,
+            review=review,
+            drafts=drafts,
+            analysis_model_id=configured_model_bindings.get("retrospective_analysis"),
+        )
+        if agent_evaluation is not None:
+
+            async def execute_regression(
+                case,
+                sandbox_root: Path,
+                *,
+                use_source_bindings: bool,
+                implementation_id: str,
+            ) -> RegressionExecutionResult:
+                if use_source_bindings:
+                    baseline = json.loads(case.baseline_versions_json)
+                    selected_bindings = baseline.get("modelBindings")
+                    if not isinstance(selected_bindings, dict) or not selected_bindings:
+                        raise RuntimeError("source_model_bindings_unavailable")
+                    bindings = {
+                        str(key): str(value) for key, value in selected_bindings.items()
+                    }
+                else:
+                    bindings = dict(model_bindings())
+                sandbox_runtime = cls.create(
+                    workspace_id=workspace_id,
+                    root=sandbox_root,
+                    model_bindings=lambda: bindings,
+                    graph_factory=graph_factory,
+                    observability=NoopObservabilitySink(),
+                    validate_review_model=validate_review_model,
+                    advanced_diagnostics_enabled=lambda: False,
+                    quality_evaluation_settings=None,
+                    enable_agent_evaluation=False,
+                )
+                try:
+                    execution = sandbox_runtime.repository.get_execution(
+                        case.execution_id
+                    )
+                    if execution.status != "running":
+                        raise RuntimeError("pre_execution_snapshot_is_not_runnable")
+                    sandbox_runtime.executions.run_prepared(
+                        execution,
+                        graph_input=execution.input,
+                    )
+                    completed = await sandbox_runtime.executions.wait(execution.id)
+                    if completed.status not in {
+                        "completed",
+                        "waiting_for_input",
+                        "waiting_for_approval",
+                    }:
+                        raise RuntimeError(
+                            completed.error_code or "agent_execution_failed"
+                        )
+                    if case.task_type in {"question_curation", "question_revision"}:
+                        adapter = QuestionCurationOutcomeAdapter(
+                            sandbox_runtime.connection,
+                            workspace_id,
+                            task_type=case.task_type,
+                        )
+                    else:
+                        adapter = create_sqlite_outcome_adapter(
+                            case.task_type,
+                            sandbox_runtime.connection,
+                            workspace_id,
+                        )
+                    outcome = adapter.build(execution.id)
+                    session = sandbox_runtime.repository.get_session(
+                        execution.session_id
+                    )
+                    graph_version_row = sandbox_runtime.connection.execute(
+                        "SELECT graph_version FROM agent_sessions WHERE id = ?",
+                        (execution.session_id,),
+                    ).fetchone()
+                    return RegressionExecutionResult(
+                        execution_id=execution.id,
+                        outcome=outcome,
+                        implementation_versions={
+                            "implementationId": implementation_id,
+                            "graph": (
+                                f"{session.kind}@{graph_version_row['graph_version']}"
+                            ),
+                            "modelBindings": bindings,
+                            "codeMode": "current_process",
+                        },
+                    )
+                finally:
+                    await sandbox_runtime.close()
+
+            agent_evaluation.set_regression_implementations(
+                RegressionImplementationCatalog(
+                    (
+                        CallableRegressionImplementation(
+                            "source-model-config@current-code",
+                            lambda case, root: execute_regression(
+                                case,
+                                root,
+                                use_source_bindings=True,
+                                implementation_id=("source-model-config@current-code"),
+                            ),
+                        ),
+                        CallableRegressionImplementation(
+                            "current-runtime",
+                            lambda case, root: execute_regression(
+                                case,
+                                root,
+                                use_source_bindings=False,
+                                implementation_id="current-runtime",
+                            ),
+                        ),
+                    )
+                )
+            )
         return cls(
             workspace_id=workspace_id,
             root=root,
@@ -571,6 +815,7 @@ class WorkspaceRuntime:
             profile=profile,
             job_targets=job_targets,
             job_training=job_training,
+            interview_retrospectives=interview_retrospectives,
             agent_observability=agent_observability,
             agent_evaluation=agent_evaluation,
             trace_retention=trace_retention,
@@ -580,6 +825,7 @@ class WorkspaceRuntime:
 
     async def close(self) -> None:
         await self.executions.close()
+        await self.events.close()
         self.connection.close()
 
 
@@ -603,6 +849,7 @@ class AgentApplication:
         validate_review_model: Callable[[str, str, str], None] | None = None,
         advanced_diagnostics_enabled: Callable[[], bool] | None = None,
         quality_evaluation_settings: Callable[[], object] | None = None,
+        registration_guard: Callable[..., object] = require_agent_definition,
     ) -> None:
         self._workspace_resolver = workspace_resolver
         self._workspace_ids = workspace_ids
@@ -613,17 +860,17 @@ class AgentApplication:
         self._validate_review_model = validate_review_model or (
             lambda _workspace, _model, _effort: None
         )
-        self._advanced_diagnostics_enabled = (
-            advanced_diagnostics_enabled or (lambda: False)
+        self._advanced_diagnostics_enabled = advanced_diagnostics_enabled or (
+            lambda: False
         )
         self._quality_evaluation_settings = quality_evaluation_settings
+        self._registration_guard = registration_guard
         self._workspaces: dict[str, WorkspaceRuntime] = {}
 
     async def create_session(
         self, *, workspace_id: str, kind: str, title: str | None = None
     ) -> SessionRecord:
-        if kind in {"profile.ingest", "profile.assess"}:
-            raise ValueError("该画像系统会话不能由用户创建")
+        self._registration_guard(kind, for_user_creation=True)
         return await self._context(workspace_id).sessions.create(
             workspace_id=workspace_id, kind=kind, title=title
         )
@@ -680,8 +927,12 @@ class AgentApplication:
             "context_usage": context.repository.context_usage(session.id),
             "usage": context.repository.usage(session.id),
             "latest_warning": context.repository.latest_warning(session.id),
-            "messages": [asdict(item) for item in context.repository.list_messages(session.id)],
-            "executions": [asdict(item) for item in context.repository.list_executions(session.id)],
+            "messages": [
+                asdict(item) for item in context.repository.list_messages(session.id)
+            ],
+            "executions": [
+                asdict(item) for item in context.repository.list_executions(session.id)
+            ],
             "latest_execution": None if latest is None else asdict(latest),
             "current_action": (
                 None
@@ -704,6 +955,7 @@ class AgentApplication:
         configuration: dict[str, Any] | None = None,
     ) -> ExecutionRecord:
         context, session = self._locate_session(session_id)
+        self._registration_guard(session.kind, for_user_creation=False)
         if configuration and configuration.get("providerModelId"):
             self._validate_review_model(
                 session.workspace_id,
@@ -725,6 +977,7 @@ class AgentApplication:
         if previous.status not in {"failed", "interrupted", "cancelled"}:
             raise ValueError("只有失败或已停止的执行可以重试")
         session = context.repository.get_session(previous.session_id)
+        self._registration_guard(session.kind, for_user_creation=False)
         message = self._execution_input_message(context.repository, previous)
         retry_input = previous.input
         input_message_id = message.id
@@ -781,11 +1034,7 @@ class AgentApplication:
         messages = repository.list_messages(execution.session_id)
         if execution.input_message_id is not None:
             message = next(
-                (
-                    item
-                    for item in messages
-                    if item.id == execution.input_message_id
-                ),
+                (item for item in messages if item.id == execution.input_message_id),
                 None,
             )
         else:
@@ -793,8 +1042,7 @@ class AgentApplication:
                 (
                     item
                     for item in messages
-                    if item.role == "user"
-                    and item.execution_id == execution.id
+                    if item.role == "user" and item.execution_id == execution.id
                 ),
                 None,
             )
@@ -807,7 +1055,9 @@ class AgentApplication:
         return await context.executions.wait(execution_id)
 
     async def cancel_execution(self, execution_id: str) -> ExecutionRecord:
-        return await self._locate_execution(execution_id).executions.cancel(execution_id)
+        return await self._locate_execution(execution_id).executions.cancel(
+            execution_id
+        )
 
     def replay_events(
         self, session_id: str, *, after_id: int | None
@@ -840,9 +1090,7 @@ class AgentApplication:
         context, _action = await self._locate_action(action_id)
         return await context.hitl.reject(action_id, command)
 
-    async def request_draft_publication(
-        self, draft_id: str
-    ) -> DraftPublicationRequest:
+    async def request_draft_publication(self, draft_id: str) -> DraftPublicationRequest:
         context, draft = await self._locate_draft(draft_id)
         lock = context.publication_locks.setdefault(draft.id, asyncio.Lock())
         async with lock:
@@ -902,7 +1150,12 @@ class AgentApplication:
 
     async def list_drafts(self, workspace_id: str):
         context = self._context(workspace_id)
-        return tuple([await self._draft_resource(context, item) for item in await context.drafts.list()])
+        return tuple(
+            [
+                await self._draft_resource(context, item)
+                for item in await context.drafts.list()
+            ]
+        )
 
     async def get_draft(self, draft_id: str):
         context, draft = await self._locate_draft(draft_id)
@@ -910,7 +1163,9 @@ class AgentApplication:
 
     async def update_draft(self, draft_id: str, command: UpdateDraftCommand):
         context, _draft = await self._locate_draft(draft_id)
-        return await self._draft_resource(context, await context.drafts.update(draft_id, command))
+        return await self._draft_resource(
+            context, await context.drafts.update(draft_id, command)
+        )
 
     def review(self, workspace_id: str) -> ReviewApplication:
         return self._context(workspace_id).review
@@ -924,9 +1179,12 @@ class AgentApplication:
     def job_training(self, workspace_id: str) -> JobTargetApplication:
         return self._context(workspace_id).job_training
 
-    def agent_observability(
+    def interview_retrospectives(
         self, workspace_id: str
-    ) -> AgentObservabilityService:
+    ) -> InterviewRetrospectiveApplication:
+        return self._context(workspace_id).interview_retrospectives
+
+    def agent_observability(self, workspace_id: str) -> AgentObservabilityService:
         return self._context(workspace_id).agent_observability
 
     def agent_evaluation(self, workspace_id: str) -> AgentEvaluationService:
@@ -986,17 +1244,13 @@ class AgentApplication:
         for workspace_id in self._workspace_ids():
             context = self._context(workspace_id)
             try:
-                context.review.repository.get_curation_command_receipt(
-                    command_id
-                )
+                context.review.repository.get_curation_command_receipt(command_id)
                 return context.review
             except LookupError:
                 continue
         raise ProductRecordNotFoundError("题库整理命令不存在")
 
-    def locate_bulk_publication(
-        self, operation_id: str
-    ) -> ReviewApplication:
+    def locate_bulk_publication(self, operation_id: str) -> ReviewApplication:
         for workspace_id in self._workspace_ids():
             context = self._context(workspace_id)
             try:
@@ -1012,6 +1266,7 @@ class AgentApplication:
             context = self._context(workspace_id)
             interrupted_executions = context.executions.recover()
             recovered.extend(interrupted_executions)
+            context.interview_retrospectives.repository.reconcile_interrupted_cleanup_runs()
             # Domain reconciliation observes durable interrupted executions;
             # it never schedules Provider work without an explicit resume.
             context.review.repository.reconcile_abandoned_work()
@@ -1055,7 +1310,9 @@ class AgentApplication:
         self._workspaces[workspace_id] = context
         return context
 
-    def _locate_session(self, session_id: str) -> tuple[WorkspaceRuntime, SessionRecord]:
+    def _locate_session(
+        self, session_id: str
+    ) -> tuple[WorkspaceRuntime, SessionRecord]:
         for workspace_id in self._workspace_ids():
             context = self._context(workspace_id)
             try:
@@ -1108,7 +1365,9 @@ class AgentApplication:
                     raise
         raise PendingActionNotFoundError(action_id)
 
-    async def _locate_draft(self, draft_id: str) -> tuple[WorkspaceRuntime, KnowledgeDraftRecord]:
+    async def _locate_draft(
+        self, draft_id: str
+    ) -> tuple[WorkspaceRuntime, KnowledgeDraftRecord]:
         for workspace_id in self._workspace_ids():
             context = self._context(workspace_id)
             try:

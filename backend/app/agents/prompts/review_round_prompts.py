@@ -13,6 +13,9 @@ REVIEW_ROUND_EVALUATION_PROMPT = PromptSpec(
     system=(
         "根据冻结题目、参考答案和必答/加分点评价本次回答。逐项返回已覆盖、"
         "部分覆盖、未覆盖及对应回答证据；只能使用题目中给出的关键点，不能臆造。"
+        "covered_key_points、partial_key_points、missing_key_points 中的每一项必须逐字复制"
+        "冻结题目的 required_key_points，不得追加括号说明、改写或拆分；解释只写入"
+        "evidence_by_point。"
         "仍有待完善关键点时，必须令 follow_up_required=true 且 follow_up_prompt 非空，"
         "follow_up_prompt 只指出仍需完善的方向，不泄露完整答案。"
         "没有待完善关键点时，必须令 follow_up_required=false 且 follow_up_prompt=null。"

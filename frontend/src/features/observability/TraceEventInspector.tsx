@@ -2,7 +2,7 @@ import { AlertTriangle, LoaderCircle, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toActionableError } from "../../shared/api/errorAdvice";
 import { getTraceEventContent } from "./observabilityApi";
-import { TraceJsonViewer } from "./TraceJsonViewer";
+import { TraceJsonViewer, type TraceModelDescriptor } from "./TraceJsonViewer";
 import { friendlyEventName } from "./observabilityLabels";
 import type { TraceEventContent, TraceEventSummary } from "./observabilityTypes";
 
@@ -11,9 +11,14 @@ interface TraceEventInspectorProps {
   runId: string;
   event: TraceEventSummary | null;
   advancedEnabled: boolean;
+  recovered?: boolean;
+  resumed?: boolean;
+  modelCatalog?: Record<string, TraceModelDescriptor>;
   drawer?: boolean;
   onClose?: () => void;
 }
+
+const AUTO_LOAD_BODY_LIMIT = 200 * 1024;
 
 function eventFamily(eventType: string) {
   if (eventType === "model.request") return "请求";
@@ -28,6 +33,9 @@ export function TraceEventInspector({
   runId,
   event,
   advancedEnabled,
+  recovered = false,
+  resumed = false,
+  modelCatalog = {},
   drawer = false,
   onClose,
 }: TraceEventInspectorProps) {
@@ -42,15 +50,23 @@ export function TraceEventInspector({
     if (!event || !advancedEnabled || event.bodyState !== "available") return;
     const controller = new AbortController();
     setLoading(true);
-    void getTraceEventContent(
-      workspaceId,
-      runId,
-      event.eventId,
-      0,
-      controller.signal,
-    ).then((page) => {
-      setPages([page]);
-    }).catch((reason: unknown) => {
+    void (async () => {
+      const loadedPages: TraceEventContent[] = [];
+      let offset = 0;
+      do {
+        const page = await getTraceEventContent(
+          workspaceId,
+          runId,
+          event.eventId,
+          offset,
+          controller.signal,
+        );
+        loadedPages.push(page);
+        if (page.nextOffset === null || event.byteLength > AUTO_LOAD_BODY_LIMIT) break;
+        offset = page.nextOffset;
+      } while (!controller.signal.aborted);
+      if (!controller.signal.aborted) setPages(loadedPages);
+    })().catch((reason: unknown) => {
       if (!controller.signal.aborted) setError(reason);
     }).finally(() => {
       if (!controller.signal.aborted) setLoading(false);
@@ -101,7 +117,7 @@ export function TraceEventInspector({
       <header>
         <div>
           <span>{event ? eventFamily(event.eventType) : "事件正文"}</span>
-          <h2>{event ? friendlyEventName(event.eventType) : "选择一个事件"}</h2>
+          <h2>{event ? friendlyEventName(event.eventType, recovered, resumed) : "选择一个事件"}</h2>
           {event ? <small>{event.eventType}</small> : null}
         </div>
         {drawer && onClose ? (
@@ -121,8 +137,8 @@ export function TraceEventInspector({
             <section className="trace-event-inspector__failure">
               <AlertTriangle size={18} aria-hidden="true" />
               <div>
-                <strong>这一步没有完成</strong>
-                <p>下面是系统保存的错误记录，可用于确认失败位置或导出诊断。</p>
+                <strong>{recovered ? "这一步曾发生异常，后续已恢复" : "这一步没有完成"}</strong>
+                <p>{recovered ? "错误记录会作为历史诊断保留，不代表当前任务仍处于失败状态。" : "下面是系统保存的错误记录，可用于确认失败位置或导出诊断。"}</p>
               </div>
             </section>
           ) : null}
@@ -131,7 +147,9 @@ export function TraceEventInspector({
             <div><dt>正文大小</dt><dd>{event.byteLength.toLocaleString()} B</dd></div>
           </dl>
           <p className="trace-event-inspector__provider-boundary">
-            仅展示 Provider 实际返回的数据，不推测模型思维过程。
+            {event.eventType === "model.request"
+              ? "展示系统实际发送给模型的内容，包括消息、系统上下文与可用 Tool；敏感凭据已在写入时过滤。"
+              : "仅展示 Provider 实际返回的数据，不推测模型思维过程。"}
           </p>
 
           {event.bodyState !== "available" ? (
@@ -148,7 +166,7 @@ export function TraceEventInspector({
             </div>
           ) : null}
 
-          {event.bodyState === "available" && event.byteLength > 200 * 1024 ? (
+          {event.bodyState === "available" && event.byteLength > AUTO_LOAD_BODY_LIMIT ? (
             <p className="trace-event-inspector__size-warning">
               <AlertTriangle size={16} aria-hidden="true" />
               <span>
@@ -176,6 +194,7 @@ export function TraceEventInspector({
               content={content}
               eventType={event.eventType}
               complete={complete}
+              modelCatalog={modelCatalog}
             />
           ) : null}
 
@@ -186,7 +205,9 @@ export function TraceEventInspector({
               disabled={loadingMore}
               onClick={() => void loadMore()}
             >
-              {loadingMore ? "正在加载…" : "继续加载"}
+              {loadingMore
+                ? "正在加载…"
+                : `继续加载剩余正文（已加载 ${Math.min(nextOffset, event.byteLength).toLocaleString()} / ${event.byteLength.toLocaleString()} B）`}
             </button>
           ) : null}
 

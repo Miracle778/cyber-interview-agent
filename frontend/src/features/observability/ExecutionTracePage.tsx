@@ -12,10 +12,11 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation, useParams } from "react-router-dom";
+import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
+import { parseApiTimestamp } from "../../shared/time";
 import { TaskWorkspace, TaskWorkspacePane } from "../../shared/ui/TaskWorkspace";
 import type { WorkspaceConfig } from "../settings/settingsApi";
-import { getAgentDiagnosticsSettings } from "../settings/settingsApi";
+import { getAgentDiagnosticsSettings, listProviders } from "../settings/settingsApi";
 import {
   getObservabilityExecution,
   listObservabilityEvents,
@@ -35,17 +36,30 @@ import { TraceEventInspector } from "./TraceEventInspector";
 import { TraceExportDialog } from "./TraceExportDialog";
 import {
   friendlyOperationName,
+  executionStartPresentation,
+  failureEventWasRecovered,
   isFailureEventType,
+  operationWasRecovered,
   operationKindLabel,
   operationStatusLabel,
 } from "./observabilityLabels";
 import { executionBusinessDestination } from "./observabilityNavigation";
-import type { ExecutionSummary } from "./observabilityTypes";
+import type {
+  AgentDefinitionSnapshot,
+  ExecutionSummary,
+} from "./observabilityTypes";
 import "./observability.css";
 
 
 interface ExecutionTracePageProps {
   workspace: WorkspaceConfig | null;
+}
+
+const LIVE_TRACE_REFRESH_MS = 1_000;
+const LIVE_TRACE_STATUSES = new Set(["queued", "running"]);
+
+function isLiveTraceStatus(status: string | null | undefined) {
+  return Boolean(status && LIVE_TRACE_STATUSES.has(status));
 }
 
 function failureGuidance(execution: ExecutionSummary) {
@@ -76,43 +90,103 @@ function failureGuidance(execution: ExecutionSummary) {
 export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
   const { runId = "" } = useParams();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   const from = (location.state as { from?: unknown } | null)?.from;
-  const returnTo =
-    typeof from === "string" && from.startsWith("/agents")
-      ? from
-      : "/agents";
+  const requestedReturnTo = searchParams.get("returnTo");
+  const validReturnTo = (value: unknown): value is string => typeof value === "string" && (value.startsWith("/agents") || value.startsWith("/retrospectives"));
+  const returnTo = validReturnTo(requestedReturnTo) ? requestedReturnTo : validReturnTo(from) ? from : "/agents";
+  const returnLabel = returnTo.startsWith("/retrospectives") ? "返回面试复盘" : "返回运行中心";
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [mobileView, setMobileView] = useState<"process" | "detail">("process");
   const [exportOpen, setExportOpen] = useState(false);
   const [narrowScreen, setNarrowScreen] = useState(false);
+  const [liveNow, setLiveNow] = useState(() => Date.now());
   const defaultFailureSelectionRun = useRef<string | null>(null);
   const userSelectionRun = useRef<string | null>(null);
+  const previousExecutionStatus = useRef<string | null>(null);
   const executionQuery = useQuery({
     queryKey: ["agent-observability", "execution", workspace?.id, runId],
     enabled: Boolean(workspace && runId),
     queryFn: ({ signal }) =>
       getObservabilityExecution(workspace!.id, runId, signal),
+    refetchInterval: (query) =>
+      isLiveTraceStatus(query.state.data?.status)
+        ? LIVE_TRACE_REFRESH_MS
+        : false,
   });
   const operationsQuery = useQuery({
     queryKey: ["agent-observability", "operations", workspace?.id, runId],
     enabled: Boolean(workspace && runId),
     queryFn: ({ signal }) =>
       listObservabilityOperations(workspace!.id, runId, signal),
+    refetchInterval: () =>
+      isLiveTraceStatus(executionQuery.data?.status)
+        ? LIVE_TRACE_REFRESH_MS
+        : false,
   });
   const eventsQuery = useQuery({
     queryKey: ["agent-observability", "events", workspace?.id, runId],
     enabled: Boolean(workspace && runId),
     queryFn: ({ signal }) =>
       listObservabilityEvents(workspace!.id, runId, signal),
+    refetchInterval: () =>
+      isLiveTraceStatus(executionQuery.data?.status)
+        ? LIVE_TRACE_REFRESH_MS
+        : false,
   });
   const diagnosticsQuery = useQuery({
     queryKey: ["agent-diagnostics-settings"],
     enabled: Boolean(workspace),
     queryFn: getAgentDiagnosticsSettings,
   });
+  const providersQuery = useQuery({
+    queryKey: ["providers"],
+    enabled: Boolean(workspace && diagnosticsQuery.data?.advancedEnabled),
+    queryFn: listProviders,
+  });
   const operations = operationsQuery.data ?? [];
   const events = eventsQuery.data ?? [];
+  const modelCatalog = useMemo(
+    () => Object.fromEntries(
+      (providersQuery.data ?? []).flatMap((provider) =>
+        provider.models.map((model) => [
+          model.id,
+          {
+            displayName: model.displayName,
+            modelId: model.modelId,
+            providerName: provider.name,
+          },
+        ]),
+      ),
+    ),
+    [providersQuery.data],
+  );
+
+  useEffect(() => {
+    const status = executionQuery.data?.status ?? null;
+    const previousStatus = previousExecutionStatus.current;
+    previousExecutionStatus.current = status;
+    if (
+      isLiveTraceStatus(previousStatus)
+      && status
+      && !isLiveTraceStatus(status)
+    ) {
+      void operationsQuery.refetch();
+      void eventsQuery.refetch();
+    }
+  }, [
+    eventsQuery.refetch,
+    executionQuery.data?.status,
+    operationsQuery.refetch,
+  ]);
+
+  useEffect(() => {
+    if (!isLiveTraceStatus(executionQuery.data?.status)) return;
+    setLiveNow(Date.now());
+    const timer = window.setInterval(() => setLiveNow(Date.now()), LIVE_TRACE_REFRESH_MS);
+    return () => window.clearInterval(timer);
+  }, [executionQuery.data?.status, runId]);
 
   useEffect(() => {
     if (selectedId && operations.some((item) => item.id === selectedId)) return;
@@ -154,6 +228,20 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
     () => events.find((event) => event.eventId === selectedEventId) ?? null,
     [events, selectedEventId],
   );
+  const selectedRecovered = useMemo(
+    () => selectedEvent
+      ? failureEventWasRecovered(selectedEvent, events)
+      : selected
+        ? operationWasRecovered(selected, events, operations)
+        : false,
+    [events, operations, selected, selectedEvent],
+  );
+  const selectedResume = useMemo(
+    () => selectedEvent
+      ? executionStartPresentation(selectedEvent, events) === "recovery"
+      : false,
+    [events, selectedEvent],
+  );
   const linearFallback =
     operations.length > 1 &&
     operations.every((operation) => operation.parentOperationId === null);
@@ -193,13 +281,19 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
               ? error.message
               : "无法读取运行详情"}
           </strong>
-          <Link to={returnTo}>返回运行中心</Link>
+          <Link to={returnTo}>{returnLabel}</Link>
         </div>
       </section>
     );
   }
 
   const execution = executionQuery.data;
+  const startedAtMs = execution.startedAt
+    ? parseApiTimestamp(execution.startedAt).getTime()
+    : Number.NaN;
+  const displayedLatencyMs = isLiveTraceStatus(execution.status) && Number.isFinite(startedAtMs)
+    ? Math.max(execution.latencyMs ?? 0, liveNow - startedAtMs)
+    : execution.latencyMs;
   const businessDestination = executionBusinessDestination(execution, returnTo);
   const needsRecovery = ["failed", "partial_success"].includes(execution.status);
   const guidance = needsRecovery ? failureGuidance(execution) : null;
@@ -214,7 +308,7 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
   return (
     <section className="execution-trace-page" aria-label="高级运行详情">
       <header className="execution-trace__header">
-        <Link to={returnTo} aria-label="返回运行中心">
+        <Link to={returnTo} aria-label={returnLabel}>
           <ArrowLeft size={18} aria-hidden="true" />
         </Link>
         <div>
@@ -296,11 +390,13 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
       ) : null}
 
       <ul className="execution-trace__metrics" aria-label="运行指标">
-        <TraceMetric icon={<Clock3 />} label="总耗时" value={formatDuration(execution.latencyMs)} />
+        <TraceMetric icon={<Clock3 />} label="总耗时" value={formatDuration(displayedLatencyMs)} />
         <TraceMetric icon={<Cpu />} label="模型调用" value={String(execution.modelCallCount)} />
         <TraceMetric icon={<Database />} label="Token" value={formatCompactNumber(execution.totalTokens)} />
         <TraceMetric icon={<RotateCcw />} label="重试" value={String(execution.retryCount)} />
       </ul>
+
+      <DefinitionSnapshotDisclosure snapshot={execution.definitionSnapshot} />
 
       <nav className="execution-trace__mobile-nav" aria-label="详情视图">
         <button
@@ -373,6 +469,9 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
               runId={runId}
               event={selectedEvent}
               advancedEnabled={diagnosticsQuery.data?.advancedEnabled ?? false}
+              recovered={selectedRecovered}
+              resumed={selectedResume}
+              modelCatalog={modelCatalog}
               drawer={narrowScreen}
               onClose={() => {
                 setSelectedEventId(null);
@@ -389,7 +488,11 @@ export function ExecutionTracePage({ workspace }: ExecutionTracePageProps) {
                 <div>
                   <dt>状态</dt>
                   <dd>
-                    {operationStatusLabel(selected.status, execution.status)
+                    {operationStatusLabel(
+                      selected.status,
+                      execution.status,
+                      selectedRecovered,
+                    )
                       ?? statusLabel(selected.status)}
                   </dd>
                 </div>
@@ -440,4 +543,89 @@ function TraceMetric({
       <div><small>{label}</small><strong>{value}</strong></div>
     </li>
   );
+}
+
+function DefinitionSnapshotDisclosure({
+  snapshot,
+}: {
+  snapshot: AgentDefinitionSnapshot;
+}) {
+  return (
+    <details className="execution-trace__definition">
+      <summary>
+        <span>本次运行定义</span>
+        <small>{snapshot.legacy ? "历史兼容" : "已冻结"}</small>
+      </summary>
+      {snapshot.legacy ? (
+        <p>历史运行未保存定义快照，不使用当前配置反推。</p>
+      ) : (
+        <dl>
+          <div>
+            <dt>Agent</dt>
+            <dd>{snapshot.agentId} · Definition v{snapshot.agentDefinitionVersion}</dd>
+          </div>
+          <div>
+            <dt>Graph</dt>
+            <dd>Graph v{snapshot.graphVersion}</dd>
+          </div>
+          <div>
+            <dt>Builder</dt>
+            <dd>{snapshot.builderKey ?? "未声明"}</dd>
+          </div>
+          <div>
+            <dt>输入 / 输出 Schema</dt>
+            <dd>
+              v{snapshot.inputSchemaVersion ?? "?"}
+              {" / "}
+              v{snapshot.outputSchemaVersion ?? "?"}
+            </dd>
+          </div>
+          <div>
+            <dt>Prompt Schema</dt>
+            <dd>{formatPromptVersions(snapshot.promptSchemaVersions)}</dd>
+          </div>
+          <div>
+            <dt>评估标准</dt>
+            <dd>
+              {snapshot.evalPackId && snapshot.evalPackVersion
+                ? `${snapshot.evalPackId} · v${snapshot.evalPackVersion}`
+                : "未绑定"}
+            </dd>
+          </div>
+          <div>
+            <dt>Trace 策略</dt>
+            <dd>{snapshot.tracePolicyId ?? "未声明"}</dd>
+          </div>
+          <div>
+            <dt>上下文 / 重试</dt>
+            <dd>
+              {snapshot.contextPolicyId ?? "未声明"}
+              {" / "}
+              {snapshot.retryPolicyId ?? "未声明"}
+            </dd>
+          </div>
+          <div>
+            <dt>Toolset</dt>
+            <dd>
+              {snapshot.allowedTools.length} 个 Tool · {shortDigest(snapshot.toolsetDigest)}
+            </dd>
+          </div>
+          <div>
+            <dt>模型绑定</dt>
+            <dd>{shortDigest(snapshot.modelBindingDigest)}</dd>
+          </div>
+        </dl>
+      )}
+    </details>
+  );
+}
+
+function formatPromptVersions(versions: Record<string, string>) {
+  const entries = Object.entries(versions);
+  if (entries.length === 0) return "未版本化";
+  return entries.map(([name, version]) => `${name} ${version}`).join(" · ");
+}
+
+function shortDigest(value: string | null) {
+  return value ? value.slice(0, 10) : "未记录";
 }
