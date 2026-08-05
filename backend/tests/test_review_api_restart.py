@@ -11,6 +11,9 @@ from app.review.models import MasteryProjection, QuestionSnapshot, ReviewRoundSe
 from tests.test_review_api_v2 import _graph_factory
 
 
+ASYNC_TEST_TIMEOUT_SECONDS = 5.0
+
+
 class _BlockingClassifier:
     def __init__(self, entered: asyncio.Event) -> None:
         self.entered = entered
@@ -714,7 +717,9 @@ async def test_interrupted_curation_command_requires_explicit_retry(
         provider_model_id=None,
         reasoning_effort="none",
     )
-    await asyncio.wait_for(entered.wait(), timeout=0.2)
+    await asyncio.wait_for(
+        entered.wait(), timeout=ASYNC_TEST_TIMEOUT_SECONDS
+    )
     await first.close()
 
     second = build()

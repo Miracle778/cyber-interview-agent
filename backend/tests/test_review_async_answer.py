@@ -18,6 +18,9 @@ from app.graphs.review_round import create_review_round_graph
 from app.review.models import MasteryProjection, QuestionSnapshot, ReviewRoundSettings
 
 
+ASYNC_TEST_TIMEOUT_SECONDS = 5.0
+
+
 class BlockingRoundAgents:
     def __init__(self) -> None:
         self.started = asyncio.Event()
@@ -203,9 +206,13 @@ async def test_answer_returns_202_before_evaluation_and_projects_safe_events(
                         "value": "my private answer",
                     },
                 ),
-                timeout=0.25,
+                timeout=ASYNC_TEST_TIMEOUT_SECONDS,
             )
             assert response.status_code == 202, response.text
+            # The evaluation is deliberately blocked. Receiving the HTTP receipt
+            # while it is still blocked proves the endpoint does not await the
+            # model; the timeout above is only a deadlock guard for slow CI hosts.
+            assert not agents.release.is_set()
             receipt = response.json()
             assert receipt == {
                 "receiptId": receipt["receiptId"],
@@ -216,7 +223,9 @@ async def test_answer_returns_202_before_evaluation_and_projects_safe_events(
                 "acceptedAt": receipt["acceptedAt"],
                 "version": 1,
             }
-            await asyncio.wait_for(agents.started.wait(), timeout=0.25)
+            await asyncio.wait_for(
+                agents.started.wait(), timeout=ASYNC_TEST_TIMEOUT_SECONDS
+            )
             immediate = (await client.get(
                 "/api/review/rounds/round-async"
             )).json()
@@ -286,7 +295,9 @@ async def test_running_evaluation_can_be_interrupted_and_retried(
                 },
             )
             assert answer.status_code == 202
-            await asyncio.wait_for(agents.started.wait(), timeout=0.25)
+            await asyncio.wait_for(
+                agents.started.wait(), timeout=ASYNC_TEST_TIMEOUT_SECONDS
+            )
 
             interrupted = await client.post(
                 "/api/review/rounds/round-interrupt/interrupt-evaluation",
@@ -355,7 +366,9 @@ async def test_running_evaluation_can_be_skipped_without_late_model_write(
                 },
             )
             assert answer.status_code == 202
-            await asyncio.wait_for(agents.started.wait(), timeout=0.25)
+            await asyncio.wait_for(
+                agents.started.wait(), timeout=ASYNC_TEST_TIMEOUT_SECONDS
+            )
 
             skipped = await client.post(
                 "/api/review/rounds/round-skip-evaluation/skip",
