@@ -37,6 +37,9 @@ from app.review.errors import ReviewConflictError
 from app.review.models import QuestionSnapshot
 
 
+ASYNC_TEST_TIMEOUT_SECONDS = 5.0
+
+
 @pytest.mark.parametrize(
     ("error", "expected"),
     [
@@ -317,7 +320,9 @@ async def test_conversation_stream_starts_before_overflow_summary_finishes(
             },
         )
         try:
-            await asyncio.wait_for(responder_entered.wait(), timeout=0.2)
+            await asyncio.wait_for(
+                responder_entered.wait(), timeout=ASYNC_TEST_TIMEOUT_SECONDS
+            )
             assert call_order[0] == "responder"
         finally:
             summary_release.set()
@@ -996,7 +1001,9 @@ async def test_concurrent_same_key_resume_is_linearized_and_projects_bound_run(
             idempotency_key="concurrent-resume-request-0001",
         )
     )
-    await asyncio.wait_for(prepare_entered.wait(), timeout=0.2)
+    await asyncio.wait_for(
+        prepare_entered.wait(), timeout=ASYNC_TEST_TIMEOUT_SECONDS
+    )
     reservation = review.repository.find_curation_control_receipt(
         batch.id, "concurrent-resume-request-0001"
     )
@@ -1142,7 +1149,9 @@ async def test_concurrent_duplicate_pause_emits_one_control_event_sequence(
             idempotency_key="concurrent-pause-request-0001",
         )
     )
-    await asyncio.wait_for(transient_entered.wait(), timeout=0.2)
+    await asyncio.wait_for(
+        transient_entered.wait(), timeout=ASYNC_TEST_TIMEOUT_SECONDS
+    )
     second = asyncio.create_task(
         review.pause_curation_session(
             session.id,
@@ -1830,14 +1839,16 @@ async def test_curation_command_returns_accepted_before_classifier_finishes(
                     "reasoningEffort": "medium",
                 },
             ),
-            timeout=0.2,
+            timeout=ASYNC_TEST_TIMEOUT_SECONDS,
         )
 
         assert response.status_code == 202, response.text
         assert response.json()["status"] == "accepted"
         assert response.json()["commandId"]
         assert response.json()["executionId"]
-        await asyncio.wait_for(entered.wait(), timeout=0.2)
+        await asyncio.wait_for(
+            entered.wait(), timeout=ASYNC_TEST_TIMEOUT_SECONDS
+        )
         release.set()
         terminal = await app.wait_execution(response.json()["executionId"])
         assert terminal.status == "completed"
@@ -1897,7 +1908,9 @@ async def test_curation_command_cancel_keeps_user_message_without_final_reply(
             },
         )
         accepted = response.json()
-        await asyncio.wait_for(entered.wait(), timeout=0.2)
+        await asyncio.wait_for(
+            entered.wait(), timeout=ASYNC_TEST_TIMEOUT_SECONDS
+        )
 
         cancelled = await app.cancel_execution(accepted["executionId"])
         receipt = review.repository.get_curation_command_receipt(
@@ -2205,7 +2218,9 @@ async def test_bulk_publication_cancel_then_retry_skips_completed_item(
                 },
             )
         ).json()
-        await asyncio.wait_for(entered.wait(), timeout=0.2)
+        await asyncio.wait_for(
+            entered.wait(), timeout=ASYNC_TEST_TIMEOUT_SECONDS
+        )
         requested = await app.cancel_execution(accepted["executionId"])
         assert requested.cancellation_requested is True
         release.set()

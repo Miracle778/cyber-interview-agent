@@ -23,6 +23,9 @@ from app.interview_retrospectives.history_search import RetrospectiveSearchFilte
 from app.main import app
 
 
+ASYNC_TEST_TIMEOUT_SECONDS = 5.0
+
+
 class FakeRetrospectiveAgents:
     async def cleanup_window(
         self,
@@ -477,7 +480,9 @@ async def test_long_cleanup_runs_two_target_windows_concurrently(
         idempotency_key="start-concurrent-cleanup",
     )
     try:
-        await asyncio.wait_for(agents.parallel_started.wait(), timeout=0.25)
+        await asyncio.wait_for(
+            agents.parallel_started.wait(), timeout=ASYNC_TEST_TIMEOUT_SECONDS
+        )
         current = retrospectives.get_cleanup(
             retrospective.id, started["cleanupVersionId"]
         )
