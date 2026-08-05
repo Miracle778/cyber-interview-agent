@@ -4222,6 +4222,9 @@ class ReviewRepository:
         expected_version: int,
         current_index: int,
         status: RoundStatus,
+        next_input_ordinal: int | None,
+        next_input_prompt: str | None,
+        next_input_version: int | None,
     ) -> ReviewRoundRecord:
         with self._transaction():
             existing = self._connection.execute(
@@ -4270,6 +4273,39 @@ class ReviewRepository:
                 raise ReviewConflictError(
                     f"round {round_id!r} changed before skip"
                 )
+            next_input_values = (
+                next_input_ordinal,
+                next_input_prompt,
+                next_input_version,
+            )
+            if status == "waiting_for_input":
+                if any(value is None for value in next_input_values):
+                    raise ValueError("next input is required after skipping a question")
+                existing_input = self._connection.execute(
+                    "SELECT id, prompt FROM review_input_requests "
+                    "WHERE round_id = ? AND ordinal = ? AND kind = 'answer' "
+                    "AND version = ?",
+                    (round_id, next_input_ordinal, next_input_version),
+                ).fetchone()
+                if existing_input is None:
+                    self._connection.execute(
+                        "INSERT INTO review_input_requests "
+                        "(id, round_id, ordinal, kind, prompt, version) "
+                        "VALUES (?, ?, ?, 'answer', ?, ?)",
+                        (
+                            str(uuid4()),
+                            round_id,
+                            next_input_ordinal,
+                            next_input_prompt,
+                            next_input_version,
+                        ),
+                    )
+                elif existing_input["prompt"] != next_input_prompt:
+                    raise ReviewConflictError(
+                        "next input request identity has different prompt"
+                    )
+            elif any(value is not None for value in next_input_values):
+                raise ValueError("terminal skip cannot create another input")
             self._connection.execute(
                 "INSERT INTO review_round_control_receipts "
                 "(id, round_id, operation, idempotency_key) "

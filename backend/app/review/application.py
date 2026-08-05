@@ -3150,6 +3150,11 @@ class ReviewApplication:
             if next_index >= len(round_record.question_snapshots)
             else "waiting_for_input"
         )
+        next_question = (
+            None
+            if next_status == "report_pending"
+            else round_record.question_snapshots[next_index]
+        )
         self.repository.skip_current_attempt(
             round_id,
             attempt_id=attempt.id,
@@ -3157,6 +3162,11 @@ class ReviewApplication:
             expected_version=round_record.version,
             current_index=next_index,
             status=next_status,
+            next_input_ordinal=(None if next_question is None else next_index + 1),
+            next_input_prompt=(
+                None if next_question is None else next_question.question_text
+            ),
+            next_input_version=(None if next_question is None else next_index * 2 + 1),
         )
         await self.executions.resume_review_after_skip(
             execution.id,
