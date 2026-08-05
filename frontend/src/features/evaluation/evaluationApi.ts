@@ -130,9 +130,7 @@ export async function runRegressionCase(
   baselineImplementationId: string,
   candidateImplementationId: string,
 ): Promise<RegressionRun> {
-  const idempotencyKey =
-    globalThis.crypto?.randomUUID?.() ??
-    `agent-regression-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const idempotencyKey = createOperationId("agent-regression");
   const payload = await apiPost<{
     caseId: string;
     baselineImplementationId: string;
