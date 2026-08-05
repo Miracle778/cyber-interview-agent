@@ -1,4 +1,5 @@
 import asyncio
+import time
 from pathlib import Path
 
 import pytest
@@ -41,14 +42,15 @@ def _create_pending(client: TestClient, *, summary: str = "original"):
         f"/api/agent/sessions/{session['id']}/executions",
         json={"input": {"summary": summary, "secret": "do-not-return"}},
     ).json()
-    for _ in range(50):
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
         listed = client.get(
             "/api/agent/actions",
             params={"workspaceId": "w1", "status": "pending"},
         )
         if listed.status_code == 200 and listed.json():
             return session, run, listed.json()[0]
-        asyncio.run(asyncio.sleep(0.01))
+        time.sleep(0.02)
     raise AssertionError("pending action did not appear")
 
 
@@ -94,11 +96,12 @@ def test_edit_approve_and_duplicate_key_return_same_result(hitl_client) -> None:
     assert first.json() == second.json()
     assert first.json()["status"] == "edited_and_approved"
     assert first.json()["preview"] == {"summary": "edited"}
-    for _ in range(50):
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
         session = client.get(f"/api/agent/sessions/{first.json()['sessionId']}").json()
         if session["latestExecution"]["status"] == "completed":
             break
-        asyncio.run(asyncio.sleep(0.01))
+        time.sleep(0.02)
     assert session["latestExecution"]["id"] == run["id"]
     assert session["latestExecution"]["resumeCount"] == 1
 
