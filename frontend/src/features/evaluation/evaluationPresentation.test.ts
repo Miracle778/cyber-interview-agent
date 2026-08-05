@@ -70,7 +70,7 @@ describe("evaluation presentation semantics", () => {
 
   it("uses readable fallbacks for unknown identifiers", () => {
     expect(evaluationPackLabel("new-agent_pack.v3")).toBe("New Agent Pack");
-    expect(dimensionLabel("novel_quality_signal")).toBe("Novel Quality Signal");
+    expect(dimensionLabel("novel_quality_signal")).toBe("其他检查项");
   });
 
   it("derives display tones without pretending they are backend gates", () => {

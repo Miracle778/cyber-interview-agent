@@ -4219,6 +4219,9 @@ class ReviewRepository:
         *,
         attempt_id: str,
         idempotency_key: str,
+        expected_version: int,
+        current_index: int,
+        status: RoundStatus,
     ) -> ReviewRoundRecord:
         with self._transaction():
             existing = self._connection.execute(
@@ -4257,6 +4260,16 @@ class ReviewRepository:
                 "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (attempt_id,),
             )
+            cursor = self._connection.execute(
+                "UPDATE review_rounds SET current_index = ?, status = ?, "
+                "version = version + 1, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND version = ?",
+                (current_index, status, round_id, expected_version),
+            )
+            if cursor.rowcount != 1:
+                raise ReviewConflictError(
+                    f"round {round_id!r} changed before skip"
+                )
             self._connection.execute(
                 "INSERT INTO review_round_control_receipts "
                 "(id, round_id, operation, idempotency_key) "

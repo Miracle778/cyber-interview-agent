@@ -3144,10 +3144,19 @@ class ReviewApplication:
             await self.executions.interrupt_review_evaluation(execution.id)
         elif execution.status != "interrupted":
             raise ReviewConflictError("review evaluation cannot be skipped")
+        next_index = round_record.current_index + 1
+        next_status = (
+            "report_pending"
+            if next_index >= len(round_record.question_snapshots)
+            else "waiting_for_input"
+        )
         self.repository.skip_current_attempt(
             round_id,
             attempt_id=attempt.id,
             idempotency_key=idempotency_key,
+            expected_version=round_record.version,
+            current_index=next_index,
+            status=next_status,
         )
         await self.executions.resume_review_after_skip(
             execution.id,
