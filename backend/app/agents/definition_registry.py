@@ -48,6 +48,7 @@ class AgentDefinition:
     trace_policy_id: str = "trace-ledger.v3"
     system: bool = False
     run_center_visible: bool = True
+    run_center_default_visible: bool = False
     lifecycle: AgentLifecycle = "active"
     user_creatable: bool = True
     aliases: tuple[str, ...] = ()
@@ -231,6 +232,7 @@ def _definition(
     trace_policy_id: str = "trace-ledger.v3",
     system: bool = False,
     run_center_visible: bool = True,
+    run_center_default_visible: bool = False,
     lifecycle: AgentLifecycle = "active",
     user_creatable: bool | None = None,
     aliases: tuple[str, ...] = (),
@@ -255,6 +257,7 @@ def _definition(
         trace_policy_id=trace_policy_id,
         system=system,
         run_center_visible=run_center_visible,
+        run_center_default_visible=run_center_default_visible,
         lifecycle=lifecycle,
         user_creatable=(not system if user_creatable is None else user_creatable),
         aliases=aliases,
@@ -276,6 +279,7 @@ _DEFINITIONS = (
         eval_pack_id="question-curation.v2",
         child_components=(
             "question_discovery",
+            "question_coverage_audit",
             "question_enrichment",
             "question_revision",
             "curation_command_classifier",
@@ -299,6 +303,7 @@ _DEFINITIONS = (
         eval_pack_id="question-revision.v2",
         child_components=(
             "question_discovery",
+            "question_coverage_audit",
             "question_enrichment",
             "question_revision",
             "context_summarization",
@@ -524,6 +529,7 @@ _DEFINITIONS = (
         ),
         allowed_scopes=("profile.materials", "knowledge.active"),
         system=True,
+        run_center_default_visible=True,
     ),
     _definition(
         "profile.assess",
@@ -559,6 +565,7 @@ _DEFINITIONS = (
         ),
         allowed_scopes=("profile.materials", "knowledge.active"),
         system=True,
+        run_center_default_visible=True,
     ),
     _definition(
         "quality.evaluate",
@@ -573,7 +580,7 @@ _DEFINITIONS = (
         ),
         model_roles=("answer_evaluation",),
         system=True,
-        run_center_visible=False,
+        run_center_default_visible=True,
     ),
     _definition(
         "knowledge.publish",

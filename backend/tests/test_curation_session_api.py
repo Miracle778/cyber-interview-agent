@@ -26,6 +26,7 @@ from app.knowledge.drafts import (
 from app.graphs.publication import create_publication_graph
 from app.graphs.question_curation import create_question_curation_graph
 from app.agents.question_curation_contracts import (
+    CoverageAuditChunk,
     QuestionCandidate,
     QuestionCandidateChunk,
     QuestionSeedChunk,
@@ -576,6 +577,9 @@ async def test_six_item_curation_preserves_partial_failure_and_restart_recovery(
 
         async def discover(self, *_args, **_kwargs) -> QuestionSeedChunk:
             return QuestionSeedChunk(seeds=[])
+
+        async def audit(self, *_args, **_kwargs) -> CoverageAuditChunk:
+            return CoverageAuditChunk(seeds=[])
 
         async def enrich(
             self,
@@ -2741,6 +2745,76 @@ async def test_question_delete_bulk_receipt_and_restore_are_consistent(
             "deleted",
             "failed",
         ]
+
+        restored_all = await client.post(
+            "/api/review/question-candidates/recycle-bin/restore-all",
+            json={"workspaceId": "w1"},
+        )
+        assert restored_all.status_code == 200, restored_all.text
+        assert restored_all.json() == {"affectedCount": 1}
+        assert len((await client.get(
+            "/api/review/question-candidates?workspaceId=w1"
+        )).json()) == 1
+
+        deleted_again = await client.post(
+            f"/api/review/question-candidates/{candidate['id']}/delete",
+            json={
+                "idempotencyKey": "delete-question-again-1",
+                "expectedVersion": candidate["draft"]["version"],
+                "reason": "再次删除",
+            },
+        )
+        assert deleted_again.status_code == 200, deleted_again.text
+        emptied = await client.delete(
+            "/api/review/question-candidates/recycle-bin",
+            params={"workspaceId": "w1"},
+        )
+        assert emptied.status_code == 200, emptied.text
+        assert emptied.json() == {"affectedCount": 1}
+        assert (await client.get(
+            "/api/review/question-candidates?workspaceId=w1&deletedOnly=true"
+        )).json() == []
+
+
+@pytest.mark.asyncio
+async def test_permanently_delete_single_question_requires_recycle_bin_state(
+    api, application
+) -> None:
+    app, source_ids = application
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        created = (await client.post(
+            "/api/review/curation-sessions",
+            json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
+        )).json()
+        await app.wait_execution(created["executionId"])
+        candidate = (await client.get(
+            "/api/review/question-candidates?workspaceId=w1"
+        )).json()[0]
+
+        with pytest.raises(
+            ReviewConflictError, match="must be in recycle bin"
+        ):
+            await client.delete(
+                f"/api/review/question-candidates/{candidate['id']}/permanent"
+            )
+
+        await client.post(
+            f"/api/review/question-candidates/{candidate['id']}/delete",
+            json={
+                "idempotencyKey": "delete-before-permanent-1",
+                "expectedVersion": candidate["draft"]["version"],
+                "reason": "永久删除测试",
+            },
+        )
+        removed = await client.delete(
+            f"/api/review/question-candidates/{candidate['id']}/permanent"
+        )
+        assert removed.status_code == 204
+        assert (await client.get(
+            "/api/review/question-candidates?workspaceId=w1&deletedOnly=true"
+        )).json() == []
 
 
 @pytest.mark.asyncio

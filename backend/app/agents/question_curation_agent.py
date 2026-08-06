@@ -14,18 +14,23 @@ from app.agents.agent_model_resolver import ModelInvocationPolicy
 from app.agents.agent_protocols import AgentRunnable
 from app.agents.context import AgentContext
 from app.agents.prompts.question_curation_prompts import (
+    QUESTION_COVERAGE_AUDIT_PROMPT,
     QUESTION_DISCOVERY_PROMPT,
     QUESTION_ENRICHMENT_PROMPT,
     QUESTION_REVISION_PROMPT,
+    render_question_coverage_audit_input,
     render_question_discovery_input,
     render_question_enrichment_input,
     render_question_revision_input,
 )
 from app.agents.question_curation_contracts import (
+    CoverageAuditChunk,
+    ProviderCoverageAuditChunk,
     ProviderQuestionCandidateChunk,
     ProviderQuestionSeedChunk,
     QuestionSeed,
     QuestionSeedChunk,
+    normalize_provider_coverage_audit_chunk,
     normalize_provider_seed_chunk,
 )
 from app.review.curation_sections import SourceSection
@@ -33,14 +38,19 @@ from app.review.models import CurationSeedTaskRecord
 
 
 _DISCOVERY_POLICY = ModelInvocationPolicy(2_048, 90, 1)
+_COVERAGE_AUDIT_POLICY = ModelInvocationPolicy(2_048, 90, 1)
 _ENRICHMENT_POLICY = ModelInvocationPolicy(4_096, 180, 1)
 _REVISION_POLICY = ModelInvocationPolicy(4_096, 180, 0)
 _MARKDOWN_HEADING_ONLY = re.compile(r"^\s{0,3}#{1,6}\s+\S.*$")
 _BOLD_HEADING_ONLY = re.compile(r"^\s*(?:\*\*|__)\S.+(?:\*\*|__)\s*$")
 _EXPLICIT_ZERO_QUESTION_PATTERNS = (
     re.compile(r"未(?:发现|找到|识别出|提取出).{0,40}(?:面试题|候选题|题目|问题)"),
-    re.compile(r"(?:材料|片段|内容).{0,30}(?:未包含|不包含|没有).{0,30}(?:面试题|候选题|题目|问题)"),
-    re.compile(r"没有.{0,30}(?:可识别|可提取|适合生成).{0,20}(?:面试题|候选题|题目|问题)"),
+    re.compile(
+        r"(?:材料|片段|内容).{0,30}(?:未包含|不包含|没有).{0,30}(?:面试题|候选题|题目|问题)"
+    ),
+    re.compile(
+        r"没有.{0,30}(?:可识别|可提取|适合生成).{0,20}(?:面试题|候选题|题目|问题)"
+    ),
     re.compile(r"\bno\s+(?:interview\s+)?questions?\b", re.IGNORECASE),
     re.compile(r"\bdoes\s+not\s+contain.{0,30}questions?\b", re.IGNORECASE),
 )
@@ -69,6 +79,7 @@ class QuestionCurationAgents:
     discovery: AgentRunnable
     enrichment: AgentRunnable
     revision: AgentRunnable
+    coverage_audit: AgentRunnable | None = None
 
     @classmethod
     def create(
@@ -126,6 +137,19 @@ class QuestionCurationAgents:
                 component_id="question_revision",
                 **common,
             ),
+            coverage_audit=factory.create(
+                AgentSpec(
+                    role="question_generation",
+                    execution_name="question_coverage_audit",
+                    prompt=QUESTION_COVERAGE_AUDIT_PROMPT,
+                    middleware=middleware,
+                    response_format=ProviderCoverageAuditChunk,
+                    structured_output_handle_errors=False,
+                    invocation_policy=_COVERAGE_AUDIT_POLICY,
+                ),
+                component_id="question_coverage_audit",
+                **common,
+            ),
         )
 
     async def discover(
@@ -139,7 +163,11 @@ class QuestionCurationAgents:
         if all(_heading_only(section.text) for section in sections):
             return QuestionSeedChunk(seeds=[])
         result = await self.discovery.ainvoke(
-            {"messages": [HumanMessage(content=render_question_discovery_input(sections))]},
+            {
+                "messages": [
+                    HumanMessage(content=render_question_discovery_input(sections))
+                ]
+            },
             isolated_thread_config(
                 config, context, f"question_discovery:{context.run_id}:{unit_index}"
             ),
@@ -160,6 +188,65 @@ class QuestionCurationAgents:
             seeds.append(seed)
         return chunk.model_copy(update={"seeds": seeds})
 
+    async def audit(
+        self,
+        sections: Sequence[SourceSection],
+        *,
+        discovered_seeds: Sequence[QuestionSeed],
+        context: AgentContext,
+        config: dict[str, Any],
+        unit_index: int,
+    ) -> CoverageAuditChunk:
+        runnable = self.coverage_audit or self.discovery
+        result = await runnable.ainvoke(
+            {
+                "messages": [
+                    HumanMessage(
+                        content=render_question_coverage_audit_input(
+                            sections, discovered_seeds=discovered_seeds
+                        )
+                    )
+                ]
+            },
+            isolated_thread_config(
+                config,
+                context,
+                f"question_coverage_audit:{context.run_id}:{unit_index}",
+            ),
+            context=context,
+        )
+        chunk = normalize_provider_coverage_audit_chunk(_discovery_structured(result))
+        allowed = {section.ref: section.source_id for section in sections}
+        seen_seeds: set[tuple[str, str]] = set()
+        seeds = []
+        for seed in chunk.seeds:
+            valid_refs = [ref for ref in seed.source_refs if ref in allowed]
+            if not valid_refs:
+                continue
+            primary = seed.source_ref if seed.source_ref in allowed else valid_refs[0]
+            source_id = allowed[primary]
+            bounded_refs = [
+                primary,
+                *(
+                    ref
+                    for ref in valid_refs
+                    if ref != primary and allowed[ref] == source_id
+                ),
+            ]
+            seed_key = (seed.question_text.casefold(), primary)
+            if seed_key in seen_seeds:
+                continue
+            seen_seeds.add(seed_key)
+            seeds.append(
+                seed.model_copy(
+                    update={
+                        "source_ref": primary,
+                        "source_refs": bounded_refs,
+                    }
+                )
+            )
+        return chunk.model_copy(update={"seeds": seeds})
+
     async def enrich(
         self,
         seeds: Sequence[QuestionSeed | CurationSeedTaskRecord],
@@ -171,9 +258,7 @@ class QuestionCurationAgents:
         unit_index: int,
     ) -> ProviderQuestionCandidateChunk:
         allowed = {section.ref: section.source_id for section in sections}
-        seed_refs = {
-            _seed_primary_ref(seed): tuple(seed.source_refs) for seed in seeds
-        }
+        seed_refs = {_seed_primary_ref(seed): tuple(seed.source_refs) for seed in seeds}
         for seed in seeds:
             if any(ref not in allowed for ref in seed.source_refs):
                 raise ValueError("question enrichment received an unknown source ref")
@@ -181,9 +266,13 @@ class QuestionCurationAgents:
                 raise ValueError("question enrichment received cross-source refs")
         result = await self.enrichment.ainvoke(
             {
-                "messages": [HumanMessage(content=render_question_enrichment_input(
-                    seeds, sections=sections, known_questions=known_questions
-                ))]
+                "messages": [
+                    HumanMessage(
+                        content=render_question_enrichment_input(
+                            seeds, sections=sections, known_questions=known_questions
+                        )
+                    )
+                ]
             },
             isolated_thread_config(
                 config, context, f"question_enrichment:{context.run_id}:{unit_index}"
@@ -205,9 +294,17 @@ class QuestionCurationAgents:
         config: dict[str, Any],
     ) -> ProviderQuestionCandidateChunk:
         result = await self.revision.ainvoke(
-            {"messages": [HumanMessage(content=render_question_revision_input(
-                source_excerpts, rewrite_feedback=rewrite_feedback, seed=seed
-            ))]},
+            {
+                "messages": [
+                    HumanMessage(
+                        content=render_question_revision_input(
+                            source_excerpts,
+                            rewrite_feedback=rewrite_feedback,
+                            seed=seed,
+                        )
+                    )
+                ]
+            },
             isolated_thread_config(
                 config, context, f"question_revision:{context.run_id}"
             ),
@@ -300,14 +397,12 @@ def _heading_only(text: str) -> bool:
         return True
     if len(lines) > 1:
         return all(
-            _MARKDOWN_HEADING_ONLY.fullmatch(line)
-            or _BOLD_HEADING_ONLY.fullmatch(line)
+            _MARKDOWN_HEADING_ONLY.fullmatch(line) or _BOLD_HEADING_ONLY.fullmatch(line)
             for line in lines
         )
     line = lines[0]
     return bool(
-        _MARKDOWN_HEADING_ONLY.fullmatch(line)
-        or _BOLD_HEADING_ONLY.fullmatch(line)
+        _MARKDOWN_HEADING_ONLY.fullmatch(line) or _BOLD_HEADING_ONLY.fullmatch(line)
     )
 
 

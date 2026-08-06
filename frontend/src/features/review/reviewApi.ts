@@ -1,4 +1,4 @@
-import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiPut } from "../../shared/api/client";
+import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiPut, apiRequest } from "../../shared/api/client";
 import type {
   ActiveQuestion,
   AcceptedBulkPublication,
@@ -12,6 +12,7 @@ import type {
   QuestionBatch,
   QuestionCandidate,
   QuestionDeletionResult,
+  QuestionRecycleBinResult,
   QuestionConfirmationResult,
   ReviewAnswerReceipt,
   ReviewRound,
@@ -248,6 +249,19 @@ export function bulkDeleteQuestionCandidates(workspaceId: string, candidates: Qu
 
 export function restoreQuestionCandidate(id: string): Promise<QuestionCandidate> {
   return apiPost(`/api/review/question-candidates/${id}/restore`, {});
+}
+
+export function restoreAllQuestionCandidates(workspaceId: string): Promise<QuestionRecycleBinResult> {
+  return apiPost("/api/review/question-candidates/recycle-bin/restore-all", { workspaceId });
+}
+
+export function permanentlyDeleteQuestionCandidate(id: string): Promise<void> {
+  return apiDelete(`/api/review/question-candidates/${id}/permanent`);
+}
+
+export function emptyQuestionCandidateRecycleBin(workspaceId: string): Promise<QuestionRecycleBinResult> {
+  const query = new URLSearchParams({ workspaceId });
+  return apiRequest(`/api/review/question-candidates/recycle-bin?${query}`, { method: "DELETE" });
 }
 
 export function listActiveQuestions(workspaceId: string): Promise<ActiveQuestion[]> {

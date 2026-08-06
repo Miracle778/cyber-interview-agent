@@ -49,7 +49,7 @@ AttemptStatus: TypeAlias = Literal[
 ReviewResultKind: TypeAlias = Literal[
     "independent_mastery", "assisted_mastery", "revealed", "skipped"
 ]
-CurationWorkStage: TypeAlias = Literal["discovery", "enrichment"]
+CurationWorkStage: TypeAlias = Literal["discovery", "audit", "enrichment"]
 CurationProcessorKind: TypeAlias = Literal["deterministic", "model"]
 CurationWorkStatus: TypeAlias = Literal[
     "pending", "running", "completed", "failed", "interrupted"

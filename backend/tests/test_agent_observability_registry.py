@@ -146,6 +146,16 @@ def test_non_agent_workflows_are_not_visible_in_the_agent_run_center() -> None:
 
     for graph_id in ("profile.ingest", "profile.assess"):
         assert AGENT_OBSERVABILITY_REGISTRY[graph_id].run_center_visible is True
+        assert (
+            AGENT_OBSERVABILITY_REGISTRY[graph_id].run_center_default_visible
+            is True
+        )
+
+    quality = AGENT_OBSERVABILITY_REGISTRY["quality.evaluate"]
+    assert quality.system is True
+    assert quality.user_creatable is False
+    assert quality.run_center_visible is True
+    assert quality.run_center_default_visible is True
 
 
 def test_interview_retrospective_is_registered_as_business_agent() -> None:

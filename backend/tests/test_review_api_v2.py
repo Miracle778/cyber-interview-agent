@@ -18,6 +18,7 @@ from app.api.dependencies import get_agent_application
 from app.api.routes_review import router as review_router
 from app.application.workspace_runtime import AgentApplication
 from app.agents.question_curation_contracts import (
+    CoverageAuditChunk,
     QuestionCandidateChunk,
     QuestionSeedChunk,
 )
@@ -56,6 +57,9 @@ class FakeRoundAgents:
 class EmptyCurationAgents:
     async def discover(self, *_args, **_kwargs):
         return QuestionSeedChunk(seeds=[])
+
+    async def audit(self, *_args, **_kwargs):
+        return CoverageAuditChunk(seeds=[])
 
     async def enrich(self, *_args, **_kwargs):
         return QuestionCandidateChunk(candidates=[])
@@ -699,8 +703,14 @@ async def test_public_question_batch_reports_failed_discovery_without_failing_ex
         items = review.repository.list_curation_work_items(batch["id"])
         assert terminal.status == "completed"
         assert review.repository.get_batch(batch["id"]).status == "completed"
-        assert {item.status for item in items} == {"failed"}
-        assert all(item.attempt_count == 2 for item in items)
+        assert {(item.stage, item.status) for item in items} == {
+            ("discovery", "failed"),
+            ("audit", "completed"),
+        }
+        assert {item.stage: item.attempt_count for item in items} == {
+            "discovery": 2,
+            "audit": 1,
+        }
         assert "failed to persist agent execution failure" not in caplog.text
     finally:
         await application.close()

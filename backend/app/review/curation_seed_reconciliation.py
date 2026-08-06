@@ -8,6 +8,7 @@ from hashlib import sha256
 from pydantic import ValidationError
 
 from app.agents.question_curation_contracts import (
+    CoverageAuditBatch,
     QuestionCandidate,
     QuestionCandidateChunk,
     QuestionSeedBatch,
@@ -32,27 +33,31 @@ def reconcile_curation_seed_tasks(
     existing_ids = {
         task.id for task in repository.list_curation_seed_tasks(batch_id)
     }
-    for item in repository.list_curation_work_items(batch_id, stage="discovery"):
-        if item.status != "completed" or item.output is None:
-            continue
-        seeds = QuestionSeedBatch.model_validate(item.output).seeds
-        for local_ordinal, seed in enumerate(seeds):
-            ordinal = item.unit_index * 20 + local_ordinal
-            encoded = json.dumps(
-                seed.model_dump(mode="json"),
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            repository.plan_curation_seed_task(
-                batch_id=batch_id,
-                discovery_work_item_id=item.id,
-                seed_ordinal=ordinal,
-                question_text=seed.question_text,
-                primary_source_ref=seed.source_ref,
-                source_refs=tuple(seed.source_refs),
-                input_digest=sha256(encoded.encode("utf-8")).hexdigest(),
-            )
+    for stage, contract, ordinal_offset in (
+        ("discovery", QuestionSeedBatch, 0),
+        ("audit", CoverageAuditBatch, 100_000),
+    ):
+        for item in repository.list_curation_work_items(batch_id, stage=stage):
+            if item.status != "completed" or item.output is None:
+                continue
+            seeds = contract.model_validate(item.output).seeds
+            for local_ordinal, seed in enumerate(seeds):
+                ordinal = ordinal_offset + item.unit_index * 20 + local_ordinal
+                encoded = json.dumps(
+                    seed.model_dump(mode="json"),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                repository.plan_curation_seed_task(
+                    batch_id=batch_id,
+                    discovery_work_item_id=item.id,
+                    seed_ordinal=ordinal,
+                    question_text=seed.question_text,
+                    primary_source_ref=seed.source_ref,
+                    source_refs=tuple(seed.source_refs),
+                    input_digest=sha256(encoded.encode("utf-8")).hexdigest(),
+                )
 
     tasks = repository.list_curation_seed_tasks(batch_id)
     by_primary: dict[str, list[CurationSeedTaskRecord]] = {}

@@ -3,7 +3,7 @@ import { Menu, Sparkles, X } from "lucide-react";
 import { useLocation } from "react-router-dom";
 import { PrimaryNavigation } from "./PrimaryNavigation";
 
-export function MobileNavigation() {
+export function MobileNavigation({ activeAgentCount = 0 }: { activeAgentCount?: number }) {
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -77,7 +77,10 @@ export function MobileNavigation() {
                 <X size={21} aria-hidden="true" />
               </button>
             </div>
-            <PrimaryNavigation onNavigate={closeNavigation} />
+            <PrimaryNavigation
+              activeAgentCount={activeAgentCount}
+              onNavigate={closeNavigation}
+            />
           </aside>
         </div>
       ) : null}

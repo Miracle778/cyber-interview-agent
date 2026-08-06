@@ -37,7 +37,7 @@ function curationIsRunning(session: CurationSession) {
   return session.batchStatus === "generating" || session.stage === "pausing";
 }
 
-const curationPhaseOrder = { discovery: 1, enrichment: 2 } as const;
+const curationPhaseOrder = { discovery: 1, audit: 2, enrichment: 3 } as const;
 const formalTerminalBatchStatuses = new Set(["review_pending", "completed", "terminated"]);
 
 function mergeProvisionalCandidates(current: CurationSession, incoming: CurationSession) {

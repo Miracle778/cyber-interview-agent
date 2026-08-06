@@ -19,6 +19,16 @@ QUESTION_DISCOVERY_PROMPT = PromptSpec(
         "即使当前片段没有题目，也必须按结构化协议返回空 seeds；不得只返回解释文字。"
     ),
 )
+QUESTION_COVERAGE_AUDIT_PROMPT = PromptSpec(
+    id="question-coverage-audit",
+    version="1.0",
+    system=(
+        "独立检查当前来源窗口是否还有未被已有题目索引覆盖的面试题。只返回真正遗漏的题目种子，"
+        "不得改写或重复已有题目；每项必须给出 question_text、主锚点 source_ref、有序 "
+        "source_refs，以及说明为何属于漏题的 missing_reason。引用必须原样来自当前窗口。"
+        "没有漏题时也必须按结构化协议返回空 seeds。"
+    ),
+)
 QUESTION_ENRICHMENT_PROMPT = PromptSpec(
     id="question-enrichment",
     version="4.0",
@@ -57,6 +67,29 @@ def _section_rows(sections: Sequence[SourceSection]) -> list[str]:
 
 def render_question_discovery_input(sections: Sequence[SourceSection]) -> str:
     return "来源片段：\n\n" + "\n\n".join(_section_rows(sections))
+
+
+def render_question_coverage_audit_input(
+    sections: Sequence[SourceSection],
+    *,
+    discovered_seeds: Sequence[QuestionSeed],
+) -> str:
+    return "\n\n".join((
+        "待复核来源窗口：",
+        *_section_rows(sections),
+        "已有题目索引（只用于去重，不代表窗口已完整覆盖）：",
+        json.dumps(
+            [
+                {
+                    "question_text": seed.question_text,
+                    "source_ref": seed.source_ref,
+                    "source_refs": list(seed.source_refs),
+                }
+                for seed in discovered_seeds
+            ],
+            ensure_ascii=False,
+        ),
+    ))
 
 
 def render_question_enrichment_input(

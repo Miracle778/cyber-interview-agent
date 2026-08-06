@@ -147,7 +147,7 @@ async def test_list_is_workspace_scoped_and_cursor_filters_round_trip(
 
 
 @pytest.mark.asyncio
-async def test_system_agents_are_opt_in_and_trace_missing_does_not_hide_run(
+async def test_default_visible_system_agents_and_trace_missing_runs_are_listed(
     api, application
 ) -> None:
     await _insert_run(
@@ -187,8 +187,10 @@ async def test_system_agents_are_opt_in_and_trace_missing_does_not_hide_run(
         )
 
     assert [item["id"] for item in default_page.json()["items"]] == [
-        "run-business"
+        "run-system",
+        "run-business",
     ]
+    assert default_page.json()["items"][0]["runCenterDefaultVisible"] is True
     assert {item["id"] for item in with_system.json()["items"]} == {
         "run-business",
         "run-system",

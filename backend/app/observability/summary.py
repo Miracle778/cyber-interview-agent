@@ -62,6 +62,7 @@ class ExecutionSummaryAssembler:
             graph_id=run["graph_id"],
             display_name=registration.display_name,
             system=registration.system,
+            run_center_default_visible=registration.run_center_default_visible,
             title=run["title"],
             status=run["status"],
             trace_health=trace_health,

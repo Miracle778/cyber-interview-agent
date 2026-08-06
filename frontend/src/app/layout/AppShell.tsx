@@ -9,6 +9,7 @@ import { ProfilePage } from "../../features/profile/ProfilePage";
 import { SettingsPage } from "../../features/settings/SettingsPage";
 import { JobTargetPage } from "../../features/jobTargets/JobTargetPage";
 import { AgentRunCenterPage } from "../../features/observability/AgentRunCenterPage";
+import { useActiveAgentCount } from "../../features/observability/useActiveAgentCount";
 import { ExecutionTracePage } from "../../features/observability/ExecutionTracePage";
 import { EvaluationLabPage } from "../../features/evaluation/EvaluationLabPage";
 import { InterviewRetrospectivePage } from "../../features/interviewRetrospectives/InterviewRetrospectivePage";
@@ -31,6 +32,7 @@ export function AppShell() {
   const [workspace, setWorkspace] = useState<WorkspaceConfig | null>(null);
   const [draftQuestion, setDraftQuestion] = useState<ReviewQuestion | null>(null);
   const [indexedCount, setIndexedCount] = useState<number | null>(null);
+  const activeAgentCount = useActiveAgentCount(workspace?.id ?? null);
 
   useEffect(() => {
     let ignore = false;
@@ -85,7 +87,7 @@ export function AppShell() {
             <p className="desktop-sidebar__kind">个人面试工作台</p>
           </div>
         </div>
-        <PrimaryNavigation />
+        <PrimaryNavigation activeAgentCount={activeAgentCount} />
         <WorkspaceSwitcher
           workspace={workspace}
           onWorkspaceSelected={(selectedWorkspace) => {
@@ -99,7 +101,7 @@ export function AppShell() {
           <span>{health.status === "connected" ? "本地服务已连接" : health.status === "checking" ? "正在连接本地服务" : "本地服务未连接"}</span>
         </div>
       </aside>
-      <MobileNavigation />
+      <MobileNavigation activeAgentCount={activeAgentCount} />
       <main id="main-content" className="app-main" tabIndex={-1}>
         <div className="app-container">
           <Routes>

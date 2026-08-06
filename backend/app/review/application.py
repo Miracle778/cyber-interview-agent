@@ -2157,6 +2157,11 @@ class ReviewApplication:
             return None
         items = self.repository.list_curation_work_items(record.active_batch_id)
         discovery_items = tuple(item for item in items if item.stage == "discovery")
+        audit_items = tuple(item for item in items if item.stage == "audit")
+        if audit_items and not all(
+            item.status == "completed" for item in audit_items
+        ):
+            return "audit"
         if discovery_items and all(
             item.status == "completed" for item in discovery_items
         ):
@@ -2167,6 +2172,8 @@ class ReviewApplication:
                 return "enrichment"
         if any(item.stage == "enrichment" for item in items):
             return "enrichment"
+        if audit_items:
+            return "audit"
         return "discovery" if items else None
 
     @staticmethod
@@ -2499,6 +2506,17 @@ class ReviewApplication:
     async def restore_candidate(self, candidate_id: str) -> dict[str, Any]:
         self.repository.restore_candidate(self.workspace_id, candidate_id)
         return await self.candidate_resource(candidate_id)
+
+    def restore_all_candidates(self) -> int:
+        return self.repository.restore_all_candidates(self.workspace_id)
+
+    def permanently_delete_candidate(self, candidate_id: str) -> None:
+        self.repository.permanently_delete_candidate(
+            self.workspace_id, candidate_id
+        )
+
+    def empty_candidate_recycle_bin(self) -> int:
+        return self.repository.empty_candidate_recycle_bin(self.workspace_id)
 
     async def update_candidate_review_note(
         self, candidate_id: str, *, note: str

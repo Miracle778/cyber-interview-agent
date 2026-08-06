@@ -1859,3 +1859,36 @@
 - 新增跨线程事务隔离测试，修复前稳定失败为另一线程观察到共享事务状态，修复后通过。
 - 质量页将 `runtime.late_result_protection` 展示为“任务结束后结果保护”，并用“旧结果是否会覆盖最终结果”解释通过、证据不足和风险状态。
 - 验证：后端相关 `53 passed`；质量页相关 `14 passed`；Ruff、compileall、前端 production build、`git diff --check` 均通过。构建仅保留既有大 chunk 警告。
+
+## 2026-08-05：后台 Agent 可见性、真实进度和模型批量设置
+
+- 质量检查启动接口改为返回 `202` 的后台运行资源；执行过程创建 `quality.evaluate` Session/Execution，并让报告、Trace 与 Execution 共用稳定 ID。
+- 质量页轮询 Execution 和 Operations，展示真实阶段、成功/失败/中断状态以及“在运行中心查看”；报告只在终态后刷新。
+- `quality.evaluate`、`profile.ingest`、`profile.assess` 通过 Agent Definition 的 `run_center_default_visible` 进入默认运行中心视图，仍保持 system-only 创建边界。
+- AppShell 新增当前工作区运行中任务订阅，左侧与移动导航的“Agent 运行中心”在数量大于 0 时显示数字角标。
+- 模型绑定页新增“一次设置全部任务模型”，复用原子 replace-all 保存接口；逐角色选择仍保留。
+- 自动验证：后端相关 `53 passed`，前端全量 `82 files / 436 passed`，质量页补充定向 `7 passed`；受影响 Ruff、compileall、TypeScript、production build 与 `git diff --check` 通过。构建仅保留既有大 chunk 警告。
+- 浏览器验收边界：5175 前端可达，但本地后端端口未运行，页面停留在“正在检查后端连接 / 尚未创建工作区”；因此本轮没有制造真实 Provider 调用或模型绑定写入，也不宣称真实数据浏览器链路已通过。
+
+## 2026-08-05：修复质量检查 Trace 在运行中心不可发现
+
+- 根因是前端运行中心保留了旧的 `system` 全过滤规则，覆盖了 Agent Definition 的 `run_center_default_visible` 合同；导航角标与列表因此使用不同口径。
+- Execution Summary、SSE Schema 和前端解析现已贯通默认可见字段；默认可见的后台 Agent 进入普通列表，内部 system Agent 继续隐藏。
+- 自动验证：后端注册、投影、路由 `39 passed`；前端运行中心 `16 passed`；TypeScript `--noEmit` 通过。
+- 运行中的后端需重启以输出新增字段；已有 Execution 无需迁移，重启后刷新即可按当前注册合同展示并进入 Trace。
+
+## 2026-08-05：记录题目整理漏题召回方案并建立 Java.md 本地预标注
+
+- 更新 `2026-07-21-r2-progressive-question-curation-design.md`，记录当前方案只能证明 section 处理覆盖的局限，以及显式锚点、语义发现、独立查漏、严格完成语义和统一归并方案。
+- 更新 Agent Evaluation v2，明确题目召回必须读取 hash 绑定且人工确认的 Gold manifest，并报告显式/隐式召回、关键漏题、精确率和重复率。
+- 使用本地授权的 `Java.md` 建立 `docs/verification/question-curation-gold/java.gold.draft.json`：绑定 source ID、内容 hash 和稳定 section refs，预标注 36 个问题；原文不复制，目录不入 Git。
+- 当前 manifest 状态是 `draft_requires_human_review`，还不能用于正式质量结论；下一步先完成一次人工校对，再实现和比较三组离线基线。
+
+## 2026-08-05：题目整理独立查漏与召回评估落地
+
+- 确定性题目锚点补充编号主题、冒号主题和小数版本防误判；同一 Java 材料的显式锚点由 4 项提升为 19 项。
+- 新增 `question_coverage_audit` Agent 组件与持久化 `audit` 工作阶段：每个来源全文重新分窗，携带已有题目索引，只补真正漏题，输出与 Discovery 种子进入同一 reducer。
+- 查漏阶段连续两次 Provider/结构化失败会让批次明确失败，已完成工作保留但不会误报“整理完成”；API 和前端显示独立“正在查漏题目”进度。
+- 新增纯确定性的 Gold 召回对齐器，按来源证据一对一匹配并统计总召回、显式/隐式/关键题召回、漏题、重复候选和无锚点候选；草稿 Gold 默认禁止作为正式分数。
+- Java 草稿临时基线：112 section、19 显式锚点、1 个剩余 Discovery 窗口；19 / 36 命中，总召回 52.78%，显式 95%，关键题 75%，隐式 0%。该结果只证明独立语义查漏有必要，待人工确认 Gold 后才可冻结正式分数。
+- 新鲜自动验证：题目整理相关后端全链路 `264 passed`（含恢复、失败、空结果、大批量与迁移），前端运行进度/会话实时合并 `44 passed`，TypeScript typecheck 与受影响 Python Ruff 检查通过。

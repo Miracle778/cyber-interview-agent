@@ -16,7 +16,9 @@ import { Link, useSearchParams } from "react-router-dom";
 import { formatBeijingDateTime } from "../../shared/time";
 import { SelectControl } from "../../shared/ui/SelectControl";
 import {
+  getObservabilityExecution,
   listObservabilityExecutions,
+  listObservabilityOperations,
 } from "../observability/observabilityApi";
 import type { WorkspaceConfig } from "../settings/settingsApi";
 import {
@@ -52,6 +54,12 @@ const ALL_EXECUTION_FILTERS = {
   agentName: "",
   includeSystemAgents: false,
 };
+const TERMINAL_EXECUTION_STATUSES = [
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+] as const;
 
 export function EvaluationLabPage({
   workspace,
@@ -73,6 +81,8 @@ export function EvaluationLabPage({
   const [baselineId, setBaselineId] = useState<string>("");
   const [compareEnabled, setCompareEnabled] = useState(false);
   const [showTechnicalMetrics, setShowTechnicalMetrics] = useState(false);
+  const [judgeExecutionId, setJudgeExecutionId] = useState<string | null>(null);
+  const [handledJudgeId, setHandledJudgeId] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const runsQuery = useQuery({
     queryKey: ["agent-evaluations", workspace?.id],
@@ -105,20 +115,36 @@ export function EvaluationLabPage({
     queryFn: ({ signal }) =>
       listEvaluationTrends(workspace!.id, undefined, undefined, signal),
   });
+  const judgeExecutionQuery = useQuery({
+    queryKey: ["agent-observability", "quality-check", workspace?.id, judgeExecutionId],
+    enabled: Boolean(workspace && judgeExecutionId),
+    queryFn: ({ signal }) => getObservabilityExecution(
+      workspace!.id,
+      judgeExecutionId!,
+      signal,
+    ),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status && TERMINAL_EXECUTION_STATUSES.some((item) => item === status)
+        ? false
+        : 1_000;
+    },
+  });
+  const judgeOperationsQuery = useQuery({
+    queryKey: ["agent-observability", "quality-check-operations", workspace?.id, judgeExecutionId],
+    enabled: Boolean(workspace && judgeExecutionId),
+    queryFn: ({ signal }) => listObservabilityOperations(
+      workspace!.id,
+      judgeExecutionId!,
+      signal,
+    ),
+    refetchInterval: judgeExecutionQuery.data?.status === "running" ? 1_000 : false,
+  });
   const judge = useMutation({
     mutationFn: () => createEvaluationRun(workspace!.id, executionId),
-    onSuccess: (run) => {
-      queryClient.setQueryData(
-        ["agent-evaluations", workspace?.id],
-        (current: EvaluationRun[] | undefined) => [
-          run,
-          ...(current ?? []).filter((item) => item.id !== run.id),
-        ],
-      );
-      void queryClient.invalidateQueries({
-        queryKey: ["agent-evaluations", workspace?.id],
-      });
-      setSelectedId(run.id);
+    onSuccess: (started) => {
+      setHandledJudgeId(null);
+      setJudgeExecutionId(started.judgeExecutionId);
     },
   });
   const feedback = useMutation({
@@ -210,6 +236,29 @@ export function EvaluationLabPage({
       && (sourceExecution.evaluationAvailable
         ?? sourceExecution.capabilities.includes("manual_judge")),
   );
+  const judgeStatus = judgeExecutionQuery.data?.status ?? null;
+  const judgeRunning = judge.isPending || judgeStatus === "running";
+  useEffect(() => {
+    if (
+      !judgeExecutionId
+      || !judgeStatus
+      || !TERMINAL_EXECUTION_STATUSES.some((item) => item === judgeStatus)
+      || handledJudgeId === judgeExecutionId
+    ) return;
+    setHandledJudgeId(judgeExecutionId);
+    void queryClient.invalidateQueries({
+      queryKey: ["agent-evaluations", workspace?.id],
+    });
+    void queryClient.invalidateQueries({
+      queryKey: ["agent-observability", "quality-overview", workspace?.id],
+    });
+  }, [
+    handledJudgeId,
+    judgeExecutionId,
+    judgeStatus,
+    queryClient,
+    workspace?.id,
+  ]);
   const comparableRuns = useMemo(
     () => selected ? runs.filter((item) => (
       item.id !== selected.id
@@ -358,17 +407,25 @@ export function EvaluationLabPage({
                   <div className="evaluation-toolbar__judge">
                     <button
                       type="button"
-                      disabled={judge.isPending}
+                      disabled={judgeRunning}
                       onClick={() => judge.mutate()}
                     >
-                      {judge.isPending
+                      {judgeRunning
                         ? <LoaderCircle className="evaluation-spin" />
                         : <FlaskConical />}
-                      {judge.isPending ? "检查中…" : "开始质量检查"}
+                      {judgeRunning ? "检查进行中" : "开始质量检查"}
                     </button>
                   </div>
                 ) : null}
               </section>
+              {judgeExecutionId ? (
+                <QualityCheckProgress
+                  executionId={judgeExecutionId}
+                  status={judgeStatus}
+                  operations={judgeOperationsQuery.data ?? []}
+                  loading={judgeExecutionQuery.isPending}
+                />
+              ) : null}
               {judge.isError ? <p className="evaluation-compare-error" role="alert">这次运行的质量检查没有完成：{judge.error.message}</p> : null}
 
               <section className="evaluation-toolbar" aria-label="质量报告设置">
@@ -517,13 +574,20 @@ export function EvaluationLabPage({
                   ? "开始检查后，这里只展示当前来源运行的结果；不会用其他历史报告代替。"
                   : "可以从一次 Agent 运行开始检查，业务运行结果不会因此改变。"}</p>
               {judge.isError ? <p className="evaluation-tool-empty__error" role="alert">检查没有完成：{judge.error.message}</p> : null}
-              {executionId && sourceCanStartEvaluation ? (
+              {judgeExecutionId ? (
+                <QualityCheckProgress
+                  executionId={judgeExecutionId}
+                  status={judgeStatus}
+                  operations={judgeOperationsQuery.data ?? []}
+                  loading={judgeExecutionQuery.isPending}
+                />
+              ) : executionId && sourceCanStartEvaluation ? (
                 <button
                   type="button"
-                  disabled={judge.isPending}
+                  disabled={judgeRunning}
                   onClick={() => judge.mutate()}
                 >
-                  {judge.isPending ? "检查中…" : "开始质量检查"}
+                  {judgeRunning ? "检查进行中" : "开始质量检查"}
                 </button>
               ) : !executionId ? (
                 <Link to="/agents">选择一次运行</Link>
@@ -543,4 +607,66 @@ function runChoiceLabel(run: EvaluationRun) {
     evaluationStatusMeta(run.status).label,
     formatBeijingDateTime(run.createdAt) ?? "时间未知",
   ].join(" · ");
+}
+
+function QualityCheckProgress({
+  executionId,
+  status,
+  operations,
+  loading,
+}: {
+  executionId: string;
+  status: string | null;
+  operations: Array<{ kind: string; status: string }>;
+  loading: boolean;
+}) {
+  const modelOperation = operations.find((item) => item.kind === "model");
+  const failed = status === "failed"
+    || status === "cancelled"
+    || status === "interrupted";
+  const completed = status === "completed";
+  const currentStep = completed
+    ? 3
+    : modelOperation?.status === "completed"
+      ? 2
+      : modelOperation
+        ? 1
+        : 0;
+  const labels = ["准备检查依据", "AI 检查业务结果", "保存质量报告"];
+  return (
+    <section className="evaluation-live-progress" aria-live="polite">
+      <header>
+        <span>{failed ? <AlertTriangle /> : <LoaderCircle className={completed ? "" : "evaluation-spin"} />}</span>
+        <div>
+          <strong>{failed
+            ? "质量检查没有完成"
+            : completed
+              ? "质量检查已完成"
+              : loading
+                ? "正在读取检查进度"
+                : labels[currentStep]}</strong>
+          <small>这是实际执行阶段，离开页面不会中断任务。</small>
+        </div>
+        <Link to={`/agents/executions/${encodeURIComponent(executionId)}`}>
+          在运行中心查看
+        </Link>
+      </header>
+      <ol>
+        {labels.map((label, index) => (
+          <li
+            key={label}
+            data-state={failed && index === currentStep
+              ? "error"
+              : index < currentStep || completed
+                ? "done"
+                : index === currentStep
+                  ? "current"
+                  : "pending"}
+          >
+            <span>{index + 1}</span>{label}
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
 }

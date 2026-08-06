@@ -4,7 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from app.agents.question_curation_contracts import QuestionSeedChunk
+from app.agents.question_curation_contracts import (
+    CoverageAuditChunk,
+    QuestionSeedChunk,
+)
 from app.application.workspace_runtime import AgentApplication
 from app.graphs.publication import create_publication_graph
 from app.graphs.question_curation import create_question_curation_graph
@@ -25,6 +28,9 @@ class MessyNotesProvider:
 
     async def discover(self, sections, *, context, config, unit_index):
         return QuestionSeedChunk(seeds=[])
+
+    async def audit(self, *_args, **_kwargs):
+        return CoverageAuditChunk(seeds=[])
 
     async def enrich(
         self, seeds, *, sections, known_questions, context, config, unit_index

@@ -119,4 +119,32 @@ describe("ModelBindings", () => {
     expect(await screen.findByText("没有可用于绑定的模型")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "保存配置" })).toBeDisabled();
   });
+
+  it("applies one model to every role and saves in one request", async () => {
+    let putBody: unknown;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      const method = init?.method ?? "GET";
+      if (url === "/api/settings/providers") return Response.json([provider]);
+      if (url.endsWith("/model-bindings") && method === "GET") {
+        return Response.json({ workspaceId: "w1", bindings: roles });
+      }
+      if (url.endsWith("/model-bindings") && method === "PUT") {
+        putBody = JSON.parse(init?.body as string);
+        return Response.json({ workspaceId: "w1", ...(putBody as object) });
+      }
+      return Response.json({ code: "unexpected", message: url }, { status: 500 });
+    });
+
+    render(<ModelBindings workspaceId="w1" />);
+    const bulk = await screen.findByLabelText("全部任务统一模型");
+    fireEvent.change(bulk, { target: { value: "m2" } });
+    fireEvent.click(screen.getByRole("button", { name: "全部使用并保存" }));
+
+    await waitFor(() => expect(putBody).toEqual({
+      bindings: Object.fromEntries(Object.keys(roles).map((role) => [role, "m2"])),
+    }));
+    expect(screen.getByLabelText("题目生成")).toHaveValue("m2");
+    expect(screen.getByLabelText("面试复盘对话")).toHaveValue("m2");
+  });
 });

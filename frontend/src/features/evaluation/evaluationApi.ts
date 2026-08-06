@@ -4,7 +4,7 @@ import { createOperationId } from "../../shared/operationId";
 import {
   comparisonSchema,
   evaluationRunListSchema,
-  evaluationRunSchema,
+  evaluationRunStartSchema,
   evaluationTrendListSchema,
   feedbackSchema,
   regressionCaseListSchema,
@@ -14,6 +14,7 @@ import {
   type EvaluationComparison,
   type EvaluationFeedback,
   type EvaluationRun,
+  type EvaluationRunStart,
   type RegressionCase,
   type RegressionRun,
   type EvaluationTrendPoint,
@@ -50,14 +51,14 @@ export async function listEvaluationRuns(
 export async function createEvaluationRun(
   workspaceId: string,
   executionId: string,
-): Promise<EvaluationRun> {
+): Promise<EvaluationRunStart> {
   const idempotencyKey = createOperationId("manual-judge");
   const payload = await apiPost<{ executionId: string }, unknown>(
     `/api/agent-evaluations/runs?workspaceId=${encodeURIComponent(workspaceId)}`,
     { executionId },
     { headers: { "Idempotency-Key": idempotencyKey } },
   );
-  return parse(() => evaluationRunSchema.parse(payload));
+  return parse(() => evaluationRunStartSchema.parse(payload));
 }
 
 export async function submitEvaluationFeedback(

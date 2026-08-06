@@ -53,6 +53,11 @@ export const evaluationRunListSchema = z.object({
   items: z.array(evaluationRunSchema),
 });
 
+export const evaluationRunStartSchema = z.object({
+  judgeExecutionId: z.string().min(1),
+  sourceExecutionId: z.string().min(1),
+});
+
 export const feedbackSchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
@@ -152,6 +157,7 @@ export const evaluationTrendListSchema = z.object({
 });
 
 export type EvaluationRun = z.infer<typeof evaluationRunSchema>;
+export type EvaluationRunStart = z.infer<typeof evaluationRunStartSchema>;
 export type EvaluationDimension = z.infer<typeof evaluationDimensionSchema>;
 export type EvaluationFeedback = z.infer<typeof feedbackSchema>;
 export type RegressionCase = z.infer<typeof regressionCaseSchema>;

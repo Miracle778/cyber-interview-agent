@@ -24,13 +24,21 @@ _QUESTION_CUES = re.compile(
 )
 _MARKDOWN_HEADING = re.compile(r"^\s{0,3}#{1,6}\s*(?P<text>.+?)\s*$")
 _BOLD_HEADING = re.compile(r"^\s*(?:\*\*|__)(?P<text>.+?)(?:\*\*|__)\s*$")
-_NUMBERED_PREFIX = re.compile(r"^\s*\d{1,3}(?:[.、]|\))\s*(?P<text>\S.*)$")
+_NUMBERED_PREFIX = re.compile(
+    r"^\s*\d{1,3}(?:(?:\.(?!\d))|[、]|\))\s*(?P<text>\S.*)$"
+)
 _INTERROGATIVE_START = re.compile(
     r"^(?:什么|如何|为什么|怎么|哪些|是否|能否|介绍|说说|谈谈|分析)"
 )
 _QUESTION_TOPIC_END = re.compile(r"(?:区别|原理|机制)\s*[：:]?$")
 _DECLARATIVE_NUMBERED_PROSE = re.compile(
     r"(?:取决于|通过.+实现|包括|是指|用于|表示|由.+组成)"
+)
+_NUMBERED_TOPIC_HINT = re.compile(
+    r"(?:区别|特性|底层|实现|过程|原理|机制|容量|条件|用途|参数|策略|流程)"
+)
+_COLON_TOPIC = re.compile(
+    r"^(?P<topic>[^：:\n]{1,40})[：:](?P<details>\S.+)$"
 )
 _ANSWER_LIST_INTRO = re.compile(
     r"(?:(?:参考)?答案\s*[：:]|"
@@ -124,6 +132,46 @@ def plan_curation_discovery(
     return plan
 
 
+def plan_curation_audit(
+    sections: tuple[SourceSection, ...],
+    discovered_seeds: tuple[QuestionSeed, ...],
+) -> tuple[DiscoveryUnit, ...]:
+    """Plan an independent full-source pass whose identity includes prior findings."""
+    _validate_atomic_sections(sections)
+    units: list[DiscoveryUnit] = []
+    cursor = 0
+    while cursor < len(sections):
+        source_id = sections[cursor].source_id
+        end = cursor + 1
+        while end < len(sections) and sections[end].source_id == source_id:
+            end += 1
+        source_seeds = tuple(
+            seed
+            for seed in discovered_seeds
+            if seed.source_ref.split("#", 1)[0] == source_id
+        )
+        seed_index = "\n".join(
+            f"{seed.source_ref}\t{seed.question_text.strip()}"
+            for seed in source_seeds
+        )
+        for packed in pack_model_sections(sections[cursor:end]):
+            digest_input = f"{_sections_digest(packed)}\n{seed_index}"
+            units.append(DiscoveryUnit(
+                unit_index=len(units),
+                sections=packed,
+                input_digest=sha256(digest_input.encode("utf-8")).hexdigest(),
+            ))
+        cursor = end
+    assigned = [section.ref for unit in units for section in unit.sections]
+    expected = [section.ref for section in sections]
+    if assigned != expected or any(
+        len({section.source_id for section in unit.sections}) != 1
+        for unit in units
+    ):
+        raise CurationPlanningError("invalid audit coverage")
+    return tuple(units)
+
+
 def _question_anchor_indexes(
     sections: tuple[SourceSection, ...],
 ) -> list[int]:
@@ -156,6 +204,7 @@ def _is_non_numbered_question_anchor(section: SourceSection) -> bool:
     return (
         _question_text(section).endswith(("?", "？"))
         or _question_heading(first_line, _QUESTION_CUES)
+        or _colon_topic_question(first_line)
     )
 
 
@@ -174,11 +223,29 @@ def _numbered_question(first_line: str, cues: re.Pattern[str]) -> bool:
     text = match.group("text").strip()
     if text.endswith(("?", "？")):
         return True
-    if cues.search(text) is None or _DECLARATIVE_NUMBERED_PROSE.search(text):
+    if _DECLARATIVE_NUMBERED_PROSE.search(text):
         return False
-    return (
+    if (
         _INTERROGATIVE_START.match(text) is not None
         or _QUESTION_TOPIC_END.search(text) is not None
+    ):
+        return True
+    return (
+        len(text) <= 160
+        and _NUMBERED_TOPIC_HINT.search(text) is not None
+        and (cues.search(text) is not None or "，" in text or "," in text)
+    )
+
+
+def _colon_topic_question(first_line: str) -> bool:
+    match = _COLON_TOPIC.match(first_line)
+    if match is None:
+        return False
+    details = match.group("details").strip()
+    return (
+        len(first_line) <= 220
+        and _QUESTION_CUES.search(details) is not None
+        and _DECLARATIVE_NUMBERED_PROSE.search(details) is None
     )
 
 

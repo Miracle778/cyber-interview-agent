@@ -25,6 +25,7 @@ from app.schemas.evaluation import (
     EvaluationFeedbackResource,
     EvaluationRunListResource,
     EvaluationRunResource,
+    EvaluationRunStartResource,
     RegressionCaseListResource,
     RegressionCaseResource,
     RegressionRunListResource,
@@ -212,7 +213,7 @@ def _regression_run_resource(record) -> RegressionRunResource:
     )
 
 
-@router.post("/runs", response_model=EvaluationRunResource, status_code=201)
+@router.post("/runs", response_model=EvaluationRunStartResource, status_code=202)
 async def create_evaluation_run(
     command: CreateEvaluationRunCommand,
     idempotency_key: Annotated[
@@ -221,9 +222,8 @@ async def create_evaluation_run(
     service: AgentEvaluationService = Depends(get_agent_evaluation_service),
 ):
     try:
-        record = await service.evaluate(
+        execution = await service.start_manual_evaluation(
             command.execution_id,
-            trigger="manual",
             idempotency_key=idempotency_key,
             eval_pack_id=command.eval_pack_id,
         )
@@ -231,7 +231,10 @@ async def create_evaluation_run(
         return _error(422, "evaluation_not_supported", str(error))
     except LookupError:
         return _error(404, "execution_not_found", "Agent Execution 不存在或无权访问")
-    return _run_resource(service, record)
+    return EvaluationRunStartResource(
+        judge_execution_id=execution.id,
+        source_execution_id=command.execution_id,
+    )
 
 
 @router.get("/runs", response_model=EvaluationRunListResource)

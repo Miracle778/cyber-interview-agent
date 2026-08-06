@@ -137,7 +137,7 @@ export function CurationRuntimePanel({ session, candidates = null, activeModelLa
   const filteredCandidates = statusFilter || qualityFilter ? candidateItems
     .filter((candidate) => (!statusFilter || candidate.status === statusFilter) && qualityMatches(candidate))
     .sort((left, right) => (ordinalByCandidate.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (ordinalByCandidate.get(right.id) ?? Number.MAX_SAFE_INTEGER) || parseApiTimestamp(right.updatedAt).getTime() - parseApiTimestamp(left.updatedAt).getTime()) : [];
-  const generationLabel = session?.progress?.phase === "discovery" ? "正在识别题目" : session?.progress?.phase === "enrichment" ? "正在补全候选" : null;
+  const generationLabel = session?.progress?.phase === "discovery" ? "正在识别题目" : session?.progress?.phase === "audit" ? "正在查漏题目" : session?.progress?.phase === "enrichment" ? "正在补全候选" : null;
   const candidateLimitReached = session?.warnings?.some((warning) => warning.code === "candidate_limit_reached") ?? false;
   const partialFailures = session?.warnings?.filter((warning) => warning.code === "curation_discovery_block_failed" || warning.code === "curation_enrichment_item_skipped") ?? [];
   const generalWarningCount = (session?.warnings?.length ?? 0) - partialFailures.length;
@@ -188,13 +188,13 @@ export function CurationRuntimePanel({ session, candidates = null, activeModelLa
   const cumulativeElapsed = activeClock.cumulativeBase + activeDelta;
   const controlState = session?.stage === "pausing" ? "pausing" : session?.batchStatus;
   const seedProgress = session?.seedProgress;
-  const activeSeedProgress = session?.progress?.phase === "discovery"
+  const activeSeedProgress = session?.progress?.phase === "discovery" || session?.progress?.phase === "audit"
     ? null
     : seedProgress ?? null;
   const processedSeedCount = activeSeedProgress
     ? activeSeedProgress.completed + activeSeedProgress.degraded + activeSeedProgress.skipped
     : session?.progress?.completed ?? 0;
-  const generatedSeedCount = session?.progress?.phase === "discovery"
+  const generatedSeedCount = session?.progress?.phase === "discovery" || session?.progress?.phase === "audit"
     ? seedProgress?.total ?? 0
     : activeSeedProgress
     ? activeSeedProgress.completed + activeSeedProgress.degraded
@@ -233,8 +233,8 @@ export function CurationRuntimePanel({ session, candidates = null, activeModelLa
             <div><strong>{controlPresentation.label}</strong><small>{controlPresentation.detail}</small></div>
           </div>
           <div className="curation-control-state__progress" role="status" aria-label="整理进度" aria-live="polite" aria-atomic="true">
-            <div><strong>{processedSeedCount} / {totalSeedCount}</strong><span>{session.progress?.phase === "discovery" ? "已完成识别" : "已处理"}</span></div>
-            <div><strong>{generatedSeedCount}</strong><span>{session.progress?.phase === "discovery" ? "已发现题目" : "已生成候选"}</span></div>
+            <div><strong>{processedSeedCount} / {totalSeedCount}</strong><span>{session.progress?.phase === "discovery" ? "已完成识别" : session.progress?.phase === "audit" ? "已完成查漏" : "已处理"}</span></div>
+            <div><strong>{generatedSeedCount}</strong><span>{session.progress?.phase === "discovery" || session.progress?.phase === "audit" ? "已发现题目" : "已生成候选"}</span></div>
             <div><strong>{retryableCount}</strong><span>{session.progress?.activeWorkers ? "正在处理" : "可继续处理"}</span></div>
             <div><strong>{skippedCount}</strong><span>已跳过</span></div>
             <div><strong>{pendingCount}</strong><span>等待处理</span></div>
