@@ -20,6 +20,8 @@ const workspace: WorkspaceConfig = {
   vaultPath: "/tmp/interview/vault",
 };
 
+const recentTimestamp = new Date().toISOString();
+
 const run: EvaluationRun = {
   id: "eval-1",
   workspaceId: "workspace-1",
@@ -36,9 +38,9 @@ const run: EvaluationRun = {
   judgeDataScope: {},
   judgeProviderModelId: "model-1",
   errorCode: null,
-  createdAt: "2026-07-30T00:00:00Z",
-  startedAt: "2026-07-30T00:00:01Z",
-  completedAt: "2026-07-30T00:00:02Z",
+  createdAt: recentTimestamp,
+  startedAt: recentTimestamp,
+  completedAt: recentTimestamp,
   dimensions: [
     {
       dimensionId: "key_point_coverage",
@@ -88,9 +90,9 @@ const execution = {
   contextThresholdTokens: 8000,
   latencyMs: 3200,
   retryCount: 0,
-  createdAt: "2026-07-30T00:00:00Z",
-  startedAt: "2026-07-30T00:00:00Z",
-  finishedAt: "2026-07-30T00:00:03Z",
+  createdAt: recentTimestamp,
+  startedAt: recentTimestamp,
+  finishedAt: recentTimestamp,
   errorCode: null,
 };
 
