@@ -163,6 +163,10 @@ class BulkConfirmQuestionCandidatesCommand(ReviewModel):
     candidate_ids: list[str] = Field(min_length=1, max_length=200)
 
 
+class QuestionRecycleBinCommand(ReviewModel):
+    workspace_id: str = Field(min_length=1)
+
+
 class UpdateQuestionCandidateNoteCommand(ReviewModel):
     note: str = Field(max_length=5000)
 
@@ -448,7 +452,7 @@ class LatestCurationCommandResource(ReviewModel):
 
 
 class CurationProgressResource(ReviewModel):
-    phase: Literal["discovery", "enrichment"] | None = None
+    phase: Literal["discovery", "audit", "enrichment"] | None = None
     completed: int = Field(ge=0)
     total: int = Field(ge=0)
     generated_candidate_count: int = Field(default=0, ge=0)
@@ -582,6 +586,10 @@ class QuestionDeletionItemResource(ReviewModel):
 
 class QuestionDeletionResultResource(ReviewModel):
     items: list[QuestionDeletionItemResource]
+
+
+class QuestionRecycleBinResultResource(ReviewModel):
+    affected_count: int = Field(ge=0)
 
 
 class QuestionConfirmationItemResource(ReviewModel):

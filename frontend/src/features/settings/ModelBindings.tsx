@@ -95,6 +95,7 @@ export function ModelBindings({ workspaceId, refreshKey = 0, onBindingsChanged, 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [bulkModelId, setBulkModelId] = useState("");
   const [error, setError] = useState<ActionableError | null>(null);
 
   useEffect(() => {
@@ -159,8 +160,11 @@ export function ModelBindings({ workspaceId, refreshKey = 0, onBindingsChanged, 
     };
   }, [dirty, onDirtyChange]);
 
-  async function handleSave() {
-    if (!complete) {
+  async function persistBindings(nextBindings: Record<ModelRole, string>) {
+    const nextComplete = Object.values(nextBindings).every((modelId) =>
+      models.some((model) => model.id === modelId),
+    );
+    if (!nextComplete) {
       setError(toActionableError(new Error(`请为全部 ${MODEL_ROLE_COUNT} 种任务用途选择可用模型`), "保存模型绑定失败"));
       return;
     }
@@ -168,7 +172,7 @@ export function ModelBindings({ workspaceId, refreshKey = 0, onBindingsChanged, 
     setSaved(false);
     setError(null);
     try {
-      const resource = await replaceWorkspaceModelBindings(workspaceId, bindings);
+      const resource = await replaceWorkspaceModelBindings(workspaceId, nextBindings);
       const next = { ...EMPTY_BINDINGS, ...resource.bindings };
       setBindings(next);
       setInitialBindings(next);
@@ -179,6 +183,20 @@ export function ModelBindings({ workspaceId, refreshKey = 0, onBindingsChanged, 
     } finally {
       setSaving(false);
     }
+  }
+
+  async function handleSave() {
+    await persistBindings(bindings);
+  }
+
+  async function handleBulkSave() {
+    if (!bulkModelId) return;
+    const next = Object.fromEntries(
+      (Object.keys(EMPTY_BINDINGS) as ModelRole[]).map((role) => [role, bulkModelId]),
+    ) as Record<ModelRole, string>;
+    setBindings(next);
+    setSaved(false);
+    await persistBindings(next);
   }
 
   return (
@@ -197,6 +215,33 @@ export function ModelBindings({ workspaceId, refreshKey = 0, onBindingsChanged, 
           <p>没有可用于绑定的模型</p>
           <p>请先在上方添加模型服务，并完成连接测试。</p>
         </div>
+      ) : null}
+      {!loading && models.length > 0 ? (
+        <section className="model-bindings__bulk" aria-labelledby="model-bindings-bulk-title">
+          <div>
+            <strong id="model-bindings-bulk-title">全部任务使用同一个模型</strong>
+            <span>一次覆盖并保存全部 {MODEL_ROLE_COUNT} 种任务用途；保存后仍可在下方单独调整。</span>
+          </div>
+          <SelectControl
+            aria-label="全部任务统一模型"
+            value={bulkModelId}
+            disabled={saving}
+            onChange={(event) => setBulkModelId(event.target.value)}
+          >
+            <option value="">选择统一使用的模型</option>
+            {models.map((model) => (
+              <option value={model.id} key={model.id}>{model.label}</option>
+            ))}
+          </SelectControl>
+          <Button
+            variant="secondary"
+            disabled={!bulkModelId || saving}
+            loading={saving}
+            onClick={handleBulkSave}
+          >
+            全部使用并保存
+          </Button>
+        </section>
       ) : null}
       <div className="model-binding-groups">
         {ROLE_GROUPS.map((group) => (

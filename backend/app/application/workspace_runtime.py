@@ -389,6 +389,11 @@ class WorkspaceRuntime:
                 else agent_evaluation.capture_pre_execution_snapshot
             ),
         )
+        if agent_evaluation is not None:
+            agent_evaluation.bind_execution_runtime(
+                sessions=sessions,
+                executions=executions,
+            )
         projection_service = ReviewDomainService(
             repository=reviews,
             selector=QuestionSelector(),

@@ -4,9 +4,13 @@ import { NAVIGATION_GROUPS } from "./navigationItems";
 
 interface PrimaryNavigationProps {
   onNavigate?: () => void;
+  activeAgentCount?: number;
 }
 
-export function PrimaryNavigation({ onNavigate }: PrimaryNavigationProps) {
+export function PrimaryNavigation({
+  onNavigate,
+  activeAgentCount = 0,
+}: PrimaryNavigationProps) {
   function handleNavigate(event: MouseEvent<HTMLAnchorElement>) {
     if (
       document.body.dataset.modelBindingsDirty === "true" &&
@@ -26,17 +30,28 @@ export function PrimaryNavigation({ onNavigate }: PrimaryNavigationProps) {
           <ul className="primary-nav__list">
             {group.items.map((item) => {
               const Icon = item.icon;
+              const isAgentCenter = item.to === "/agents";
               return (
                 <li key={item.to}>
                   <NavLink
                     className={({ isActive }) =>
                       `primary-nav__link${isActive ? " primary-nav__link--active" : ""}`
                     }
-                    to={item.to}
+                    to={isAgentCenter && activeAgentCount > 0
+                      ? "/agents?status=running"
+                      : item.to}
                     onClick={handleNavigate}
+                    aria-label={isAgentCenter && activeAgentCount > 0
+                      ? `${item.label}，${activeAgentCount} 个正在运行`
+                      : undefined}
                   >
                     <Icon size={19} aria-hidden="true" />
                     <span>{item.label}</span>
+                    {isAgentCenter && activeAgentCount > 0 ? (
+                      <span className="primary-nav__badge" aria-hidden="true">
+                        {activeAgentCount > 99 ? "99+" : activeAgentCount}
+                      </span>
+                    ) : null}
                   </NavLink>
                 </li>
               );

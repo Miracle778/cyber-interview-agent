@@ -20,13 +20,16 @@ from app.agents.question_curation_normalization import (
     normalize_provider_candidate_observation,
 )
 from app.agents.question_curation_contracts import (
+    CoverageAuditBatch,
     QuestionCandidate,
     QuestionCandidateBatch,
+    QuestionSeed,
     QuestionSeedBatch,
     QuestionSeedChunk,
 )
 from app.review.curation_planner import (
     pack_model_sections,
+    plan_curation_audit,
     plan_curation_discovery,
 )
 from app.review.curation_seed_reconciliation import reconcile_curation_seed_tasks
@@ -67,9 +70,10 @@ class QuestionCurationState(TypedDict, total=False):
     batch_id: str
     revision_candidate_id: str | None
     discovery_work_item_ids: list[str]
+    audit_work_item_ids: list[str]
     enrichment_work_item_ids: list[str]
     seed_task_ids: list[str]
-    generation_phase: Literal["discovery", "enrichment"]
+    generation_phase: Literal["discovery", "audit", "enrichment"]
     completed_units: int
     total_units: int
     generated_candidate_count: int
@@ -481,6 +485,132 @@ def create_question_curation_graph(
             "warnings": warnings,
         }
 
+    async def plan_audit(state: QuestionCurationState) -> dict[str, object]:
+        batch_id = _batch_id(state)
+        existing = repository.list_curation_work_items(batch_id, stage="audit")
+        if existing:
+            return {
+                "audit_work_item_ids": [item.id for item in existing],
+                "generation_phase": "audit",
+                "completed_units": sum(
+                    item.status == "completed" for item in existing
+                ),
+                "total_units": len(existing),
+                "generated_candidate_count": _completed_candidate_count(
+                    repository, batch_id
+                ),
+            }
+        discovered_seeds = _completed_discovery_seeds(repository, batch_id)
+        units = plan_curation_audit(
+            _sections_for_batch(invocation_inputs, batch_id), discovered_seeds
+        )
+        items = [
+            repository.plan_curation_work_item(
+                batch_id=batch_id,
+                stage="audit",
+                unit_index=unit.unit_index,
+                input_digest=unit.input_digest,
+                source_refs=tuple(section.ref for section in unit.sections),
+                processor_kind="model",
+            )
+            for unit in units
+        ]
+        return {
+            "audit_work_item_ids": [item.id for item in items],
+            "generation_phase": "audit",
+            "completed_units": 0,
+            "total_units": len(items),
+            "generated_candidate_count": _completed_candidate_count(
+                repository, batch_id
+            ),
+        }
+
+    async def audit_wave(
+        state: QuestionCurationState,
+        config: RunnableConfig,
+        runtime: Runtime[AgentContext],
+    ) -> dict[str, object]:
+        batch_id = _batch_id(state)
+        sections_by_ref = {
+            section.ref: section
+            for section in _sections_for_batch(invocation_inputs, batch_id)
+        }
+        discovered_seeds = _completed_discovery_seeds(repository, batch_id)
+        limit = repository.get_batch(batch_id).concurrency_limit
+        pending_ids = tuple(
+            item_id
+            for item_id in state.get("audit_work_item_ids", [])
+            if not _discovery_terminal(repository.get_curation_work_item(item_id))
+        )[:limit]
+
+        async def worker(work_item_id: str) -> None:
+            running = repository.start_curation_work_item(work_item_id)
+            if running.status == "completed":
+                return
+            sections = tuple(
+                sections_by_ref[source_ref] for source_ref in running.source_refs
+            )
+            window_refs = set(running.source_refs)
+            relevant_seeds = tuple(
+                seed
+                for seed in discovered_seeds
+                if window_refs.intersection(seed.source_refs)
+            )
+            try:
+                output = await agents.audit(
+                    sections,
+                    discovered_seeds=relevant_seeds,
+                    context=runtime.context,
+                    config=dict(config),
+                    unit_index=running.unit_index,
+                )
+            except asyncio.CancelledError:
+                repository.interrupt_running_curation_work_items(
+                    batch_id, error_code="curation_interrupted"
+                )
+                raise
+            except Exception as error:
+                if repository.get_curation_work_item(running.id).status == "running":
+                    repository.fail_curation_work_item(
+                        running.id, error_code=curation_error_code(error)
+                    )
+                return
+            repository.complete_curation_work_item(
+                running.id,
+                output=CoverageAuditBatch(seeds=list(output.seeds)).model_dump(
+                    mode="json"
+                ),
+            )
+
+        result = await run_curation_wave(
+            pending_ids,
+            limit=limit,
+            worker=worker,
+        )
+        _raise_wave_failure(repository, batch_id, result)
+        items = repository.list_curation_work_items(batch_id, stage="audit")
+        exhausted = next(
+            (
+                item
+                for item in items
+                if item.status == "failed"
+                and item.attempt_count >= _DISCOVERY_MAX_ATTEMPTS
+            ),
+            None,
+        )
+        if exhausted is not None:
+            raise CurationWaveFailed(
+                exhausted.last_error_code or "curation_coverage_audit_failed"
+            )
+        return {
+            "generation_phase": "audit",
+            "completed_units": sum(item.status == "completed" for item in items),
+            "total_units": len(items),
+            "generated_candidate_count": _completed_candidate_count(
+                repository, batch_id
+            ),
+        }
+
     async def plan_enrichment(state: QuestionCurationState) -> dict[str, object]:
         batch_id = _batch_id(state)
         reconciliation = reconcile_curation_seed_tasks(repository, batch_id)
@@ -718,6 +848,18 @@ def create_question_curation_graph(
             else "done"
         )
 
+    def audit_route(state: QuestionCurationState) -> str:
+        return (
+            "pending"
+            if any(
+                not _discovery_terminal(
+                    repository.get_curation_work_item(item_id)
+                )
+                for item_id in state.get("audit_work_item_ids", [])
+            )
+            else "done"
+        )
+
     def enrichment_route(state: QuestionCurationState) -> str:
         return (
             "pending"
@@ -743,6 +885,8 @@ def create_question_curation_graph(
         "plan_sections", plan_sections, input_schema=QuestionCurationInput
     )
     graph.add_node("discover_wave", discover_wave)
+    graph.add_node("plan_audit", plan_audit)
+    graph.add_node("audit_wave", audit_wave)
     graph.add_node("plan_enrichment", plan_enrichment)
     graph.add_node("enrich_wave", enrich_wave)
     graph.add_node("reduce_candidates", reduce_candidates)
@@ -761,7 +905,13 @@ def create_question_curation_graph(
     graph.add_conditional_edges(
         "discover_wave",
         discovery_route,
-        {"pending": "discover_wave", "done": "plan_enrichment"},
+        {"pending": "discover_wave", "done": "plan_audit"},
+    )
+    graph.add_edge("plan_audit", "audit_wave")
+    graph.add_conditional_edges(
+        "audit_wave",
+        audit_route,
+        {"pending": "audit_wave", "done": "plan_enrichment"},
     )
     graph.add_edge("plan_enrichment", "enrich_wave")
     graph.add_conditional_edges(
@@ -809,6 +959,19 @@ def _completed_candidate_count(
         )
         if item.status == "completed" and item.output is not None
     )
+
+
+def _completed_discovery_seeds(
+    repository: ReviewRepository, batch_id: str
+) -> tuple[QuestionSeed, ...]:
+    seeds: list[QuestionSeed] = []
+    for item in repository.list_curation_work_items(
+        batch_id, stage="discovery"
+    ):
+        if item.status != "completed" or item.output is None:
+            continue
+        seeds.extend(QuestionSeedBatch.model_validate(item.output).seeds)
+    return tuple(seeds)
 
 
 def _prefilter_similar_titles(

@@ -171,6 +171,16 @@ related_distinct | revision_candidate | unrelated
 
 示例：材料只有“Redis 为什么快？”这一行。系统补充了一份合理答案时，不能因答案不在原文就把“来源忠实度”判低；正确做法是 `sourceAnswer` 为空、`supplementalAnswer` 有内容，“原文答案忠实度”不适用，转而评价“补全质量”和“补全透明度”。
 
+“明确题目识别”只有在存在版本冻结的本地 Gold manifest 时才计算。可靠分母合同为：
+
+- manifest 绑定 source 内容 SHA-256，原文变化后不得继续复用；
+- 每个预期题包含 `kind=explicit|implicit`、稳定 `sourceRefs`、`critical` 和人工确认状态；
+- `draft_requires_human_review` 只用于预标注诊断，不进入质量趋势、回归结论或发布门禁；
+- 当前运行候选与 Gold 的确定性规范化匹配先给出候选对齐，模糊匹配由人工复核，生成模型不能作为唯一 Judge；
+- 报告必须同时展示显式/隐式分母、命中数、漏题清单、关键漏题、精确率和重复率，不能只给一个无分母的“覆盖良好”。
+
+首个本地 Gold Set 使用用户授权的 `Java.md`。原文不复制到仓库；只在被 `.gitignore` 排除的 `docs/verification/question-curation-gold/` 保存本地 manifest。正式门槛为显式召回率不低于 99%、隐式召回率不低于 90%、关键题漏题为 0，并要求精确率不显著低于当前基线。
+
 ### 6.2 单题改写 `question-revision.v2`
 
 - 改写意图识别；

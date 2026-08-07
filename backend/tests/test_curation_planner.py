@@ -2,9 +2,11 @@ from collections import Counter
 
 import pytest
 
+from app.agents.question_curation_contracts import QuestionSeed
 from app.infrastructure.runtime_database import connect_runtime_database
 from app.review.curation_planner import (
     CurationPlanningError,
+    plan_curation_audit,
     plan_curation_discovery,
 )
 from app.review.curation_sections import (
@@ -75,6 +77,90 @@ def test_planner_recognizes_explicit_and_numbered_question_lines() -> None:
     ]
     assert len(plan.deterministic_units) == 2
     assert plan.model_units == ()
+
+
+def test_planner_recognizes_numbered_topic_questions_without_question_cues() -> None:
+    sections = section_sources((
+        "s1:java.md\n"
+        "1. String StringBuffer StringBuilder 区别，\n答案一。\n"
+        "3. Java 8 新特性，lambda stream api optional\n答案二。\n"
+        "5. HashMap，底层实现，put 过程，扩容原理，初始容量\n答案三。",
+    ))
+
+    plan = plan_curation_discovery(sections)
+
+    assert [unit.seeds[0].question_text for unit in plan.deterministic_units] == [
+        "String StringBuffer StringBuilder 区别，",
+        "Java 8 新特性，lambda stream api optional",
+        "HashMap，底层实现，put 过程，扩容原理，初始容量",
+    ]
+
+
+def test_planner_recognizes_colon_topic_questions_without_question_marks() -> None:
+    sections = section_sources((
+        "s1:java.md\n"
+        "ThreadLocal：用途、底层 ThreadLocalMap 的实现、为什么会内存泄漏、怎么避免。\n"
+        "答案一。\n\n"
+        "线程池：核心参数的含义、任务提交后的执行流程、几种拒绝策略的区别。\n"
+        "答案二。",
+    ))
+
+    plan = plan_curation_discovery(sections)
+
+    assert [unit.seeds[0].question_text for unit in plan.deterministic_units] == [
+        "ThreadLocal：用途、底层 ThreadLocalMap 的实现、为什么会内存泄漏、怎么避免。",
+        "线程池：核心参数的含义、任务提交后的执行流程、几种拒绝策略的区别。",
+    ]
+
+
+def test_decimal_version_answer_lines_are_not_numbered_question_anchors() -> None:
+    sections = section_sources((
+        "s1:java.md\n"
+        "3. 线程安全用 ConcurrentHashMap，1.7 1.8 机制区别\n"
+        "1.7 是数组加链表，使用 Segment 锁。\n"
+        "1.8 是数组加链表加红黑树，使用 CAS 和 synchronized。",
+    ))
+
+    plan = plan_curation_discovery(sections)
+
+    assert [unit.seeds[0].question_text for unit in plan.deterministic_units] == [
+        "线程安全用 ConcurrentHashMap，1.7 1.8 机制区别"
+    ]
+    assert len(plan.deterministic_units[0].source_refs) == 3
+
+
+def test_audit_plan_covers_every_source_without_cross_source_windows() -> None:
+    sections = section_sources((
+        "s1:first.md\n第一份材料。\n\n第二段材料。",
+        "s2:second.md\n另一份材料。",
+    ))
+    discovered = (
+        QuestionSeed(
+            question_text="已经发现的问题是什么？",
+            source_ref="s1#section-0001",
+        ),
+    )
+
+    units = plan_curation_audit(sections, discovered)
+
+    assert [unit.unit_index for unit in units] == list(range(len(units)))
+    assert [section.ref for unit in units for section in unit.sections] == [
+        section.ref for section in sections
+    ]
+    assert all(len({section.source_id for section in unit.sections}) == 1 for unit in units)
+    changed = plan_curation_audit(
+        sections,
+        (
+            *discovered,
+            QuestionSeed(
+                question_text="后来发现的问题是什么？",
+                source_ref="s2#section-0001",
+            ),
+        ),
+    )
+    assert [unit.input_digest for unit in units] != [
+        unit.input_digest for unit in changed
+    ]
 
 
 def test_numbered_answer_prose_with_question_cues_stays_in_parent_range() -> None:

@@ -1,4 +1,5 @@
-import { AlertTriangle, Bot, CheckCircle2, Clock3, LoaderCircle, PauseCircle, XCircle } from "lucide-react";
+import { AlertTriangle, Bot, CheckCircle2, ChevronDown, Clock3, History, LoaderCircle, PauseCircle, XCircle } from "lucide-react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import {
   BEIJING_TIME_ZONE,
@@ -131,6 +132,7 @@ function StatusIcon({ status }: { status: string }) {
 interface ExecutionListProps {
   executions: ExecutionSummary[];
   currentExecutionBySession: ReadonlyMap<string, ExecutionSummary>;
+  executionHistoryBySession: ReadonlyMap<string, ExecutionSummary[]>;
   selectedId: string | null;
   onSelect: (executionId: string) => void;
   returnTo: string;
@@ -139,10 +141,12 @@ interface ExecutionListProps {
 export function ExecutionList({
   executions,
   currentExecutionBySession,
+  executionHistoryBySession,
   selectedId,
   onSelect,
   returnTo,
 }: ExecutionListProps) {
+  const [expandedSessionId, setExpandedSessionId] = useState<string | null>(null);
   return (
     <div className="execution-list" aria-label="Execution 列表">
       <div className="execution-list__header" aria-hidden="true">
@@ -152,6 +156,10 @@ export function ExecutionList({
         <span>最近更新</span>
       </div>
       {executions.map((execution) => {
+        const executionHistory = executionHistoryBySession.get(execution.sessionId)
+          ?? [execution];
+        const executionCount = executionHistory.length;
+        const historyExpanded = expandedSessionId === execution.sessionId;
         const currentSessionExecution =
           currentExecutionBySession.get(execution.sessionId) ?? execution;
         const isHistorical =
@@ -174,43 +182,113 @@ export function ExecutionList({
             : executionResultSummary(execution);
         return (
         <div className="execution-row-card" key={execution.id}>
-          <button
-            className="execution-row"
-            data-status={displayStatus}
-            aria-pressed={execution.id === selectedId}
-            type="button"
-            onClick={() => onSelect(execution.id)}
-          >
-            <span className="execution-row__identity">
-              <span className="execution-row__icon" aria-hidden="true">
-                <Bot size={17} />
+          <div className="execution-row-card__main">
+            <button
+              className="execution-row"
+              data-status={displayStatus}
+              aria-pressed={execution.id === selectedId}
+              type="button"
+              onClick={() => onSelect(execution.id)}
+            >
+              <span className="execution-row__identity">
+                <span className="execution-row__icon" aria-hidden="true">
+                  <Bot size={17} />
+                </span>
+                <span>
+                  <strong>{executionTaskTitle(execution)}</strong>
+                  <small>{execution.displayName}</small>
+                </span>
               </span>
-              <span>
-                <strong>{executionTaskTitle(execution)}</strong>
-                <small>{execution.displayName}</small>
+              <span className="execution-status" data-status={displayStatus}>
+                <StatusIcon status={displayStatus} />
+                {statusLabel(displayStatus)}
               </span>
-            </span>
-            <span className="execution-status" data-status={displayStatus}>
-              <StatusIcon status={displayStatus} />
-              {statusLabel(displayStatus)}
-            </span>
-            <span className="execution-row__summary">
-              {resultSummary}
-            </span>
-            <time dateTime={execution.finishedAt ?? execution.startedAt ?? execution.createdAt}>
-              {formatRunUpdatedAt(
-                execution.finishedAt ?? execution.startedAt ?? execution.createdAt,
-              )}
-            </time>
-          </button>
-          <Link
-            className="execution-row__details"
-            to={`/agents/executions/${encodeURIComponent(execution.id)}`}
-            state={{ from: returnTo }}
-            aria-label={`查看“${execution.title}”运行详情`}
-          >
-            详情
-          </Link>
+              <span className="execution-row__summary">
+                {resultSummary}
+              </span>
+              <time dateTime={execution.finishedAt ?? execution.startedAt ?? execution.createdAt}>
+                {formatRunUpdatedAt(
+                  execution.finishedAt ?? execution.startedAt ?? execution.createdAt,
+                )}
+              </time>
+            </button>
+            {executionCount > 1 ? (
+              <button
+                className="execution-row__history-toggle"
+                type="button"
+                aria-expanded={historyExpanded}
+                aria-controls={`execution-history-${execution.sessionId}`}
+                onClick={() => setExpandedSessionId(
+                  historyExpanded ? null : execution.sessionId,
+                )}
+              >
+                <History size={14} aria-hidden="true" />
+                {historyExpanded ? "收起运行记录" : `查看 ${executionCount} 次运行`}
+                <ChevronDown size={14} aria-hidden="true" />
+              </button>
+            ) : null}
+            <Link
+              className="execution-row__details"
+              to={`/agents/executions/${encodeURIComponent(execution.id)}`}
+              state={{ from: returnTo }}
+              aria-label={`查看“${execution.title}”运行详情`}
+            >
+              详情
+            </Link>
+          </div>
+          {historyExpanded ? (
+            <section
+              className="execution-history"
+              id={`execution-history-${execution.sessionId}`}
+              aria-label={`${executionTaskTitle(execution)}的运行记录`}
+            >
+              <header>
+                <strong>运行记录</strong>
+                <span>共 {executionCount} 次，最近一次在最前</span>
+              </header>
+              <ol>
+                {executionHistory.map((historyExecution, index) => {
+                  const runNumber = executionCount - index;
+                  const isCurrent = historyExecution.id === currentSessionExecution.id;
+                  const recoveredFailure = !isCurrent
+                    && ["failed", "partial_success"].includes(historyExecution.status)
+                    && !["failed", "partial_success"].includes(currentSessionExecution.status);
+                  return (
+                    <li key={historyExecution.id}>
+                      <span className="execution-history__ordinal">
+                        第 {runNumber} 次
+                        {isCurrent ? <em>当前运行</em> : null}
+                      </span>
+                      <span
+                        className="execution-status"
+                        data-status={recoveredFailure ? "recovered" : historyExecution.status}
+                      >
+                        <StatusIcon status={recoveredFailure ? "recovered" : historyExecution.status} />
+                        {recoveredFailure
+                          ? "历史失败·已恢复"
+                          : statusLabel(historyExecution.status)}
+                      </span>
+                      <time dateTime={historyExecution.finishedAt ?? historyExecution.startedAt ?? historyExecution.createdAt}>
+                        {formatRunUpdatedAt(
+                          historyExecution.finishedAt
+                          ?? historyExecution.startedAt
+                          ?? historyExecution.createdAt,
+                        )}
+                      </time>
+                      <span>{executionResultSummary(historyExecution)}</span>
+                      <Link
+                        to={`/agents/executions/${encodeURIComponent(historyExecution.id)}`}
+                        state={{ from: returnTo }}
+                        aria-label={`查看第 ${runNumber} 次运行详情`}
+                      >
+                        查看 Trace
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ol>
+            </section>
+          ) : null}
         </div>
         );
       })}

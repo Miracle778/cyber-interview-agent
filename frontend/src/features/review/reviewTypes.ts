@@ -102,6 +102,10 @@ export interface QuestionDeletionResult {
   items: { candidateId: string; status: "deleted" | "already_deleted" | "blocked" | "failed"; reason: string | null }[];
 }
 
+export interface QuestionRecycleBinResult {
+  affectedCount: number;
+}
+
 export interface QuestionConfirmationResult {
   items: {
     candidateId: string;
@@ -213,7 +217,7 @@ export interface CurationSession {
   contextUsage: { currentTokens: number; thresholdTokens: number; estimated: boolean };
   stage: CurationStage;
   progress: {
-    phase: "discovery" | "enrichment" | null;
+    phase: "discovery" | "audit" | "enrichment" | null;
     completed: number;
     total: number;
     generatedCandidateCount: number;
@@ -233,7 +237,7 @@ export interface CurationSession {
     sourceId?: string;
     code: string;
     limit?: number;
-    stage?: "discovery" | "enrichment";
+    stage?: "discovery" | "audit" | "enrichment";
     unitIndex?: number;
     seedOrdinal?: number;
     sourceRefs?: string[];

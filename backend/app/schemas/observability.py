@@ -31,6 +31,7 @@ class ExecutionSummaryResource(ObservabilityModel):
     graph_id: str
     display_name: str
     system: bool
+    run_center_default_visible: bool = False
     title: str
     status: str
     trace_health: TraceHealth

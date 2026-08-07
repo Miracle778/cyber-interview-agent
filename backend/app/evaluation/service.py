@@ -8,7 +8,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from app.agents.context import AgentContext
 from app.evaluation.contracts import JudgeResult, JudgeResultV2
@@ -36,6 +36,15 @@ from app.evaluation.views import (
 )
 from app.agents.definition_registry import resolve_agent_definition
 from app.agents.definition_snapshot import AgentDefinitionSnapshot
+from app.application.execution_service import (
+    AgentExecutionService,
+    ExecutionCancellation,
+)
+from app.application.session_service import (
+    AgentSessionService,
+    ExecutionRecord,
+    ProductRecordNotFoundError,
+)
 
 
 class EvaluationNotSupportedError(ValueError):
@@ -44,6 +53,10 @@ class EvaluationNotSupportedError(ValueError):
 
 class AutomaticEvaluationSkipped(RuntimeError):
     pass
+
+
+class EvaluationExecutionFailed(RuntimeError):
+    code = "quality_evaluation_failed"
 
 
 _COMPATIBLE_PACKS_BY_GRAPH = {
@@ -105,6 +118,93 @@ class AgentEvaluationService:
         self._regression_implementations = (
             regression_implementations or RegressionImplementationCatalog()
         )
+        self._sessions: AgentSessionService | None = None
+        self._executions: AgentExecutionService | None = None
+
+    def bind_execution_runtime(
+        self,
+        *,
+        sessions: AgentSessionService,
+        executions: AgentExecutionService,
+    ) -> None:
+        """Attach the product execution control plane after runtime construction."""
+
+        self._sessions = sessions
+        self._executions = executions
+
+    async def start_manual_evaluation(
+        self,
+        execution_id: str,
+        *,
+        idempotency_key: str,
+        eval_pack_id: str | None = None,
+    ) -> ExecutionRecord:
+        """Start a visible, cancellable quality check and return immediately."""
+
+        if self._sessions is None or self._executions is None:
+            raise EvaluationNotSupportedError("质量检查执行服务尚未初始化")
+        source = self.observability._run(execution_id)
+        self._resolve_evaluation_pack(source, eval_pack_id)
+
+        quality_execution_id = str(
+            uuid5(
+                NAMESPACE_URL,
+                f"{self.workspace_id}:quality-evaluation:{idempotency_key}",
+            )
+        )
+        try:
+            return self._sessions.repository.get_execution(quality_execution_id)
+        except ProductRecordNotFoundError:
+            pass
+
+        quality_session_id = str(
+            uuid5(
+                NAMESPACE_URL,
+                f"{self.workspace_id}:quality-evaluation-session:{execution_id}",
+            )
+        )
+        try:
+            session = self._sessions.get(quality_session_id)
+        except ProductRecordNotFoundError:
+            session = await self._sessions.create(
+                workspace_id=self.workspace_id,
+                kind="quality.evaluate",
+                title=f"质量检查：{source['title']}",
+                session_id=quality_session_id,
+                visibility="system",
+            )
+        execution = await self._executions.prepare(
+            session,
+            input={
+                "sourceExecutionId": execution_id,
+                "evalPackId": eval_pack_id,
+                "trigger": "manual",
+            },
+            project_input_message=False,
+            execution_id=quality_execution_id,
+        )
+
+        async def handler(
+            active: ExecutionRecord,
+            cancellation: ExecutionCancellation,
+        ) -> None:
+            cancellation.raise_if_requested()
+            result = await self.evaluate(
+                execution_id,
+                trigger="manual",
+                idempotency_key=idempotency_key,
+                eval_pack_id=eval_pack_id,
+                evaluation_run_id=active.id,
+                evaluation_session_id=active.session_id,
+            )
+            cancellation.raise_if_requested()
+            if result.status != "completed":
+                raise EvaluationExecutionFailed(
+                    result.error_code or "质量检查未完成"
+                )
+
+        self._executions.run_background(execution, handler)
+        return execution
 
     @property
     def advanced_diagnostics_enabled(self) -> bool:
@@ -174,21 +274,9 @@ class AgentEvaluationService:
             idempotency_key=idempotency_key,
         )
 
-    async def evaluate(
-        self,
-        execution_id: str,
-        *,
-        trigger: str = "manual",
-        idempotency_key: str | None = None,
-        degraded: bool = False,
-        rejected: bool = False,
-        heavily_edited: bool = False,
-        eval_pack_id: str | None = None,
-    ) -> EvaluationRunRecord:
-        execution = self.observability._run(execution_id)
-        if execution["graph_id"] == "evaluation.judge":
-            raise EvaluationNotSupportedError("Judge 运行不能递归评估")
-
+    def _resolve_evaluation_pack(self, execution, eval_pack_id: str | None):
+        if execution["graph_id"] in {"evaluation.judge", "quality.evaluate"}:
+            raise EvaluationNotSupportedError("质量检查运行不能递归评估")
         raw_snapshot = execution.get("agent_definition_snapshot_json")
         definition_snapshot = AgentDefinitionSnapshot.from_json(
             raw_snapshot
@@ -205,13 +293,9 @@ class AgentEvaluationService:
             if definition_snapshot.eval_pack_id is None:
                 raise EvaluationNotSupportedError("该 Agent 暂不支持质量评估")
             if eval_pack_id is not None and eval_pack_id != definition_snapshot.eval_pack_id:
-                raise EvaluationNotSupportedError(
-                    "不能替换本次运行冻结的评估标准"
-                )
+                raise EvaluationNotSupportedError("不能替换本次运行冻结的评估标准")
             selected_pack_id = definition_snapshot.eval_pack_id
-            compatibility_agent_id = (
-                definition_snapshot.agent_id or execution["graph_id"]
-            )
+            compatibility_agent_id = definition_snapshot.agent_id or execution["graph_id"]
         if selected_pack_id not in _COMPATIBLE_PACKS_BY_GRAPH.get(
             compatibility_agent_id, set()
         ):
@@ -225,6 +309,25 @@ class AgentEvaluationService:
             and definition_snapshot.eval_pack_version != pack.version
         ):
             raise EvaluationNotSupportedError("本次运行冻结的评估标准版本已不可用")
+        return definition_snapshot, pack
+
+    async def evaluate(
+        self,
+        execution_id: str,
+        *,
+        trigger: str = "manual",
+        idempotency_key: str | None = None,
+        degraded: bool = False,
+        rejected: bool = False,
+        heavily_edited: bool = False,
+        eval_pack_id: str | None = None,
+        evaluation_run_id: str | None = None,
+        evaluation_session_id: str | None = None,
+    ) -> EvaluationRunRecord:
+        execution = self.observability._run(execution_id)
+        definition_snapshot, pack = self._resolve_evaluation_pack(
+            execution, eval_pack_id
+        )
         configured = self._settings()
         if trigger == "automatic":
             decision = decide_automatic_evaluation(
@@ -259,8 +362,10 @@ class AgentEvaluationService:
                 provider_model_id=provider_model_id,
                 trigger=trigger,
                 idempotency_key=idempotency_key,
+                evaluation_run_id=evaluation_run_id,
+                evaluation_session_id=evaluation_session_id,
             )
-        run_id = str(uuid4())
+        run_id = evaluation_run_id or str(uuid4())
         key = idempotency_key or (
             f"{trigger}:{execution_id}:{pack.id}:{pack.version}:"
             f"{snapshot.frozen_input_hash}"
@@ -303,9 +408,7 @@ class AgentEvaluationService:
         if record.status != "pending":
             return record
         record = self.repository.mark_running(record.id)
-        deterministic = EvaluationRuntime(
-            snapshot=snapshot, pack=pack
-        ).run_deterministic()
+        deterministic = EvaluationRuntime(snapshot=snapshot, pack=pack).run_deterministic()
         deterministic_json = json.dumps(
             asdict(deterministic),
             ensure_ascii=False,
@@ -319,7 +422,7 @@ class AgentEvaluationService:
         context = AgentContext(
             workspace_id=self.workspace_id,
             workspace_root=self.workspace_root,
-            session_id="evaluation",
+            session_id=evaluation_session_id or "evaluation",
             run_id=record.id,
             allowed_tools=frozenset(),
             allowed_scopes=frozenset(),
@@ -333,7 +436,7 @@ class AgentEvaluationService:
                 context=context,
             )
         except asyncio.CancelledError:
-            completed = self.repository.complete_run(
+            self.repository.complete_run(
                 record.id,
                 deterministic_result_json=deterministic_json,
                 judge_result_json=None,
@@ -389,6 +492,8 @@ class AgentEvaluationService:
         provider_model_id: str,
         trigger: str,
         idempotency_key: str | None,
+        evaluation_run_id: str | None = None,
+        evaluation_session_id: str | None = None,
     ) -> EvaluationRunRecord:
         outcome = self._outcome_adapter_factory(pack.task_type).build(execution_id)
         view = self._build_evaluation_view(outcome, pack)
@@ -425,7 +530,7 @@ class AgentEvaluationService:
             f"{outcome.outcome_hash}:{frozen_input_hash}"
         )
         record = self.repository.create_run(
-            eval_run_id=str(uuid4()),
+            eval_run_id=evaluation_run_id or str(uuid4()),
             execution_id=execution_id,
             eval_pack_id=pack.id,
             eval_pack_version=pack.version,
@@ -461,7 +566,7 @@ class AgentEvaluationService:
         context = AgentContext(
             workspace_id=self.workspace_id,
             workspace_root=self.workspace_root,
-            session_id="evaluation",
+            session_id=evaluation_session_id or "evaluation",
             run_id=record.id,
             allowed_tools=frozenset(),
             allowed_scopes=frozenset(),

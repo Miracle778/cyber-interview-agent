@@ -523,7 +523,7 @@ describe("AgentRunCenterPage", () => {
     expect(within(preview).queryByRole("link", { name: "查看并处理" })).not.toBeInTheDocument();
   });
 
-  it("keeps recovered failures in history without treating them as current action items", async () => {
+  it("shows one current task per session while keeping historical executions out of task counts", async () => {
     mockPage(page([
       recoveredCurationFailure,
       waitingExecution,
@@ -546,24 +546,41 @@ describe("AgentRunCenterPage", () => {
       name: /题库整理任务/,
     })).not.toBeInTheDocument();
 
-    fireEvent.click(within(tabs).getByRole("button", { name: "失败 1" }));
-
-    const historicalRow = within(taskList()).getByRole("button", {
+    fireEvent.click(within(tabs).getByRole("button", { name: "全部 2" }));
+    const currentRow = within(taskList()).getByRole("button", {
       name: /题库整理任务/,
     });
-    expect(historicalRow).toHaveTextContent("历史失败·已恢复");
-    expect(historicalRow).toHaveTextContent("当前为“已完成”");
+    fireEvent.click(currentRow);
+    expect(currentRow).toHaveTextContent("已完成");
+    expect(within(taskList()).getAllByRole("button", {
+      name: /题库整理任务/,
+    })).toHaveLength(1);
+    expect(within(tabs).getByRole("button", { name: "已完成 1" }))
+      .toBeInTheDocument();
+    expect(within(tabs).getByRole("button", { name: "失败 0" }))
+      .toBeInTheDocument();
+
+    fireEvent.click(within(taskList()).getByRole("button", {
+      name: "查看 2 次运行",
+    }));
+    const history = within(taskList()).getByRole("region", {
+      name: "题库整理任务的运行记录",
+    });
+    expect(within(history).getByText("第 2 次")).toBeInTheDocument();
+    expect(within(history).getByText("当前运行")).toBeInTheDocument();
+    expect(within(history).getByText("第 1 次")).toBeInTheDocument();
+    expect(within(history).getByText("历史失败·已恢复")).toBeInTheDocument();
+    expect(within(history).getByRole("link", {
+      name: "查看第 2 次运行详情",
+    })).toHaveAttribute("href", "/agents/executions/run-curation-recovered");
+    expect(within(history).getByRole("link", {
+      name: "查看第 1 次运行详情",
+    })).toHaveAttribute("href", "/agents/executions/run-curation-failed");
 
     const preview = screen.getByRole("complementary", { name: "任务详情" });
-    expect(preview).toHaveTextContent("历史失败·会话已恢复");
-    expect(preview).toHaveTextContent("当前会话状态为“已完成”");
-    expect(within(preview).getByRole("link", { name: "查看当前会话" })).toHaveAttribute(
+    expect(within(preview).getByRole("link", { name: "查看运行详情" })).toHaveAttribute(
       "href",
-      "/review?section=catalog&curationSessionId=session-curation-recovered&returnTo=%2Fagents%3Fstatus%3Dfailed",
-    );
-    expect(within(preview).getByRole("link", { name: "查看失败详情" })).toHaveAttribute(
-      "href",
-      "/agents/executions/run-curation-failed",
+      "/agents/executions/run-curation-recovered",
     );
   });
 
@@ -606,7 +623,7 @@ describe("AgentRunCenterPage", () => {
     expect(screen.queryByText(/^0$/)).not.toBeInTheDocument();
   });
 
-  it("applies live summaries and keeps system tasks hidden until requested", async () => {
+  it("shows default-visible system tasks while keeping internal system tasks hidden", async () => {
     mockPage(page([runningExecution]));
 
     render(<AgentRunCenterPage workspace={workspace} />, { wrapper });
@@ -642,15 +659,37 @@ describe("AgentRunCenterPage", () => {
           displayName: "简历画像整理",
           title: "系统画像任务",
           system: true,
+          runCenterDefaultVisible: true,
         },
       });
     });
-    expect(screen.queryByRole("button", { name: /系统画像任务/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /系统画像任务/ })).toBeInTheDocument();
+
+    await act(async () => {
+      FakeEventSource.instances[0].emit("execution.summary.changed", {
+        eventId: "11",
+        type: "execution.summary.changed",
+        execution: {
+          ...completedExecution,
+          id: "run-internal-system-live",
+          sessionId: "session-internal-system-live",
+          graphId: "diagnostic.echo",
+          displayName: "系统诊断",
+          title: "内部诊断任务",
+          system: true,
+          runCenterDefaultVisible: false,
+        },
+      });
+    });
+    expect(screen.queryByRole("button", { name: /内部诊断任务/ })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "筛选" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "包含系统 Agent" }));
     expect(await within(taskList()).findByRole("button", {
       name: /系统画像任务/,
+    })).toBeInTheDocument();
+    expect(await within(taskList()).findByRole("button", {
+      name: /内部诊断任务/,
     })).toBeInTheDocument();
   });
 

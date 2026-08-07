@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from app.agents import question_curation_contracts as curation_contracts
 from app.agents.context import AgentContext
 from app.agents.prompts.question_curation_prompts import (
+    QUESTION_COVERAGE_AUDIT_PROMPT,
     QUESTION_DISCOVERY_PROMPT,
     QUESTION_ENRICHMENT_PROMPT,
 )
@@ -22,6 +23,8 @@ from app.agents.question_curation_agent import (
     QuestionCurationAgents,
 )
 from app.agents.question_curation_contracts import (
+    CoverageAuditChunk,
+    CoverageAuditSeed,
     QuestionCandidate,
     QuestionCandidateBatch,
     QuestionCandidateChunk,
@@ -29,7 +32,10 @@ from app.agents.question_curation_contracts import (
     QuestionSeed,
     QuestionSeedChunk,
 )
-from app.graphs.question_curation import create_question_curation_graph
+from app.graphs.question_curation import (
+    CurationWaveFailed,
+    create_question_curation_graph,
+)
 from app.infrastructure.checkpoints import AgentCheckpointer
 from app.infrastructure.runtime_database import connect_runtime_database
 from app.review.curation_sections import SourceSection, section_sources
@@ -69,12 +75,28 @@ class EnrichmentCall:
     known_questions: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class AuditCall:
+    unit_index: int
+    sections: tuple[SourceSection, ...]
+    discovered_seeds: tuple[QuestionSeed, ...]
+
+
 class RecordingCurationAgents:
-    def __init__(self, *, discovery_outputs=(), enrichment_outputs=(), revision_output=None):
+    def __init__(
+        self,
+        *,
+        discovery_outputs=(),
+        audit_outputs=(),
+        enrichment_outputs=(),
+        revision_output=None,
+    ):
         self._discovery_outputs = iter(discovery_outputs)
+        self._audit_outputs = iter(audit_outputs)
         self._enrichment_outputs = iter(enrichment_outputs)
         self.revision_output = revision_output
         self.discovery_calls: list[DiscoveryCall] = []
+        self.audit_calls: list[AuditCall] = []
         self.enrichment_calls: list[EnrichmentCall] = []
         self.revision_calls: list[object] = []
 
@@ -89,16 +111,35 @@ class RecordingCurationAgents:
             raise output
         return output
 
-    async def enrich(self, seeds, *, sections, known_questions, context, config, unit_index):
-        self.enrichment_calls.append(EnrichmentCall(
-            unit_index,
-            tuple(seeds),
-            tuple(sections),
-            tuple(known_questions),
-        ))
-        output = next(
-            self._enrichment_outputs, QuestionCandidateChunk(candidates=[])
+    async def audit(
+        self,
+        sections,
+        *,
+        discovered_seeds,
+        context,
+        config,
+        unit_index,
+    ):
+        self.audit_calls.append(
+            AuditCall(unit_index, tuple(sections), tuple(discovered_seeds))
         )
+        output = next(self._audit_outputs, QuestionSeedChunk(seeds=[]))
+        if isinstance(output, Exception):
+            raise output
+        return output
+
+    async def enrich(
+        self, seeds, *, sections, known_questions, context, config, unit_index
+    ):
+        self.enrichment_calls.append(
+            EnrichmentCall(
+                unit_index,
+                tuple(seeds),
+                tuple(sections),
+                tuple(known_questions),
+            )
+        )
+        output = next(self._enrichment_outputs, QuestionCandidateChunk(candidates=[]))
         if isinstance(output, Exception):
             raise output
         return output
@@ -221,20 +262,24 @@ def test_question_contracts_are_strict_and_bounded() -> None:
 
 
 def test_question_seed_preserves_legacy_primary_ref_and_normalizes_duplicates() -> None:
-    legacy = QuestionSeed.model_validate({
-        "question_text": "什么是 MVCC？",
-        "source_ref": "s1#section-0001",
-    })
-    normalized = QuestionSeed.model_validate({
-        "question_text": "什么是 MVCC？",
-        "source_ref": "s1#section-0001",
-        "source_refs": [
-            "s1#section-0001",
-            "s1#section-0002",
-            "s1#section-0001",
-            "s1#section-0003",
-        ],
-    })
+    legacy = QuestionSeed.model_validate(
+        {
+            "question_text": "什么是 MVCC？",
+            "source_ref": "s1#section-0001",
+        }
+    )
+    normalized = QuestionSeed.model_validate(
+        {
+            "question_text": "什么是 MVCC？",
+            "source_ref": "s1#section-0001",
+            "source_refs": [
+                "s1#section-0001",
+                "s1#section-0002",
+                "s1#section-0001",
+                "s1#section-0003",
+            ],
+        }
+    )
 
     assert legacy.source_refs == ["s1#section-0001"]
     assert normalized.source_refs == [
@@ -242,37 +287,47 @@ def test_question_seed_preserves_legacy_primary_ref_and_normalizes_duplicates() 
         "s1#section-0002",
         "s1#section-0003",
     ]
-    repeated = QuestionSeed.model_validate({
-        "question_text": "什么是 MVCC？",
-        "source_ref": "s1#section-0001",
-        "source_refs": [
-            "s1#section-0001" if index % 2 else "s1#section-0002"
-            for index in range(1, 34)
-        ],
-    })
+    repeated = QuestionSeed.model_validate(
+        {
+            "question_text": "什么是 MVCC？",
+            "source_ref": "s1#section-0001",
+            "source_refs": [
+                "s1#section-0001" if index % 2 else "s1#section-0002"
+                for index in range(1, 34)
+            ],
+        }
+    )
     assert repeated.source_refs == ["s1#section-0001", "s1#section-0002"]
     with pytest.raises(ValidationError, match="primary source ref must be first"):
-        QuestionSeed.model_validate({
-            "question_text": "什么是 MVCC？",
-            "source_ref": "s1#section-0001",
-            "source_refs": ["s1#section-0002", "s1#section-0001"],
-        })
+        QuestionSeed.model_validate(
+            {
+                "question_text": "什么是 MVCC？",
+                "source_ref": "s1#section-0001",
+                "source_refs": ["s1#section-0002", "s1#section-0001"],
+            }
+        )
     with pytest.raises(ValidationError):
-        QuestionSeed.model_validate({
-            "question_text": "什么是 MVCC？",
-            "source_ref": "s1#section-0001",
-            "source_refs": [f"s1#section-{index:04d}" for index in range(1, 34)],
-        })
+        QuestionSeed.model_validate(
+            {
+                "question_text": "什么是 MVCC？",
+                "source_ref": "s1#section-0001",
+                "source_refs": [f"s1#section-{index:04d}" for index in range(1, 34)],
+            }
+        )
 
 
 def test_strict_question_seed_chunk_rejects_ungrounded_rows() -> None:
     with pytest.raises(ValidationError):
-        QuestionSeedChunk.model_validate({
-            "seeds": [{
-                "question_text": "模型生成但没有证据引用的题目",
-                "source_refs": [None],
-            }]
-        })
+        QuestionSeedChunk.model_validate(
+            {
+                "seeds": [
+                    {
+                        "question_text": "模型生成但没有证据引用的题目",
+                        "source_refs": [None],
+                    }
+                ]
+            }
+        )
 
 
 def test_strict_question_candidate_chunk_rejects_missing_metadata() -> None:
@@ -285,16 +340,18 @@ def test_strict_question_candidate_chunk_rejects_missing_metadata() -> None:
 
 
 def test_provider_seed_normalization_caps_the_raw_list_at_twenty() -> None:
-    raw = curation_contracts.ProviderQuestionSeedChunk.model_validate({
-        "seeds": [
-            {
-                "question_text": f"问题 {index}？",
-                "source_ref": f"s1#section-{index:04d}",
-                "source_refs": [f"s1#section-{index:04d}"],
-            }
-            for index in range(1, 22)
-        ]
-    })
+    raw = curation_contracts.ProviderQuestionSeedChunk.model_validate(
+        {
+            "seeds": [
+                {
+                    "question_text": f"问题 {index}？",
+                    "source_ref": f"s1#section-{index:04d}",
+                    "source_refs": [f"s1#section-{index:04d}"],
+                }
+                for index in range(1, 22)
+            ]
+        }
+    )
 
     normalized = curation_contracts.normalize_provider_seed_chunk(raw)
 
@@ -303,18 +360,22 @@ def test_provider_seed_normalization_caps_the_raw_list_at_twenty() -> None:
 
 
 def test_provider_seed_normalization_repairs_reference_order_and_nulls() -> None:
-    raw = curation_contracts.ProviderQuestionSeedChunk.model_validate({
-        "seeds": [{
-            "question_text": "什么是引用归一化？",
-            "source_ref": "s1#section-0002",
-            "source_refs": [
-                "s1#section-0001",
-                None,
-                "s1#section-0002",
-                "s1#section-0001",
-            ],
-        }]
-    })
+    raw = curation_contracts.ProviderQuestionSeedChunk.model_validate(
+        {
+            "seeds": [
+                {
+                    "question_text": "什么是引用归一化？",
+                    "source_ref": "s1#section-0002",
+                    "source_refs": [
+                        "s1#section-0001",
+                        None,
+                        "s1#section-0002",
+                        "s1#section-0001",
+                    ],
+                }
+            ]
+        }
+    )
 
     normalized = curation_contracts.normalize_provider_seed_chunk(raw)
 
@@ -325,24 +386,26 @@ def test_provider_seed_normalization_repairs_reference_order_and_nulls() -> None
 
 
 def test_provider_seed_normalization_drops_only_rows_without_grounding() -> None:
-    raw = curation_contracts.ProviderQuestionSeedChunk.model_validate({
-        "seeds": [
-            {
-                "question_text": "有效题目？",
-                "source_ref": "s1#section-0001",
-                "source_refs": ["s1#section-0001"],
-            },
-            {
-                "question_text": "无证据题目？",
-                "source_refs": [None],
-            },
-            {
-                "question_text": "未知引用题目？",
-                "source_ref": "s1#section-9999",
-                "source_refs": ["s1#section-9999"],
-            },
-        ]
-    })
+    raw = curation_contracts.ProviderQuestionSeedChunk.model_validate(
+        {
+            "seeds": [
+                {
+                    "question_text": "有效题目？",
+                    "source_ref": "s1#section-0001",
+                    "source_refs": ["s1#section-0001"],
+                },
+                {
+                    "question_text": "无证据题目？",
+                    "source_refs": [None],
+                },
+                {
+                    "question_text": "未知引用题目？",
+                    "source_ref": "s1#section-9999",
+                    "source_refs": ["s1#section-9999"],
+                },
+            ]
+        }
+    )
 
     normalized = curation_contracts.normalize_provider_seed_chunk(raw)
 
@@ -357,9 +420,9 @@ def test_provider_candidate_normalization_repairs_metadata_and_seed_refs() -> No
     raw_candidate.pop("title")
     raw_candidate.pop("topics")
     raw_candidate["source_refs"] = ["s1#section-0001"]
-    raw = curation_contracts.ProviderQuestionCandidateChunk.model_validate({
-        "candidates": [raw_candidate]
-    })
+    raw = curation_contracts.ProviderQuestionCandidateChunk.model_validate(
+        {"candidates": [raw_candidate]}
+    )
 
     normalized = curation_contracts.normalize_provider_candidate_chunk(
         raw,
@@ -429,16 +492,17 @@ def test_question_curation_agents_use_stage_specific_retry_policies() -> None:
 
     QuestionCurationAgents.create(factory, model_bindings={})
 
-    discovery, enrichment, revision = factory.specs
+    discovery, enrichment, revision, audit = factory.specs
     assert discovery.response_format is curation_contracts.ProviderQuestionSeedChunk
     assert (
-        enrichment.response_format
-        is curation_contracts.ProviderQuestionCandidateChunk
+        enrichment.response_format is curation_contracts.ProviderQuestionCandidateChunk
     )
     assert revision.response_format is curation_contracts.ProviderQuestionCandidateChunk
+    assert audit.response_format is curation_contracts.ProviderCoverageAuditChunk
     assert discovery.structured_output_handle_errors is False
     assert enrichment.structured_output_handle_errors is False
     assert revision.structured_output_handle_errors is False
+    assert audit.structured_output_handle_errors is False
     assert (
         discovery.invocation_policy.max_output_tokens,
         discovery.invocation_policy.request_timeout_seconds,
@@ -454,6 +518,11 @@ def test_question_curation_agents_use_stage_specific_retry_policies() -> None:
         revision.invocation_policy.request_timeout_seconds,
         revision.invocation_policy.max_retries,
     ) == (4_096, 180, 0)
+    assert (
+        audit.invocation_policy.max_output_tokens,
+        audit.invocation_policy.request_timeout_seconds,
+        audit.invocation_policy.max_retries,
+    ) == (2_048, 90, 1)
 
 
 @pytest.mark.asyncio
@@ -464,14 +533,16 @@ async def test_concrete_agents_normalize_provider_discovery_output(
         async def ainvoke(self, _input, config=None, *, context=None):
             return {
                 "structured_response": {
-                    "seeds": [{
-                        "question_text": "什么是引用归一化？",
-                        "source_ref": "s1#section-0002",
-                        "source_refs": [
-                            "s1#section-0001",
-                            "s1#section-0002",
-                        ],
-                    }]
+                    "seeds": [
+                        {
+                            "question_text": "什么是引用归一化？",
+                            "source_ref": "s1#section-0002",
+                            "source_refs": [
+                                "s1#section-0001",
+                                "s1#section-0002",
+                            ],
+                        }
+                    ]
                 }
             }
 
@@ -489,6 +560,116 @@ async def test_concrete_agents_normalize_provider_discovery_output(
         "s1#section-0002",
         "s1#section-0001",
     ]
+
+
+@pytest.mark.asyncio
+async def test_coverage_audit_discards_unknown_secondary_refs(
+    tmp_path: Path,
+) -> None:
+    class Runnable:
+        async def ainvoke(self, _input, config=None, *, context=None):
+            return {
+                "structured_response": {
+                    "seeds": [
+                        {
+                            "question_text": "覆盖审计发现的问题是什么？",
+                            "source_ref": "s1#section-0001",
+                            "source_refs": [
+                                "s1#section-0001",
+                                "hallucinated#section-9999",
+                            ],
+                            "missing_reason": "已有题目没有覆盖该问题",
+                        }
+                    ]
+                }
+            }
+
+    runnable = Runnable()
+    agents = QuestionCurationAgents(runnable, runnable, runnable, runnable)
+    sections = (SourceSection("s1", "s1#section-0001", 1, "正文一", "a" * 64),)
+
+    result = await agents.audit(
+        sections,
+        discovered_seeds=(),
+        context=context(tmp_path),
+        config={},
+        unit_index=0,
+    )
+
+    assert result.seeds[0].source_ref == "s1#section-0001"
+    assert result.seeds[0].source_refs == ["s1#section-0001"]
+
+
+@pytest.mark.asyncio
+async def test_coverage_audit_repairs_unknown_primary_from_valid_evidence(
+    tmp_path: Path,
+) -> None:
+    class Runnable:
+        async def ainvoke(self, _input, config=None, *, context=None):
+            return {
+                "structured_response": {
+                    "seeds": [
+                        {
+                            "question_text": "覆盖审计发现的问题是什么？",
+                            "source_ref": "hallucinated#section-9999",
+                            "source_refs": [
+                                "hallucinated#section-9999",
+                                "s1#section-0002",
+                            ],
+                            "missing_reason": "已有题目没有覆盖该问题",
+                        }
+                    ]
+                }
+            }
+
+    runnable = Runnable()
+    agents = QuestionCurationAgents(runnable, runnable, runnable, runnable)
+    sections = (SourceSection("s1", "s1#section-0002", 2, "正文二", "b" * 64),)
+
+    result = await agents.audit(
+        sections,
+        discovered_seeds=(),
+        context=context(tmp_path),
+        config={},
+        unit_index=0,
+    )
+
+    assert result.seeds[0].source_ref == "s1#section-0002"
+    assert result.seeds[0].source_refs == ["s1#section-0002"]
+
+
+@pytest.mark.asyncio
+async def test_coverage_audit_drops_candidates_without_valid_evidence(
+    tmp_path: Path,
+) -> None:
+    class Runnable:
+        async def ainvoke(self, _input, config=None, *, context=None):
+            return {
+                "structured_response": {
+                    "seeds": [
+                        {
+                            "question_text": "没有证据的问题是什么？",
+                            "source_ref": "hallucinated#section-9999",
+                            "source_refs": ["hallucinated#section-9999"],
+                            "missing_reason": "已有题目没有覆盖该问题",
+                        }
+                    ]
+                }
+            }
+
+    runnable = Runnable()
+    agents = QuestionCurationAgents(runnable, runnable, runnable, runnable)
+    sections = (SourceSection("s1", "s1#section-0001", 1, "正文一", "a" * 64),)
+
+    result = await agents.audit(
+        sections,
+        discovered_seeds=(),
+        context=context(tmp_path),
+        config={},
+        unit_index=0,
+    )
+
+    assert result.seeds == []
 
 
 @pytest.mark.asyncio
@@ -535,9 +716,7 @@ async def test_concrete_agents_report_truncated_reasoning_as_recoverable(
 
     runnable = Runnable()
     agents = QuestionCurationAgents(runnable, runnable, runnable)
-    sections = (
-        SourceSection("s1", "s1#section-0001", 1, "正文", "a" * 64),
-    )
+    sections = (SourceSection("s1", "s1#section-0001", 1, "正文", "a" * 64),)
 
     with pytest.raises(ModelOutputTruncatedError) as failure:
         await agents.discover(
@@ -554,17 +733,13 @@ async def test_concrete_agents_accept_explicit_zero_question_prose(
     class Runnable:
         async def ainvoke(self, _input, config=None, *, context=None):
             return {
-                "messages": [
-                    AIMessage(content="这些片段未包含可识别的面试题。")
-                ],
+                "messages": [AIMessage(content="这些片段未包含可识别的面试题。")],
                 "structured_response": None,
             }
 
     runnable = Runnable()
     agents = QuestionCurationAgents(runnable, runnable, runnable)
-    sections = (
-        SourceSection("s1", "s1#section-0001", 1, "普通随手记录", "a" * 64),
-    )
+    sections = (SourceSection("s1", "s1#section-0001", 1, "普通随手记录", "a" * 64),)
 
     result = await agents.discover(
         sections, context=context(tmp_path), config={}, unit_index=0
@@ -593,9 +768,7 @@ async def test_concrete_agents_do_not_silently_drop_unstructured_content(
 
     runnable = Runnable()
     agents = QuestionCurationAgents(runnable, runnable, runnable)
-    sections = (
-        SourceSection("s1", "s1#section-0001", 1, "普通随手记录", "a" * 64),
-    )
+    sections = (SourceSection("s1", "s1#section-0001", 1, "普通随手记录", "a" * 64),)
 
     with pytest.raises(ModelStructuredOutputMissingError):
         await agents.discover(
@@ -618,9 +791,10 @@ def test_curation_transport_failures_have_at_most_one_retry(
     factory = RecordingFactory()
     QuestionCurationAgents.create(factory, model_bindings={})
 
-    discovery, enrichment, _revision = factory.specs
+    discovery, enrichment, _revision, audit = factory.specs
     assert discovery.invocation_policy.max_retries == 1
     assert enrichment.invocation_policy.max_retries == 1
+    assert audit.invocation_policy.max_retries == 1
 
 
 def test_question_curation_prompts_describe_multi_ref_bounds() -> None:
@@ -629,6 +803,9 @@ def test_question_curation_prompts_describe_multi_ref_bounds() -> None:
     assert "source_refs" in QUESTION_DISCOVERY_PROMPT.system
     assert "3" in QUESTION_ENRICHMENT_PROMPT.system
     assert "有序引用" in QUESTION_ENRICHMENT_PROMPT.system
+    assert "漏题" in QUESTION_COVERAGE_AUDIT_PROMPT.system
+    assert "已有题目索引" in QUESTION_COVERAGE_AUDIT_PROMPT.system
+    assert "missing_reason" in QUESTION_COVERAGE_AUDIT_PROMPT.system
 
 
 @pytest.mark.asyncio
@@ -636,22 +813,35 @@ async def test_graph_runs_bounded_discovery_then_enrichment(
     repository: ReviewRepository, batch, tmp_path: Path
 ):
     agents = RecordingCurationAgents(
-        discovery_outputs=[QuestionSeedChunk(seeds=[QuestionSeed(
-            question_text="普通说明主题的机制是什么？",
-            source_ref="plain-0#section-0001",
-        )])],
+        discovery_outputs=[
+            QuestionSeedChunk(
+                seeds=[
+                    QuestionSeed(
+                        question_text="普通说明主题的机制是什么？",
+                        source_ref="plain-0#section-0001",
+                    )
+                ]
+            )
+        ],
         enrichment_outputs=[
-            QuestionCandidateChunk(candidates=[candidate(1).model_copy(update={
-                "question_text": "普通说明主题的机制是什么？",
-                "source_refs": ["plain-0#section-0001"],
-            })])
+            QuestionCandidateChunk(
+                candidates=[
+                    candidate(1).model_copy(
+                        update={
+                            "question_text": "普通说明主题的机制是什么？",
+                            "source_refs": ["plain-0#section-0001"],
+                        }
+                    )
+                ]
+            )
         ],
     )
     graph = create_question_curation_graph(agents, repository=repository)
     result = await graph.ainvoke(
-        persist_graph_input(repository, {
-            **curation_input(batch.id), "source_excerpts": plain_sources(1)
-        }),
+        persist_graph_input(
+            repository,
+            {**curation_input(batch.id), "source_excerpts": plain_sources(1)},
+        ),
         context=context(tmp_path),
     )
 
@@ -661,6 +851,121 @@ async def test_graph_runs_bounded_discovery_then_enrichment(
     assert len(agents.enrichment_calls[0].seeds) <= 3
     assert len(result["candidates"]) == 1
     assert result["generation_phase"] == "enrichment"
+
+
+@pytest.mark.asyncio
+async def test_graph_audits_every_source_window_and_enriches_missing_seeds(
+    repository: ReviewRepository, batch, tmp_path: Path
+):
+    class AuditAwareAgents(RecordingCurationAgents):
+        async def enrich(
+            self, seeds, *, sections, known_questions, context, config, unit_index
+        ):
+            self.enrichment_calls.append(
+                EnrichmentCall(
+                    unit_index,
+                    tuple(seeds),
+                    tuple(sections),
+                    tuple(known_questions),
+                )
+            )
+            return QuestionCandidateChunk(
+                candidates=[
+                    candidate(index + 1).model_copy(
+                        update={
+                            "question_text": seed.question_text,
+                            "source_refs": list(seed.source_refs),
+                        }
+                    )
+                    for index, seed in enumerate(seeds)
+                ]
+            )
+
+    agents = AuditAwareAgents(
+        discovery_outputs=[
+            QuestionSeedChunk(
+                seeds=[
+                    QuestionSeed(
+                        question_text="已经发现的问题是什么？",
+                        source_ref="plain-0#section-0001",
+                    )
+                ]
+            )
+        ],
+        audit_outputs=[
+            CoverageAuditChunk(
+                seeds=[
+                    CoverageAuditSeed(
+                        question_text="独立查漏发现的问题是什么？",
+                        source_ref="plain-0#section-0002",
+                        missing_reason="已有索引没有覆盖这个独立问题",
+                    )
+                ]
+            )
+        ],
+    )
+    graph = create_question_curation_graph(agents, repository=repository)
+
+    result = await graph.ainvoke(
+        persist_graph_input(
+            repository,
+            {**curation_input(batch.id), "source_excerpts": plain_sources(1)},
+        ),
+        context=context(tmp_path),
+    )
+
+    assert len(agents.audit_calls) == 1
+    assert [seed.question_text for seed in agents.audit_calls[0].discovered_seeds] == [
+        "已经发现的问题是什么？"
+    ]
+    assert [
+        item.status
+        for item in repository.list_curation_work_items(batch.id, stage="audit")
+    ] == ["completed"]
+    assert {
+        task.question_text for task in repository.list_curation_seed_tasks(batch.id)
+    } == {
+        "已经发现的问题是什么？",
+        "独立查漏发现的问题是什么？",
+    }
+    assert len(result["candidates"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_graph_does_not_report_success_when_coverage_audit_is_exhausted(
+    repository: ReviewRepository, batch, tmp_path: Path
+):
+    class FailingAuditAgents(RecordingCurationAgents):
+        async def audit(
+            self,
+            sections,
+            *,
+            discovered_seeds,
+            context,
+            config,
+            unit_index,
+        ):
+            self.audit_calls.append(
+                AuditCall(unit_index, tuple(sections), tuple(discovered_seeds))
+            )
+            raise FakeProviderError("private provider body")
+
+    agents = FailingAuditAgents()
+    graph = create_question_curation_graph(agents, repository=repository)
+
+    with pytest.raises(CurationWaveFailed) as failure:
+        await graph.ainvoke(
+            persist_graph_input(repository, curation_input(batch.id, section_count=1)),
+            context=context(tmp_path),
+        )
+
+    audit_items = repository.list_curation_work_items(batch.id, stage="audit")
+    assert failure.value.code == "provider_error"
+    assert len(agents.audit_calls) == 2
+    assert len(audit_items) == 1
+    assert audit_items[0].status == "failed"
+    assert audit_items[0].attempt_count == 2
+    assert agents.enrichment_calls == []
 
 
 @pytest.mark.asyncio
@@ -675,15 +980,11 @@ async def test_structured_units_complete_without_discovery_agent_calls(
     graph = create_question_curation_graph(agents, repository=repository)
 
     result = await graph.ainvoke(
-        persist_graph_input(
-            repository, curation_input(batch.id, section_count=2)
-        ),
+        persist_graph_input(repository, curation_input(batch.id, section_count=2)),
         context=context(tmp_path),
     )
 
-    discovery_items = repository.list_curation_work_items(
-        batch.id, stage="discovery"
-    )
+    discovery_items = repository.list_curation_work_items(batch.id, stage="discovery")
     assert agents.discovery_calls == []
     assert all(item.processor_kind == "deterministic" for item in discovery_items)
     assert all(item.status == "completed" for item in discovery_items)
@@ -706,9 +1007,11 @@ async def test_enrichment_commits_siblings_then_retries_only_missing_seed(
         async def enrich(
             self, seeds, *, sections, known_questions, context, config, unit_index
         ):
-            self.enrichment_calls.append(EnrichmentCall(
-                unit_index, tuple(seeds), tuple(sections), tuple(known_questions)
-            ))
+            self.enrichment_calls.append(
+                EnrichmentCall(
+                    unit_index, tuple(seeds), tuple(sections), tuple(known_questions)
+                )
+            )
             if len(seeds) == 3:
                 self.active += 1
                 self.peak = max(self.peak, self.active)
@@ -719,25 +1022,32 @@ async def test_enrichment_commits_siblings_then_retries_only_missing_seed(
                 finally:
                     self.active -= 1
             included = seeds[:-1] if len(seeds) == 3 and unit_index == 0 else seeds
-            return {"candidates": [{
-                "seed_key": item.seed_key,
-                "title": f"题目 {item.seed_ordinal + 1}",
-                "question_text": item.question_text,
-                "source_answer": f"答案 {item.seed_ordinal + 1}",
-                "topics": ["数据库"],
-                "difficulty": "medium",
-                "key_points": ["关键点"],
-                "follow_ups": [],
-                "source_refs": list(item.source_refs),
-                "correction_note": "无需修正",
-            } for item in included]}
+            return {
+                "candidates": [
+                    {
+                        "seed_key": item.seed_key,
+                        "title": f"题目 {item.seed_ordinal + 1}",
+                        "question_text": item.question_text,
+                        "source_answer": f"答案 {item.seed_ordinal + 1}",
+                        "topics": ["数据库"],
+                        "difficulty": "medium",
+                        "key_points": ["关键点"],
+                        "follow_ups": [],
+                        "source_refs": list(item.source_refs),
+                        "correction_note": "无需修正",
+                    }
+                    for item in included
+                ]
+            }
 
     agents = SeedIsolationAgents()
     graph = create_question_curation_graph(agents, repository=repository)
-    task = asyncio.create_task(graph.ainvoke(
-        persist_graph_input(repository, curation_input(batch.id, section_count=9)),
-        context=context(tmp_path),
-    ))
+    task = asyncio.create_task(
+        graph.ainvoke(
+            persist_graph_input(repository, curation_input(batch.id, section_count=9)),
+            context=context(tmp_path),
+        )
+    )
 
     await asyncio.wait_for(agents.first_wave_started.wait(), timeout=1)
     assert agents.peak == 3
@@ -768,9 +1078,7 @@ async def test_enrichment_retries_malformed_tool_output_without_failing_wave(
     graph = create_question_curation_graph(agents, repository=repository)
 
     result = await graph.ainvoke(
-        persist_graph_input(
-            repository, curation_input(batch.id, section_count=1)
-        ),
+        persist_graph_input(repository, curation_input(batch.id, section_count=1)),
         context=context(tmp_path),
     )
 
@@ -807,23 +1115,32 @@ async def test_discovery_wave_runs_three_provider_calls_concurrently(
                 self.first_wave_started.set()
             try:
                 await self.release.wait()
-                return QuestionSeedChunk(seeds=[QuestionSeed(
-                    question_text=f"说明主题 {unit_index} 的机制是什么？",
-                    source_ref=sections[0].ref,
-                    source_refs=[section.ref for section in sections],
-                )])
+                return QuestionSeedChunk(
+                    seeds=[
+                        QuestionSeed(
+                            question_text=f"说明主题 {unit_index} 的机制是什么？",
+                            source_ref=sections[0].ref,
+                            source_refs=[section.ref for section in sections],
+                        )
+                    ]
+                )
             finally:
                 self.active -= 1
 
     agents = BarrierAgents()
     graph = create_question_curation_graph(agents, repository=repository)
-    task = asyncio.create_task(graph.ainvoke(
-        persist_graph_input(repository, {
-            **curation_input(batch.id),
-            "source_excerpts": plain_sources(6),
-        }),
-        context=context(tmp_path),
-    ))
+    task = asyncio.create_task(
+        graph.ainvoke(
+            persist_graph_input(
+                repository,
+                {
+                    **curation_input(batch.id),
+                    "source_excerpts": plain_sources(6),
+                },
+            ),
+            context=context(tmp_path),
+        )
+    )
 
     await asyncio.wait_for(agents.first_wave_started.wait(), timeout=1)
     assert agents.peak == 3
@@ -845,36 +1162,50 @@ async def test_graph_emits_monotonic_progress_after_each_bounded_wave(
 
         async def discover(self, sections, *, context, config, unit_index):
             self.discovery_calls.append(DiscoveryCall(unit_index, tuple(sections)))
-            return QuestionSeedChunk(seeds=[QuestionSeed(
-                question_text=f"说明主题 {unit_index} 的机制是什么？",
-                source_ref=sections[0].ref,
-                source_refs=[section.ref for section in sections],
-            )])
+            return QuestionSeedChunk(
+                seeds=[
+                    QuestionSeed(
+                        question_text=f"说明主题 {unit_index} 的机制是什么？",
+                        source_ref=sections[0].ref,
+                        source_refs=[section.ref for section in sections],
+                    )
+                ]
+            )
 
         async def enrich(
             self, seeds, *, sections, known_questions, context, config, unit_index
         ):
-            self.enrichment_calls.append(EnrichmentCall(
-                unit_index, tuple(seeds), tuple(sections), tuple(known_questions)
-            ))
+            self.enrichment_calls.append(
+                EnrichmentCall(
+                    unit_index, tuple(seeds), tuple(sections), tuple(known_questions)
+                )
+            )
             return QuestionCandidateChunk(candidates=[])
 
     agents = ProgressAgents()
     graph = create_question_curation_graph(agents, repository=repository)
     discovery_completed: list[int] = []
+    audit_completed: list[int] = []
     async for state in graph.astream(
-        persist_graph_input(repository, {
-            **curation_input(batch.id),
-            "source_excerpts": plain_sources(7),
-        }),
+        persist_graph_input(
+            repository,
+            {
+                **curation_input(batch.id),
+                "source_excerpts": plain_sources(7),
+            },
+        ),
         context=context(tmp_path),
         stream_mode="values",
     ):
         if state.get("generation_phase") == "discovery":
             discovery_completed.append(int(state.get("completed_units", 0)))
+        if state.get("generation_phase") == "audit":
+            audit_completed.append(int(state.get("completed_units", 0)))
 
     assert discovery_completed == [0, 3, 6, 7]
     assert discovery_completed == sorted(discovery_completed)
+    assert audit_completed == [0, 3, 6, 7]
+    assert audit_completed == sorted(audit_completed)
 
 
 @pytest.mark.asyncio
@@ -890,41 +1221,52 @@ async def test_discovery_wave_keeps_siblings_and_reports_one_failed_block(
             if unit_index == 1:
                 raise FakeProviderError("private provider body")
             await asyncio.sleep(0.01)
-            return QuestionSeedChunk(seeds=[QuestionSeed(
-                question_text=f"说明主题 {unit_index} 的机制是什么？",
-                source_ref=sections[0].ref,
-                source_refs=[section.ref for section in sections],
-            )])
+            return QuestionSeedChunk(
+                seeds=[
+                    QuestionSeed(
+                        question_text=f"说明主题 {unit_index} 的机制是什么？",
+                        source_ref=sections[0].ref,
+                        source_refs=[section.ref for section in sections],
+                    )
+                ]
+            )
 
         async def enrich(
             self, seeds, *, sections, known_questions, context, config, unit_index
         ):
-            self.enrichment_calls.append(EnrichmentCall(
-                unit_index, tuple(seeds), tuple(sections), tuple(known_questions)
-            ))
-            return QuestionCandidateChunk(candidates=[
-                QuestionCandidate(
-                    title=f"题目 {item.seed_ordinal + 1}",
-                    question_text=item.question_text,
-                    reference_answer="答案",
-                    topics=["topic"],
-                    difficulty="medium",
-                    key_points=["关键点"],
-                    follow_ups=[],
-                    source_refs=list(item.source_refs),
-                    correction_note="结构化整理",
+            self.enrichment_calls.append(
+                EnrichmentCall(
+                    unit_index, tuple(seeds), tuple(sections), tuple(known_questions)
                 )
-                for item in seeds
-            ])
+            )
+            return QuestionCandidateChunk(
+                candidates=[
+                    QuestionCandidate(
+                        title=f"题目 {item.seed_ordinal + 1}",
+                        question_text=item.question_text,
+                        reference_answer="答案",
+                        topics=["topic"],
+                        difficulty="medium",
+                        key_points=["关键点"],
+                        follow_ups=[],
+                        source_refs=list(item.source_refs),
+                        correction_note="结构化整理",
+                    )
+                    for item in seeds
+                ]
+            )
 
     agents = PartialFailureAgents()
     graph = create_question_curation_graph(agents, repository=repository)
 
     result = await graph.ainvoke(
-        persist_graph_input(repository, {
-            **curation_input(batch.id),
-            "source_excerpts": plain_sources(3),
-        }),
+        persist_graph_input(
+            repository,
+            {
+                **curation_input(batch.id),
+                "source_excerpts": plain_sources(3),
+            },
+        ),
         context=context(tmp_path),
     )
 
@@ -935,18 +1277,20 @@ async def test_discovery_wave_keeps_siblings_and_reports_one_failed_block(
     assert items[0].output is not None
     assert items[2].output is not None
     assert len(result["candidates"]) == 2
-    assert result["warnings"] == [{
-        "code": "curation_discovery_block_failed",
-        "stage": "discovery",
-        "unitIndex": 1,
-        "sourceId": "plain-1",
-        "sourceRefs": [
-            "plain-1#section-0001",
-            "plain-1#section-0002",
-            "plain-1#section-0003",
-        ],
-        "errorCode": "provider_error",
-    }]
+    assert result["warnings"] == [
+        {
+            "code": "curation_discovery_block_failed",
+            "stage": "discovery",
+            "unitIndex": 1,
+            "sourceId": "plain-1",
+            "sourceRefs": [
+                "plain-1#section-0001",
+                "plain-1#section-0002",
+                "plain-1#section-0003",
+            ],
+            "errorCode": "provider_error",
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -966,38 +1310,47 @@ async def test_rate_limited_block_is_skipped_and_reduces_current_batch_to_one(
             if unit_index == 1:
                 raise failure_type("private provider overload response")
             await asyncio.sleep(0.01)
-            return QuestionSeedChunk(seeds=[QuestionSeed(
-                question_text=f"说明主题 {unit_index} 的机制是什么？",
-                source_ref=sections[0].ref,
-                source_refs=[section.ref for section in sections],
-            )])
+            return QuestionSeedChunk(
+                seeds=[
+                    QuestionSeed(
+                        question_text=f"说明主题 {unit_index} 的机制是什么？",
+                        source_ref=sections[0].ref,
+                        source_refs=[section.ref for section in sections],
+                    )
+                ]
+            )
 
         async def enrich(
             self, seeds, *, sections, known_questions, context, config, unit_index
         ):
-            return QuestionCandidateChunk(candidates=[
-                QuestionCandidate(
-                    title=f"题目 {item.seed_ordinal + 1}",
-                    question_text=item.question_text,
-                    reference_answer="答案",
-                    topics=["topic"],
-                    difficulty="medium",
-                    key_points=["关键点"],
-                    follow_ups=[],
-                    source_refs=list(item.source_refs),
-                    correction_note="结构化整理",
-                )
-                for item in seeds
-            ])
+            return QuestionCandidateChunk(
+                candidates=[
+                    QuestionCandidate(
+                        title=f"题目 {item.seed_ordinal + 1}",
+                        question_text=item.question_text,
+                        reference_answer="答案",
+                        topics=["topic"],
+                        difficulty="medium",
+                        key_points=["关键点"],
+                        follow_ups=[],
+                        source_refs=list(item.source_refs),
+                        correction_note="结构化整理",
+                    )
+                    for item in seeds
+                ]
+            )
 
     agents = RateLimitedAgents()
     graph = create_question_curation_graph(agents, repository=repository)
 
     result = await graph.ainvoke(
-        persist_graph_input(repository, {
-            **curation_input(batch.id),
-            "source_excerpts": plain_sources(3),
-        }),
+        persist_graph_input(
+            repository,
+            {
+                **curation_input(batch.id),
+                "source_excerpts": plain_sources(3),
+            },
+        ),
         context=context(tmp_path),
     )
 
@@ -1024,9 +1377,7 @@ async def test_enrichment_provider_failure_retries_then_skips_without_losing_res
     graph = create_question_curation_graph(agents, repository=repository)
 
     result = await graph.ainvoke(
-        persist_graph_input(
-            repository, curation_input(batch.id, section_count=1)
-        ),
+        persist_graph_input(repository, curation_input(batch.id, section_count=1)),
         context=context(tmp_path),
     )
 
@@ -1036,14 +1387,16 @@ async def test_enrichment_provider_failure_retries_then_skips_without_losing_res
     assert seed_tasks[0].status == "skipped"
     assert seed_tasks[0].last_error_code == "provider_error"
     assert result["candidates"] == []
-    assert result["warnings"] == [{
-        "code": "curation_enrichment_item_skipped",
-        "stage": "enrichment",
-        "seedOrdinal": 0,
-        "sourceId": "s1",
-        "sourceRefs": ["s1#section-0001"],
-        "errorCode": "provider_error",
-    }]
+    assert result["warnings"] == [
+        {
+            "code": "curation_enrichment_item_skipped",
+            "stage": "enrichment",
+            "seedOrdinal": 0,
+            "sourceId": "s1",
+            "sourceRefs": ["s1#section-0001"],
+            "errorCode": "provider_error",
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -1068,13 +1421,18 @@ async def test_graph_cancellation_interrupts_every_started_item(
 
     agents = BlockingAgents()
     graph = create_question_curation_graph(agents, repository=repository)
-    task = asyncio.create_task(graph.ainvoke(
-        persist_graph_input(repository, {
-            **curation_input(batch.id),
-            "source_excerpts": plain_sources(3),
-        }),
-        context=context(tmp_path),
-    ))
+    task = asyncio.create_task(
+        graph.ainvoke(
+            persist_graph_input(
+                repository,
+                {
+                    **curation_input(batch.id),
+                    "source_excerpts": plain_sources(3),
+                },
+            ),
+            context=context(tmp_path),
+        )
+    )
     await asyncio.wait_for(agents.started.wait(), timeout=1)
     task.cancel()
 
@@ -1086,9 +1444,9 @@ async def test_graph_cancellation_interrupts_every_started_item(
         item.status != "running"
         for item in repository.list_curation_work_items(batch.id)
     )
-    assert {
-        item.status for item in repository.list_curation_work_items(batch.id)
-    } == {"interrupted"}
+    assert {item.status for item in repository.list_curation_work_items(batch.id)} == {
+        "interrupted"
+    }
 
 
 @pytest.mark.asyncio
@@ -1102,35 +1460,42 @@ async def test_enrichment_uses_only_bounded_active_titles_not_prior_outputs(
         async def enrich(
             self, seeds, *, sections, known_questions, context, config, unit_index
         ):
-            self.enrichment_calls.append(EnrichmentCall(
-                unit_index,
-                tuple(seeds),
-                tuple(sections),
-                tuple(known_questions),
-            ))
-            await asyncio.sleep(0.005 if unit_index == 0 else 0)
-            return QuestionCandidateChunk(candidates=[
-                QuestionCandidate(
-                    title=f"generated-unit-{unit_index}-{ordinal}",
-                    question_text=seed_value.question_text,
-                    reference_answer="答案",
-                    topics=["topic"],
-                    difficulty="medium",
-                    key_points=["关键点"],
-                    follow_ups=[],
-                    source_refs=list(seed_value.source_refs),
-                    correction_note="结构化整理",
+            self.enrichment_calls.append(
+                EnrichmentCall(
+                    unit_index,
+                    tuple(seeds),
+                    tuple(sections),
+                    tuple(known_questions),
                 )
-                for ordinal, seed_value in enumerate(seeds)
-            ])
+            )
+            await asyncio.sleep(0.005 if unit_index == 0 else 0)
+            return QuestionCandidateChunk(
+                candidates=[
+                    QuestionCandidate(
+                        title=f"generated-unit-{unit_index}-{ordinal}",
+                        question_text=seed_value.question_text,
+                        reference_answer="答案",
+                        topics=["topic"],
+                        difficulty="medium",
+                        key_points=["关键点"],
+                        follow_ups=[],
+                        source_refs=list(seed_value.source_refs),
+                        correction_note="结构化整理",
+                    )
+                    for ordinal, seed_value in enumerate(seeds)
+                ]
+            )
 
     agents = DynamicEnrichmentAgents()
     graph = create_question_curation_graph(agents, repository=repository)
     result = await graph.ainvoke(
-        persist_graph_input(repository, {
-            **curation_input(batch.id, section_count=6),
-            "similar_questions": [f"active title {index}" for index in range(100)],
-        }),
+        persist_graph_input(
+            repository,
+            {
+                **curation_input(batch.id, section_count=6),
+                "similar_questions": [f"active title {index}" for index in range(100)],
+            },
+        ),
         context=context(tmp_path),
     )
 
@@ -1138,9 +1503,11 @@ async def test_enrichment_uses_only_bounded_active_titles_not_prior_outputs(
     assert all(len(call.known_questions) <= 20 for call in agents.enrichment_calls)
     assert all(
         tuple(section.ref for section in call.sections)
-        == tuple(dict.fromkeys(
-            ref for seed_value in call.seeds for ref in seed_value.source_refs
-        ))
+        == tuple(
+            dict.fromkeys(
+                ref for seed_value in call.seeds for ref in seed_value.source_refs
+            )
+        )
         for call in agents.enrichment_calls
     )
     assert all(
@@ -1158,12 +1525,14 @@ async def test_enrichment_ranks_active_titles_for_each_seed_chunk(
         async def enrich(
             self, seeds, *, sections, known_questions, context, config, unit_index
         ):
-            self.enrichment_calls.append(EnrichmentCall(
-                unit_index,
-                tuple(seeds),
-                tuple(sections),
-                tuple(known_questions),
-            ))
+            self.enrichment_calls.append(
+                EnrichmentCall(
+                    unit_index,
+                    tuple(seeds),
+                    tuple(sections),
+                    tuple(known_questions),
+                )
+            )
             return QuestionCandidateChunk(candidates=[])
 
     agents = ChunkAgents()
@@ -1192,11 +1561,14 @@ async def test_enrichment_ranks_active_titles_for_each_seed_chunk(
     ]
 
     await graph.ainvoke(
-        persist_graph_input(repository, {
-            **curation_input(batch.id, section_count=6),
-            "source_excerpts": [source],
-            "similar_questions": [*left_titles, *right_titles],
-        }),
+        persist_graph_input(
+            repository,
+            {
+                **curation_input(batch.id, section_count=6),
+                "source_excerpts": [source],
+                "similar_questions": [*left_titles, *right_titles],
+            },
+        ),
         context=context(tmp_path),
     )
 
@@ -1226,23 +1598,30 @@ async def test_resume_progress_starts_at_persisted_candidate_count(
         async def enrich(
             self, seeds, *, sections, known_questions, context, config, unit_index
         ):
-            self.enrichment_calls.append(EnrichmentCall(
-                unit_index,
-                tuple(seeds),
-                tuple(sections),
-                tuple(known_questions),
-            ))
-            return QuestionCandidateChunk(candidates=[QuestionCandidate(
-                title=f"题目 {seed_task.seed_ordinal + 1}",
-                question_text=seed_task.question_text,
-                reference_answer=f"答案 {seed_task.seed_ordinal + 1}",
-                topics=["mybatis"],
-                difficulty="medium",
-                key_points=[f"关键点 {seed_task.seed_ordinal + 1}"],
-                follow_ups=[],
-                source_refs=list(seed_task.source_refs),
-                correction_note="结构化整理",
-            ) for seed_task in seeds])
+            self.enrichment_calls.append(
+                EnrichmentCall(
+                    unit_index,
+                    tuple(seeds),
+                    tuple(sections),
+                    tuple(known_questions),
+                )
+            )
+            return QuestionCandidateChunk(
+                candidates=[
+                    QuestionCandidate(
+                        title=f"题目 {seed_task.seed_ordinal + 1}",
+                        question_text=seed_task.question_text,
+                        reference_answer=f"答案 {seed_task.seed_ordinal + 1}",
+                        topics=["mybatis"],
+                        difficulty="medium",
+                        key_points=[f"关键点 {seed_task.seed_ordinal + 1}"],
+                        follow_ups=[],
+                        source_refs=list(seed_task.source_refs),
+                        correction_note="结构化整理",
+                    )
+                    for seed_task in seeds
+                ]
+            )
 
     agents = ResumeProgressAgents()
     graph = create_question_curation_graph(agents, repository=repository)
@@ -1282,11 +1661,14 @@ async def test_persisted_graph_checkpoint_contains_no_source_corpus_or_titles(
             agents, repository=repository, checkpointer=saver
         )
         await graph.ainvoke(
-            persist_graph_input(repository, {
-                **curation_input(batch.id, section_count=1),
-                "source_excerpts": [f"s1:source.md\n1、{source_marker}？\n答案"],
-                "similar_questions": [title_marker],
-            }),
+            persist_graph_input(
+                repository,
+                {
+                    **curation_input(batch.id, section_count=1),
+                    "source_excerpts": [f"s1:source.md\n1、{source_marker}？\n答案"],
+                    "similar_questions": [title_marker],
+                },
+            ),
             config={"configurable": {"thread_id": "safe-checkpoint"}},
             context=context(tmp_path),
         )
@@ -1311,10 +1693,13 @@ async def test_graph_output_state_excludes_source_text_and_unbounded_titles(
     graph = create_question_curation_graph(agents, repository=repository)
 
     result = await graph.ainvoke(
-        persist_graph_input(repository, {
-            **curation_input(batch.id, section_count=1),
-            "similar_questions": [f"active title {index}" for index in range(100)],
-        }),
+        persist_graph_input(
+            repository,
+            {
+                **curation_input(batch.id, section_count=1),
+                "similar_questions": [f"active title {index}" for index in range(100)],
+            },
+        ),
         context=context(tmp_path),
     )
 
@@ -1325,6 +1710,7 @@ async def test_graph_output_state_excludes_source_text_and_unbounded_titles(
         "batch_id",
         "revision_candidate_id",
         "discovery_work_item_ids",
+        "audit_work_item_ids",
         "enrichment_work_item_ids",
         "seed_task_ids",
         "generation_phase",
@@ -1350,42 +1736,51 @@ async def test_retry_reuses_completed_discovery_item(
             self.attempts[unit_index] = self.attempts.get(unit_index, 0) + 1
             if unit_index == 1 and self.attempts[unit_index] == 1:
                 raise FakeProviderError()
-            return QuestionSeedChunk(seeds=[QuestionSeed(
-                question_text=f"普通说明主题 {unit_index} 的机制是什么？",
-                source_ref=sections[0].ref,
-                source_refs=[section.ref for section in sections],
-            )])
+            return QuestionSeedChunk(
+                seeds=[
+                    QuestionSeed(
+                        question_text=f"普通说明主题 {unit_index} 的机制是什么？",
+                        source_ref=sections[0].ref,
+                        source_refs=[section.ref for section in sections],
+                    )
+                ]
+            )
 
         async def enrich(
             self, seeds, *, sections, known_questions, context, config, unit_index
         ):
-            self.enrichment_calls.append(EnrichmentCall(
-                unit_index, tuple(seeds), tuple(sections), tuple(known_questions)
-            ))
-            return QuestionCandidateChunk(candidates=[
-                QuestionCandidate(
-                    title=f"题目 {index}",
-                    question_text=seed_value.question_text,
-                    reference_answer="答案",
-                    topics=["topic"],
-                    difficulty="medium",
-                    key_points=["关键点"],
-                    follow_ups=[],
-                    source_refs=list(seed_value.source_refs),
-                    correction_note="结构化整理",
+            self.enrichment_calls.append(
+                EnrichmentCall(
+                    unit_index, tuple(seeds), tuple(sections), tuple(known_questions)
                 )
-                for index, seed_value in enumerate(seeds)
-            ])
+            )
+            return QuestionCandidateChunk(
+                candidates=[
+                    QuestionCandidate(
+                        title=f"题目 {index}",
+                        question_text=seed_value.question_text,
+                        reference_answer="答案",
+                        topics=["topic"],
+                        difficulty="medium",
+                        key_points=["关键点"],
+                        follow_ups=[],
+                        source_refs=list(seed_value.source_refs),
+                        correction_note="结构化整理",
+                    )
+                    for index, seed_value in enumerate(seeds)
+                ]
+            )
 
     agents = ResumeAgents()
     graph = create_question_curation_graph(agents, repository=repository)
-    graph_input = persist_graph_input(repository, {
-        **curation_input(batch.id),
-        "source_excerpts": plain_sources(2),
-    })
-    result = await graph.ainvoke(
-        graph_input, context=context(tmp_path)
+    graph_input = persist_graph_input(
+        repository,
+        {
+            **curation_input(batch.id),
+            "source_excerpts": plain_sources(2),
+        },
     )
+    result = await graph.ainvoke(graph_input, context=context(tmp_path))
 
     assert len(repository.list_curation_seed_tasks(batch.id)) == 2
     assert result["warnings"] == []
@@ -1393,16 +1788,12 @@ async def test_retry_reuses_completed_discovery_item(
     assert agents.discovery_call_indexes.count(1) == 2
     attempts = [
         item.attempt_count
-        for item in repository.list_curation_work_items(
-            batch.id, stage="discovery"
-        )
+        for item in repository.list_curation_work_items(batch.id, stage="discovery")
     ]
     assert attempts == [1, 2]
     assert all(
         item.status == "completed"
-        for item in repository.list_curation_work_items(
-            batch.id, stage="discovery"
-        )
+        for item in repository.list_curation_work_items(batch.id, stage="discovery")
     )
 
 
@@ -1411,8 +1802,7 @@ async def test_legacy_dense_work_item_is_split_without_replanning_identity(
     repository: ReviewRepository, batch, tmp_path: Path
 ) -> None:
     source_excerpt = "s1:notes.md\n" + "\n\n".join(
-        f"第 {index} 条没有明确题目结构的随手记录。"
-        for index in range(1, 9)
+        f"第 {index} 条没有明确题目结构的随手记录。" for index in range(1, 9)
     )
     sections = section_sources((source_excerpt,))
     legacy = repository.plan_curation_work_item(
@@ -1427,19 +1817,26 @@ async def test_legacy_dense_work_item_is_split_without_replanning_identity(
     class LegacyAgents(RecordingCurationAgents):
         async def discover(self, sections, *, context, config, unit_index):
             self.discovery_calls.append(DiscoveryCall(unit_index, tuple(sections)))
-            return QuestionSeedChunk(seeds=[QuestionSeed(
-                question_text=f"{sections[0].text} 可以追问什么？",
-                source_ref=sections[0].ref,
-                source_refs=[section.ref for section in sections],
-            )])
+            return QuestionSeedChunk(
+                seeds=[
+                    QuestionSeed(
+                        question_text=f"{sections[0].text} 可以追问什么？",
+                        source_ref=sections[0].ref,
+                        source_refs=[section.ref for section in sections],
+                    )
+                ]
+            )
 
     agents = LegacyAgents()
     graph = create_question_curation_graph(agents, repository=repository)
     await graph.ainvoke(
-        persist_graph_input(repository, {
-            **curation_input(batch.id),
-            "source_excerpts": [source_excerpt],
-        }),
+        persist_graph_input(
+            repository,
+            {
+                **curation_input(batch.id),
+                "source_excerpts": [source_excerpt],
+            },
+        ),
         context=context(tmp_path),
     )
 
@@ -1459,11 +1856,14 @@ async def test_single_revision_bypasses_discovery_and_enrichment(
     )
     graph = create_question_curation_graph(agents, repository=repository)
     result = await graph.ainvoke(
-        persist_graph_input(repository, {
-            **curation_input(batch.id),
-            "revision_candidate_id": "candidate-1",
-            "rewrite_feedback": "更具体",
-        }),
+        persist_graph_input(
+            repository,
+            {
+                **curation_input(batch.id),
+                "revision_candidate_id": "candidate-1",
+                "rewrite_feedback": "更具体",
+            },
+        ),
         context=context(tmp_path),
     )
 
@@ -1488,9 +1888,9 @@ async def test_manual_seed_retry_runs_exactly_one_seed_attempt(
     )
     repository.complete_deterministic_curation_work_item(
         discovery.id,
-        output=QuestionSeedChunk(seeds=[QuestionSeed(
-            question_text="问题 1？", source_ref=source_ref
-        )]).model_dump(mode="json"),
+        output=QuestionSeedChunk(
+            seeds=[QuestionSeed(question_text="问题 1？", source_ref=source_ref)]
+        ).model_dump(mode="json"),
     )
     task = repository.plan_curation_seed_task(
         batch_id=batch.id,
@@ -1530,32 +1930,40 @@ async def test_manual_seed_retry_runs_exactly_one_seed_attempt(
         async def enrich(
             self, seeds, *, sections, known_questions, context, config, unit_index
         ):
-            self.enrichment_calls.append(EnrichmentCall(
-                unit_index, tuple(seeds), tuple(sections), tuple(known_questions)
-            ))
+            self.enrichment_calls.append(
+                EnrichmentCall(
+                    unit_index, tuple(seeds), tuple(sections), tuple(known_questions)
+                )
+            )
             seed_task = seeds[0]
-            return {"candidates": [{
-                "seed_key": seed_task.seed_key,
-                "question_text": seed_task.question_text,
-                "source_answer": "恢复后的材料答案",
-                "topics": ["runtime"],
-                "difficulty": "medium",
-                "key_points": ["可恢复"],
-                "follow_ups": [],
-                "source_refs": list(seed_task.source_refs),
-                "correction_note": "无需修正",
-            }]}
+            return {
+                "candidates": [
+                    {
+                        "seed_key": seed_task.seed_key,
+                        "question_text": seed_task.question_text,
+                        "source_answer": "恢复后的材料答案",
+                        "topics": ["runtime"],
+                        "difficulty": "medium",
+                        "key_points": ["可恢复"],
+                        "follow_ups": [],
+                        "source_refs": list(seed_task.source_refs),
+                        "correction_note": "无需修正",
+                    }
+                ]
+            }
 
     agents = ManualAgents()
     graph = create_question_curation_graph(agents, repository=repository)
     graph_input = persist_graph_input(
         repository, curation_input(batch.id, section_count=1)
     )
-    graph_input.update({
-        "manual_seed_task_id": task.id,
-        "manual_seed_expected_version": skipped.version,
-        "manual_seed_retry_key": "manual-retry-0001",
-    })
+    graph_input.update(
+        {
+            "manual_seed_task_id": task.id,
+            "manual_seed_expected_version": skipped.version,
+            "manual_seed_retry_key": "manual-retry-0001",
+        }
+    )
 
     await graph.ainvoke(graph_input, context=context(tmp_path))
 
@@ -1580,10 +1988,12 @@ async def test_graph_caps_dense_sources_at_200_with_explicit_warning(
     enrichment_outputs = [
         QuestionCandidateChunk(
             candidates=[
-                candidate(index).model_copy(update={
-                    "question_text": f"唯一主题 topic-{index} 的机制与边界是什么？",
-                    "topics": [f"topic-{index}"],
-                })
+                candidate(index).model_copy(
+                    update={
+                        "question_text": f"唯一主题 topic-{index} 的机制与边界是什么？",
+                        "topics": [f"topic-{index}"],
+                    }
+                )
                 for index in range(start, min(start + 3, 201))
             ]
         )
@@ -1596,9 +2006,7 @@ async def test_graph_caps_dense_sources_at_200_with_explicit_warning(
     graph = create_question_curation_graph(agents, repository=repository)
 
     result = await graph.ainvoke(
-        persist_graph_input(
-            repository, curation_input(batch.id, section_count=205)
-        ),
+        persist_graph_input(repository, curation_input(batch.id, section_count=205)),
         context=context(tmp_path),
     )
 
@@ -1657,11 +2065,15 @@ async def test_concrete_agents_reject_unknown_secondary_source_refs(tmp_path: Pa
     class Runnable:
         async def ainvoke(self, _input, config=None, *, context=None):
             return {
-                "structured_response": QuestionSeedChunk(seeds=[QuestionSeed(
-                    question_text="问题？",
-                    source_ref="s1#section-0001",
-                    source_refs=["s1#section-0001", "s1#section-9999"],
-                )])
+                "structured_response": QuestionSeedChunk(
+                    seeds=[
+                        QuestionSeed(
+                            question_text="问题？",
+                            source_ref="s1#section-0001",
+                            source_refs=["s1#section-0001", "s1#section-9999"],
+                        )
+                    ]
+                )
             }
 
     agents = QuestionCurationAgents(Runnable(), Runnable(), Runnable())
@@ -1678,11 +2090,15 @@ async def test_concrete_agents_reject_cross_source_seed_refs(tmp_path: Path):
     class Runnable:
         async def ainvoke(self, _input, config=None, *, context=None):
             return {
-                "structured_response": QuestionSeedChunk(seeds=[QuestionSeed(
-                    question_text="问题？",
-                    source_ref="s1#section-0001",
-                    source_refs=["s1#section-0001", "s2#section-0001"],
-                )])
+                "structured_response": QuestionSeedChunk(
+                    seeds=[
+                        QuestionSeed(
+                            question_text="问题？",
+                            source_ref="s1#section-0001",
+                            source_refs=["s1#section-0001", "s2#section-0001"],
+                        )
+                    ]
+                )
             }
 
     agents = QuestionCurationAgents(Runnable(), Runnable(), Runnable())
@@ -1701,9 +2117,9 @@ async def test_concrete_agents_reject_cross_source_seed_refs(tmp_path: Path):
 async def test_concrete_agents_preserve_untrusted_refs_for_normalization_boundary(
     tmp_path: Path,
 ):
-    invalid = candidate(1).model_copy(update={
-        "source_refs": ["s1#section-0001", "s1#section-9999"]
-    })
+    invalid = candidate(1).model_copy(
+        update={"source_refs": ["s1#section-0001", "s1#section-9999"]}
+    )
 
     class Runnable:
         async def ainvoke(self, _input, config=None, *, context=None):
@@ -1736,11 +2152,7 @@ async def test_concrete_agents_keep_first_seed_for_duplicate_source_refs(
 
     class Runnable:
         async def ainvoke(self, _input, config=None, *, context=None):
-            return {
-                "structured_response": QuestionSeedChunk(
-                    seeds=[first, duplicate]
-                )
-            }
+            return {"structured_response": QuestionSeedChunk(seeds=[first, duplicate])}
 
     agents = QuestionCurationAgents(Runnable(), Runnable(), Runnable())
     section = SourceSection("s1", "s1#section-0001", 1, "正文", "a" * 64)

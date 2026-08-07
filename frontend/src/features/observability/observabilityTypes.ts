@@ -17,6 +17,7 @@ export const executionSummarySchema = z.object({
   graphId: z.string().min(1),
   displayName: z.string().min(1),
   system: z.boolean(),
+  runCenterDefaultVisible: z.boolean().optional(),
   title: z.string().min(1),
   status: z.string().min(1),
   traceHealth: z.enum(["complete", "partial", "missing", "unavailable"]),

@@ -30,6 +30,14 @@ class ProviderQuestionSeedChunk(_ProviderQuestionCurationOutput):
     seeds: list[ProviderQuestionSeed] = Field(default_factory=list)
 
 
+class ProviderCoverageAuditSeed(ProviderQuestionSeed):
+    missing_reason: str | None = None
+
+
+class ProviderCoverageAuditChunk(_ProviderQuestionCurationOutput):
+    seeds: list[ProviderCoverageAuditSeed] = Field(default_factory=list)
+
+
 class ProviderQuestionCandidate(_ProviderQuestionCurationOutput):
     seed_key: str | None = None
     title: str | None = None
@@ -128,6 +136,18 @@ class QuestionSeedBatch(_StrictQuestionCurationOutput):
     seeds: list[QuestionSeed] = Field(default_factory=list, max_length=200)
 
 
+class CoverageAuditSeed(QuestionSeed):
+    missing_reason: str = Field(min_length=1)
+
+
+class CoverageAuditChunk(_StrictQuestionCurationOutput):
+    seeds: list[CoverageAuditSeed] = Field(default_factory=list, max_length=20)
+
+
+class CoverageAuditBatch(_StrictQuestionCurationOutput):
+    seeds: list[CoverageAuditSeed] = Field(default_factory=list, max_length=200)
+
+
 def normalize_provider_seed_chunk(value: object) -> QuestionSeedChunk:
     if isinstance(value, BaseModel):
         value = value.model_dump()
@@ -154,6 +174,34 @@ def normalize_provider_seed_chunk(value: object) -> QuestionSeedChunk:
             )
         )
     return QuestionSeedChunk(seeds=seeds)
+
+
+def normalize_provider_coverage_audit_chunk(value: object) -> CoverageAuditChunk:
+    if isinstance(value, BaseModel):
+        value = value.model_dump()
+    raw = ProviderCoverageAuditChunk.model_validate(value)
+    seeds: list[CoverageAuditSeed] = []
+    for item in raw.seeds[:20]:
+        question_text = (item.question_text or "").strip()
+        primary = (item.source_ref or "").strip()
+        missing_reason = (item.missing_reason or "").strip()
+        if not question_text or not primary or not missing_reason:
+            continue
+        secondary_refs: list[str] = []
+        for raw_ref in _provider_values(item.source_refs):
+            ref = (raw_ref or "").strip()
+            if not ref or ref == primary or ref in secondary_refs:
+                continue
+            secondary_refs.append(ref)
+        seeds.append(CoverageAuditSeed(
+            question_text=question_text,
+            source_ref=primary,
+            source_refs=[primary, *secondary_refs][
+                :MAX_QUESTION_SEED_SOURCE_REFS
+            ],
+            missing_reason=missing_reason,
+        ))
+    return CoverageAuditChunk(seeds=seeds)
 
 
 def normalize_provider_candidate_chunk(

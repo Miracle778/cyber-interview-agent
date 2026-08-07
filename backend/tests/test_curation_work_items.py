@@ -387,6 +387,62 @@ def test_resume_reuses_batch_and_records_idempotent_receipt(
     ) == resumed
 
 
+def test_failed_batch_resume_requeues_only_exhausted_work_for_one_more_attempt(
+    repository: ReviewRepository, batch
+) -> None:
+    completed = repository.plan_curation_work_item(
+        batch_id=batch.id,
+        stage="audit",
+        unit_index=0,
+        input_digest="a" * 64,
+        source_refs=("s1#section-0001",),
+    )
+    exhausted = repository.plan_curation_work_item(
+        batch_id=batch.id,
+        stage="audit",
+        unit_index=1,
+        input_digest="b" * 64,
+        source_refs=("s1#section-0002",),
+    )
+    repository.complete_curation_work_item(
+        repository.start_curation_work_item(completed.id).id,
+        output={"seeds": []},
+    )
+    repository.fail_curation_work_item(
+        repository.start_curation_work_item(exhausted.id).id,
+        error_code="schema_validation_error",
+    )
+    repository.fail_curation_work_item(
+        repository.start_curation_work_item(exhausted.id).id,
+        error_code="schema_validation_error",
+    )
+    repository.update_batch_status(batch.id, "failed")
+    _insert_resume_run(repository)
+    failed = repository.get_batch(batch.id)
+
+    repository.resume_curation_batch(
+        batch.id,
+        execution_id="run-3",
+        idempotency_key="resume-exhausted-work-0001",
+        expected_version=failed.version,
+        reason="failed",
+    )
+
+    assert repository.get_curation_work_item(completed.id).status == "completed"
+    retried = repository.get_curation_work_item(exhausted.id)
+    assert (retried.status, retried.attempt_count, retried.last_error_code) == (
+        "pending",
+        2,
+        "schema_validation_error",
+    )
+    restarted = repository.start_curation_work_item(exhausted.id)
+    assert (restarted.status, restarted.attempt_count, restarted.last_error_code) == (
+        "running",
+        3,
+        None,
+    )
+
+
 def test_resume_rejects_execution_owned_by_another_curation_session(
     repository: ReviewRepository, batch
 ) -> None:

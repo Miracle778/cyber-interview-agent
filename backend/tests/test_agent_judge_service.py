@@ -33,7 +33,12 @@ from app.evaluation.snapshot import (
     FrozenTraceEvent,
 )
 from app.infrastructure.runtime_database import connect_runtime_database
-from app.application.session_service import ProductRepository
+from app.application.execution_service import AgentExecutionService
+from app.application.session_service import (
+    AgentSessionService,
+    ProductEventStream,
+    ProductRepository,
+)
 from app.agents.definition_registry import require_agent_definition
 from app.agents.definition_snapshot import build_agent_definition_snapshot
 
@@ -44,6 +49,7 @@ class FakeObservability:
             "id": "execution-1",
             "graph_id": graph_id,
             "status": status,
+            "title": "复习单题",
         }
 
     def _run(self, execution_id: str):
@@ -251,6 +257,57 @@ async def test_manual_judge_is_idempotent_and_does_not_change_business_status(
         assert observability.row["status"] == "completed"
         assert len(service.repository.list_dimension_results(first.id)) > 0
     finally:
+        connection.close()
+
+
+@pytest.mark.asyncio
+async def test_manual_judge_runs_as_visible_product_execution(tmp_path) -> None:
+    connection, _observability, service = _service(tmp_path)
+    product = ProductRepository(connection)
+    events = ProductEventStream(product, workspace_root=tmp_path)
+    sessions = AgentSessionService(product, events)
+
+    async def unused_command(*_args, **_kwargs):
+        return None
+
+    executions = AgentExecutionService(
+        workspace_id="workspace-1",
+        workspace_root=tmp_path,
+        repository=product,
+        events=events,
+        graph_factory=lambda *_args, **_kwargs: None,
+        model_bindings=lambda: {"answer_evaluation": "model-1"},
+        create_action=unused_command,
+        create_draft=unused_command,
+        mark_draft_review_pending=unused_command,
+    )
+    service.bind_execution_runtime(sessions=sessions, executions=executions)
+
+    try:
+        started = await service.start_manual_evaluation(
+            "execution-1",
+            idempotency_key="visible-quality-run",
+            eval_pack_id="review.v1",
+        )
+        completed = await executions.wait(started.id)
+        evaluation = service.repository.list_runs()[0]
+        session = sessions.get(completed.session_id)
+        replay = await service.start_manual_evaluation(
+            "execution-1",
+            idempotency_key="visible-quality-run",
+            eval_pack_id="review.v1",
+        )
+
+        assert completed.status == "completed"
+        assert evaluation.id == completed.id
+        assert evaluation.status == "completed"
+        assert session.kind == "quality.evaluate"
+        assert session.visibility == "system"
+        assert session.title == "质量检查：复习单题"
+        assert replay.id == completed.id
+        assert replay.status == "completed"
+    finally:
+        await events.close()
         connection.close()
 
 

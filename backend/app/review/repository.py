@@ -1558,6 +1558,17 @@ class ReviewRepository:
                 "AND status = 'running'",
                 (batch_id,),
             )
+            if reason == "failed":
+                # A user-initiated retry must grant work items which exhausted the
+                # automatic retry budget one fresh execution opportunity.  Keep the
+                # cumulative attempt count for diagnostics; changing the terminal
+                # status back to pending is enough for the graph to claim it once.
+                self._connection.execute(
+                    "UPDATE review_curation_work_items SET status = 'pending', "
+                    "updated_at = CURRENT_TIMESTAMP WHERE batch_id = ? "
+                    "AND status = 'failed' AND attempt_count >= 2",
+                    (batch_id,),
+                )
             self._resume_interrupted_curation_seed_tasks_locked(batch_id)
             if existing is None:
                 self._connection.execute(
@@ -1735,7 +1746,10 @@ class ReviewRepository:
             ).fetchone()
             if origin is None:
                 raise LookupError(discovery_work_item_id)
-            if origin["batch_id"] != batch_id or origin["stage"] != "discovery":
+            if origin["batch_id"] != batch_id or origin["stage"] not in {
+                "discovery",
+                "audit",
+            }:
                 raise ReviewConflictError("seed task discovery origin changed")
             existing = self._connection.execute(
                 "SELECT * FROM review_curation_seed_tasks "
@@ -2224,7 +2238,7 @@ class ReviewRepository:
         clauses = ["batch_id = ?"]
         values: list[object] = [batch_id]
         if stage is not None:
-            if stage not in {"discovery", "enrichment"}:
+            if stage not in {"discovery", "audit", "enrichment"}:
                 raise ValueError("unsupported curation work item stage")
             clauses.append("stage = ?")
             values.append(stage)
@@ -2998,6 +3012,65 @@ class ReviewRepository:
                     (self._snapshot(row["question_json"]).question_id,),
                 )
         return self.get_candidate(candidate_id)
+
+    def restore_all_candidates(self, workspace_id: str) -> int:
+        with self._transaction():
+            rows = self._connection.execute(
+                "SELECT c.id, c.status, c.question_json "
+                "FROM review_question_candidates c "
+                "JOIN review_question_batches b ON b.id = c.batch_id "
+                "WHERE b.workspace_id = ? AND c.deleted_at IS NOT NULL",
+                (workspace_id,),
+            ).fetchall()
+            self._connection.executemany(
+                "UPDATE review_question_candidates "
+                "SET deleted_at = NULL, deletion_reason = '', "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                ((row["id"],) for row in rows),
+            )
+            for row in rows:
+                if row["status"] == "published":
+                    self._connection.execute(
+                        "UPDATE review_question_catalog SET active = 1, "
+                        "updated_at = CURRENT_TIMESTAMP WHERE question_id = ?",
+                        (self._snapshot(row["question_json"]).question_id,),
+                    )
+        return len(rows)
+
+    def permanently_delete_candidate(
+        self, workspace_id: str, candidate_id: str
+    ) -> None:
+        with self._transaction():
+            row = self._connection.execute(
+                "SELECT c.deleted_at FROM review_question_candidates c "
+                "JOIN review_question_batches b ON b.id = c.batch_id "
+                "WHERE c.id = ? AND b.workspace_id = ?",
+                (candidate_id, workspace_id),
+            ).fetchone()
+            if row is None:
+                raise LookupError(candidate_id)
+            if row["deleted_at"] is None:
+                raise ReviewConflictError(
+                    "question candidate must be in recycle bin"
+                )
+            self._connection.execute(
+                "DELETE FROM review_question_candidates WHERE id = ?",
+                (candidate_id,),
+            )
+
+    def empty_candidate_recycle_bin(self, workspace_id: str) -> int:
+        with self._transaction():
+            rows = self._connection.execute(
+                "SELECT c.id FROM review_question_candidates c "
+                "JOIN review_question_batches b ON b.id = c.batch_id "
+                "WHERE b.workspace_id = ? AND c.deleted_at IS NOT NULL",
+                (workspace_id,),
+            ).fetchall()
+            self._connection.executemany(
+                "DELETE FROM review_question_candidates WHERE id = ?",
+                ((row["id"],) for row in rows),
+            )
+        return len(rows)
 
     def update_candidate(
         self,
@@ -4712,7 +4785,7 @@ class ReviewRepository:
         source_refs: tuple[str, ...],
         processor_kind: CurationProcessorKind,
     ) -> None:
-        if stage not in {"discovery", "enrichment"}:
+        if stage not in {"discovery", "audit", "enrichment"}:
             raise ValueError("unsupported curation work item stage")
         if unit_index < 0:
             raise ValueError("curation work item unit index must not be negative")
@@ -4862,6 +4935,7 @@ class ReviewRepository:
         """Reject unbounded or non-contract output before it becomes durable state."""
         try:
             from app.agents.question_curation_contracts import (
+                CoverageAuditBatch,
                 QuestionCandidateChunk,
                 QuestionSeedBatch,
             )
@@ -4869,14 +4943,16 @@ class ReviewRepository:
             # Task 1 and this persistence foundation can land independently.
             # Keep the same narrow wire contract until the strict Pydantic
             # chunks are available, then delegate validation to them above.
-            expected_key = "seeds" if stage == "discovery" else "candidates"
-            maximum = 6 if stage == "discovery" else 3
+            expected_key = (
+                "seeds" if stage in {"discovery", "audit"} else "candidates"
+            )
+            maximum = 20 if stage == "audit" else 6 if stage == "discovery" else 3
             if set(output) != {expected_key}:
                 raise ValueError("curation work item output has an invalid shape")
             values = output[expected_key]
             if not isinstance(values, list) or len(values) > maximum:
                 raise ValueError("curation work item output exceeds its bound")
-            if stage == "discovery":
+            if stage in {"discovery", "audit"}:
                 if any(
                     not isinstance(value, dict)
                     or set(value) != {"question_text", "source_ref"}
@@ -4918,7 +4994,11 @@ class ReviewRepository:
             validated = output
         else:
             contract = (
-                QuestionSeedBatch if stage == "discovery" else QuestionCandidateChunk
+                QuestionSeedBatch
+                if stage == "discovery"
+                else CoverageAuditBatch
+                if stage == "audit"
+                else QuestionCandidateChunk
             )
             validated = contract.model_validate(output).model_dump(mode="json")
         encoded = _canonical_json(validated)

@@ -103,6 +103,18 @@ describe("CurationRuntimePanel candidate status", () => {
     expect(screen.getByText("已生成前 200 道候选题，请先审核当前结果")).toBeInTheDocument();
   });
 
+  it("shows the independent coverage audit as a distinct progress phase", () => {
+    render(<CurationRuntimePanel session={{
+      ...session,
+      batchStatus: "generating",
+      stage: "generating",
+      progress: { phase: "audit", completed: 2, total: 5, generatedCandidateCount: 0, activeWorkers: 1 },
+    }} />);
+
+    expect(screen.getByText("正在查漏题目")).toBeInTheDocument();
+    expect(screen.getByText("已完成查漏")).toBeInTheDocument();
+  });
+
   it("shows failed source blocks without turning partial success into a failed run", () => {
     render(<CurationRuntimePanel session={{
       ...session,

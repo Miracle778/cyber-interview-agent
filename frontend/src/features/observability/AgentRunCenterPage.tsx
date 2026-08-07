@@ -80,7 +80,11 @@ function matchesFilters(
   filters: ExecutionFilters,
   currentExecutionIds: ReadonlySet<string>,
 ) {
-  if (!filters.includeSystemAgents && execution.system) return false;
+  if (
+    !filters.includeSystemAgents
+    && execution.system
+    && !execution.runCenterDefaultVisible
+  ) return false;
   if (
     CURRENT_EXECUTION_STATUS_FILTERS.has(filters.status)
     && (
@@ -126,6 +130,11 @@ function latestExecutionsBySession(executions: ExecutionSummary[]) {
     }
   }
   return latestBySession;
+}
+
+function newestExecutionFirst(left: ExecutionSummary, right: ExecutionSummary) {
+  const createdAtOrder = right.createdAt.localeCompare(left.createdAt);
+  return createdAtOrder || right.id.localeCompare(left.id);
 }
 
 function countStatuses(
@@ -229,7 +238,9 @@ export function AgentRunCenterPage({
       if (!byId.has(execution.id)) byId.set(execution.id, execution);
     }
     return [...byId.values()].filter((execution) =>
-      filters.includeSystemAgents || !execution.system
+      filters.includeSystemAgents
+      || !execution.system
+      || execution.runCenterDefaultVisible
     );
   }, [filters.includeSystemAgents, liveById, query.data?.items]);
 
@@ -243,24 +254,37 @@ export function AgentRunCenterPage({
     ),
     [currentExecutionBySession],
   );
+  const currentExecutions = useMemo(
+    () => [...currentExecutionBySession.values()].sort(newestExecutionFirst),
+    [currentExecutionBySession],
+  );
+  const executionHistoryBySession = useMemo(() => {
+    const history = new Map<string, ExecutionSummary[]>();
+    for (const execution of allExecutions) {
+      const sessionExecutions = history.get(execution.sessionId) ?? [];
+      sessionExecutions.push(execution);
+      history.set(execution.sessionId, sessionExecutions);
+    }
+    for (const sessionExecutions of history.values()) {
+      sessionExecutions.sort(newestExecutionFirst);
+    }
+    return history;
+  }, [allExecutions]);
   const executions = useMemo(
-    () => allExecutions.filter((execution) =>
+    () => currentExecutions.filter((execution) =>
       matchesFilters(execution, filters, currentExecutionIds)
     ),
-    [allExecutions, currentExecutionIds, filters],
+    [currentExecutions, currentExecutionIds, filters],
   );
   const actionItems = useMemo(
-    () => allExecutions.filter((execution) =>
-      currentExecutionIds.has(execution.id) && executionNeedsAction(execution)
-    ),
-    [allExecutions, currentExecutionIds],
+    () => currentExecutions.filter(executionNeedsAction),
+    [currentExecutions],
   );
   const focusedItems = useMemo(
-    () => allExecutions.filter((execution) =>
-      currentExecutionIds.has(execution.id)
-      && STATUS_GROUPS.focused.has(execution.status)
+    () => currentExecutions.filter((execution) =>
+      STATUS_GROUPS.focused.has(execution.status)
     ),
-    [allExecutions, currentExecutionIds],
+    [currentExecutions],
   );
   const totalPages = Math.max(1, Math.ceil(executions.length / PAGE_SIZE));
   const visibleExecutions = executions.slice(
@@ -310,17 +334,17 @@ export function AgentRunCenterPage({
     returnSearchParams.size ? `?${returnSearchParams.toString()}` : ""
   }`;
   const agentNames = useMemo(
-    () => [...new Set(allExecutions.map((item) => item.displayName))]
+    () => [...new Set(currentExecutions.map((item) => item.displayName))]
       .sort((left, right) => left.localeCompare(right, "zh-CN")),
-    [allExecutions],
+    [currentExecutions],
   );
   const counts = useMemo(() => ({
-    all: allExecutions.length,
+    all: currentExecutions.length,
     focused: focusedItems.length,
-    completed: countStatuses(allExecutions, "completed"),
-    failed: countStatuses(allExecutions, "failed"),
-    stopped: countStatuses(allExecutions, STATUS_GROUPS.stopped),
-  }), [allExecutions, focusedItems.length]);
+    completed: countStatuses(currentExecutions, "completed"),
+    failed: countStatuses(currentExecutions, "failed"),
+    stopped: countStatuses(currentExecutions, STATUS_GROUPS.stopped),
+  }), [currentExecutions, focusedItems.length]);
   const exactAttentionStatus = ["partial_success", "failed"].includes(filters.status)
     ? filters.status
     : "";
@@ -585,6 +609,7 @@ export function AgentRunCenterPage({
                     <ExecutionList
                       executions={visibleExecutions}
                       currentExecutionBySession={currentExecutionBySession}
+                      executionHistoryBySession={executionHistoryBySession}
                       selectedId={previewOpen ? selectedId : null}
                       onSelect={selectExecution}
                       returnTo={returnTo}

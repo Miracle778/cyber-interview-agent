@@ -23,6 +23,11 @@ class CreateEvaluationRunCommand(EvaluationModel):
     eval_pack_id: str | None = Field(default=None, min_length=1)
 
 
+class EvaluationRunStartResource(EvaluationModel):
+    judge_execution_id: str
+    source_execution_id: str
+
+
 class EvaluationDimensionResource(EvaluationModel):
     dimension_id: str
     source: str

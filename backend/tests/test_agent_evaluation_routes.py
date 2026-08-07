@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -73,6 +74,20 @@ class RouteEvaluationService:
             judge_trace_run_id=run.id,
         )
 
+    async def start_manual_evaluation(
+        self,
+        execution_id: str,
+        *,
+        idempotency_key: str,
+        **kwargs,
+    ):
+        await self.evaluate(
+            execution_id,
+            idempotency_key=idempotency_key,
+            **kwargs,
+        )
+        return SimpleNamespace(id=f"judge-{idempotency_key}")
+
 
 @pytest.fixture
 def api(tmp_path):
@@ -104,12 +119,24 @@ async def test_manual_run_is_idempotent_and_raw_fields_are_hidden(api) -> None:
             headers={"Idempotency-Key": "manual-request-1"},
             json={"executionId": "execution-1"},
         )
-    assert first.status_code == replay.status_code == 201
-    assert first.json()["id"] == replay.json()["id"]
-    assert first.json()["rawSnapshot"] is None
-    assert first.json()["rawJudgeResult"] is None
-    assert first.json()["judgeTraceRunId"] is None
-    assert first.json()["dimensions"][0]["score"] == 80
+    assert first.status_code == replay.status_code == 202
+    assert first.json() == replay.json() == {
+        "judgeExecutionId": "judge-manual-request-1",
+        "sourceExecutionId": "execution-1",
+    }
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        runs = await client.get(
+            "/api/agent-evaluations/runs",
+            params={"workspaceId": "workspace-1", "executionId": "execution-1"},
+        )
+    run = runs.json()["items"][0]
+    assert run["rawSnapshot"] is None
+    assert run["rawJudgeResult"] is None
+    assert run["judgeTraceRunId"] is None
+    assert run["dimensions"][0]["score"] == 80
 
 
 @pytest.mark.asyncio

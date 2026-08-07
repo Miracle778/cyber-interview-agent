@@ -20,6 +20,8 @@ const workspace: WorkspaceConfig = {
   vaultPath: "/tmp/interview/vault",
 };
 
+const recentTimestamp = new Date().toISOString();
+
 const run: EvaluationRun = {
   id: "eval-1",
   workspaceId: "workspace-1",
@@ -36,9 +38,9 @@ const run: EvaluationRun = {
   judgeDataScope: {},
   judgeProviderModelId: "model-1",
   errorCode: null,
-  createdAt: "2026-07-30T00:00:00Z",
-  startedAt: "2026-07-30T00:00:01Z",
-  completedAt: "2026-07-30T00:00:02Z",
+  createdAt: recentTimestamp,
+  startedAt: recentTimestamp,
+  completedAt: recentTimestamp,
   dimensions: [
     {
       dimensionId: "key_point_coverage",
@@ -88,9 +90,9 @@ const execution = {
   contextThresholdTokens: 8000,
   latencyMs: 3200,
   retryCount: 0,
-  createdAt: "2026-07-30T00:00:00Z",
-  startedAt: "2026-07-30T00:00:00Z",
-  finishedAt: "2026-07-30T00:00:03Z",
+  createdAt: recentTimestamp,
+  startedAt: recentTimestamp,
+  finishedAt: recentTimestamp,
   errorCode: null,
 };
 
@@ -123,6 +125,60 @@ function mockEvaluationPage(
     const url = String(input);
     const method = init?.method ?? "GET";
     requests.push({ url, method });
+    if (url.includes("/agent-observability/executions/judge-execution-1/operations")) {
+      return Response.json({
+        items: [{
+          id: "model-op-1",
+          runId: "judge-execution-1",
+          parentOperationId: null,
+          kind: "model",
+          name: "quality_evaluation_judge",
+          agentRole: "answer_evaluation",
+          status: "completed",
+          startedAt: "2026-07-30T00:00:04Z",
+          finishedAt: "2026-07-30T00:00:05Z",
+          latencyMs: 1000,
+          retryCount: 0,
+          errorCode: null,
+          eventCount: 2,
+        }],
+      });
+    }
+    if (url.includes("/agent-observability/executions/judge-execution-1")) {
+      return Response.json({
+        ...execution,
+        id: "judge-execution-1",
+        sessionId: "quality-session-1",
+        graphId: "quality.evaluate",
+        displayName: "运行质量评估",
+        title: "质量检查：复习轮次 · 10 题",
+        system: true,
+        status: "completed",
+        capabilities: ["export_trace"],
+        definitionSnapshot: {
+          snapshotVersion: 1,
+          legacy: false,
+          agentId: "quality.evaluate",
+          agentDefinitionVersion: "1",
+          graphVersion: 1,
+          builderKey: "quality_evaluation_agents",
+          promptSchemaVersions: {},
+          inputSchemaVersion: null,
+          outputSchemaVersion: null,
+          childComponents: [],
+          modelRoles: ["answer_evaluation"],
+          allowedTools: [],
+          allowedScopes: [],
+          toolsetDigest: null,
+          modelBindingDigest: null,
+          contextPolicyId: null,
+          retryPolicyId: null,
+          tracePolicyId: null,
+          evalPackId: null,
+          evalPackVersion: null,
+        },
+      });
+    }
     if (url.includes("/agent-observability/executions?")) {
       return Response.json({
         items: executions,
@@ -146,7 +202,10 @@ function mockEvaluationPage(
         : Response.json({ detail: "incompatible" }, { status: comparisonStatus });
     }
     if (method === "POST" && url.includes("/runs?")) {
-      return Response.json(run);
+      return Response.json({
+        judgeExecutionId: "judge-execution-1",
+        sourceExecutionId: "execution-1",
+      });
     }
     return Response.json({ items: runs });
   });
@@ -226,6 +285,11 @@ describe("EvaluationLabPage", () => {
         && request.url.includes("/api/agent-evaluations/runs?")
       ),
     ).toBe(true));
+    expect(await screen.findByText("质量检查已完成")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "在运行中心查看" })).toHaveAttribute(
+      "href",
+      "/agents/executions/judge-execution-1",
+    );
     fireEvent.click(screen.getByRole("tab", { name: /^回归实验/ }));
     expect(screen.getByRole("heading", { name: "评估案例" })).toBeInTheDocument();
     expect(screen.getByText("选择案例")).toBeInTheDocument();

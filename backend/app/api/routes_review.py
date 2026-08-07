@@ -46,6 +46,8 @@ from app.schemas.review import (
     BulkConfirmQuestionCandidatesCommand,
     QuestionDeletionResultResource,
     QuestionConfirmationResultResource,
+    QuestionRecycleBinCommand,
+    QuestionRecycleBinResultResource,
 )
 from app.schemas.agent import ExecutionResource
 
@@ -462,6 +464,46 @@ async def restore_question_candidate(
 ):
     review = application.locate_review_candidate(candidate_id)
     return await review.restore_candidate(candidate_id)
+
+
+@router.post(
+    "/question-candidates/recycle-bin/restore-all",
+    response_model=QuestionRecycleBinResultResource,
+)
+async def restore_all_question_candidates(
+    command: QuestionRecycleBinCommand,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    affected_count = application.review(
+        command.workspace_id
+    ).restore_all_candidates()
+    return {"affected_count": affected_count}
+
+
+@router.delete(
+    "/question-candidates/recycle-bin",
+    response_model=QuestionRecycleBinResultResource,
+)
+async def empty_question_candidate_recycle_bin(
+    workspace_id: Annotated[str, Query(alias="workspaceId")],
+    application: AgentApplication = Depends(get_agent_application),
+):
+    affected_count = application.review(
+        workspace_id
+    ).empty_candidate_recycle_bin()
+    return {"affected_count": affected_count}
+
+
+@router.delete(
+    "/question-candidates/{candidate_id}/permanent",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def permanently_delete_question_candidate(
+    candidate_id: str,
+    application: AgentApplication = Depends(get_agent_application),
+):
+    review = application.locate_review_candidate(candidate_id)
+    review.permanently_delete_candidate(candidate_id)
 
 
 @router.patch(

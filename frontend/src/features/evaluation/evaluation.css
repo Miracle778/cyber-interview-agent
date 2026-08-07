@@ -150,6 +150,111 @@
   font-size: .72rem;
 }
 
+.evaluation-live-progress {
+  margin: 0 24px 20px;
+  padding: 18px 20px;
+  border: 1px solid var(--line-strong, #cbd5e1);
+  border-radius: 14px;
+  background: #f8faff;
+}
+
+.evaluation-live-progress header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.evaluation-live-progress header > span {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 50%;
+  color: #4058c7;
+  background: #e8ecff;
+}
+
+.evaluation-live-progress header div {
+  display: grid;
+  gap: 3px;
+}
+
+.evaluation-live-progress header strong {
+  color: #172033;
+}
+
+.evaluation-live-progress header small {
+  color: #667085;
+}
+
+.evaluation-live-progress header a {
+  margin-left: auto;
+  color: #4058c7;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.evaluation-live-progress ol {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.evaluation-live-progress li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  color: #7b8497;
+  background: #eef1f6;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.evaluation-live-progress li > span {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.evaluation-live-progress li[data-state="current"] {
+  color: #3448ad;
+  background: #e5eaff;
+}
+
+.evaluation-live-progress li[data-state="done"] {
+  color: #087f5b;
+  background: #e3f7ef;
+}
+
+.evaluation-live-progress li[data-state="error"] {
+  color: #b42318;
+  background: #feeceb;
+}
+
+@media (max-width: 760px) {
+  .evaluation-live-progress header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .evaluation-live-progress header a {
+    width: 100%;
+    margin-left: 50px;
+  }
+
+  .evaluation-live-progress ol {
+    grid-template-columns: 1fr;
+  }
+}
+
 .evaluation-toolbar__selectors {
   display: flex;
   min-width: 0;

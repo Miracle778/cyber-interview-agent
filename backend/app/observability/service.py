@@ -375,7 +375,11 @@ class AgentObservabilityService:
         )
         if registration is None or not registration.run_center_visible:
             return False
-        if not include_system_agents and registration.system:
+        if (
+            not include_system_agents
+            and registration.system
+            and not registration.run_center_default_visible
+        ):
             return False
         if not AgentObservabilityService._matches_status(row["status"], status):
             return False

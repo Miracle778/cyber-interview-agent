@@ -306,9 +306,9 @@ def test_cursor_filters_and_system_agent_visibility_are_stable(
         limit=50,
     )
 
-    assert [item.id for item in first.items] == ["run-completed", "run-running"]
-    assert [item.id for item in second.items] == ["run-failed", "run-cancelled"]
-    assert first.total == second.total == 6
+    assert [item.id for item in first.items] == ["run-system", "run-completed"]
+    assert [item.id for item in second.items] == ["run-running", "run-failed"]
+    assert first.total == second.total == 7
     assert [item.id for item in failed.items] == ["run-failed"]
     assert {item.display_name for item in curation.items} == {"题库整理"}
     assert "画像助手" in curation.agent_counts
@@ -317,6 +317,7 @@ def test_cursor_filters_and_system_agent_visibility_are_stable(
     assert system.total == 7
     assert system.items[0].id == "run-system"
     assert system.items[0].system is True
+    assert system.items[0].run_center_default_visible is True
     assert next(item for item in system.items if item.id == "run-completed").system is False
     assert "run-publication" not in {item.id for item in system.items}
     assert "run-diagnostic" not in {item.id for item in system.items}
