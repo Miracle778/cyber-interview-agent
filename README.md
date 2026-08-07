@@ -69,6 +69,12 @@ Cyber Interview Agent 为此建立一组职责明确的领域 Agent：
 
 这是一种 **Hybrid Agentic Application**：确定性路径由代码和领域 Graph 控制，模型负责语义理解、评估、追问和生成。它并不追求把每个功能都改成自由 ReAct。Anthropic 的 [Building Effective Agents](https://www.anthropic.com/engineering/building-effective-agents)、OpenAI Agents SDK 的 [Agent orchestration](https://openai.github.io/openai-agents-python/multi_agent/) 与 LangGraph 的 [Workflows and agents](https://docs.langchain.com/oss/python/langgraph/workflows-agents) 都强调根据可预测性和任务开放程度选择工作流或 Agent；本项目把这一原则落实到了写权限、恢复和长期资产边界。
 
+## 系统技术架构
+
+产品界面只读取稳定的业务投影；确定性领域 Graph 与受限 Role Agent 共享同一套 Runtime、上下文、权限和观测边界。模型不能直接修改题库、画像或复盘资产，正式写入始终经过领域服务、证据校验、HITL 与幂等回执；Checkpoint、Trace 和领域事实分别服务于恢复、诊断和业务，不互相充当第二套真相。
+
+![Cyber Interview Agent 系统技术架构](assets/readme/09-system-technical-architecture.png)
+
 ## Agent Runtime：让长任务真的可以继续
 
 题目整理、简历解析和岗位分析不适合被当作一次性的 HTTP 请求。系统把用户语义和运行尝试分开持久化，并用 SQLite checkpoint、领域工作单元与 SSE 事件流支持：
