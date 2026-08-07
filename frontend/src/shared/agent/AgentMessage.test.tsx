@@ -24,7 +24,9 @@ describe("AgentMessage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "复制消息" }));
 
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith("可复制内容"));
-    expect(screen.getByRole("status")).toHaveTextContent("已复制");
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith("可复制内容");
+      expect(screen.getByRole("status")).toHaveTextContent("已复制");
+    });
   });
 });
