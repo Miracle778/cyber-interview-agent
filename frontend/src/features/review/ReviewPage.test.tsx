@@ -232,7 +232,11 @@ describe("R2 ReviewPage", () => {
     render(<ReviewPage workspace={workspace} />, { wrapper });
 
     fireEvent.click(await screen.findByRole("button", { name: /3 题/ }));
-    fireEvent.click(await screen.findByRole("button", { name: /回看第 1 题：已完成题目，已完成/ }));
+    expect(await screen.findByLabelText("本轮答题统计")).toHaveTextContent("还剩 1 题");
+    expect(screen.getByLabelText("本轮答题统计")).toHaveTextContent("已回答 1");
+    expect(screen.getByLabelText("本轮答题统计")).toHaveTextContent("已跳过 1");
+    expect(screen.getByRole("navigation", { name: "已回答和跳过的题目" })).toBeVisible();
+    fireEvent.click(await screen.findByRole("button", { name: /回看第 1 题：已完成题目，已回答/ }));
     expect(screen.getByRole("region", { name: "回看第 1 题" })).toHaveTextContent("我的完成题回答");
     expect(screen.getByRole("region", { name: "回看第 1 题" })).toHaveTextContent("回答覆盖完整");
 
@@ -278,15 +282,11 @@ describe("R2 ReviewPage", () => {
     render(<ReviewPage workspace={workspace} />, { wrapper });
 
     fireEvent.click(await screen.findByRole("button", { name: /10 题/ }));
-    const omitted = await screen.findByRole("button", { name: "查看第 2 至 6 题" });
-    expect(omitted).toHaveAttribute("aria-expanded", "false");
-
-    fireEvent.click(omitted);
-    expect(omitted).toHaveAttribute("aria-expanded", "true");
-    fireEvent.click(screen.getByRole("button", { name: "回看第 4 题：历史题目 4，已完成" }));
+    expect(await screen.findByLabelText("本轮答题统计")).toHaveTextContent("还剩 3 题");
+    fireEvent.click(screen.getByRole("button", { name: "回看第 4 题：历史题目 4，已回答" }));
 
     expect(screen.getByRole("region", { name: "回看第 4 题" })).toHaveTextContent("第 4 题回答");
-    expect(screen.queryByRole("region", { name: "第 2 至 6 题" })).toBeNull();
+    expect(screen.getByRole("navigation", { name: "已回答和跳过的题目" })).toBeVisible();
   });
 
   it("shows completed results without reopening setup", async () => {

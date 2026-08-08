@@ -59,6 +59,16 @@ describe("RetrospectiveHistorySearch", () => {
     expect(await screen.findByText("数字签名系统如何设计？")).toBeVisible();
     expect(screen.getByText("这是当时的回答。")).toBeVisible();
     expect(screen.getByText("结果集已冻结", { exact: false })).toBeVisible();
+
+    const workspace = screen.getByLabelText("检索结果与分析");
+    const search = screen.getByLabelText("历史复盘检索");
+    fireEvent.doubleClick(screen.getByRole("tab", { name: "题目详情" }));
+    expect(workspace).toHaveClass("is-analysis-expanded");
+    expect(search).toHaveClass("is-analysis-expanded");
+    expect(screen.getByRole("button", { name: "显示题目列表" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "显示题目列表" }));
+    expect(workspace).not.toHaveClass("is-analysis-expanded");
+    expect(search).not.toHaveClass("is-analysis-expanded");
   });
 
   it("keeps summary progress visible after the start request returns", async () => {
@@ -79,9 +89,10 @@ describe("RetrospectiveHistorySearch", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Agent 正在总结当前冻结结果",
     );
-    const insights = screen.getByLabelText("检索总结与报告");
-    expect(insights).toContainElement(screen.getByRole("status"));
-    expect(insights.nextElementSibling).toHaveClass("history-search__workspace");
+    const resultWorkspace = screen.getByLabelText("检索结果与分析");
+    expect(resultWorkspace).toContainElement(screen.getByRole("status"));
+    expect(screen.getByRole("tab", { name: "Agent 总结" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("数字签名系统如何设计？")).toBeVisible();
   });
 
   it("restores the latest persisted search after the history tab remounts", async () => {
