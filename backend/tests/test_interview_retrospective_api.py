@@ -21,6 +21,7 @@ from app.graphs.interview_retrospective_cleanup import (
 from app.interview_retrospectives.projection import cleanup_version_resource
 from app.interview_retrospectives.history_search import RetrospectiveSearchFilters
 from app.main import app
+from tests.async_test_utils import wait_for_signal
 
 
 ASYNC_TEST_TIMEOUT_SECONDS = 5.0
@@ -1363,6 +1364,7 @@ async def test_question_extraction_contract_failure_does_not_retry_full_window(
     assert extraction.last_error_code == "schema_validation_error"
 
 
+@pytest.mark.windows_stability
 @pytest.mark.asyncio
 async def test_analysis_stop_and_resume_keeps_completed_extraction(
     retrospective_application: AgentApplication,
@@ -1440,7 +1442,9 @@ async def test_analysis_stop_and_resume_keeps_completed_extraction(
         cleanup_version_id=cleanup.id,
         idempotency_key="analysis-resume-start",
     )
-    await asyncio.wait_for(agents.analysis_started.wait(), timeout=2)
+    await wait_for_signal(
+        agents.analysis_started.wait(), label="the retrospective analysis wave"
+    )
     run_id = started["analysisRunId"]
     questions_before_stop = application.list_questions(retrospective.id)
     stopped = await application.stop_analysis(

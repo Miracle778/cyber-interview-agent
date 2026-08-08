@@ -36,6 +36,7 @@ from app.review.curation_command_contracts import CurationCommandPlan
 from app.review.application import _publication_error_code
 from app.review.errors import ReviewConflictError
 from app.review.models import QuestionSnapshot
+from tests.async_test_utils import wait_for_signal
 
 
 ASYNC_TEST_TIMEOUT_SECONDS = 5.0
@@ -557,6 +558,7 @@ def _provisional_candidate(title: str, source_ref: str) -> dict[str, object]:
     }
 
 
+@pytest.mark.windows_stability
 @pytest.mark.asyncio
 async def test_six_item_curation_preserves_partial_failure_and_restart_recovery(
     tmp_path: Path,
@@ -665,7 +667,10 @@ async def test_six_item_curation_preserves_partial_failure_and_restart_recovery(
     )
     batch_id = str(created["active_batch_id"])
 
-    await asyncio.wait_for(agents.first_wave_started.wait(), timeout=2)
+    await wait_for_signal(
+        agents.first_wave_started.wait(),
+        label="the first recoverable curation wave",
+    )
     assert agents.peak == 3
     agents.release_first_wave.set()
     partial_execution = await first.wait_execution(str(created["execution_id"]))
@@ -686,7 +691,10 @@ async def test_six_item_curation_preserves_partial_failure_and_restart_recovery(
     )
     paused_session_id = str(paused_created["id"])
     paused_batch_id = str(paused_created["active_batch_id"])
-    await asyncio.wait_for(agents.pause_wave_started.wait(), timeout=2)
+    await wait_for_signal(
+        agents.pause_wave_started.wait(),
+        label="the curation wave that will be paused",
+    )
     generating_batch = first_review.repository.get_batch(paused_batch_id)
     paused = await first_review.pause_curation_session(
         paused_session_id,
@@ -1634,7 +1642,9 @@ async def test_cancelling_after_staging_cleans_private_artifact_immediately(
                 json={"workspaceId": "w1", "sourceRefs": [source_ids[0]]},
             )
         ).json()
-        await asyncio.wait_for(staged.wait(), timeout=1)
+        await wait_for_signal(
+            staged.wait(), label="the private draft staging boundary"
+        )
         execution = review.sessions.repository.get_execution(
             resource["executionId"]
         )
