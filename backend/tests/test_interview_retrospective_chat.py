@@ -12,6 +12,7 @@ from app.agents.interview_retrospective_contracts import (
 from app.application.workspace_runtime import AgentApplication
 from app.api.dependencies import get_agent_application
 from app.main import app
+from tests.async_test_utils import wait_for_signal
 
 
 class FakeDiscussionAgents:
@@ -113,6 +114,7 @@ async def test_explanation_creates_messages_without_new_analysis_version(
     assert service.repository.current_analysis_run(retrospective.id) is None
 
 
+@pytest.mark.windows_stability
 @pytest.mark.asyncio
 async def test_stopping_chat_keeps_user_message_without_partial_assistant_reply(
     discussion_application: AgentApplication,
@@ -133,7 +135,9 @@ async def test_stopping_chat_keeps_user_message_without_partial_assistant_reply(
         message="读取分析后再回答",
         selected_question_id=None,
     )
-    await asyncio.wait_for(entered.wait(), timeout=1)
+    await wait_for_signal(
+        entered.wait(), label="the blocking retrospective discussion"
+    )
 
     cancelled = await service.stop_chat(retrospective.id, execution.id)
     result = service.conversation(retrospective.id)

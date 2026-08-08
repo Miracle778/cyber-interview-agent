@@ -36,6 +36,9 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = [".", ".."]
+markers = [
+  "windows_stability: concurrency and cancellation contracts repeated on Windows CI",
+]
 
 [tool.coverage.run]
 branch = true

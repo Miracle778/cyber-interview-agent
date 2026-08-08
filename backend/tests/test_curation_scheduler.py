@@ -6,8 +6,10 @@ import httpx
 import pytest
 
 from app.review.curation_scheduler import curation_error_code, run_curation_wave
+from tests.async_test_utils import wait_for_completion, wait_for_signal
 
 
+@pytest.mark.windows_stability
 @pytest.mark.asyncio
 async def test_wave_limits_active_workers_to_three() -> None:
     active = 0
@@ -33,11 +35,13 @@ async def test_wave_limits_active_workers_to_three() -> None:
             worker=worker,
         )
     )
-    await asyncio.wait_for(first_wave_started.wait(), timeout=1)
+    await wait_for_signal(
+        first_wave_started.wait(), label="the first three curation workers"
+    )
     assert peak == 3
     release.set()
 
-    result = await asyncio.wait_for(task, timeout=1)
+    result = await wait_for_completion(task, label="the bounded curation wave")
 
     assert result.completed_ids == tuple(f"w-{index}" for index in range(6))
     assert result.failed == ()
@@ -86,6 +90,7 @@ async def test_wave_waits_for_sibling_successes_after_one_worker_fails() -> None
     assert "provider" not in repr(result)
 
 
+@pytest.mark.windows_stability
 @pytest.mark.asyncio
 async def test_outer_cancellation_waits_for_started_worker_cleanup() -> None:
     active = 0
@@ -108,7 +113,7 @@ async def test_outer_cancellation_waits_for_started_worker_cleanup() -> None:
     task = asyncio.create_task(
         run_curation_wave(("w-0", "w-1", "w-2"), limit=2, worker=worker)
     )
-    await asyncio.wait_for(started.wait(), timeout=1)
+    await wait_for_signal(started.wait(), label="the first two curation workers")
     task.cancel()
 
     with pytest.raises(asyncio.CancelledError):

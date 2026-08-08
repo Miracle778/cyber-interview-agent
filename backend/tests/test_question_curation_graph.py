@@ -40,6 +40,7 @@ from app.infrastructure.checkpoints import AgentCheckpointer
 from app.infrastructure.runtime_database import connect_runtime_database
 from app.review.curation_sections import SourceSection, section_sources
 from app.review.repository import ReviewRepository
+from tests.async_test_utils import wait_for_completion, wait_for_signal
 
 
 class FakeProviderError(RuntimeError):
@@ -992,6 +993,7 @@ async def test_structured_units_complete_without_discovery_agent_calls(
     assert len(result["candidates"]) == 2
 
 
+@pytest.mark.windows_stability
 @pytest.mark.asyncio
 async def test_enrichment_commits_siblings_then_retries_only_missing_seed(
     repository: ReviewRepository, batch, tmp_path: Path
@@ -1049,10 +1051,15 @@ async def test_enrichment_commits_siblings_then_retries_only_missing_seed(
         )
     )
 
-    await asyncio.wait_for(agents.first_wave_started.wait(), timeout=1)
+    await wait_for_signal(
+        agents.first_wave_started.wait(),
+        label="three concurrent enrichment calls",
+    )
     assert agents.peak == 3
     agents.release.set()
-    result = await asyncio.wait_for(task, timeout=2)
+    result = await wait_for_completion(
+        task, label="the enrichment graph after releasing its barrier"
+    )
 
     assert len(agents.enrichment_calls) == 4
     assert [len(call.seeds) for call in agents.enrichment_calls].count(1) == 1
@@ -1090,6 +1097,7 @@ async def test_enrichment_retries_malformed_tool_output_without_failing_wave(
     assert result["candidates"] == []
 
 
+@pytest.mark.windows_stability
 @pytest.mark.asyncio
 async def test_discovery_wave_runs_three_provider_calls_concurrently(
     repository: ReviewRepository, batch, tmp_path: Path
@@ -1142,10 +1150,15 @@ async def test_discovery_wave_runs_three_provider_calls_concurrently(
         )
     )
 
-    await asyncio.wait_for(agents.first_wave_started.wait(), timeout=1)
+    await wait_for_signal(
+        agents.first_wave_started.wait(),
+        label="three concurrent discovery calls",
+    )
     assert agents.peak == 3
     agents.release.set()
-    result = await asyncio.wait_for(task, timeout=2)
+    result = await wait_for_completion(
+        task, label="the discovery graph after releasing its barrier"
+    )
 
     assert agents.peak == 3
     assert len(agents.discovery_calls) == 6
@@ -1399,6 +1412,7 @@ async def test_enrichment_provider_failure_retries_then_skips_without_losing_res
     ]
 
 
+@pytest.mark.windows_stability
 @pytest.mark.asyncio
 async def test_graph_cancellation_interrupts_every_started_item(
     repository: ReviewRepository, batch, tmp_path: Path
@@ -1433,7 +1447,9 @@ async def test_graph_cancellation_interrupts_every_started_item(
             context=context(tmp_path),
         )
     )
-    await asyncio.wait_for(agents.started.wait(), timeout=1)
+    await wait_for_signal(
+        agents.started.wait(), label="the first three blocking discovery calls"
+    )
     task.cancel()
 
     with pytest.raises(asyncio.CancelledError):
