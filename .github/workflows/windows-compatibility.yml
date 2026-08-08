@@ -7,6 +7,29 @@ on:
       - main
 
 jobs:
+  backend-async-stability:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+      - name: Install Python dependencies
+        working-directory: backend
+        run: uv sync --frozen
+      - name: Repeat concurrency and cancellation contracts
+        working-directory: backend
+        shell: pwsh
+        run: |
+          1..5 | ForEach-Object {
+            Write-Host "Windows async stability pass $_/5"
+            uv run pytest -q -m windows_stability --durations=15
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
+          }
+
   backend:
     runs-on: windows-latest
     timeout-minutes: 20
