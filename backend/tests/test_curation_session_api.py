@@ -2199,8 +2199,15 @@ async def test_bulk_publication_cancel_then_retry_skips_completed_item(
         calls: list[tuple[str, str]] = []
 
         async def fake_publish(
-            candidate_id, *, idempotency_key, confirm_ai_supplement=False
+            candidate_id,
+            *,
+            idempotency_key,
+            session_id,
+            execution_id,
+            confirm_ai_supplement=False,
         ):
+            assert session_id == created["id"]
+            assert execution_id
             calls.append((candidate_id, idempotency_key))
             if candidate_id == first.id and not release.is_set():
                 entered.set()
@@ -2209,7 +2216,7 @@ async def test_bulk_publication_cancel_then_retry_skips_completed_item(
                 candidate_id, status="published"
             )
 
-        review._publish_curation_candidate = fake_publish
+        review._publish_preconfirmed_curation_candidate = fake_publish
         accepted = (
             await client.post(
                 f"/api/review/curation-sessions/{created['id']}"

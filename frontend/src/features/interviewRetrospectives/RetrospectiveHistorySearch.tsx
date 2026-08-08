@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Building2, Clock3, FileText, History, Pencil, RefreshCw, Save, Search, Sparkles, X } from "lucide-react";
+import { ArrowRight, Building2, Clock3, FileText, History, Maximize2, PanelLeftOpen, Pencil, RefreshCw, Save, Search, Sparkles, X } from "lucide-react";
 import { MarkdownView } from "../knowledge/MarkdownView";
 import { Button } from "../../shared/ui/Button";
 import { SelectControl } from "../../shared/ui/SelectControl";
@@ -43,6 +43,8 @@ export function RetrospectiveHistorySearch({
   const [reportScope, setReportScope] = useState<"all" | "selected">("all");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyFilter, setHistoryFilter] = useState("");
+  const [rightPaneMode, setRightPaneMode] = useState<"detail" | "summary" | "report">("detail");
+  const [analysisExpanded, setAnalysisExpanded] = useState(false);
 
   function changeSearchSetId(value: string | null) {
     if (selectedSearchSetId === undefined) setLocalSearchSetId(value);
@@ -75,6 +77,7 @@ export function RetrospectiveHistorySearch({
       hydratedSearchSetId.current = value.id;
       setSelectedResultId(null);
       setSelectedReportId(null);
+      setRightPaneMode("detail");
       void queryClient.invalidateQueries({ queryKey: ["retrospective-history-searches", workspaceId] });
     },
   });
@@ -113,6 +116,7 @@ export function RetrospectiveHistorySearch({
   });
   const summaryMutation = useMutation({
     mutationFn: () => summarizeRetrospectiveSearch(workspaceId, searchSetId!),
+    onMutate: () => setRightPaneMode("summary"),
     onSuccess: (value) => queryClient.setQueryData(["retrospective-history-search", workspaceId, value.id], value),
   });
   const reportMutation = useMutation({
@@ -123,6 +127,7 @@ export function RetrospectiveHistorySearch({
     }),
     onSuccess: (value) => {
       setSelectedReportId(value.id);
+      setRightPaneMode("report");
       setReportOpen(false);
       void queryClient.invalidateQueries({ queryKey: ["retrospective-history-reports", workspaceId] });
     },
@@ -154,6 +159,7 @@ export function RetrospectiveHistorySearch({
     if (!report.searchSetId) return;
     changeSearchSetId(report.searchSetId);
     setSelectedReportId(null);
+    setRightPaneMode("detail");
   }
 
   function openSearch(item: RetrospectiveSearchSet) {
@@ -163,6 +169,7 @@ export function RetrospectiveHistorySearch({
     setJobTargetId(typeof item.filters.jobTargetId === "string" ? item.filters.jobTargetId : "");
     setSelectedResultId(null);
     setSelectedReportId(null);
+    setRightPaneMode("detail");
     setHistoryOpen(false);
   }
 
@@ -179,7 +186,12 @@ export function RetrospectiveHistorySearch({
     if (queryText.trim()) searchMutation.mutate({ queryText: queryText.trim(), jobTargetId });
   }
 
-  return <section className="history-search" aria-label="历史复盘检索">
+  function selectReport(id: string) {
+    setSelectedReportId(id);
+    setRightPaneMode("report");
+  }
+
+  return <section className={`history-search${analysisExpanded ? " is-analysis-expanded" : ""}`} aria-label="历史复盘检索">
     <header className="history-search__hero">
       <div><p>Workspace 历史检索</p><h2>跨多场面试，找到问题和证据</h2><span>先由 Agent 理解你的表达，再由确定性检索返回完整、可追溯的结果。</span></div>
       <form onSubmit={submit} className="history-search__form">
@@ -212,22 +224,41 @@ export function RetrospectiveHistorySearch({
         <div><Button variant="ghost" disabled={!results.length || summaryMutation.isPending} loading={summaryMutation.isPending} onClick={() => summaryMutation.mutate()}><Sparkles size={16} />总结这些问题</Button><Button disabled={!results.length || reportMutation.isPending} loading={reportMutation.isPending} onClick={() => { setReportTitle(`${queryText || searchQuery.data?.queryText || "历史问题"}总结报告`); setReportOpen(true); }}><FileText size={16} />生成总结报告</Button></div>
       </div>
       <div className="history-search__body">
-        <div className="history-search__insights" aria-label="检索总结与报告">
-          {searchQuery.data.status === "failed" ? <div className="history-search__error" role="alert">检索没有完成：{searchQuery.data.lastErrorCode ?? "未知错误"}</div> : null}
-          {searchQuery.data.summaryExecutionId && !searchQuery.data.summaryMarkdown && !searchQuery.data.lastErrorCode ? <article className="history-search__summary" role="status" aria-live="polite"><header><RefreshCw size={18} className="is-spinning" /><strong>Agent 正在总结当前冻结结果</strong><span>完成后会自动显示</span></header><p>你可以继续查看检索结果或离开页面，已启动的总结不会丢失。</p></article> : null}
-          {searchQuery.data.summaryMarkdown ? <article className="history-search__summary"><header><Sparkles size={18} /><strong>Agent 总结</strong><span>{searchQuery.data.summaryCitationQuestionIds.length} 条题目引用</span></header><MarkdownView markdown={searchQuery.data.summaryMarkdown} /></article> : null}
-          {searchQuery.data.summaryExecutionId && searchQuery.data.lastErrorCode && !searchQuery.data.summaryMarkdown ? <div className="history-search__error" role="alert">总结没有完成：{searchQuery.data.lastErrorCode}。检索结果仍然可以继续查看。</div> : null}
-          {selectedReport ? <ReportArticle report={selectedReport} sources={reportResultsQuery.data ?? []} saving={updateReportMutation.isPending} onOpenSources={() => openReportSources(selectedReport)} onSave={(input) => updateReportMutation.mutateAsync({ reportId: selectedReport.id, expectedVersion: selectedReport.version, ...input })} /> : null}
-        </div>
-        <div className="history-search__workspace">
+        <div className={`history-search__workspace${analysisExpanded ? " is-analysis-expanded" : ""}`} aria-label="检索结果与分析">
           <div className="history-search__groups">
-            {resultsQuery.isLoading ? <p>正在载入检索结果…</p> : grouped.map((group) => <section key={group.id}><header><Building2 size={16} /><div><strong>{group.title}</strong><span>{group.meta}</span></div><em>{group.items.length} 题</em></header>{group.items.map((item) => <button type="button" className={item.id === selectedResultId ? "is-selected" : ""} key={item.id} onClick={() => { setSelectedResultId(item.id); setSelectedReportId(null); }}><span>#{item.rank}</span><strong>{text(item.questionSnapshot.questionText)}</strong><small>{item.matchedTerms.join(" · ")}</small><ArrowRight size={15} /></button>)}</section>)}
+            {resultsQuery.isLoading ? <p>正在载入检索结果…</p> : grouped.map((group) => <section key={group.id}><header><Building2 size={16} /><div><strong>{group.title}</strong><span>{group.meta}</span></div><em>{group.items.length} 题</em></header>{group.items.map((item) => <button type="button" className={item.id === selectedResultId ? "is-selected" : ""} key={item.id} onClick={() => { setSelectedResultId(item.id); setSelectedReportId(null); setRightPaneMode("detail"); }}><span>#{item.rank}</span><strong>{text(item.questionSnapshot.questionText)}</strong><small>{item.matchedTerms.join(" · ")}</small><ArrowRight size={15} /></button>)}</section>)}
             {!resultsQuery.isLoading && searchQuery.data.status === "completed" && !results.length ? <div className="history-search__none"><h3>没有找到符合条件的问题</h3><p>可以换一个项目别名、技术关键词，或放宽求职目标筛选。</p></div> : null}
           </div>
-          <ResultDetail result={selectedResult} />
+          <section className="history-search__analysis" aria-label="检索分析区">
+            <div className="history-search__analysis-tabs" role="tablist" aria-label="检索结果视图">
+              <button type="button" role="tab" aria-selected={rightPaneMode === "detail"} title="双击进入专注阅读" onClick={() => setRightPaneMode("detail")} onDoubleClick={() => { setRightPaneMode("detail"); setAnalysisExpanded(true); }}>题目详情</button>
+              {(summaryMutation.isPending || searchQuery.data.summaryExecutionId || searchQuery.data.summaryMarkdown || searchQuery.data.lastErrorCode) ? <button type="button" role="tab" aria-selected={rightPaneMode === "summary"} title="双击进入专注阅读" onClick={() => setRightPaneMode("summary")} onDoubleClick={() => { setRightPaneMode("summary"); setAnalysisExpanded(true); }}>Agent 总结</button> : null}
+              {selectedReport ? <button type="button" role="tab" aria-selected={rightPaneMode === "report"} title="双击进入专注阅读" onClick={() => setRightPaneMode("report")} onDoubleClick={() => { setRightPaneMode("report"); setAnalysisExpanded(true); }}>总结报告</button> : null}
+              <button
+                type="button"
+                className="history-search__analysis-toggle"
+                aria-label={analysisExpanded ? "显示题目列表" : "展开阅读区"}
+                aria-pressed={analysisExpanded}
+                onClick={() => setAnalysisExpanded((value) => !value)}
+              >
+                {analysisExpanded ? <PanelLeftOpen size={16} /> : <Maximize2 size={16} />}
+                {analysisExpanded ? "显示题目列表" : "展开阅读区"}
+              </button>
+            </div>
+            <div className="history-search__analysis-content">
+              {rightPaneMode === "detail" ? <ResultDetail result={selectedResult} /> : null}
+              {rightPaneMode === "summary" ? <>
+                {searchQuery.data.status === "failed" ? <div className="history-search__error" role="alert">检索没有完成：{searchQuery.data.lastErrorCode ?? "未知错误"}</div> : null}
+                {(summaryMutation.isPending || (searchQuery.data.summaryExecutionId && !searchQuery.data.summaryMarkdown && !searchQuery.data.lastErrorCode)) ? <article className="history-search__summary" role="status" aria-live="polite"><header><RefreshCw size={18} className="is-spinning" /><strong>Agent 正在总结当前冻结结果</strong><span>完成后会自动显示</span></header><p>题目列表仍可继续浏览；总结完成后会保存在本次检索中。</p></article> : null}
+                {searchQuery.data.summaryMarkdown ? <article className="history-search__summary"><header><Sparkles size={18} /><strong>Agent 总结</strong><span>{searchQuery.data.summaryCitationQuestionIds.length} 条题目引用</span></header><MarkdownView markdown={searchQuery.data.summaryMarkdown} /></article> : null}
+                {searchQuery.data.summaryExecutionId && searchQuery.data.lastErrorCode && !searchQuery.data.summaryMarkdown ? <div className="history-search__error" role="alert">总结没有完成：{searchQuery.data.lastErrorCode}。检索结果仍然可以继续查看。</div> : null}
+              </> : null}
+              {rightPaneMode === "report" && selectedReport ? <ReportArticle report={selectedReport} sources={reportResultsQuery.data ?? []} saving={updateReportMutation.isPending} onOpenSources={() => openReportSources(selectedReport)} onSave={(input) => updateReportMutation.mutateAsync({ reportId: selectedReport.id, expectedVersion: selectedReport.version, ...input })} /> : null}
+            </div>
+          </section>
         </div>
       </div>
-      <ReportHistory reports={reportsQuery.data ?? []} selectedReportId={selectedReportId} onSelect={setSelectedReportId} />
+      <ReportHistory reports={reportsQuery.data ?? []} selectedReportId={selectedReportId} onSelect={selectReport} />
       {reportOpen ? <div className="retrospective-confirm-backdrop" role="presentation"><section className="retrospective-confirm history-search__report-dialog" role="dialog" aria-modal="true" aria-labelledby="history-report-title"><FileText size={24} /><div><h3 id="history-report-title">生成历史复盘报告</h3><p>Agent 只读取当前冻结的检索结果；报告生成后可以继续编辑。</p><label>报告名称<input aria-label="历史报告名称" value={reportTitle} onChange={(event) => setReportTitle(event.target.value)} autoFocus /></label><label>报告侧重点<SelectControl aria-label="历史报告侧重点" value={reportFocus} onChange={(event) => setReportFocus(event.target.value as typeof reportFocus)}><option value="preparation">下一轮准备</option><option value="question_summary">问题归纳</option><option value="performance_review">表现复盘</option></SelectControl></label><label>报告范围<SelectControl aria-label="历史报告范围" value={reportScope} onChange={(event) => setReportScope(event.target.value as typeof reportScope)}><option value="all">当前全部 {results.length} 道问题</option><option value="selected" disabled={!selectedResultId}>当前选中的 1 道问题</option></SelectControl></label></div><footer><Button variant="ghost" onClick={() => setReportOpen(false)}>取消</Button><Button loading={reportMutation.isPending} disabled={!reportTitle.trim()} onClick={() => reportMutation.mutate()}>开始生成</Button></footer></section></div> : null}
     </> : null}
     {historyOpen ? <div className="history-search__history-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHistoryOpen(false); }}>

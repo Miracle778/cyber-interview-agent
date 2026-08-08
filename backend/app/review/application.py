@@ -35,7 +35,7 @@ from app.application.session_service import (
     ProductEventStream,
     ReasoningEffort,
 )
-from app.hitl.models import ResolveActionCommand
+from app.hitl.models import CreatePendingAction, ResolveActionCommand
 from app.hitl.repository import PendingActionRepository
 from app.hitl.service import HitlService
 from app.knowledge.drafts import (
@@ -1104,9 +1104,11 @@ class ReviewApplication:
                     )
                     try:
                         with cancellation.critical_section():
-                            await self._publish_curation_candidate(
+                            await self._publish_preconfirmed_curation_candidate(
                                 item.candidate_id,
                                 idempotency_key=item.idempotency_key,
+                                session_id=operation.session_id,
+                                execution_id=current.id,
                                 confirm_ai_supplement=True,
                             )
                             item = self.repository.transition_bulk_publication_item(
@@ -1972,6 +1974,59 @@ class ReviewApplication:
                     raise
                 await asyncio.sleep(retry_delay)
         await self.executions.wait(execution.id)
+
+    async def _publish_preconfirmed_curation_candidate(
+        self,
+        candidate_id: str,
+        *,
+        idempotency_key: str,
+        session_id: str,
+        execution_id: str,
+        confirm_ai_supplement: bool = False,
+    ) -> None:
+        """Publish one item inside a user-confirmed bulk operation.
+
+        The bulk command is the user approval boundary.  Each item keeps an
+        idempotent authorization receipt for crash recovery, while sharing the
+        single bulk session/execution instead of spawning a publication Agent.
+        """
+        candidate = self.repository.get_candidate(candidate_id)
+        if candidate.status == "published":
+            return
+        self._assert_candidate_publishable(
+            candidate, confirm_ai_supplement=confirm_ai_supplement
+        )
+        if candidate.draft_id is None:
+            raise ReviewConflictError("candidate has no draft")
+        draft = await self.drafts.get(candidate.draft_id)
+        await self.drafts.mark_review_pending(
+            draft.id,
+            expected_version=draft.version,
+            expected_hash=draft.content_hash,
+        )
+        await self.hitl.approve_preconfirmed(
+            CreatePendingAction(
+                workspace_id=self.workspace_id,
+                session_id=session_id,
+                run_id=execution_id,
+                action_type="knowledge.publish",
+                payload={
+                    "draftId": draft.id,
+                    "draftVersion": draft.version,
+                    "contentHash": draft.content_hash,
+                    "title": draft.title,
+                    "markdown": draft.markdown,
+                },
+                preview={
+                    "draftId": draft.id,
+                    "title": draft.title,
+                    "markdown": draft.markdown,
+                },
+                editable_fields=(),
+                idempotency_key=f"preconfirmed:{idempotency_key}",
+            ),
+            resolution_key=idempotency_key,
+        )
 
     def _assert_candidate_publishable(
         self, candidate, *, confirm_ai_supplement: bool = False

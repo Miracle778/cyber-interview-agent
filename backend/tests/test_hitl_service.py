@@ -208,6 +208,32 @@ async def test_edited_approval_persists_and_resumes_once(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
+async def test_preconfirmed_approval_delivers_without_waiting_or_resuming_graph(
+    tmp_path: Path,
+) -> None:
+    connection = _database(tmp_path)
+    prepare = BlockingPrepare()
+    service, repository, handler, events, resume = _service(
+        tmp_path,
+        prepare_resolution=prepare,
+    )
+
+    approved = await service.approve_preconfirmed(
+        _request(),
+        resolution_key="bulk-confirm-1",
+    )
+
+    receipt = (await repository.list_resolutions(approved.id))[0]
+    assert approved.status == "approved"
+    assert receipt.delivery_status == "delivered"
+    assert handler.receipts == [receipt.id]
+    assert [item[2] for item in events.items] == ["approval.resolved"]
+    assert resume.calls == []
+    assert prepare.started.is_set() is False
+    connection.close()
+
+
+@pytest.mark.asyncio
 async def test_reject_resumes_with_reason(tmp_path: Path) -> None:
     connection = _database(tmp_path)
     service, repository, _handler, _events, resume = _service(tmp_path)

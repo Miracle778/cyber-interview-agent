@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, ArrowLeft, FileCheck2, MoreHorizontal, PanelLeftOpen, PanelRightClose, PanelRightOpen, RotateCcw, StopCircle } from "lucide-react";
+import { AlertCircle, ArrowLeft, BookOpenCheck, FileCheck2, MoreHorizontal, PanelLeftOpen, PanelRightClose, PanelRightOpen, RotateCcw, StopCircle } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "../../shared/ui/Button";
@@ -59,83 +59,51 @@ export function shouldShowStreamExecutionError(
 }
 
 function ReviewQuestionStepper({ round, viewedOrdinal, onSelect }: { round: ReviewRound; viewedOrdinal: number | null; onSelect: (ordinal: number) => void }) {
-  const [expandedRange, setExpandedRange] = useState<{ start: number; end: number } | null>(null);
   const current = Math.min(round.currentIndex, Math.max(0, round.questionCount - 1));
-  const all = Array.from({ length: round.questionCount }, (_, index) => index);
-  const indexes = round.questionCount <= 5 ? all : [...new Set([0, Math.max(0, current - 1), current, Math.min(round.questionCount - 1, current + 1), round.questionCount - 1])].sort((left, right) => left - right);
-  const entries: Array<{ kind: "question"; index: number } | { kind: "gap"; start: number; end: number }> = [];
-  indexes.forEach((index, position) => {
-    const previous = indexes[position - 1];
-    if (position > 0 && previous !== index - 1) entries.push({ kind: "gap", start: previous + 1, end: index - 1 });
-    entries.push({ kind: "question", index });
-  });
-
-  useEffect(() => {
-    setExpandedRange(null);
-  }, [round.id, round.currentIndex]);
-
-  const selectQuestion = (ordinal: number) => {
-    setExpandedRange(null);
-    onSelect(ordinal);
-  };
+  const currentOrdinal = current + 1;
+  const currentTitle = round.currentQuestion?.title ?? "当前题目";
+  const attempted = [...round.attempts].sort((left, right) => left.ordinal - right.ordinal);
+  const answeredCount = attempted.filter((attempt) => !attempt.skipped).length;
+  const skippedCount = attempted.filter((attempt) => attempt.skipped).length;
+  const remainingCount = Math.max(round.questionCount - attempted.length, 0);
 
   return <nav className="review-question-stepper" aria-label="本轮题目进度">
-    <ol>{entries.map((entry) => {
-      if (entry.kind === "gap") {
-        const startOrdinal = entry.start + 1;
-        const endOrdinal = entry.end + 1;
-        const expanded = expandedRange?.start === entry.start && expandedRange.end === entry.end;
-        return <li key={`gap-${entry.start}-${entry.end}`} className="review-question-stepper__gap">
-          <button
-            type="button"
-            className="review-question-stepper__ellipsis"
-            aria-label={`查看第 ${startOrdinal} 至 ${endOrdinal} 题`}
-            aria-expanded={expanded}
-            onClick={() => setExpandedRange(expanded ? null : { start: entry.start, end: entry.end })}
-          >…</button>
-        </li>;
-      }
-      const index = entry.index;
-      const ordinal = index + 1;
-      const attempt = round.attempts.find((item) => item.ordinal === ordinal);
-      const isCurrent = index === current;
-      const selected = viewedOrdinal === ordinal || (viewedOrdinal === null && isCurrent);
-      const title = isCurrent ? round.currentQuestion?.title : attempt?.questionSnapshot.title;
-      const completed = Boolean(attempt) || round.status === "completed";
-      const status = attempt?.skipped ? "已跳过" : attempt ? "已完成" : "待开始";
-      const content = <>
-        <span className="review-question-stepper__number">{ordinal}</span>
-        <span><small>{viewedOrdinal === ordinal ? `正在回看第 ${ordinal} 题` : isCurrent ? `第 ${ordinal} / ${round.questionCount} 题` : `第 ${ordinal} 题 · ${status}`}</small><strong>{title ?? "待开始"}</strong></span>
-      </>;
-      return <li key={index} aria-current={selected ? "step" : undefined} data-active-question={isCurrent || undefined} data-completed={completed || undefined} data-skipped={attempt?.skipped || undefined}>
-        {attempt || isCurrent
-          ? <button type="button" aria-label={isCurrent ? `返回当前第 ${ordinal} 题：${title}` : `回看第 ${ordinal} 题：${title}，${status}`} onClick={() => selectQuestion(ordinal)}>{content}</button>
-          : <span className="review-question-stepper__item">{content}</span>}
-      </li>;
-    })}</ol>
-    {expandedRange ? <section className="review-question-stepper__picker" aria-label={`第 ${expandedRange.start + 1} 至 ${expandedRange.end + 1} 题`}>
-      <header>
-        <strong>选择要回看的题目</strong>
-        <button type="button" onClick={() => setExpandedRange(null)}>收起</button>
-      </header>
-      <div>{Array.from({ length: expandedRange.end - expandedRange.start + 1 }, (_, offset) => expandedRange.start + offset).map((index) => {
-        const ordinal = index + 1;
-        const attempt = round.attempts.find((item) => item.ordinal === ordinal);
-        const status = attempt?.skipped ? "已跳过" : attempt ? "已完成" : "待开始";
-        const title = attempt?.questionSnapshot.title ?? "尚未开始";
+    <div className="review-question-stepper__toolbar">
+      <button
+        type="button"
+        className={viewedOrdinal === null ? "is-current" : ""}
+        aria-label={`返回当前第 ${currentOrdinal} 题：${currentTitle}`}
+        onClick={() => onSelect(currentOrdinal)}
+      >
+        <span className="review-question-stepper__number">{currentOrdinal}</span>
+        <span><small>当前进度</small><strong>第 {currentOrdinal} / {round.questionCount} 题 · {currentTitle}</strong></span>
+      </button>
+      <div className="review-question-stepper__stats" aria-label="本轮答题统计">
+        <span className="is-remaining"><BookOpenCheck size={15} />还剩 <strong>{remainingCount}</strong> 题</span>
+        <span className="is-answered">已回答 <strong>{answeredCount}</strong></span>
+        <span className="is-skipped">已跳过 <strong>{skippedCount}</strong></span>
+      </div>
+    </div>
+    {attempted.length ? <section className="review-question-stepper__history" role="navigation" aria-label="已回答和跳过的题目">
+      <header><strong>本轮记录 · {attempted.length}</strong><small>点题号回看，不改变进度</small></header>
+      <div>{attempted.map((attempt) => {
+        const ordinal = attempt.ordinal;
+        const status = attempt.skipped ? "已跳过" : "已回答";
+        const title = attempt.questionSnapshot.title;
         return <button
           type="button"
           key={ordinal}
-          disabled={!attempt}
-          aria-label={attempt ? `回看第 ${ordinal} 题：${title}，${status}` : `第 ${ordinal} 题，待开始`}
-          onClick={() => selectQuestion(ordinal)}
+          aria-current={viewedOrdinal === ordinal ? "page" : undefined}
+          aria-label={`回看第 ${ordinal} 题：${title}，${status}`}
+          data-skipped={attempt.skipped ? "true" : "false"}
+          onClick={() => onSelect(ordinal)}
         >
           <span>{ordinal}</span>
           <span><strong>{title}</strong><small>{status}</small></span>
         </button>;
       })}</div>
-    </section> : null}
-    <div className="review-question-stepper__track" aria-hidden="true"><span style={{ width: `${Math.max(4, ((current + 1) / round.questionCount) * 100)}%` }} /></div>
+    </section> : <p className="review-question-stepper__empty-history">完成或跳过题目后，会在这里保留回看入口。</p>}
+    <div className="review-question-stepper__track" aria-hidden="true"><span style={{ width: `${Math.max(4, (currentOrdinal / round.questionCount) * 100)}%` }} /></div>
   </nav>;
 }
 

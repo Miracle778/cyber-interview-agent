@@ -87,6 +87,37 @@ class HitlService:
         await self._deliver(resolved, receipt, handler)
         return resolved
 
+    async def approve_preconfirmed(
+        self,
+        request: CreatePendingAction,
+        *,
+        resolution_key: str,
+    ) -> PendingActionRecord:
+        """Persist and deliver a user-confirmed action without a graph interrupt.
+
+        The caller owns the user confirmation boundary (for example, one bulk
+        publication confirmation).  We still persist one idempotent resolution
+        receipt per side effect, but do not wait for or resume an Agent graph.
+        """
+        action = await self.create_action(request)
+        handler = self._handlers.get(action.action_type)
+        decision = {
+            "actionId": action.id,
+            "decision": "approved",
+            "payload": action.payload,
+            "confirmationMode": "preconfirmed",
+        }
+        receipt = await self._repository.resolve(
+            action.id,
+            expected_version=action.version,
+            status="approved",
+            resolution_key=resolution_key,
+            decision=decision,
+        )
+        resolved = await self._repository.get(action.id)
+        await self._deliver(resolved, receipt, handler, resume_graph=False)
+        return resolved
+
     async def reject(
         self, action_id: str, command: ResolveActionCommand
     ) -> PendingActionRecord:
@@ -133,7 +164,14 @@ class HitlService:
             return
         await self._prepare_resolution(action.run_id)
 
-    async def _deliver(self, action, receipt, handler) -> None:
+    async def _deliver(
+        self,
+        action,
+        receipt,
+        handler,
+        *,
+        resume_graph: bool = True,
+    ) -> None:
         if receipt.delivery_status == "delivered":
             return
         delivering = await self._repository.claim_delivery(receipt.id)
@@ -151,9 +189,10 @@ class HitlService:
                     "version": action.version,
                 },
             )
-            await self._resume_action(
-                action.run_id, delivering.decision, delivering.id
-            )
+            if resume_graph:
+                await self._resume_action(
+                    action.run_id, delivering.decision, delivering.id
+                )
             await self._repository.mark_delivered(delivering.id)
         except Exception:
             await self._repository.mark_delivery_failed(
