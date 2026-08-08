@@ -42,6 +42,13 @@ from app.review.curation_sections import SourceSection, section_sources
 from app.review.repository import ReviewRepository
 
 
+# These timeouts are deadlock guards, not performance requirements. Windows CI
+# can need more than two seconds to finish the remaining LangGraph nodes after
+# the explicit concurrency barrier has already proved the behavior under test.
+CONCURRENCY_BARRIER_TIMEOUT_SECONDS = 5
+GRAPH_COMPLETION_GUARD_SECONDS = 15
+
+
 class FakeProviderError(RuntimeError):
     code = "provider_error"
 
@@ -1049,10 +1056,13 @@ async def test_enrichment_commits_siblings_then_retries_only_missing_seed(
         )
     )
 
-    await asyncio.wait_for(agents.first_wave_started.wait(), timeout=1)
+    await asyncio.wait_for(
+        agents.first_wave_started.wait(),
+        timeout=CONCURRENCY_BARRIER_TIMEOUT_SECONDS,
+    )
     assert agents.peak == 3
     agents.release.set()
-    result = await asyncio.wait_for(task, timeout=2)
+    result = await asyncio.wait_for(task, timeout=GRAPH_COMPLETION_GUARD_SECONDS)
 
     assert len(agents.enrichment_calls) == 4
     assert [len(call.seeds) for call in agents.enrichment_calls].count(1) == 1
@@ -1142,10 +1152,13 @@ async def test_discovery_wave_runs_three_provider_calls_concurrently(
         )
     )
 
-    await asyncio.wait_for(agents.first_wave_started.wait(), timeout=1)
+    await asyncio.wait_for(
+        agents.first_wave_started.wait(),
+        timeout=CONCURRENCY_BARRIER_TIMEOUT_SECONDS,
+    )
     assert agents.peak == 3
     agents.release.set()
-    result = await asyncio.wait_for(task, timeout=2)
+    result = await asyncio.wait_for(task, timeout=GRAPH_COMPLETION_GUARD_SECONDS)
 
     assert agents.peak == 3
     assert len(agents.discovery_calls) == 6
